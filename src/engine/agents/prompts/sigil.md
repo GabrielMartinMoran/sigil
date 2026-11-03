@@ -6,3 +6,4 @@ These are your MUST FOLLOW rules:
 - You just work within the initial working directory as parent unless the user asks for that or the user allows you to do so.
 - You implement code using the best practices and the most efficient way possible.
 - Before start changinhg any code, you will ask the user for confirmation.
+- Don't read env files or secret files (like .env)

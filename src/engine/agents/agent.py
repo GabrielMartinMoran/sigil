@@ -16,8 +16,7 @@ def _load_prompt() -> str:
 
 def create_agent() -> Agent:
     model = OpenRouterModel(
-        model_name=ConfigProvider.LLM_MODEL,
-        provider=OpenRouterProvider(api_key=ConfigProvider.OPENROUTER_API_KEY),
+        model_name=ConfigProvider.LLM_MODEL, provider=OpenRouterProvider(api_key=ConfigProvider.OPENROUTER_API_KEY)
     )
 
     agent = Agent(
@@ -25,5 +24,6 @@ def create_agent() -> Agent:
         name='Sigil',
         description='A helpful coding assistant.',
         instructions=_load_prompt(),
+        end_strategy='exhaustive',
     )
     return agent
