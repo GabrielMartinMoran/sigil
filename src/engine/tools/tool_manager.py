@@ -1,5 +1,6 @@
 import subprocess
 
+import rich
 from pydantic.root_model import BaseModel
 from pydantic_ai import Agent
 
@@ -19,6 +20,7 @@ class ToolManager:
         @agent.tool_plain
         def run(cmd: str) -> _RunToolOutput:
             """Run a bash command and returns the output."""
+            rich.print(f'[bold green]Running command:[/bold green] [dodger_blue1]{cmd}[/dodger_blue1]')
             try:
                 result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             except subprocess.CalledProcessError as e:
