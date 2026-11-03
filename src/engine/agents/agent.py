@@ -9,6 +9,11 @@ from src.config_provider import ConfigProvider
 _SIGIL_PROMPT = os.path.join(os.path.dirname(__file__), 'prompts', 'sigil.md')
 
 
+def _load_prompt() -> str:
+    with open(_SIGIL_PROMPT, 'r') as f:
+        return f.read()
+
+
 def create_agent() -> Agent:
     model = OpenRouterModel(
         model_name=ConfigProvider.LLM_MODEL,
@@ -19,6 +24,6 @@ def create_agent() -> Agent:
         model,
         name='Sigil',
         description='A helpful coding assistant.',
-        instructions=_SIGIL_PROMPT,
+        instructions=_load_prompt(),
     )
     return agent

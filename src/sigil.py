@@ -1,5 +1,6 @@
 import rich
 from pydantic_ai.messages import ModelResponse
+from rich.markdown import Markdown
 
 from src.engine.agents.agent import create_agent
 from src.engine.tools.tool_manager import ToolManager
@@ -18,9 +19,20 @@ def run() -> None:
     while True:
         user_input = input('> ')
         result = agent.run_sync(user_input)
-        for formatted_message in [
-            f'[italic bright_black]{x.thinking}[/italic bright_black]\n\n[orange3]{x.text}[/orange3]\n\n'
-            for x in result.new_messages()
-            if isinstance(x, ModelResponse)
-        ]:
+
+        formatted_messages = []
+
+        for x in result.new_messages():
+            if not isinstance(x, ModelResponse):
+                continue
+            thinking = f'\n\n[italic bright_black]{x.thinking}[/italic bright_black]\n' if x.thinking else None
+            output = Markdown(x.text) if x.text else None
+
+            if thinking:
+                formatted_messages.append(thinking)
+            if output:
+                formatted_messages.append(output)
+                formatted_messages.append('\n')
+
+        for formatted_message in formatted_messages:
             rich.print(formatted_message)
