@@ -1,4 +1,5 @@
 import rich
+from prompt_toolkit import prompt
 from pydantic_ai.messages import ModelResponse
 from rich.markdown import Markdown
 
@@ -17,7 +18,7 @@ def run() -> None:
     rich.print('[bold magenta]Welcome to Sigil![/bold magenta]')
 
     while True:
-        user_input = input('> ')
+        user_input = prompt('> ', multiline=True)
         result = agent.run_sync(user_input)
 
         formatted_messages = []
