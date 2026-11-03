@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import os
 import re
@@ -6,10 +8,16 @@ import shlex
 import signal
 import subprocess
 import time
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
-import rich
 from pydantic import BaseModel
 from pydantic_ai import Agent
+
+from src.engine.tools.tool_registry import ToolLogger, ToolRegistrar
+
+if TYPE_CHECKING:
+    from src.engine.skills.registry import SkillRegistry
 
 DEFAULT_TIMEOUT = 15
 MAX_TIMEOUT = 120
@@ -58,12 +66,30 @@ def _is_self_invocation(cmd: str) -> bool:
     return False
 
 
-def execute_command(cmd: str, timeout_seconds: int = DEFAULT_TIMEOUT) -> _RunToolOutput:
-    """Ejecuta un comando de Bash no interactivo y devuelve su salida."""
+def execute_command(
+    cmd: str,
+    timeout_seconds: int = DEFAULT_TIMEOUT,
+    *,
+    cwd: str | os.PathLike[str] | None = None,
+    extra_env: dict[str, str] | None = None,
+    check_self_invocation: bool = True,
+) -> _RunToolOutput:
+    """Ejecuta un comando de Bash no interactivo y devuelve su salida.
+
+    Args:
+        cmd: Comando a ejecutar.
+        timeout_seconds: Timeout en segundos (se recorta a 1-120).
+        cwd: Directorio de trabajo del proceso hijo.
+        extra_env: Variables de entorno adicionales para el proceso hijo.
+        check_self_invocation: Si es ``False``, no se rechaza el comando por
+            parecer una invocación anidada de Sigil. Los scripts de skills lo
+            usan para permitir nombres como ``main.py``; el guard de entorno
+            (``SELF_GUARD_ENV``) sigue activo en el proceso hijo.
+    """
     if not cmd.strip():
         return _RunToolOutput(returncode=2, stderr='Empty command.')
 
-    if _is_self_invocation(cmd):
+    if check_self_invocation and _is_self_invocation(cmd):
         return _RunToolOutput(
             returncode=126,
             stderr=(
@@ -71,6 +97,13 @@ def execute_command(cmd: str, timeout_seconds: int = DEFAULT_TIMEOUT) -> _RunToo
                 f'agent is not allowed ({SELF_GUARD_ENV}=1).'
             ),
         )
+
+    if cwd is not None:
+        cwd_path = os.fspath(cwd)
+        if not os.path.isdir(cwd_path):
+            return _RunToolOutput(returncode=2, stderr=f'Working directory does not exist: {cwd_path}')
+    else:
+        cwd_path = None
 
     timeout = max(1, min(timeout_seconds, MAX_TIMEOUT))
     deadline = time.monotonic() + timeout
@@ -82,11 +115,13 @@ def execute_command(cmd: str, timeout_seconds: int = DEFAULT_TIMEOUT) -> _RunToo
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
+            cwd=cwd_path,
             env={
                 **os.environ,
                 'CI': '1',
                 'GIT_TERMINAL_PROMPT': '0',
                 SELF_GUARD_ENV: '1',
+                **(extra_env or {}),
             },
         )
     except OSError as exc:
@@ -145,7 +180,7 @@ def execute_command(cmd: str, timeout_seconds: int = DEFAULT_TIMEOUT) -> _RunToo
 
         process.wait(timeout=2)
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         _kill_process_group(process)
         try:
             process.wait(timeout=2)
@@ -220,12 +255,38 @@ async def execute_commands(
 
 
 class ToolManager:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        skill_registry: SkillRegistry | None = None,
+        tool_logger: ToolLogger | None = None,
+    ) -> None:
         self.tools = {}
+        if skill_registry is None:
+            from src.engine.skills.registry import SkillRegistry
+
+            skill_registry = SkillRegistry()
+        self.skill_registry = skill_registry
+        self.tool_logger = tool_logger
+
+    def registrar(self, agent: Agent) -> ToolRegistrar:
+        """Registrador con logging para tools de este agente."""
+        return ToolRegistrar(agent, self.tool_logger)
+
+    def register_tool(
+        self,
+        agent: Agent,
+        func: Callable[..., Any],
+        *,
+        use_context: bool = False,
+        **tool_kwargs: Any,
+    ) -> Callable[..., Any]:
+        """Registra una tool externa aplicando el logging de Sigil."""
+        return self.registrar(agent).register(func, use_context=use_context, **tool_kwargs)
 
     def register_tools(self, agent: Agent) -> None:
+        tools = self.registrar(agent)
 
-        @agent.tool_plain
+        @tools.tool
         async def run(
             cmds: list[str],
             timeout_seconds: int = DEFAULT_TIMEOUT,
@@ -245,12 +306,10 @@ class ToolManager:
                     to each command individually.
             """
             if not cmds:
-                rich.print('[yellow]No commands to run.[/yellow]')
                 return []
 
-            for cmd in cmds:
-                rich.print(
-                    f'[bold green]Running command:[/bold green] [dodger_blue1]{cmd}[/dodger_blue1] '
-                    f'[bold green](timeout: {timeout_seconds}s, parallel)[/bold green]'
-                )
             return await execute_commands(cmds, timeout_seconds)
+
+        from src.engine.skills.tools import register_skill_tools
+
+        register_skill_tools(agent, self.skill_registry, logger=self.tool_logger)

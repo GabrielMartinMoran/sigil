@@ -6,7 +6,6 @@ from typing import Any
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
-    FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
     ModelResponse,
@@ -28,6 +27,8 @@ from src.engine.agents.model_info import context_usage_percent, fetch_model_info
 from src.engine.agents.step_limiter import StepLimiter, StepLimitExceeded
 from src.engine.commands import COMMANDS, match_commands
 from src.engine.sessions.session_store import Session, SessionStore
+from src.engine.tools.tool_registry import ToolLoggerHub
+from src.ui.tool_logging import ChatToolLogSink, ToolLogMessage
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.command_menu import CommandMenu
 from src.ui.widgets.prompt_input import PromptInput
@@ -44,11 +45,19 @@ class SigilApp(App):
     CSS_PATH = 'theme.tcss'
     TITLE = 'Sigil'
 
-    def __init__(self, agent: Agent, store: SessionStore, session: Session) -> None:
+    def __init__(
+        self,
+        agent: Agent,
+        store: SessionStore,
+        session: Session,
+        tool_logger: ToolLoggerHub | None = None,
+    ) -> None:
         super().__init__()
         self._agent = agent
         self._store = store
         self._session = session
+        self._tool_logger = tool_logger
+        self._tool_log_sink: ChatToolLogSink | None = None
         self._history: list[ModelMessage] = list(session.messages)
         self._context_length: int | None = None
         self.menu_visible = False
@@ -65,6 +74,9 @@ class SigilApp(App):
         )
 
     async def on_mount(self) -> None:
+        if self._tool_logger is not None:
+            self._tool_log_sink = ChatToolLogSink(self)
+            self._tool_logger.add_sink(self._tool_log_sink)
         self.query_one(CommandMenu).display = False
         self._update_status()
         if self._history:
@@ -73,6 +85,19 @@ class SigilApp(App):
             chat.finalize()
         self.query_one(PromptInput).focus()
         self._load_model_info()
+
+    async def on_tool_log_message(self, message: ToolLogMessage) -> None:
+        event = message.event
+        chat = self.query_one(ChatLog)
+        if event.phase == 'start':
+            await chat.add_tool_call(event.tool_name, event.args)
+        elif event.phase == 'error':
+            await chat.add_notice(f'✖ {event.tool_name}: {event.error}', style='bold red')
+
+    async def on_unmount(self) -> None:
+        if self._tool_logger is not None and self._tool_log_sink is not None:
+            self._tool_logger.remove_sink(self._tool_log_sink)
+            self._tool_log_sink = None
 
     @work
     async def _load_model_info(self) -> None:
@@ -233,8 +258,6 @@ class SigilApp(App):
                 await chat.add_text(delta.content_delta)
             elif isinstance(delta, ThinkingPartDelta) and delta.content_delta:
                 await chat.add_thinking(delta.content_delta)
-        elif isinstance(event, FunctionToolCallEvent):
-            await chat.add_tool_call(event.part.tool_name, event.part.args)
         elif isinstance(event, FunctionToolResultEvent):
             ok = getattr(event.part, 'outcome', 'success') == 'success'
             await chat.add_tool_result(event.part.tool_name, event.part.content, ok=ok)

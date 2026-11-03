@@ -1774,6 +1774,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-ai" },
     { name = "python-dotenv" },
+    { name = "pyyaml" },
     { name = "rich" },
     { name = "textual" },
 ]
@@ -1792,6 +1793,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.14.2" },
     { name = "pydantic-ai", specifier = ">=2.65.0" },
     { name = "python-dotenv", specifier = ">=1.2.4" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=15.0.0" },
     { name = "textual", specifier = ">=8.2.8" },
 ]

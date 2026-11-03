@@ -14,6 +14,7 @@ from pydantic_ai.models.test import TestModel
 
 import src.ui.app as appmod
 from src.engine.sessions.session_store import SessionStore
+from src.engine.tools.tool_registry import ToolLoggerHub, ToolRegistrar
 from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.command_menu import CommandMenu
@@ -31,10 +32,10 @@ async def _wait_idle(app, pilot, attempts: int = 40) -> None:
             return
 
 
-def _make_app(agent: Agent, tmp: str) -> SigilApp:
+def _make_app(agent: Agent, tmp: str, tool_logger: ToolLoggerHub | None = None) -> SigilApp:
     store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
     session = store.create_session()
-    return SigilApp(agent=agent, store=store, session=session)
+    return SigilApp(agent=agent, store=store, session=session, tool_logger=tool_logger)
 
 
 def test_app_runs_turn_and_renders_chat(monkeypatch):
@@ -91,22 +92,51 @@ def test_tool_call_and_result_are_rendered(monkeypatch):
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
+            tool_logger = ToolLoggerHub()
             agent = Agent(TestModel(call_tools=['ping']), instructions='x')
 
-            @agent.tool_plain
+            @ToolRegistrar(agent, tool_logger).tool
             def ping() -> str:
                 return 'pong'
 
-            app = _make_app(agent, tmp)
+            app = _make_app(agent, tmp, tool_logger)
             async with app.run_test() as pilot:
                 await pilot.pause()
                 await pilot.press('h', 'i')
                 await pilot.press('enter')
                 await _wait_idle(app, pilot)
 
-                classes = [w.__class__.__name__ for w in app.query_one(ChatLog).children]
-                assert 'Static' in classes  # incluye líneas de tool call/result
+                widgets = list(app.query_one(ChatLog).children)
+                class_names = {name for widget in widgets for name in widget.classes}
+                assert 'tool-call' in class_names
+                assert 'tool-result' in class_names
+                assert any('ping' in str(widget.render()) for widget in widgets)
                 assert len(app._session.messages) >= 3
+
+    asyncio.run(inner())
+
+
+def test_tool_error_is_rendered_as_notice(monkeypatch):
+    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            tool_logger = ToolLoggerHub()
+            agent = Agent(TestModel(call_tools=['explode']), instructions='x')
+
+            @ToolRegistrar(agent, tool_logger).tool
+            def explode() -> str:
+                raise ValueError('kaboom')
+
+            app = _make_app(agent, tmp, tool_logger)
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press('h', 'i')
+                await pilot.press('enter')
+                await _wait_idle(app, pilot)
+
+                texts = [str(widget.render()) for widget in app.query_one(ChatLog).children]
+                assert any('kaboom' in text for text in texts)
 
     asyncio.run(inner())
 
