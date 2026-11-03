@@ -23,4 +23,6 @@ class ToolManager:
                 result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             except subprocess.CalledProcessError as e:
                 return _RunToolOutput(returncode=e.returncode, stdout=e.stdout, stderr=e.stderr)
+            except Exception as e:
+                return _RunToolOutput(returncode=1, stdout=None, stderr=str(e))
             return _RunToolOutput(returncode=result.returncode, stdout=result.stdout, stderr=result.stderr)
