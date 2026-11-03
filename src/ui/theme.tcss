@@ -1,0 +1,69 @@
+Screen {
+    layout: vertical;
+}
+
+#root {
+    height: 1fr;
+}
+
+#chat {
+    height: 1fr;
+    border: round $primary;
+    padding: 0 1;
+    scrollbar-size-vertical: 1;
+}
+
+#menu {
+    height: auto;
+    max-height: 8;
+    border: round $accent;
+    background: $panel;
+}
+
+#prompt {
+    height: auto;
+    border: round $accent;
+}
+
+#status {
+    height: 1;
+    background: $panel;
+    padding: 0 1;
+}
+
+.user-msg {
+    margin-top: 1;
+    color: $text;
+}
+
+.assistant-msg {
+    margin-top: 1;
+}
+
+.tool-call {
+    color: cyan;
+}
+
+.tool-result {
+    color: $text-muted;
+}
+
+.notice {
+    margin-top: 1;
+}
+
+SessionPicker {
+    align: center middle;
+}
+
+#picker {
+    width: 80%;
+    height: 60%;
+    border: round $accent;
+    background: $panel;
+    padding: 1 2;
+}
+
+#sessions {
+    height: 1fr;
+}
