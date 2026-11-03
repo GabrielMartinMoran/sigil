@@ -136,3 +136,25 @@ def test_autoscroll_only_when_at_bottom(monkeypatch):
                 assert chat.scroll_offset.y == y  # no salta al fondo
 
     asyncio.run(inner())
+
+
+def test_markdown_output_is_rendered_in_app(monkeypatch):
+    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = Agent(TestModel(custom_output_text='# Encabezado\n\nEsto es **negrita**.'), instructions='x')
+            app = _make_app(agent, tmp)
+            async with app.run_test(size=(90, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press('h', 'i')
+                await pilot.press('enter')
+                await _wait_idle(app, pilot)
+
+                svg = app.export_screenshot()
+                assert 'Encabezado' in svg
+                assert '# Encabezado' not in svg  # el '#' de markdown no se muestra literal
+                assert 'negrita' in svg
+                assert '**negrita**' not in svg  # los '**' no se muestran literales
+
+    asyncio.run(inner())

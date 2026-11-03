@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from pydantic_ai.messages import (
@@ -14,6 +15,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from rich.console import Group
+from rich.markdown import Markdown
 from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.widgets import Static
@@ -24,30 +27,74 @@ def _preview(value: Any, limit: int = 160) -> str:
     return text if len(text) <= limit else text[: limit - 1] + '…'
 
 
+def build_assistant_renderable(thinking: str, text: str):
+    """Arma el contenido del mensaje: razonamiento plano + texto en Markdown."""
+    parts: list[object] = []
+    if thinking:
+        parts.append(Text(thinking, style='italic dim'))
+    if text:
+        parts.append(Markdown(text))
+    if not parts:
+        return Text('')
+    if len(parts) == 1:
+        return parts[0]
+    return Group(*parts)
+
+
+_RENDER_INTERVAL = 0.08  # segundos: throttle del re-render de Markdown en streaming
+
+
 class AssistantBlock(Static):
-    """Un bloque de respuesta del modelo (pensamiento + texto)."""
+    """Un bloque de respuesta del modelo (pensamiento + texto).
+
+    El Markdown se re-renderiza como máximo cada `_RENDER_INTERVAL` segundos para
+    no re-parsearlo en cada delta; se garantiza un flush final con `finalize()`.
+    """
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(Text(''), **kwargs)
         self._thinking = ''
         self._text = ''
+        self._dirty = False
+        self._last_render = 0.0
+        self._timer: Any = None
 
     def add_thinking(self, delta: str) -> None:
         self._thinking += delta
-        self._refresh()
+        self._schedule_refresh()
 
     def add_text(self, delta: str) -> None:
         self._text += delta
-        self._refresh()
+        self._schedule_refresh()
 
-    def _refresh(self) -> None:
-        content = Text()
-        if self._thinking:
-            content.append(self._thinking, style='italic dim')
-            if self._text:
-                content.append('\n\n')
-        content.append(self._text)
-        self.update(content)
+    def _schedule_refresh(self) -> None:
+        now = time.monotonic()
+        elapsed = now - self._last_render
+
+        if elapsed >= _RENDER_INTERVAL:
+            self._flush()
+            return
+
+        self._dirty = True
+        if self._timer is None:
+            self._timer = self.set_timer(_RENDER_INTERVAL - elapsed, self._on_timer)
+
+    def _on_timer(self) -> None:
+        self._timer = None
+        if self._dirty:
+            self._flush()
+
+    def _flush(self) -> None:
+        self._dirty = False
+        self._last_render = time.monotonic()
+        self.update(build_assistant_renderable(self._thinking, self._text))
+
+    def finalize(self) -> None:
+        """Vuelca ya el contenido pendiente (fin del turno)."""
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+        self._flush()
 
 
 class ChatLog(VerticalScroll):
@@ -106,6 +153,12 @@ class ChatLog(VerticalScroll):
         assert self._current is not None
         self._current.add_text(delta)
         self._maybe_scroll(at_bottom)
+
+    def finalize(self) -> None:
+        """Fuerza el render pendiente de todos los bloques (fin de turno/historial)."""
+        for child in self.children:
+            if isinstance(child, AssistantBlock):
+                child.finalize()
 
     async def clear(self) -> None:
         self._current = None

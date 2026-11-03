@@ -68,7 +68,9 @@ class SigilApp(App):
         self.query_one(CommandMenu).display = False
         self._update_status()
         if self._history:
-            await self.query_one(ChatLog).render_history(self._history)
+            chat = self.query_one(ChatLog)
+            await chat.render_history(self._history)
+            chat.finalize()
         self.query_one(PromptInput).focus()
         self._load_model_info()
 
@@ -192,6 +194,7 @@ class SigilApp(App):
                     self._history = loaded.messages
                     await chat.clear()
                     await chat.render_history(loaded.messages)
+                    chat.finalize()
                     await chat.add_notice(f'Cargada sesión {loaded.short_id}.', style='green')
                     self._update_status()
         elif name == '/help':
@@ -267,6 +270,7 @@ class SigilApp(App):
         finally:
             prompt.disabled = False
             prompt.focus()
+            chat.finalize()
 
         self._history = result.all_messages()
         self._session.messages = self._history

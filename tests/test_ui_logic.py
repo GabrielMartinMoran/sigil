@@ -48,3 +48,16 @@ def test_context_usage_percent():
     assert context_usage_percent(None, 1000) is None
     assert context_usage_percent(500, None) is None
     assert context_usage_percent(2000, 1000) == 200.0
+
+
+def test_assistant_renderable_uses_markdown_for_text():
+    from rich.console import Group
+    from rich.markdown import Markdown
+    from rich.text import Text
+
+    from src.ui.widgets.chat_log import build_assistant_renderable
+
+    assert isinstance(build_assistant_renderable('pensando', ''), Text)
+    assert isinstance(build_assistant_renderable('', '# Hola'), Markdown)
+    assert isinstance(build_assistant_renderable('pensando', 'texto'), Group)
+    assert isinstance(build_assistant_renderable('', ''), Text)
