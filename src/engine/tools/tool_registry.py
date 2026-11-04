@@ -31,6 +31,15 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, get_type_hints
 
+from pydantic_ai import RunContext
+
+from src.engine.tools.concurrency import (
+    ConcurrencyContext,
+    ConcurrencyGuard,
+    ToolConflict,
+    earlier_siblings,
+)
+
 if TYPE_CHECKING:
     from pydantic_ai import Agent
 
@@ -87,7 +96,7 @@ def _bind_args(
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
     *,
-    skip_first: bool,
+    drop_first: bool,
 ) -> dict[str, Any]:
     """Argumentos efectivos de la llamada (con defaults aplicados)."""
     try:
@@ -97,28 +106,42 @@ def _bind_args(
     except TypeError, ValueError:
         values = dict(kwargs)
 
-    if skip_first and values:
+    if drop_first and values:
         values.pop(next(iter(values)), None)
     return values
 
 
-def _prepare_wrapper(wrapper: Callable[..., Any], func: Callable[..., Any]) -> None:
+def _prepare_wrapper(wrapper: Callable[..., Any], func: Callable[..., Any], *, prepend_ctx: bool = False) -> None:
     """Preserva nombre/docstring/firma y resuelve anotaciones string.
 
     ``functools.wraps`` copia ``__annotations__``, pero si el módulo original
     usa ``from __future__ import annotations`` quedan como strings y pydantic-ai
     las resolvería contra los globals del wrapper. Las evaluamos acá y dejamos
     tipos reales en ``__annotations__`` y ``__signature__``.
+
+    Con ``prepend_ctx`` la firma expuesta arranca con un ``RunContext``: es lo
+    que necesita una tool con guarda de concurrencia, que recibe el contexto
+    aunque su función no lo pida. pydantic-ai lo saca del schema porque la tool
+    se registra como context tool.
     """
     functools.update_wrapper(wrapper, func)
     try:
-        wrapper.__annotations__ = get_type_hints(func, include_extras=True)
+        annotations = get_type_hints(func, include_extras=True)
     except Exception:  # noqa: BLE001 - fallback a las anotaciones originales
-        wrapper.__annotations__ = dict(getattr(func, '__annotations__', {}))
+        annotations = dict(getattr(func, '__annotations__', {}))
     try:
-        wrapper.__signature__ = inspect.signature(func, eval_str=True)  # type: ignore[attr-defined]
-    except Exception:  # noqa: BLE001, S110
-        pass
+        signature: inspect.Signature | None = inspect.signature(func, eval_str=True)
+    except Exception:  # noqa: BLE001
+        signature = None
+
+    if prepend_ctx and signature is not None:
+        ctx_param = inspect.Parameter('ctx', inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=RunContext[Any])
+        signature = signature.replace(parameters=[ctx_param, *signature.parameters.values()])
+        annotations = {'ctx': RunContext[Any], **annotations}
+
+    wrapper.__annotations__ = annotations
+    if signature is not None:
+        wrapper.__signature__ = signature  # type: ignore[attr-defined]
 
 
 def _emit_sync(logger: ToolLogger | None, event: ToolCallEvent) -> None:
@@ -139,12 +162,12 @@ def _emit_sync(logger: ToolLogger | None, event: ToolCallEvent) -> None:
 
 
 def _start_event(
-    tool_name: str, func: Callable[..., Any], args: tuple[Any, ...], kwargs: dict[str, Any], *, skip_first: bool
+    tool_name: str, func: Callable[..., Any], args: tuple[Any, ...], kwargs: dict[str, Any], *, drop_first: bool
 ) -> ToolCallEvent:
     return ToolCallEvent(
         tool_name=tool_name,
         phase='start',
-        args=_bind_args(func, args, kwargs, skip_first=skip_first),
+        args=_bind_args(func, args, kwargs, drop_first=drop_first),
     )
 
 
@@ -166,46 +189,118 @@ def _error_event(tool_name: str, started: float, exc: BaseException) -> ToolCall
     )
 
 
+def _check_concurrency(
+    guard: ConcurrencyGuard,
+    *,
+    tool_name: str,
+    func: Callable[..., Any],
+    ctx: Any,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    drop_first: bool,
+) -> None:
+    """Evalúa la guarda y lanza ``ToolConflict`` si la llamada no puede correr."""
+    call_args = _bind_args(func, args, kwargs, drop_first=drop_first)
+    tool_call_id = getattr(ctx, 'tool_call_id', None)
+    reason = guard(
+        ConcurrencyContext(
+            tool_name=tool_name,
+            args=call_args,
+            tool_call_id=tool_call_id,
+            siblings=earlier_siblings(
+                getattr(ctx, 'messages', ()),
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                args=call_args,
+            ),
+        )
+    )
+    if reason:
+        raise ToolConflict(reason)
+
+
 def wrap_tool(
     func: Callable[..., Any],
     *,
     tool_name: str,
     logger: ToolLogger | None = None,
-    skip_first_arg: bool = False,
+    takes_ctx: bool = False,
+    concurrency: ConcurrencyGuard | None = None,
 ) -> Callable[..., Any]:
     """Envuelve ``func`` para loguear inicio, éxito y error.
 
     Conserva la naturaleza sync/async de ``func`` para no cambiar cómo la
     ejecuta pydantic-ai ni romper llamadas directas desde otros módulos.
+
+    ``takes_ctx`` indica que ``func`` recibe un ``RunContext`` como primer
+    argumento. Con ``concurrency`` el wrapper recibe el contexto aunque ``func``
+    no lo pida, para poder evaluar la guarda antes de ejecutar.
     """
+    wrapper_takes_ctx = takes_ctx or concurrency is not None
+    prepend_ctx = concurrency is not None and not takes_ctx
+
+    def split_ctx(args: tuple[Any, ...]) -> tuple[Any, tuple[Any, ...]]:
+        """Separa el ``RunContext`` del wrapper de los argumentos de ``func``.
+
+        Una llamada directa desde código —tests, otros módulos— no trae
+        contexto. En ese caso se ejecuta igual, sin guarda: la guarda sólo tiene
+        sentido dentro de un run, donde hay hermanos con los que comparar.
+        """
+        if wrapper_takes_ctx and args and isinstance(args[0], RunContext):
+            return args[0], args[1:]
+        return None, args
+
+    def forward(ctx: Any, func_args: tuple[Any, ...]) -> tuple[Any, ...]:
+        """Argumentos con los que se invoca ``func``."""
+        return (ctx, *func_args) if takes_ctx and ctx is not None else func_args
+
+    def guard(ctx: Any, forwarded: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+        if concurrency is None or ctx is None:
+            return
+        _check_concurrency(
+            concurrency,
+            tool_name=tool_name,
+            func=func,
+            ctx=ctx,
+            args=forwarded,
+            kwargs=kwargs,
+            drop_first=takes_ctx,
+        )
+
     if inspect.iscoroutinefunction(func):
 
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            await _emit(logger, _start_event(tool_name, func, args, kwargs, skip_first=skip_first_arg))
+            ctx, func_args = split_ctx(args)
+            forwarded = forward(ctx, func_args)
+            await _emit(logger, _start_event(tool_name, func, forwarded, kwargs, drop_first=takes_ctx))
             started = time.perf_counter()
             try:
-                result = await func(*args, **kwargs)
+                guard(ctx, forwarded, kwargs)
+                result = await func(*forwarded, **kwargs)
             except Exception as exc:
                 await _emit(logger, _error_event(tool_name, started, exc))
                 raise
             await _emit(logger, _end_event(tool_name, started, result))
             return result
 
-        _prepare_wrapper(async_wrapper, func)
+        _prepare_wrapper(async_wrapper, func, prepend_ctx=prepend_ctx)
         return async_wrapper
 
     def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-        _emit_sync(logger, _start_event(tool_name, func, args, kwargs, skip_first=skip_first_arg))
+        ctx, func_args = split_ctx(args)
+        forwarded = forward(ctx, func_args)
+        _emit_sync(logger, _start_event(tool_name, func, forwarded, kwargs, drop_first=takes_ctx))
         started = time.perf_counter()
         try:
-            result = func(*args, **kwargs)
+            guard(ctx, forwarded, kwargs)
+            result = func(*forwarded, **kwargs)
         except Exception as exc:
             _emit_sync(logger, _error_event(tool_name, started, exc))
             raise
         _emit_sync(logger, _end_event(tool_name, started, result))
         return result
 
-    _prepare_wrapper(sync_wrapper, func)
+    _prepare_wrapper(sync_wrapper, func, prepend_ctx=prepend_ctx)
     return sync_wrapper
 
 
@@ -248,10 +343,18 @@ class ToolRegistrar:
         *,
         name: str | None = None,
         description: str | None = None,
+        concurrency: ConcurrencyGuard | None = None,
         **tool_kwargs: Any,
     ) -> Any:
-        """Decorador equivalente a ``agent.tool_plain`` con logging."""
-        return self._make(func, use_context=False, name=name, description=description, **tool_kwargs)
+        """Decorador equivalente a ``agent.tool_plain`` con logging.
+
+        ``concurrency`` declara cuándo la llamada no puede convivir con las
+        anteriores de la misma respuesta del modelo. Ver
+        ``src.engine.tools.concurrency``.
+        """
+        return self._make(
+            func, use_context=False, name=name, description=description, concurrency=concurrency, **tool_kwargs
+        )
 
     def context_tool(
         self,
@@ -259,10 +362,13 @@ class ToolRegistrar:
         *,
         name: str | None = None,
         description: str | None = None,
+        concurrency: ConcurrencyGuard | None = None,
         **tool_kwargs: Any,
     ) -> Any:
         """Decorador equivalente a ``agent.tool`` (recibe ``RunContext``)."""
-        return self._make(func, use_context=True, name=name, description=description, **tool_kwargs)
+        return self._make(
+            func, use_context=True, name=name, description=description, concurrency=concurrency, **tool_kwargs
+        )
 
     def register(
         self,
@@ -271,10 +377,18 @@ class ToolRegistrar:
         use_context: bool = False,
         name: str | None = None,
         description: str | None = None,
+        concurrency: ConcurrencyGuard | None = None,
         **tool_kwargs: Any,
     ) -> Callable[..., Any]:
         """Registra una función ya definida y devuelve el wrapper."""
-        return self._make(func, use_context=use_context, name=name, description=description, **tool_kwargs)
+        return self._make(
+            func,
+            use_context=use_context,
+            name=name,
+            description=description,
+            concurrency=concurrency,
+            **tool_kwargs,
+        )
 
     def _make(
         self,
@@ -283,6 +397,7 @@ class ToolRegistrar:
         use_context: bool,
         name: str | None,
         description: str | None,
+        concurrency: ConcurrencyGuard | None = None,
         **tool_kwargs: Any,
     ) -> Any:
         def decorator(target: Callable[..., Any]) -> Callable[..., Any]:
@@ -291,9 +406,18 @@ class ToolRegistrar:
                 target,
                 tool_name=tool_name,
                 logger=self.logger,
-                skip_first_arg=use_context,
+                takes_ctx=use_context,
+                concurrency=concurrency,
             )
-            self._register(wrapped, use_context=use_context, name=name, description=description, **tool_kwargs)
+            # Una tool con guarda necesita el contexto, así que se registra como
+            # context tool aunque su función no lo pida.
+            self._register(
+                wrapped,
+                use_context=use_context or concurrency is not None,
+                name=name,
+                description=description,
+                **tool_kwargs,
+            )
             return wrapped
 
         return decorator(func) if func is not None else decorator
@@ -324,6 +448,7 @@ def register_tool(
     use_context: bool = False,
     name: str | None = None,
     description: str | None = None,
+    concurrency: ConcurrencyGuard | None = None,
     **tool_kwargs: Any,
 ) -> Any:
     """Atajo para registrar una tool suelta con logging."""
@@ -336,6 +461,7 @@ def register_tool(
                 use_context=use_context,
                 name=name,
                 description=description,
+                concurrency=concurrency,
                 **tool_kwargs,
             )
 
@@ -346,12 +472,16 @@ def register_tool(
         use_context=use_context,
         name=name,
         description=description,
+        concurrency=concurrency,
         **tool_kwargs,
     )
 
 
 __all__ = [
+    'ConcurrencyContext',
+    'ConcurrencyGuard',
     'ToolCallEvent',
+    'ToolConflict',
     'ToolLogger',
     'ToolLoggerHub',
     'ToolRegistrar',

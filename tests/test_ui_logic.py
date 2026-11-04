@@ -10,7 +10,7 @@ def test_match_commands_requires_slash():
 
 def test_match_commands_filters_by_prefix():
     names = [command.name for command in match_commands('/')]
-    assert names == ['/new', '/load', '/mcp', '/help', '/quit']
+    assert names == ['/new', '/load', '/sidebar', '/mcp', '/help', '/quit']
 
     assert [c.name for c in match_commands('/n')] == ['/new']
     assert [c.name for c in match_commands('/l')] == ['/load']

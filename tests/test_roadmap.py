@@ -29,7 +29,7 @@ def _tool(store):
 
 
 def test_set_add_update_remove_clear(tmp_path):
-    store = RoadmapStore(path=tmp_path / 'roadmap.json')
+    store = RoadmapStore(directory=tmp_path, session_id='s1')
     tool = _tool(store)
 
     snap = tool(action='set', items=[RoadmapItemInput(title='A'), RoadmapItemInput(title='B', status='in_progress')])
@@ -54,12 +54,11 @@ def test_set_add_update_remove_clear(tmp_path):
 
 
 def test_persistence_roundtrip(tmp_path):
-    path = tmp_path / 'roadmap.json'
-    store = RoadmapStore(path=path)
+    store = RoadmapStore(directory=tmp_path, session_id='s1')
     store.set_items([TodoItem(title='A', status='done')])
-    assert path.exists()
+    assert store.path is not None and store.path.exists()
 
-    reloaded = RoadmapStore(path=path)
+    reloaded = RoadmapStore(directory=tmp_path, session_id='s1')
     items = reloaded.snapshot()
     assert len(items) == 1
     assert items[0].title == 'A'
@@ -67,15 +66,50 @@ def test_persistence_roundtrip(tmp_path):
 
 
 def test_update_unknown_id_raises(tmp_path):
-    store = RoadmapStore(path=tmp_path / 'roadmap.json')
+    store = RoadmapStore(directory=tmp_path, session_id='s1')
     tool = _tool(store)
     with pytest.raises(ValueError, match='No roadmap item'):
         tool(action='update', item_id='nope', status='done')
 
 
 def test_listener_is_notified(tmp_path):
-    store = RoadmapStore(path=tmp_path / 'roadmap.json')
+    store = RoadmapStore(directory=tmp_path, session_id='s1')
     calls = []
     store.add_listener(lambda: calls.append(1))
     store.set_items([TodoItem(title='A')])
     assert calls == [1]
+
+
+def test_each_session_has_its_own_roadmap(tmp_path):
+    store = RoadmapStore(directory=tmp_path, session_id='s1')
+    tool = _tool(store)
+    tool(action='set', items=[RoadmapItemInput(title='De la sesión 1')])
+
+    store.bind_session('s2')
+    assert store.snapshot() == []
+    tool(action='set', items=[RoadmapItemInput(title='De la sesión 2')])
+
+    store.bind_session('s1')
+    assert [item.title for item in store.snapshot()] == ['De la sesión 1']
+
+    store.bind_session('s2')
+    assert [item.title for item in store.snapshot()] == ['De la sesión 2']
+
+
+def test_bind_session_notifies_listeners(tmp_path):
+    store = RoadmapStore(directory=tmp_path, session_id='s1')
+    calls = []
+    store.add_listener(lambda: calls.append(1))
+    store.bind_session('s2')
+    assert calls == [1]
+    # Rebinding to the same session is a no-op.
+    store.bind_session('s2')
+    assert calls == [1]
+
+
+def test_store_without_session_is_memory_only(tmp_path):
+    store = RoadmapStore(directory=tmp_path)
+    assert store.path is None
+    store.set_items([TodoItem(title='A')])
+    assert [item.title for item in store.snapshot()] == ['A']
+    assert list(tmp_path.iterdir()) == []

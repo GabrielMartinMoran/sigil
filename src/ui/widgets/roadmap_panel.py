@@ -31,8 +31,23 @@ class RoadmapPanel(Static):
     def __init__(self, store: RoadmapStore | None = None, **kwargs: Any) -> None:
         super().__init__(Text(''), **kwargs)
         self._store = store
+        self._shown = True
 
     def on_mount(self) -> None:
+        self.refresh_from_store()
+
+    @property
+    def shown(self) -> bool:
+        """Si el usuario pidió ver el panel, más allá de si hay roadmap.
+
+        No se llama ``visible`` porque Textual ya usa ese nombre para la regla
+        CSS ``visibility``, que reserva espacio en vez de liberarlo.
+        """
+        return self._shown
+
+    def set_shown(self, shown: bool) -> None:
+        """Muestra u oculta el panel y lo redibuja."""
+        self._shown = shown
         self.refresh_from_store()
 
     def set_store(self, store: RoadmapStore | None) -> None:
@@ -40,7 +55,9 @@ class RoadmapPanel(Static):
         self.refresh_from_store()
 
     def refresh_from_store(self) -> None:
-        if self._store is None:
+        # El toggle del usuario manda: un roadmap que cambia no vuelve a mostrar
+        # un panel que el usuario ocultó.
+        if self._store is None or not self._shown:
             self.display = False
             return
         self.display = True

@@ -67,6 +67,41 @@ registrar.register(existing_function, name='external-tool')
 tool_manager.register_tool(agent, existing_function)
 ```
 
+### Concurrencia entre tools
+
+pydantic-ai ejecuta las llamadas hermanas de una misma respuesta del modelo como
+tareas concurrentes. Para casi todas las tools eso está bien. Para las que mutan
+un recurso compartido, dos llamadas simultáneas se pisan: cada una lee el estado
+original y la última en escribir borra el trabajo de la anterior.
+
+Una guarda declara, por tool, cuándo la llamada no puede convivir con las
+anteriores de la misma respuesta. Recibe un `ConcurrencyContext` con los
+argumentos efectivos y las llamadas anteriores, en orden de emisión, y devuelve
+el motivo del conflicto o `None`.
+
+```python
+from src.engine.tools import ConcurrencyContext
+
+
+def no_same_key(ctx: ConcurrencyContext) -> str | None:
+    for sibling in ctx.siblings:
+        if sibling.tool_name == ctx.tool_name and sibling.args.get('key') == ctx.args.get('key'):
+            return f'{ctx.tool_name} already ran for key {ctx.args["key"]!r}'
+    return None
+
+
+@registrar.tool(concurrency=no_same_key)
+def my_tool(key: str) -> str: ...
+```
+
+La guarda se evalúa en orden de invocación: la primera llamada de un grupo en
+conflicto siempre pasa y las siguientes fallan con un `ToolConflict`. El modelo
+lo ve como resultado fallido de la tool y puede reemitir la llamada en un paso
+aparte. El resto de las llamadas sigue en paralelo, sin barreras globales.
+
+Una llamada directa desde código —sin `RunContext`— se ejecuta igual, sin
+guarda: no hay hermanos con los que comparar.
+
 Los scripts se ejecutan con el intérprete de Sigil para `.py`, `bash` para
 `.sh`/`.bash`, `node` para `.js`, y shebang/permisos para el resto. Heredan el
 guard `SIGIL_SELF_GUARD`, que impide lanzar otra instancia de Sigil.
@@ -250,6 +285,11 @@ el chat con su duración y sus argumentos.
 | `ask_user` | Pregunta al usuario con opciones, dentro de la UI |
 | `update_roadmap` | Publica y actualiza el roadmap de la tarea actual |
 
+Un error de una tool no corta el turno: vuelve al modelo como resultado fallido
+(`outcome: failed`) y el agente decide cómo seguir. Si el `old_string` de un
+`patch_file` no aparece, el modelo lee el error y corrige la llamada en vez de
+devolverte el control a mitad de la tarea.
+
 ### Archivos
 
 `read_file`, `write_file` y `patch_file` trabajan dentro del workspace: una ruta
@@ -261,8 +301,17 @@ fuera de él se rechaza con error, no se resuelve en silencio.
   tiene que aparecer una sola vez, salvo `replace_all=true`. Si aparece varias
   veces, el error lista las líneas donde está.
 - **Rango de líneas** (`start_line` + `end_line`): útil cuando ya conocés los
-  números de línea. Podés validar el contenido actual con `expected_text` o con
-  `expected_sha256`.
+  números de línea. Podés validar el contenido actual con `expected_text`, el
+  texto que esperás encontrar en ese rango; el salto de línea final se ignora.
+
+Ambos modos respetan los finales de línea del archivo: un archivo con CRLF sigue
+con CRLF después del parche.
+
+`write_file` y `patch_file` declaran una guarda de concurrencia: dos llamadas
+que escriben el mismo archivo en una misma respuesta chocan. La primera pasa y
+la segunda falla con un mensaje que le pide al modelo reemitirla en un paso
+aparte. Editar archivos distintos sigue en paralelo, y leer un archivo nunca
+choca con editarlo.
 
 ### Web
 
@@ -281,10 +330,30 @@ cancelás, la tool devuelve `cancelled: true` y el turno sigue sin respuesta.
 ### Roadmap
 
 `update_roadmap` mantiene la lista de tareas del panel izquierdo. Cada ítem
-queda en `pending`, `in_progress`, `done` o `blocked`, y el estado se guarda en
-`~/.sigil/roadmaps/<hash-del-cwd>.json`, un archivo por directorio de trabajo.
-Si la escritura falla, la lista sigue funcionando en memoria y el error queda
-en `persistence_error`.
+queda en `pending`, `in_progress`, `done` o `blocked`.
+
+El roadmap es de la sesión, no del directorio: cada sesión arranca con la lista
+vacía, avanza con ella y la recupera al cargarla con `/load`. El estado se
+guarda en `~/.sigil/roadmaps/<hash-del-cwd>/<id-de-sesión>.json`. Si la
+escritura falla, la lista sigue funcionando en memoria y el error queda en
+`persistence_error`.
+
+## Comandos
+
+Los comandos se escriben en el prompt y empiezan con `/`. El menú los filtra
+mientras escribís.
+
+| Comando | Qué hace |
+| --- | --- |
+| `/new` | Inicia una sesión nueva, con su roadmap vacío |
+| `/load` | Carga una sesión guardada y su roadmap |
+| `/sidebar [on\|off]` | Muestra u oculta el sidebar; sin argumento, alterna |
+| `/mcp` | Consulta el estado de los servidores MCP |
+| `/help` | Lista los comandos disponibles |
+| `/quit` | Sale de Sigil |
+
+El sidebar arranca visible. Ocultarlo no borra el roadmap: el agente lo sigue
+actualizando y vuelve a aparecer con `/sidebar on`.
 
 ## Desarrollo
 

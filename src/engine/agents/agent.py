@@ -10,6 +10,7 @@ from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 from src.config_provider import ConfigProvider
 from src.engine.agents.retry import RetryTransientModelErrors
+from src.engine.agents.tool_errors import ToolErrorRecovery
 
 if TYPE_CHECKING:
     from pydantic_ai.toolsets import AbstractToolset
@@ -44,7 +45,9 @@ def create_agent(
         description='A helpful coding assistant.',
         instructions=_load_prompt(),
         end_strategy='exhaustive',
-        capabilities=[model_retry],
+        # Un error de tool vuelve al modelo como resultado fallido en vez de
+        # abortar el turno; los fallos transitorios del proveedor se reintentan.
+        capabilities=[model_retry, ToolErrorRecovery()],
         # Toolsets externos (p. ej. servidores MCP); las tools de funciones se
         # siguen registrando después con `ToolManager`.
         toolsets=list(toolsets or []),

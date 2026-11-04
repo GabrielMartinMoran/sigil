@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import base64
-import hashlib
+import codecs
 import os
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from src.engine.tools.concurrency import ConcurrencyContext
 from src.engine.tools.tool_registry import ToolLogger, ToolRegistrar
 
 MAX_READ_BYTES = 256 * 1024
+
+MUTATING_TOOLS = frozenset({'patch_file', 'write_file'})
+"""Tools que reescriben un archivo y por lo tanto no pueden solaparse."""
 
 
 class FileToolError(Exception):
@@ -76,7 +80,39 @@ def _decode(data: bytes) -> tuple[str, bool, str]:
     try:
         return data.decode('utf-8'), False, 'utf-8'
     except UnicodeDecodeError:
-        return base64.b64encode(data).decode('ascii'), True, 'base64'
+        # A byte limit can cut a multi-byte sequence in half. That is a
+        # truncated text file, not binary data: drop the incomplete tail and
+        # keep the readable text. Invalid bytes anywhere else mean binary.
+        decoder = codecs.getincrementaldecoder('utf-8')()
+        try:
+            return decoder.decode(data, final=False), False, 'utf-8'
+        except UnicodeDecodeError:
+            return base64.b64encode(data).decode('ascii'), True, 'base64'
+
+
+def _split_lines(text: str) -> list[str]:
+    """Split on ``\\n`` only, keeping each line's own ending.
+
+    ``str.splitlines`` also breaks on ``\\x0b``, ``\\x0c`` and Unicode
+    separators, which would make line numbers disagree with editors. Keeping
+    the endings lets patches round-trip CRLF files byte for byte.
+    """
+    if not text:
+        return []
+    parts = text.split('\n')
+    lines = [part + '\n' for part in parts[:-1]]
+    if parts[-1]:
+        lines.append(parts[-1])
+    return lines
+
+
+def _strip_eol(value: str) -> str:
+    """Drop a single trailing line ending, so ``'a'`` and ``'a\\n'`` compare equal."""
+    if value.endswith('\r\n'):
+        return value[:-2]
+    if value.endswith('\n'):
+        return value[:-1]
+    return value
 
 
 def _find_occurrences(text: str, needle: str) -> list[int]:
@@ -120,48 +156,63 @@ def _apply_line_patch(
     end_line: int,
     new: str,
     expected_text: str | None,
-    expected_sha256: str | None,
 ) -> tuple[str, str]:
     newline = _detect_newline(text)
-    had_trailing = text.endswith(newline)
-    lines = text.split(newline)
-    if had_trailing and lines and lines[-1] == '':
-        lines = lines[:-1]
+    lines = _split_lines(text)
     total = len(lines)
     if not (1 <= start_line <= end_line <= total):
         raise FileToolError(f'Invalid line range {start_line}-{end_line} for a file with {total} lines.')
 
-    region_lines = lines[start_line - 1 : end_line]
-    region = newline.join(region_lines)
-    if end_line < total or had_trailing:
-        region += newline
-
-    if expected_text is not None and region != expected_text:
+    region = ''.join(lines[start_line - 1 : end_line])
+    if expected_text is not None and _strip_eol(region) != _strip_eol(expected_text):
         raise FileToolError(
             'The current text in the requested line range does not match `expected_text`. '
             'Read the file again and retry with the correct range or text.'
         )
-    if expected_sha256 is not None:
-        actual = hashlib.sha256(region.encode('utf-8')).hexdigest()
-        if actual != expected_sha256.lower():
-            raise FileToolError(
-                f'The current text in the requested line range does not match `expected_sha256`. Actual hash: {actual}.'
-            )
 
     replacement = new.replace('\r\n', '\n').replace('\n', newline) if new else ''
-    new_lines = replacement.split(newline) if replacement else []
-    if new_lines and new_lines[-1] == '':
-        new_lines = new_lines[:-1]
+    # Keep the file's line-ending convention: a replacement that does not end
+    # with a newline still needs one unless it lands on an unterminated last line.
+    if replacement and not replacement.endswith('\n') and (end_line < total or region.endswith('\n')):
+        replacement += newline
 
-    updated = newline.join(lines[: start_line - 1] + new_lines + lines[end_line:])
-    if had_trailing and updated:
-        updated += newline
+    updated = ''.join(lines[: start_line - 1]) + replacement + ''.join(lines[end_line:])
     return updated, region
 
 
 def _preview(value: str, limit: int = 300) -> str:
     collapsed = ' '.join(value.split())
     return collapsed if len(collapsed) <= limit else collapsed[: limit - 1] + '…'
+
+
+def _same_file_conflict(ctx: ConcurrencyContext) -> str | None:
+    """Dos escrituras al mismo archivo en una misma respuesta se pisarían.
+
+    Cada llamada lee el archivo, calcula el resultado y lo escribe. Si dos corren
+    a la vez, la última en escribir borra el trabajo de la otra. La primera del
+    lote pasa; las siguientes fallan con un mensaje que le dice al modelo cómo
+    seguir.
+    """
+    try:
+        target = _resolve(ctx.args['path'])
+    except FileToolError, KeyError:
+        # Ruta inválida o ausente: la tool fallará con un mensaje mejor.
+        return None
+
+    for sibling in ctx.siblings:
+        if sibling.tool_name not in MUTATING_TOOLS:
+            continue
+        try:
+            other = _resolve(sibling.args['path'])
+        except FileToolError, KeyError:
+            continue
+        if other == target:
+            return (
+                f'Another {sibling.tool_name} call in this same response already edits {str(target)!r}. '
+                'Concurrent edits to one file overwrite each other, so this call was not applied. '
+                'Re-issue it in a separate step, after the earlier edit lands.'
+            )
+    return None
 
 
 def register_file_tools(agent: Any, logger: ToolLogger | None = None) -> None:
@@ -197,18 +248,18 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None) -> None:
 
         if start_line is not None or end_line is not None:
             try:
-                text = target.read_text(encoding='utf-8')
+                # newline='' keeps CRLF intact so the text can be copied
+                # verbatim into `patch_file`.
+                text = target.read_text(encoding='utf-8', newline='')
             except UnicodeDecodeError as exc:
                 raise FileToolError(f'File {path!r} is not UTF-8 text; read it without a line range.') from exc
-            lines = text.splitlines()
+            lines = _split_lines(text)
             total = len(lines)
             first = max(1, start_line or 1)
             last = min(total, end_line or total)
             if first > last:
                 raise FileToolError(f'Invalid line range {first}-{last} for a file with {total} lines.')
-            chunk = '\n'.join(lines[first - 1 : last])
-            if text.endswith('\n'):
-                chunk += '\n'
+            chunk = ''.join(lines[first - 1 : last])
             return FileContent(
                 path=str(target),
                 size=size,
@@ -233,13 +284,16 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None) -> None:
             content=content,
         )
 
-    @tools.tool
+    @tools.tool(concurrency=_same_file_conflict)
     def write_file(path: str, content: str, append: bool = False) -> WriteResult:
         """Write or append to a text file in the workspace.
 
         Parent directories are created as needed. Use `patch_file` for focused
         edits to an existing file; use this tool to create a new file or to
         replace/append its full content.
+
+        Two calls that write the same file in the same response conflict: the
+        later one fails and must be re-issued in a separate step.
 
         Args:
             path: File path, absolute or relative to the workspace.
@@ -255,7 +309,7 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None) -> None:
             handle.write(data)
         return WriteResult(path=str(target), bytes_written=len(data), created=created, appended=append)
 
-    @tools.tool
+    @tools.tool(concurrency=_same_file_conflict)
     def patch_file(
         path: str,
         old_string: str | None = None,
@@ -263,7 +317,6 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None) -> None:
         start_line: int | None = None,
         end_line: int | None = None,
         expected_text: str | None = None,
-        expected_sha256: str | None = None,
         replace_all: bool = False,
     ) -> PatchResult:
         """Edit an existing file, with two modes.
@@ -275,11 +328,15 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None) -> None:
 
         Alternatively, pass `start_line` and `end_line` (1-indexed, inclusive)
         and `new_string` to replace those lines. Optionally validate the current
-        content with `expected_text` or `expected_sha256` (SHA-256 hex of the
-        region). This mode is useful when you know the line numbers.
+        content with `expected_text` (the text you expect in that range, as
+        returned by `read_file`; a trailing newline is ignored). This mode is
+        useful when you know the line numbers.
 
         Use `write_file` to create a new file; this tool only edits existing
         files.
+
+        Two calls that edit the same file in the same response conflict: the
+        later one fails and must be re-issued in a separate step.
 
         Args:
             path: File path, absolute or relative to the workspace.
@@ -288,8 +345,6 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None) -> None:
             start_line: First line to replace (line mode).
             end_line: Last line to replace (line mode).
             expected_text: Optional exact text of the target region, for
-                validation in line mode.
-            expected_sha256: Optional SHA-256 hex of the target region, for
                 validation in line mode.
             replace_all: Replace every occurrence in string mode.
         """
@@ -300,7 +355,9 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None) -> None:
             raise FileToolError(f'Not a file: {path!r}.')
 
         try:
-            text = target.read_text(encoding='utf-8')
+            # newline='' preserves the file's line endings instead of silently
+            # rewriting CRLF files to LF.
+            text = target.read_text(encoding='utf-8', newline='')
         except UnicodeDecodeError as exc:
             raise FileToolError(f'File {path!r} is not UTF-8 text.') from exc
 
@@ -312,6 +369,8 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None) -> None:
                 raise FileToolError('`new_string` is required when `old_string` is provided.')
             if line_mode:
                 raise FileToolError('Use either `old_string`/`new_string` or `start_line`/`end_line`, not both.')
+            if expected_text is not None:
+                raise FileToolError('`expected_text` only applies to line-range patches, not to `old_string`.')
             updated, count = _apply_string_patch(text, old_string, new_string, replace_all)
             mode = 'string'
         else:
@@ -321,11 +380,11 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None) -> None:
                 raise FileToolError('`new_string` is required for line-range patches.')
             if start_line is None or end_line is None:
                 raise FileToolError('Both `start_line` and `end_line` are required for line-range patches.')
-            updated, _region = _apply_line_patch(text, start_line, end_line, new_string, expected_text, expected_sha256)
+            updated, _region = _apply_line_patch(text, start_line, end_line, new_string, expected_text)
             count = 1
             mode = 'lines'
 
-        target.write_text(updated, encoding='utf-8')
+        target.write_text(updated, encoding='utf-8', newline='')
         return PatchResult(
             path=str(target),
             mode=mode,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from typing import Any
+from typing import Any, Literal
 
 from ddgs import DDGS
 from pydantic import BaseModel
@@ -77,8 +77,8 @@ def register_web_tools(agent: Any, logger: ToolLogger | None = None) -> None:
         query: str,
         max_results: int = 8,
         region: str = 'us-en',
-        safesearch: str = 'moderate',
-        timelimit: str | None = None,
+        safesearch: Literal['on', 'moderate', 'off'] = 'moderate',
+        timelimit: Literal['d', 'w', 'm', 'y'] | None = None,
     ) -> SearchResponse:
         """Search the web and return ranked text results.
 
@@ -118,7 +118,7 @@ def register_web_tools(agent: Any, logger: ToolLogger | None = None) -> None:
             max_chars: Maximum characters to return (default 40,000).
         """
         raw = await asyncio.to_thread(_extract, url, fmt)
-        content = raw.get('content', '')
+        content = raw.get('content') or ''
         resolved_url = str(raw.get('url') or url)
         if isinstance(content, bytes):
             return PageContent(

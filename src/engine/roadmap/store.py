@@ -37,28 +37,53 @@ class TodoItem(BaseModel):
 
 
 class RoadmapStore:
-    """Lista de tareas con persistencia y notificación a la UI.
+    """Roadmap de una sesión, con persistencia y notificación a la UI.
+
+    Cada sesión tiene su propio archivo: el roadmap nace vacío con la sesión,
+    avanza con ella y se recupera al cargarla. ``bind_session`` reapunta el
+    store al roadmap de otra sesión sin recrear el objeto, de modo que la tool
+    del agente siempre escribe en la sesión activa.
 
     La persistencia es best-effort: si falla, el estado en memoria sigue
     funcionando y el error queda en ``persistence_error``.
     """
 
-    def __init__(self, path: str | Path | None = None) -> None:
+    def __init__(self, directory: str | Path | None = None, session_id: str | None = None) -> None:
         self._lock = threading.RLock()
         self._listeners: list[Callable[[], None]] = []
         self._items: list[TodoItem] = []
         self.persistence_error: str | None = None
-        self._path = Path(path) if path is not None else self._default_path()
+        self._directory = Path(directory) if directory is not None else self._default_directory()
+        self._session_id = session_id
+        self._path = self._path_for(session_id)
         self._load()
 
     @staticmethod
-    def _default_path() -> Path:
-        base = Path.home() / '.sigil' / 'roadmaps'
-        return base / f'{_cwd_hash(Path.cwd())}.json'
+    def _default_directory() -> Path:
+        return Path.home() / '.sigil' / 'roadmaps' / _cwd_hash(Path.cwd())
+
+    def _path_for(self, session_id: str | None) -> Path | None:
+        return self._directory / f'{session_id}.json' if session_id else None
 
     @property
-    def path(self) -> Path:
+    def session_id(self) -> str | None:
+        return self._session_id
+
+    @property
+    def path(self) -> Path | None:
         return self._path
+
+    def bind_session(self, session_id: str | None) -> None:
+        """Reapunta el store al roadmap de ``session_id`` y lo recarga."""
+        with self._lock:
+            if session_id == self._session_id:
+                return
+            self._session_id = session_id
+            self._path = self._path_for(session_id)
+            self._items = []
+            self.persistence_error = None
+            self._load()
+        self._notify()
 
     def snapshot(self) -> list[TodoItem]:
         with self._lock:
@@ -150,6 +175,8 @@ class RoadmapStore:
                 pass
 
     def _load(self) -> None:
+        if self._path is None:
+            return
         try:
             raw = self._path.read_text(encoding='utf-8')
         except FileNotFoundError:
@@ -164,6 +191,8 @@ class RoadmapStore:
             self.persistence_error = f'Could not parse {self._path}: {exc}'
 
     def _save_locked(self) -> None:
+        if self._path is None:
+            return
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             payload = {'items': [item.model_dump() for item in self._items]}

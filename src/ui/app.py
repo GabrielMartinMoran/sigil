@@ -279,19 +279,21 @@ class SigilApp(App):
         self.menu_hide()
 
         if text.startswith('/'):
-            self.run_worker(self._handle_command(text.split(' ', 1)[0]))
+            name, _, args = text.partition(' ')
+            self.run_worker(self._handle_command(name, args))
             return
 
         await self.query_one(ChatLog).add_user(text)
         self._run_turn(text)
 
-    async def _handle_command(self, name: str) -> None:
+    async def _handle_command(self, name: str, args: str = '') -> None:
         chat = self.query_one(ChatLog)
 
         if name == '/new':
             self._persist()
             self._session = self._store.create_session()
             self._history = self._session.messages
+            self._bind_roadmap()
             await chat.clear()
             await chat.add_notice(f'Nueva sesión {self._session.short_id}.', style='green')
             self._update_status()
@@ -307,11 +309,14 @@ class SigilApp(App):
                 if loaded is not None:
                     self._session = loaded
                     self._history = loaded.messages
+                    self._bind_roadmap()
                     await chat.clear()
                     await chat.render_history(loaded.messages)
                     chat.finalize()
                     await chat.add_notice(f'Cargada sesión {loaded.short_id}.', style='green')
                     self._update_status()
+        elif name == '/sidebar':
+            await self._handle_sidebar(args, chat)
         elif name == '/mcp':
             await self._show_mcp(chat)
         elif name == '/help':
@@ -320,6 +325,21 @@ class SigilApp(App):
             self.exit()
         else:
             await chat.add_notice(f'Comando desconocido: {name}', style='red')
+
+    async def _handle_sidebar(self, args: str, chat: ChatLog) -> None:
+        """`/sidebar` alterna; `/sidebar on|off` fija el estado."""
+        value = args.strip().lower()
+        panel = self.query_one(RoadmapPanel)
+        if value in {'', 'toggle'}:
+            panel.set_shown(not panel.shown)
+        elif value in {'on', 'show'}:
+            panel.set_shown(True)
+        elif value in {'off', 'hide'}:
+            panel.set_shown(False)
+        else:
+            await chat.add_notice('Uso: /sidebar [on|off]', style='yellow')
+            return
+        await chat.add_notice(f'Sidebar {"visible" if panel.shown else "oculto"}.', style='cyan')
 
     async def _show_mcp(self, chat: ChatLog) -> None:
         if self._mcp_manager is None or not self._mcp_manager:
@@ -336,6 +356,11 @@ class SigilApp(App):
     def _persist(self) -> None:
         if self._session.messages:
             self._store.save(self._session)
+
+    def _bind_roadmap(self) -> None:
+        """El roadmap sigue a la sesión activa: cada sesión tiene el suyo."""
+        if self._roadmap_store is not None:
+            self._roadmap_store.bind_session(self._session.id)
 
     # --- turno del agente -------------------------------------------------
 

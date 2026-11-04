@@ -97,7 +97,7 @@ def test_context_tool_skips_ctx_in_logged_args():
     def with_ctx(ctx: object, value: int) -> int:
         return value
 
-    wrapped = wrap_tool(with_ctx, tool_name='with_ctx', logger=logger, skip_first_arg=True)
+    wrapped = wrap_tool(with_ctx, tool_name='with_ctx', logger=logger, takes_ctx=True)
     assert wrapped(object(), 7) == 7
 
     assert logger.events[0].args == {'value': 7}

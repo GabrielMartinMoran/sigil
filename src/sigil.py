@@ -26,10 +26,17 @@ def run() -> None:
     # Hub de logging de tools: el engine emite, la UI agrega su sink al montar.
     tool_logger = ToolLoggerHub()
 
+    # Sesión activa: el roadmap y el historial cuelgan de ella.
+    store = SessionStore()
+    session = store.load_last()
+    if session is None:
+        session = store.create_session()
+
     # Puente para preguntas interactivas y estado del roadmap: el engine
-    # actualiza, la UI los consume.
+    # actualiza, la UI los consume. El roadmap es por sesión: nace vacío con
+    # cada sesión y se recupera al cargarla.
     question_hub = QuestionHub()
-    roadmap_store = RoadmapStore()
+    roadmap_store = RoadmapStore(session_id=session.id)
 
     # Servidores MCP declarados en .sigil/config.json (y en ~/.sigil/config.json).
     # Los errores de configuración no abortan el arranque: se muestran en el chat.
@@ -49,11 +56,6 @@ def run() -> None:
     register_file_tools(agent, logger=tool_logger)
     register_interaction_tools(agent, question_hub, logger=tool_logger)
     register_roadmap_tools(agent, roadmap_store, logger=tool_logger)
-
-    store = SessionStore()
-    session = store.load_last()
-    if session is None:
-        session = store.create_session()
 
     SigilApp(
         agent=agent,
