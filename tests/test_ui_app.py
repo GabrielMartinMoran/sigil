@@ -221,6 +221,45 @@ def test_autoscroll_only_when_at_bottom(monkeypatch):
     asyncio.run(inner())
 
 
+def test_autoscroll_follows_streaming_growth(monkeypatch):
+    """El auto-scroll debe seguir el contenido que crece durante el streaming.
+
+    Regresión: el scroll manual tras cada delta se ejecutaba antes del flush
+    diferido del bloque (throttle de 80 ms), así que la vista quedaba corta.
+    El anclaje de Textual reajusta el scroll en cada layout.
+    """
+    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _make_app(Agent(TestModel(), instructions='x'), tmp)
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.pause()
+                chat = app.query_one(ChatLog)
+
+                for index in range(40):
+                    await chat.add_user(f'mensaje {index}')
+                await pilot.pause()
+                assert chat.is_vertical_scroll_end
+
+                # Varios deltas dentro de la ventana del throttle: el contenido
+                # real recién crece cuando el timer hace flush.
+                await chat.begin_response()
+                for _ in range(20):
+                    await chat.add_text('linea de respuesta ' * 4)
+
+                # Refresh con el contenido aun sin crecer (el scroll manual
+                # agendado se ejecutaria aca, con la altura vieja)...
+                await pilot.pause()
+                # ...y recien despues el throttle vuelca el texto pendiente.
+                await asyncio.sleep(0.15)
+                await pilot.pause()
+
+                assert chat.is_vertical_scroll_end
+
+    asyncio.run(inner())
+
+
 def test_markdown_output_is_rendered_in_app(monkeypatch):
     monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 

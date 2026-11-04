@@ -1,4 +1,4 @@
-"""Historial de chat scrolleable con auto-scroll condicionado."""
+"""Historial de chat scrolleable con auto-scroll anclado al final."""
 
 from __future__ import annotations
 
@@ -98,23 +98,28 @@ class AssistantBlock(Static):
 
 
 class ChatLog(VerticalScroll):
-    """Contenedor de mensajes; scrollea al final sólo si ya estaba al final."""
+    """Historial de chat con auto-scroll anclado al final.
+
+    Usa la API de anclaje de Textual (`anchor`): mientras el widget esté anclado,
+    el compositor mantiene la vista al final en cada layout, de modo que el
+    contenido que crece (incluido el streaming con flush diferido) se sigue
+    automáticamente, sin scrolls manuales ni problemas de timing.
+
+    Al scrollear hacia arriba el anclaje se libera y se restaura solo cuando el
+    usuario vuelve al final, así se respeta a quien está leyendo historial.
+    """
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._current: AssistantBlock | None = None
 
-    def _at_bottom(self) -> bool:
-        return self.is_vertical_scroll_end
-
-    def _maybe_scroll(self, at_bottom: bool) -> None:
-        if at_bottom:
-            self.scroll_end(animate=False)
+    def on_mount(self) -> None:
+        # Ancla la vista al final desde el arranque.
+        self.anchor()
 
     async def _append(self, widget: Static) -> None:
-        at_bottom = self._at_bottom()
+        # El anclaje se encarga del scroll; no hace falta forzar scroll_end.
         await self.mount(widget)
-        self._maybe_scroll(at_bottom)
 
     async def add_user(self, text: str) -> None:
         self._current = None
@@ -141,18 +146,14 @@ class ChatLog(VerticalScroll):
             await self.mount(self._current)
 
     async def add_thinking(self, delta: str) -> None:
-        at_bottom = self._at_bottom()
         await self._ensure_block()
         assert self._current is not None
         self._current.add_thinking(delta)
-        self._maybe_scroll(at_bottom)
 
     async def add_text(self, delta: str) -> None:
-        at_bottom = self._at_bottom()
         await self._ensure_block()
         assert self._current is not None
         self._current.add_text(delta)
-        self._maybe_scroll(at_bottom)
 
     def finalize(self) -> None:
         """Fuerza el render pendiente de todos los bloques (fin de turno/historial)."""
@@ -163,6 +164,8 @@ class ChatLog(VerticalScroll):
     async def clear(self) -> None:
         self._current = None
         await self.remove_children()
+        # Tras limpiar, el historial nuevo vuelve a seguir el final.
+        self.anchor()
 
     async def render_history(self, messages: list[ModelMessage]) -> None:
         """Reconstruye el historial a partir de los mensajes de pydantic-ai."""
