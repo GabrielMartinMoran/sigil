@@ -20,6 +20,7 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ThinkingPartDelta,
 )
+from pydantic_ai.usage import UsageLimits
 from textual import work
 from textual.app import App, ComposeResult, ScreenStackError
 from textual.containers import Horizontal, Vertical
@@ -539,6 +540,11 @@ class SigilApp(App):
         # `agent.iter` (en vez de `agent.run`) conserva el run accesible: si el
         # turno se aborta por el límite de pasos o por un error, `run.all_messages()`
         # devuelve lo que se alcanzó a completar y la sesión no pierde el contexto.
+        #
+        # `request_limit=None` desactiva el tope de 50 requests que pydantic-ai
+        # aplica por default: el límite de pasos de Sigil (`SIGIL_MAX_STEPS`) ya
+        # acota el turno, y el default cortaría antes con un `UsageLimitExceeded`
+        # que el usuario no configuró.
         run: Any = None
         history = self._history
         # El primer checkpoint del turno (el prompt del usuario) se guarda ya.
@@ -549,6 +555,7 @@ class SigilApp(App):
                 message_history=self._history,
                 capabilities=[ProcessEventStream(handler=handler)],
                 model_settings=self._model_settings(),
+                usage_limits=UsageLimits(request_limit=None),
             ) as run:
                 self._current_run = run
                 async for _node in run:

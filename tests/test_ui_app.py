@@ -17,7 +17,7 @@ from src.engine.sessions.session_store import SessionStore
 from src.engine.tooling.logging import ToolLoggerHub
 from src.engine.tooling.registrar import ToolRegistrar
 from src.ui.app import SigilApp
-from src.ui.widgets.chat_log import ChatLog
+from src.ui.widgets.chat_log import AssistantBlock, ChatLog
 from src.ui.widgets.command_menu import CommandMenu
 from src.ui.widgets.prompt_input import PromptInput
 
@@ -334,6 +334,57 @@ def test_step_limit_abort_preserves_session_and_context(monkeypatch):
                 await pilot.press('enter')
                 await _wait_idle(app, pilot)
                 assert len(app._history) > prior
+
+    asyncio.run(inner())
+
+
+def test_turn_is_not_cut_by_pydantic_ai_default_request_limit(monkeypatch):
+    """Regresión: el tope de 50 requests de pydantic-ai no corta un turno largo.
+
+    Sigil acota el turno con `SIGIL_MAX_STEPS`; el default de pydantic-ai
+    abortaba antes con un `UsageLimitExceeded` que el usuario nunca configuró.
+    """
+    from pydantic_ai.messages import ModelMessage, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
+
+    from src.config_provider import ConfigProvider
+
+    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
+    monkeypatch.setattr(ConfigProvider, 'MAX_STEPS', 200)
+
+    # 60 llamadas a tools = 61 requests: por encima del default de 50.
+    calls = 60
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo):
+        done = sum(
+            1 for message in messages for part in getattr(message, 'parts', []) if isinstance(part, ToolCallPart)
+        )
+        if done < calls:
+            yield {0: DeltaToolCall(name='ping', json_args='{}', tool_call_id=f'c{done}')}
+        else:
+            yield 'done'
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = Agent(FunctionModel(stream_function=stream_function), instructions='x')
+
+            @agent.tool_plain
+            def ping() -> str:
+                return 'pong'
+
+            app = _make_app(agent, tmp)
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press('h', 'i')
+                await pilot.press('enter')
+                await _wait_idle(app, pilot, attempts=400)
+
+                texts = _chat_texts(app)
+                assert not any('request_limit' in text for text in texts)
+                assert not any('Step limit' in text for text in texts)
+                # El turno llegó al final: la respuesta final quedó en el chat.
+                blocks = [child for child in app.query_one(ChatLog).children if isinstance(child, AssistantBlock)]
+                assert blocks and blocks[-1]._text == 'done'
 
     asyncio.run(inner())
 

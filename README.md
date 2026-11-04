@@ -354,6 +354,18 @@ guarda en `~/.sigil/roadmaps/<hash-del-cwd>/<id-de-sesión>.json`. Si la
 escritura falla, la lista sigue funcionando en memoria y el error queda en
 `persistence_error`.
 
+## Límites del turno
+
+Un turno se corta por una sola razón: `SIGIL_MAX_STEPS` (default `256`). Cada
+respuesta del modelo y cada llamada a una tool cuentan como un paso; al superar
+el límite el turno se aborta con un aviso en el chat y lo completado queda en la
+sesión.
+
+pydantic-ai trae su propio tope de 50 requests por run. Sigil lo desactiva
+(`request_limit=None`) para que el único límite sea el de pasos: si no, un turno
+largo moría con un `UsageLimitExceeded` que nadie configuró, antes de llegar al
+límite real.
+
 ## Comandos
 
 Los comandos se escriben en el prompt y empiezan con `/`. El menú los filtra
