@@ -1,19 +1,19 @@
-"""Working set: los archivos que el agente tocó, derivados del log.
+"""Working set: the files the agent touched, derived from the log.
 
-Cuando la compactación colapsa turnos viejos en un resumen, los payloads se
-pierden —que es lo que se quiere— pero con ellos se va el rastro de *qué
-archivos* estaba tocando el agente. Ese rastro es barato y es lo que evita que
-después de compactar vuelva a leer desde cero lo que ya tenía en la mano.
+When compaction collapses old turns into a summary, the payloads are
+lost (which is what you want), but with them goes the trail of *which
+files* the agent was touching. That trail is cheap and is what prevents the
+agent from re-reading from scratch, after compacting, what it already had at hand.
 
-El working set se **deriva del log**, no se mantiene en un estado aparte:
+The working set is **derived from the log**, it is not kept in a separate state:
 
-- es determinístico, igual que la vista;
-- no puede desincronizarse del historial;
-- sobrevive a `/load` sin persistir nada extra.
+- it is deterministic, just like the view;
+- it cannot get out of sync with the history;
+- it survives `/load` without persisting anything extra.
 
-Sólo cuentan las tools que declaran un path del workspace (`PATH_TOOLS`). `run`
-queda afuera: recibe comandos de shell, no paths, y adivinar qué archivos toca
-sería inventar información.
+Only tools that declare a workspace path count (`PATH_TOOLS`). `run`
+stays out: it receives shell commands, not paths, and guessing which files it touches
+would be making information up.
 """
 
 from __future__ import annotations
@@ -28,19 +28,19 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from src.engine.context.scope import PATH_TOOLS
 
 DEFAULT_WORKING_SET_LIMIT = 20
-"""Archivos que se conservan en el resumen. Más que eso deja de ser un resumen."""
+"""Files kept in the summary. More than that stops being a summary."""
 
 READ_TOOLS: frozenset[str] = frozenset({'read_file'})
-"""Tools que sólo leen. El resto de `PATH_TOOLS` escribe."""
+"""Read-only tools. The rest of `PATH_TOOLS` write."""
 
 
 @dataclass(frozen=True, slots=True)
 class TouchedFile:
-    """Un archivo tocado por el agente, con el rastro de qué se le hizo."""
+    """A file touched by the agent, with the trail of what was done to it."""
 
     path: str
     tools: tuple[str, ...]
-    """Tools que lo tocaron, en orden de primera aparición, sin repetir."""
+    """Tools that touched it, in order of first appearance, without repeats."""
 
     @property
     def written(self) -> bool:
@@ -55,11 +55,11 @@ class _Entry:
     path: str
     tools: list[str] = field(default_factory=list)
     order: int = 0
-    """Posición de la última vez que se tocó. Más alto es más reciente."""
+    """Position of the last time it was touched. Higher is more recent."""
 
 
 def _normalize(raw: str) -> str:
-    """Normaliza un path para deduplicar sin inventar rutas absolutas."""
+    """Normalizes a path to deduplicate without inventing absolute paths."""
     path = raw.strip().replace('\\', '/')
     while path.startswith('./'):
         path = path[2:]
@@ -67,11 +67,11 @@ def _normalize(raw: str) -> str:
 
 
 def _args_mapping(args: Any) -> Mapping[str, Any] | None:
-    """Argumentos de un `ToolCallPart` como mapping.
+    """Args of a `ToolCallPart` as a mapping.
 
-    pydantic-ai deja `args` como dict cuando pudo parsearlo y como string JSON
-    cuando el modelo emitió algo que no validó. Un string que no parsea no
-    aporta paths: se ignora en vez de romper la vista.
+    pydantic-ai leaves `args` as a dict when it could parse it and as a JSON string
+    when the model emitted something that did not validate. A string that does not parse
+    contributes no paths: it is ignored instead of breaking the view.
     """
     if isinstance(args, Mapping):
         return args
@@ -89,12 +89,12 @@ def touched_files(
     *,
     limit: int = DEFAULT_WORKING_SET_LIMIT,
 ) -> list[TouchedFile]:
-    """Archivos tocados por las tools, del más reciente al más viejo.
+    """Files touched by the tools, most recent first.
 
-    El orden es por última interacción: lo que el agente acaba de tocar es lo
-    que más probablemente necesite en el paso siguiente. El desempate es el
-    orden de primera aparición, para que dos archivos tocados en el mismo
-    mensaje queden estables.
+    The order is by last interaction: what the agent just touched is what
+    it most likely needs on the next step. The tiebreaker is the
+    order of first appearance, so two files touched in the same
+    message stay stable.
     """
     entries: dict[str, _Entry] = {}
     for position, message in enumerate(messages):
@@ -127,7 +127,7 @@ def touched_files(
 
 
 def render_working_set(files: Sequence[TouchedFile]) -> str:
-    """Texto del working set para el resumen de compactación."""
+    """Working set text for the compaction summary."""
     if not files:
         return ''
     lines = ['Files touched so far (most recent first):']

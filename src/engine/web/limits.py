@@ -1,7 +1,7 @@
-"""Límites de las tools de web."""
+"""Web tool limits."""
 
 MAX_PAGE_CHARS = 40_000
-"""Caracteres que se devuelven por página."""
+"""Characters returned per page."""
 
 MAX_SEARCH_RESULTS = 20
-"""Tope de resultados por búsqueda."""
+"""Cap of results per search."""

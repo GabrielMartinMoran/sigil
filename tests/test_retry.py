@@ -1,4 +1,4 @@
-"""Reintentos ante fallos transitorios del modelo."""
+"""Retries on transient model failures."""
 
 import asyncio
 from types import SimpleNamespace
@@ -24,24 +24,24 @@ from src.engine.agents.retry import (
 
 _BODY = 'Upstream error from Morph: regional pod proxy response stream failed: error decoding response body'
 
-# Así es como los adaptadores reales levantan un 502: un error que es a la vez
-# ``ModelHTTPError`` y la categoría. Un ``ModelHTTPError`` pelado no satisface
-# ``except ModelServerError``, así que construir el fixture con ``for_category``
-# es lo que hace que los tests midan el caso real.
+# This is how the real adapters raise a 502: an error that is at once
+# ``ModelHTTPError`` and the category. A bare ``ModelHTTPError`` does not satisfy
+# ``except ModelServerError``, so building the fixture with ``for_category``
+# is what makes the tests measure the real case.
 _SERVER_ERROR = ModelHTTPError.for_category(ModelServerError, status_code=502, model_name='test/model', body=_BODY)
 
-# Error sin categoría: sólo adaptadores o modelos propios que no clasifican.
+# Error without a category: only adapters or custom models that do not classify.
 _UNCATEGORIZED_502 = ModelHTTPError(502, 'test/model', body=_BODY)
 _UNCATEGORIZED_404 = ModelHTTPError(404, 'test/model', body='not found')
 
 
 def _capability(**kwargs: object) -> RetryTransientModelErrors:
-    # Sin espera real entre intentos: los tests no deben dormir.
+    # No real wait between attempts: tests must not sleep.
     return RetryTransientModelErrors(base_delay=0.0, **kwargs)  # type: ignore[arg-type]
 
 
 def _hook(capability: RetryTransientModelErrors, attempt: int, error: Exception) -> None:
-    """Corre el hook como lo hace el framework, con el intento que falló."""
+    """Runs the hook the way the framework does, with the attempt that failed."""
 
     async def call() -> None:
         await capability.on_model_request_error(
@@ -84,14 +84,14 @@ def test_rate_limit_and_server_errors_are_transient() -> None:
 
 
 def test_uncategorized_http_error_falls_back_to_status_code() -> None:
-    # Sin categoría: el status decide. 502 vale otro intento, 404 no.
+    # Without a category: the status decides. 502 is worth another attempt, 404 is not.
     assert is_transient(_UNCATEGORIZED_502) is True
     assert is_transient(_UNCATEGORIZED_404) is False
 
 
 def test_quota_error_with_429_status_is_not_retried() -> None:
-    # Regresión: OpenRouter manda la cuota agotada con 429. Comparte status con
-    # el rate limit, pero es permanente: no debe consumir los cinco intentos.
+    # Regression: OpenRouter sends exhausted quota with 429. It shares its status with
+    # the rate limit, but it is permanent: it must not consume the five attempts.
     quota = ModelHTTPError.for_category(ModelQuotaExceededError, status_code=429, model_name='test/model')
 
     assert is_transient(quota) is False
@@ -115,7 +115,7 @@ def test_retry_notice_reports_attempt_and_reason() -> None:
 
 def test_notifier_failure_does_not_break_the_retry() -> None:
     def boom(_notice: object) -> None:
-        raise RuntimeError('la UI explotó')
+        raise RuntimeError('the UI blew up')
 
     capability = _capability(max_attempts=5)
     capability.on_retry = boom
@@ -147,7 +147,7 @@ def test_agent_retries_transient_errors_until_success() -> None:
         calls['count'] += 1
         if calls['count'] <= 2:
             raise _SERVER_ERROR
-        return ModelResponse(parts=[TextPart('respuesta final')])
+        return ModelResponse(parts=[TextPart('final answer')])
 
     async def inner() -> None:
         capability = _capability(max_attempts=5)
@@ -155,9 +155,9 @@ def test_agent_retries_transient_errors_until_success() -> None:
         capability.on_retry = notices.append
         agent = Agent(FunctionModel(model_function), instructions='x', capabilities=[capability])
 
-        result = await agent.run('hola')
+        result = await agent.run('hello')
 
-        assert result.output == 'respuesta final'
+        assert result.output == 'final answer'
         assert calls['count'] == 3
         assert [notice.attempt for notice in notices] == [1, 2]
 
@@ -176,7 +176,7 @@ def test_agent_fails_after_exhausting_attempts() -> None:
         agent = Agent(FunctionModel(model_function), instructions='x', capabilities=[capability])
 
         with pytest.raises(ModelServerError):
-            await agent.run('hola')
+            await agent.run('hello')
 
         assert calls['count'] == 3
 

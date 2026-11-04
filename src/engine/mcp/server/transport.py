@@ -1,4 +1,4 @@
-"""Transportes y construcción del ``MCPToolset`` de un servidor."""
+"""Transports and construction of a server's ``MCPToolset``."""
 
 from __future__ import annotations
 
@@ -13,14 +13,14 @@ from src.engine.tooling.logging import ToolLogger
 
 
 def stdio_transport(spec: MCPServerSpec) -> StdioTransport:
-    """Transporte stdio, con el guard de entorno en el proceso hijo."""
+    """stdio transport, with the environment guard on the child process."""
     config = spec.config
     cwd = spec.cwd_path
     return StdioTransport(
         command=config.command or '',
         args=list(config.args),
-        # El guard de entorno impide que un server configurado con
-        # `command: "sigil"` levante otra instancia del agente.
+        # The environment guard prevents a server configured with
+        # `command: "sigil"` from spawning another agent instance.
         env={**config.env, SELF_GUARD_ENV: '1'},
         cwd=str(cwd) if cwd is not None else None,
         keep_alive=config.keep_alive,
@@ -28,7 +28,7 @@ def stdio_transport(spec: MCPServerSpec) -> StdioTransport:
 
 
 def create_toolset(spec: MCPServerSpec, logger: ToolLogger | None) -> MCPToolset:
-    """Crea el ``MCPToolset`` del servidor, sin filtros ni prefijo."""
+    """Creates the server's ``MCPToolset``, without filters or prefix."""
     config = spec.config
     options: dict[str, Any] = {
         'id': spec.name,

@@ -1,8 +1,8 @@
-"""Metadatos del modelo consultados dinámicamente a OpenRouter.
+"""Model metadata queried dynamically from OpenRouter.
 
-El contexto máximo (ventana de contexto) no viene en el perfil estático de
-pydantic-ai para modelos arbitrarios de OpenRouter, así que lo obtenemos del
-endpoint público ``/api/v1/models`` y lo cacheamos por proceso.
+The maximum context (context window) does not come in pydantic-ai's static profile
+for arbitrary OpenRouter models, so we get it from the public
+``/api/v1/models`` endpoint and cache it per process.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ class ModelInfo:
 
 
 def parse_model_info(data: list[dict], model_id: str) -> ModelInfo | None:
-    """Busca ``model_id`` dentro de la lista de modelos de OpenRouter."""
+    """Looks for ``model_id`` in the OpenRouter model list."""
     candidate = model_id.removeprefix('~')
     for entry in data:
         ids = {entry.get('id'), entry.get('canonical_slug')}
@@ -41,7 +41,7 @@ def parse_model_info(data: list[dict], model_id: str) -> ModelInfo | None:
 
 
 async def fetch_model_info(model_id: str) -> ModelInfo | None:
-    """Devuelve la info del modelo (con cache) o ``None`` si no se pudo obtener."""
+    """Returns the model info (cached) or ``None`` if it could not be fetched."""
     if model_id in _cache:
         return _cache[model_id]
 
@@ -61,7 +61,7 @@ async def fetch_model_info(model_id: str) -> ModelInfo | None:
 
 
 def context_usage_percent(used_tokens: int | None, context_length: int | None) -> float | None:
-    """Porcentaje de ventana de contexto usada, o ``None`` si falta información."""
+    """Percentage of the context window used, or ``None`` if information is missing."""
     if not context_length or used_tokens is None:
         return None
     return max(0.0, used_tokens / context_length * 100.0)

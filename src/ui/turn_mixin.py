@@ -1,4 +1,4 @@
-"""Ejecución de un turno del agente: stream de eventos y checkpoints."""
+"""Agent turn execution: event stream and checkpoints."""
 
 from __future__ import annotations
 
@@ -25,14 +25,14 @@ from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 
 CHECKPOINT_INTERVAL = 1.0
-"""Segundos mínimos entre checkpoints durante un turno (el guardado final es obligatorio)."""
+"""Minimum seconds between checkpoints during a turn (the final save is mandatory)."""
 
 
 class TurnMixin:
-    """Corre el turno del agente contra la app.
+    """Runs the agent turn against the app.
 
-    Espera que la app defina ``_agent``, ``_history``, ``_session``, ``_store``,
-    ``_current_run``, ``_last_checkpoint_at`` y ``_update_status``.
+    It expects the app to define ``_agent``, ``_history``, ``_session``, ``_store``,
+    ``_current_run``, ``_last_checkpoint_at`` and ``_update_status``.
     """
 
     _agent: Any
@@ -43,20 +43,20 @@ class TurnMixin:
     _last_checkpoint_at: float
 
     def model_settings(self) -> dict[str, Any] | None:
-        """Settings por request: el esfuerzo de razonamiento configurado."""
+        """Per-request settings: the configured reasoning effort."""
         effort = ConfigProvider.REASONING_EFFORT
         if effort in EFFORTS:
             return {'thinking': effort}
         return None
 
     def checkpoint(self, *, force: bool = False) -> None:
-        """Persiste el avance del turno en curso, como mucho una vez por segundo.
+        """Persists the progress of the current turn, at most once per second.
 
-        Se llama después de cada iteración del agente y de cada evento del
-        stream. Si el proceso muere a mitad de un turno largo, la sesión en
-        disco conserva lo completado hasta el último checkpoint. Sólo escribe
-        cuando el historial cambió y pasó la ventana de throttle; el guardado
-        final del turno es obligatorio y no pasa por acá.
+        It is called after every agent iteration and every stream
+        event. If the process dies halfway through a long turn, the session on
+        disk keeps what was completed up to the last checkpoint. It only writes
+        when the history changed and the throttle window passed; the final
+        save of the turn is mandatory and does not go through here.
         """
         run = self._current_run
         if run is None:
@@ -73,28 +73,28 @@ class TurnMixin:
         self._last_checkpoint_at = now
         self._session.messages = list(messages)
         self._store.save(self._session)
-        # La barra se actualiza por paso, no sólo al cerrar el turno.
+        # The bar updates per step, not only when the turn closes.
         self.update_status(messages)
-        # La vista de debug también (es un no-op si está cerrada).
+        # The debug view too (it is a no-op if closed).
         refresh_debug = getattr(self, 'refresh_debug', None)
         if callable(refresh_debug):
             refresh_debug(messages)
 
     def turn_handler(self, limiter: StepLimiter, chat: ChatLog) -> Any:
-        """Handler del stream que alimenta el chat y los checkpoints."""
+        """Stream handler that feeds the chat and the checkpoints."""
 
         async def handler(_ctx: Any, events: Any) -> None:
             async for event in events:
                 limiter.count(event)
-                # Checkpoint por evento: apenas el run agrega un mensaje al
-                # historial (p. ej. el prompt del usuario) queda en disco.
+                # Checkpoint per event: as soon as the run adds a message to
+                # the history (e.g. the user prompt) it lands on disk.
                 self.checkpoint()
                 await self.dispatch_event(event, chat)
 
         return handler
 
     async def dispatch_event(self, event: Any, chat: ChatLog) -> None:
-        """Traduce un evento del stream a lo que muestra el chat."""
+        """Translates a stream event into what the chat shows."""
         if isinstance(event, PartStartEvent):
             if event.index == 0:
                 await chat.begin_response()
@@ -115,23 +115,23 @@ class TurnMixin:
 
     @work(exclusive=True)
     async def run_turn(self, text: str) -> None:
-        """Corre un turno completo, persistiendo el avance sobre la marcha."""
+        """Runs a full turn, persisting progress along the way."""
         chat = self.query_one(ChatLog)
         prompt = self.query_one(PromptInput)
         limiter = StepLimiter(ConfigProvider.MAX_STEPS)
         handler = self.turn_handler(limiter, chat)
         prompt.disabled = True
-        # `agent.iter` (en vez de `agent.run`) conserva el run accesible: si el
-        # turno se aborta por el límite de pasos o por un error, `run.all_messages()`
-        # devuelve lo que se alcanzó a completar y la sesión no pierde el contexto.
+        # `agent.iter` (instead of `agent.run`) keeps the run accessible: if the
+        # turn is aborted by the step limit or by an error, `run.all_messages()`
+        # returns what was completed and the session does not lose the context.
         #
-        # `request_limit=None` desactiva el tope de 50 requests que pydantic-ai
-        # aplica por default: el límite de pasos de Sigil (`SIGIL_MAX_STEPS`) ya
-        # acota el turno, y el default cortaría antes con un `UsageLimitExceeded`
-        # que el usuario no configuró.
+        # `request_limit=None` disables the 50-request cap pydantic-ai
+        # applies by default: Sigil's step limit (`SIGIL_MAX_STEPS`) already
+        # bounds the turn, and the default would cut earlier with a `UsageLimitExceeded`
+        # the user did not configure.
         run: Any = None
         history = self._history
-        # El primer checkpoint del turno (el prompt del usuario) se guarda ya.
+        # The first checkpoint of the turn (the user prompt) is saved right away.
         self._last_checkpoint_at = 0.0
         try:
             async with self._agent.iter(
@@ -143,8 +143,8 @@ class TurnMixin:
             ) as run:
                 self._current_run = run
                 async for _node in run:
-                    # Checkpoint por iteración: cada nodo completado (respuesta
-                    # del modelo, tanda de tools) queda persistido.
+                    # Checkpoint per iteration: every completed node (model
+                    # response, tool batch) gets persisted.
                     self.checkpoint()
             history = run.all_messages()
         except StepLimitExceeded:
@@ -168,7 +168,7 @@ class TurnMixin:
         self._session.messages = self._history
         self._store.save(self._session)
         self.update_status()
-        # La vista de debug muestra el costo del turno recién cerrado.
+        # The debug view shows the cost of the turn just closed.
         refresh_debug = getattr(self, 'refresh_debug', None)
         if callable(refresh_debug):
             refresh_debug()

@@ -1,6 +1,6 @@
-"""Tests de la herramienta `run` / `execute_command`.
+"""Tests for the `run` tool / `execute_command`.
 
-No requieren red ni un LLM: sólo ejecutan comandos finitos del sistema.
+They need no network and no LLM: they only run finite system commands.
 """
 
 import asyncio
@@ -12,7 +12,7 @@ from src.engine.shell.limits import MAX_OUTPUT_BYTES
 from src.engine.shell.runner import execute_command, execute_commands
 from src.engine.shell.tools import register_shell_tools
 
-# --- 1. Comando simple --------------------------------------------------------
+# --- 1. Simple command --------------------------------------------------------
 
 
 def test_simple_command_pwd():
@@ -22,7 +22,7 @@ def test_simple_command_pwd():
     assert not result.timed_out
 
 
-# --- 2. Comando con argumentos ------------------------------------------------
+# --- 2. Command with arguments ------------------------------------------------
 
 
 def test_command_with_arguments(tmp_path):
@@ -32,7 +32,7 @@ def test_command_with_arguments(tmp_path):
     assert 'a.txt' in result.stdout
 
 
-# --- 3. Rutas con espacios ----------------------------------------------------
+# --- 3. Paths with spaces -----------------------------------------------------
 
 
 def test_path_with_spaces(tmp_path):
@@ -44,7 +44,7 @@ def test_path_with_spaces(tmp_path):
     assert 'file name.txt' in result.stdout
 
 
-# --- 4. Captura de stdout y stderr --------------------------------------------
+# --- 4. stdout and stderr capture ---------------------------------------------
 
 
 def test_captures_stdout_and_stderr_separately():
@@ -54,7 +54,7 @@ def test_captures_stdout_and_stderr_separately():
     assert result.stderr.strip() == 'err'
 
 
-# --- 5. Código de salida ------------------------------------------------------
+# --- 5. Exit code -------------------------------------------------------------
 
 
 def test_exit_code_is_returned():
@@ -63,7 +63,7 @@ def test_exit_code_is_returned():
     assert not result.timed_out
 
 
-# --- 6. Comando inexistente ---------------------------------------------------
+# --- 6. Nonexistent command ---------------------------------------------------
 
 
 def test_nonexistent_command_does_not_raise():
@@ -73,7 +73,7 @@ def test_nonexistent_command_does_not_raise():
     assert not result.timed_out
 
 
-# --- 7. Proceso que espera stdin no bloquea -----------------------------------
+# --- 7. A process waiting on stdin does not block ------------------------------
 
 
 def test_stdin_closed_does_not_block():
@@ -84,7 +84,7 @@ def test_stdin_closed_does_not_block():
     assert time.monotonic() - start < 5
 
 
-# --- 8. Timeout termina el proceso --------------------------------------------
+# --- 8. Timeout terminates the process ----------------------------------------
 
 
 def test_timeout_terminates_process():
@@ -95,18 +95,18 @@ def test_timeout_terminates_process():
     assert time.monotonic() - start < 8
 
 
-# --- 9. Timeout no deja hijos vivos -------------------------------------------
+# --- 9. Timeout leaves no live children ---------------------------------------
 
 
 def test_timeout_kills_children():
     start = time.monotonic()
     result = execute_command('sleep 30 & wait', timeout_seconds=1)
     assert result.timed_out
-    # Si el grupo de procesos no se hubiera matado, esto tardaría ~30s.
+    # If the process group had not been killed, this would take ~30s.
     assert time.monotonic() - start < 8
 
 
-# --- 10. Límite de salida -----------------------------------------------------
+# --- 10. Output limit ---------------------------------------------------------
 
 
 def test_output_is_truncated():
@@ -115,7 +115,7 @@ def test_output_is_truncated():
     assert len(result.stdout.encode('utf-8')) <= MAX_OUTPUT_BYTES
 
 
-# --- 11. Distinción de estados ------------------------------------------------
+# --- 11. State distinction ----------------------------------------------------
 
 
 def test_empty_command_is_rejected():
@@ -131,7 +131,7 @@ def test_timeout_vs_normal_are_distinguishable():
     assert timed.timed_out and timed.returncode == 124
 
 
-# --- 12. Integración con el agente --------------------------------------------
+# --- 12. Integration with the agent -------------------------------------------
 
 
 class _DummyAgent:
@@ -153,7 +153,7 @@ def test_register_shell_tools_registers_run():
     assert result[0].returncode == 0
 
 
-# --- Autoprotección -----------------------------------------------------------
+# --- Self-protection ----------------------------------------------------------
 
 
 def test_child_process_gets_guard_env():
@@ -173,7 +173,7 @@ def test_refuses_uv_run_main():
     assert result.returncode == 126
 
 
-# --- 13. Ejecución en paralelo -------------------------------------------------
+# --- 13. Parallel execution ----------------------------------------------------
 
 
 def test_execute_commands_runs_in_parallel():
@@ -181,7 +181,7 @@ def test_execute_commands_runs_in_parallel():
     results = asyncio.run(execute_commands(['sleep 1', 'sleep 1', 'sleep 1']))
     elapsed = time.monotonic() - start
     assert all(r.returncode == 0 for r in results)
-    # En secuencial tardarían ~3s; en paralelo deberían rondar 1s.
+    # Sequentially they would take ~3s; in parallel they should be around 1s.
     assert elapsed < 2.5
 
 

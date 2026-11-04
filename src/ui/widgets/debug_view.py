@@ -1,12 +1,12 @@
-"""Vista de debug: el lado del agente de la conversación.
+"""Debug view: the agent side of the conversation.
 
-Reemplaza al chat (`alt+d`) para responder una sola pregunta: **¿qué ve el
-agente?** El chat muestra lo que el usuario leyó; esta vista muestra lo que
-viaja en el request: instrucciones resueltas, schemas de tools, la proyección
-del historial después de la estrategia de contexto y el uso del prompt cache.
+It replaces the chat (`alt+d`) to answer a single question: **what does the
+agent see?** The chat shows what the user read; this view shows what
+travels in the request: resolved instructions, tool schemas, the history
+projection after the context strategy and the prompt cache usage.
 
-Todo lo que se pinta sale de `DebugReport` (engine), así que el widget no
-calcula nada: sólo formatea.
+Everything painted comes from `DebugReport` (engine), so the widget
+computes nothing: it only formats.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ def _hit_style(ratio: float) -> str:
 
 
 def build_debug_header(report: DebugReport) -> Text:
-    """Cabecera fija: lo que hay que ver de un vistazo."""
+    """Fixed header: what has to be seen at a glance."""
     text = Text()
     text.append(' DEBUG ', style='bold black on yellow')
     text.append('  agent side of the conversation', style='bold')
@@ -103,8 +103,8 @@ def build_debug_header(report: DebugReport) -> Text:
 
 def _fixed_cost_table(report: DebugReport) -> RenderableType:
     if not report.request.captured:
-        # Sin request en este proceso no hay medición: mostrar "0 blocks · 0 tools"
-        # haría creer que el agente va sin instrucciones ni tools.
+        # With no request in this process there is no measurement: showing "0 blocks · 0 tools"
+        # would suggest the agent runs with no instructions and no tools.
         return Text(
             'Fixed cost per request\n'
             '  No request captured in this process yet (loaded session?).\n'
@@ -205,7 +205,7 @@ def _messages_section(title: str, rows: tuple[DebugMessage, ...], *, empty: str,
 
 
 def build_debug_body(report: DebugReport) -> RenderableType:
-    """Cuerpo scrolleable: costo fijo, caché, vista del agente y log completo."""
+    """Scrollable body: fixed cost, cache, agent view and full log."""
     sections: list[RenderableType] = [
         _fixed_cost_table(report),
         Text(''),
@@ -239,11 +239,11 @@ def build_debug_body(report: DebugReport) -> RenderableType:
 
 
 class AgentDebugView(Vertical):
-    """Reemplazo del chat: cabecera fija y cuerpo scrolleable con el diagnóstico.
+    """Chat replacement: fixed header and scrollable body with the diagnostic.
 
-    La cabecera queda fija porque el resumen (log vs vista, hit de caché) es lo
-    que se mira mientras el turno corre; el cuerpo arranca arriba y se scrollea
-    a mano, sin anclaje al final: acá el final no es lo más nuevo.
+    The header stays fixed because the summary (log vs view, cache hit) is what
+    you look at while the turn runs; the body starts at the top and is scrolled
+    by hand, without anchoring to the bottom: here the bottom is not the newest part.
     """
 
     DEFAULT_CSS = """
@@ -268,11 +268,11 @@ class AgentDebugView(Vertical):
 
     @property
     def last_report(self) -> DebugReport | None:
-        """Último reporte pintado. Lo usan los tests para inspeccionar sin parsear la pantalla."""
+        """Last painted report. Tests use it to inspect without parsing the screen."""
         return self._report
 
     def update_report(self, report: DebugReport) -> None:
-        """Repinta la vista con un reporte nuevo."""
+        """Repaints the view with a new report."""
         self._report = report
         self._header.update(build_debug_header(report))
         self._body.update(build_debug_body(report))

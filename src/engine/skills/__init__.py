@@ -1,15 +1,15 @@
-"""Soporte del protocolo Agent Skills para Sigil.
+"""Agent Skills protocol support for Sigil.
 
-Un skill es un directorio con un ``SKILL.md`` (frontmatter YAML + cuerpo
-Markdown) y recursos opcionales (``scripts/``, ``references/``, ``assets/``).
+A skill is a directory with a ``SKILL.md`` (YAML frontmatter + Markdown
+body) and optional resources (``scripts/``, ``references/``, ``assets/``).
 
-El módulo implementa el protocolo completo de consumo:
+The module implements the full consumption protocol:
 
-- descubrimiento en ``<cwd>/.agents/skills`` y ``~/.agents/skills``,
-- *progressive disclosure*: metadatos siempre disponibles, cuerpo bajo demanda,
-  recursos y scripts cuando se necesitan,
-- lectura segura de recursos (sin escapes de directorio),
-- ejecución de scripts empaquetados dentro del skill.
+- discovery in ``<cwd>/.agents/skills`` and ``~/.agents/skills``,
+- *progressive disclosure*: metadata always available, body on demand,
+  resources and scripts when they are needed,
+- safe resource reading (no directory escapes),
+- execution of scripts bundled inside the skill.
 
-El paquete no re-exporta símbolos: importá del módulo dueño.
+The package re-exports no symbols: import from the owning module.
 """

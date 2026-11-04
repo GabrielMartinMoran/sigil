@@ -1,4 +1,4 @@
-"""Lectura de un archivo de configuración y validación de sus servidores."""
+"""Reading a config file and validating its servers."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from src.engine.mcp.config_models.server_spec import MCPServerSpec
 
 
 def load_file(path: Path, environ: Mapping[str, str]) -> tuple[dict[str, MCPServerSpec], list[str]]:
-    """Lee un archivo de configuración. Devuelve ``(servidores, errores)``."""
+    """Reads a config file. Returns ``(servers, errors)``."""
     try:
         raw = json.loads(path.read_text(encoding='utf-8'))
     except OSError as exc:

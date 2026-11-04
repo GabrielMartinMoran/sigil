@@ -1,4 +1,4 @@
-"""Validación de una entrada de servidor MCP contra su archivo de origen."""
+"""Validation of an MCP server entry against its source file."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from src.engine.mcp.config_models.server_spec import MCPServerSpec
 
 
 def format_validation(exc: ValidationError) -> str:
-    """Mensaje de error legible de un fallo de validación de pydantic."""
+    """Readable error message from a pydantic validation failure."""
     parts: list[str] = []
     for error in exc.errors():
         location = '.'.join(str(item) for item in error['loc'])
@@ -31,7 +31,7 @@ def build_spec(
     entry: Any,
     environ: Mapping[str, str],
 ) -> tuple[MCPServerSpec | None, str | None]:
-    """Valida una entrada de ``mcp_servers``. Devuelve ``(spec, error)``."""
+    """Validates an ``mcp_servers`` entry. Returns ``(spec, error)``."""
     if not isinstance(entry, dict):
         return None, f'{path}: server `{name}` must be a JSON object.'
     if not SERVER_NAME_RE.match(name):

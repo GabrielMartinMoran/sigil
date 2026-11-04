@@ -1,4 +1,4 @@
-"""Archivo empaquetado dentro de un skill."""
+"""File bundled inside a skill."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class SkillResource:
-    """Archivo empaquetado dentro de un skill."""
+    """File bundled inside a skill."""
 
     path: str
     size: int

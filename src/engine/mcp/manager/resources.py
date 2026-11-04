@@ -1,4 +1,4 @@
-"""Consulta de resources de los servidores MCP."""
+"""Query of resources from MCP servers."""
 
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ from src.engine.mcp.tool_models.resource_info import ResourceInfo
 
 
 async def list_resources(servers: ServerMap, server: str | None = None) -> list[ResourceInfo]:
-    """Resources publicados por los servidores alcanzados."""
+    """Resources published by the reached servers."""
     found: list[ResourceInfo] = []
     for item in targets(servers, server):
         assert item.toolset is not None
         try:
             resources = await item.toolset.list_resources()
-        except Exception as exc:  # noqa: BLE001 - un servidor caído no anula el resto
+        except Exception as exc:  # noqa: BLE001 - a downed server does not void the rest
             item.error = f'{type(exc).__name__}: {exc}'
             continue
         found.extend(
@@ -32,7 +32,7 @@ async def list_resources(servers: ServerMap, server: str | None = None) -> list[
 
 
 async def read_resource(servers: ServerMap, server: str, uri: str) -> ResourceContent:
-    """Contenido de un resource, normalizado a un payload único."""
+    """Content of a resource, normalized to a single payload."""
     item = require(servers, server)
     assert item.toolset is not None
     return to_content(item.name, uri, await item.toolset.read_resource(uri))

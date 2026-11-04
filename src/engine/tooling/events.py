@@ -1,8 +1,8 @@
-"""Eventos que emite el wrapper de una tool.
+"""Events emitted by a tool's wrapper.
 
-Un evento describe un momento de la vida de una llamada —arrancó, terminó bien,
-falló— con lo mínimo que necesita un sink para mostrarlo: nombre, argumentos,
-duración y un resumen del resultado o del error.
+An event describes a moment in the life of a call (it started, it finished fine,
+it failed) with the minimum a sink needs to show it: name, args,
+duration and a summary of the result or the error.
 """
 
 from __future__ import annotations
@@ -11,28 +11,28 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 ToolPhase = Literal['start', 'success', 'error']
-"""Fase de una llamada: arrancó, terminó bien o falló."""
+"""Phase of a call: started, finished fine or failed."""
 
 PREVIEW_LIMIT = 200
-"""Caracteres que se conservan en un resumen de una línea."""
+"""Characters kept in a one-line summary."""
 
 
 def preview(value: Any, limit: int = PREVIEW_LIMIT) -> str:
-    """Resumen de una línea, seguro para cualquier valor.
+    """One-line summary, safe for any value.
 
-    El logging nunca debe romper una tool, así que un ``__str__`` que explota
-    cae al ``repr`` del objeto en vez de propagar la excepción.
+    Logging must never break a tool, so a ``__str__`` that blows up
+    falls back to the object's ``repr`` instead of propagating the exception.
     """
     try:
         text = ' '.join(str(value).split())
-    except Exception:  # noqa: BLE001 - el logging nunca debe romper una tool
+    except Exception:  # noqa: BLE001 - logging must never break a tool
         text = object.__repr__(value)
     return text if len(text) <= limit else text[: limit - 1] + '…'
 
 
 @dataclass(frozen=True, slots=True)
 class ToolCallEvent:
-    """Evento emitido por el wrapper de una tool."""
+    """Event emitted by a tool's wrapper."""
 
     tool_name: str
     phase: ToolPhase

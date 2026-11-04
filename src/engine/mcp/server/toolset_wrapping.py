@@ -1,4 +1,4 @@
-"""Filtros, prefijo y degradación controlada de un toolset MCP."""
+"""Filters, prefix and controlled degradation of an MCP toolset."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def _filter(spec: MCPServerSpec) -> Callable[[Any, Any], bool]:
 
 
 def wrap_toolset(spec: MCPServerSpec, toolset: MCPToolset, on_error: Callable[[str], None]) -> AbstractToolset:
-    """Aplica filtros, prefijo y degradación controlada al toolset."""
+    """Applies filters, prefix and controlled degradation to the toolset."""
     wrapped: AbstractToolset = toolset
     if spec.config.include_tools or spec.config.exclude_tools:
         wrapped = wrapped.filtered(_filter(spec))

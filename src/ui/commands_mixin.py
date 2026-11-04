@@ -1,4 +1,4 @@
-"""Comandos de barra: sesión, sidebar, MCP, contexto y ayuda."""
+"""Slash commands: session, sidebar, MCP, context and help."""
 
 from __future__ import annotations
 
@@ -13,15 +13,15 @@ from src.ui.widgets.session_picker import SessionPicker
 
 
 class CommandsMixin:
-    """Despacha los comandos de barra y gestiona el cambio de sesión.
+    """Dispatches the slash commands and manages session switching.
 
-    Espera que la app defina ``_store``, ``_session``, ``_history``,
+    It expects the app to define ``_store``, ``_session``, ``_history``,
     ``_scope``, ``_loaded_skills``, ``_mcp_manager``, ``_meter``,
-    ``_context_capability``, ``_workspace`` y ``_roadmap_store``.
+    ``_context_capability``, ``_workspace`` and ``_roadmap_store``.
     """
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Enter en el prompt: comando de barra o turno del agente."""
+        """Enter on the prompt: slash command or agent turn."""
         if event.input is not self.query_one(PromptInput):
             return
 
@@ -42,7 +42,7 @@ class CommandsMixin:
         self.run_turn(text)
 
     async def handle_command(self, name: str, args: str = '') -> None:
-        """Ejecuta el comando pedido."""
+        """Runs the requested command."""
         chat = self.query_one(ChatLog)
 
         handlers = {
@@ -62,11 +62,11 @@ class CommandsMixin:
         await handler()
 
     def action_quit(self) -> None:
-        """Cierra la aplicación, persistiendo la sesión."""
+        """Closes the application, persisting the session."""
         self.exit()
 
     async def new_session(self, chat: ChatLog) -> None:
-        """Arranca una sesión vacía y limpia el estado de la UI."""
+        """Starts an empty session and clears the UI state."""
         self.persist()
         self.bind_session(self._store.create_session())
         if self._scope is not None:
@@ -79,7 +79,7 @@ class CommandsMixin:
         self.update_status()
 
     async def load_session(self, chat: ChatLog) -> None:
-        """Carga una sesión elegida por el usuario."""
+        """Loads a session chosen by the user."""
         sessions = self._store.list_sessions()
         if not sessions:
             await chat.add_notice('No saved sessions.', style='yellow')
@@ -104,23 +104,23 @@ class CommandsMixin:
         self.update_status()
 
     def bind_session(self, session: object) -> None:
-        """Apunta la app a ``session``: historial, roadmap y persistencia."""
+        """Points the app at ``session``: history, roadmap and persistence."""
         self._session = session
         self._history = session.messages
         self.bind_roadmap()
 
     def bind_roadmap(self) -> None:
-        """El roadmap sigue a la sesión activa: cada sesión tiene el suyo."""
+        """The roadmap follows the active session: each session has its own."""
         if self._roadmap_store is not None:
             self._roadmap_store.bind_session(self._session.id)
 
     def persist(self) -> None:
-        """Guarda la sesión actual si tiene mensajes."""
+        """Saves the current session if it has messages."""
         if self._session.messages:
             self._store.save(self._session)
 
     async def handle_sidebar(self, args: str, chat: ChatLog) -> None:
-        """`/sidebar` alterna; `/sidebar on|off` fija el estado."""
+        """`/sidebar` toggles; `/sidebar on|off` sets the state."""
         from src.ui.widgets.roadmap_panel import RoadmapPanel
 
         value = args.strip().lower()
@@ -137,10 +137,10 @@ class CommandsMixin:
         await chat.add_notice(f'Sidebar {"shown" if panel.shown else "hidden"}.', style='cyan')
 
     async def handle_debug(self, args: str, chat: ChatLog) -> None:
-        """`/debug` alterna la vista; `/debug on|off` fija el estado; `--text` vuelca el reporte.
+        """`/debug` toggles the view; `/debug on|off` sets the state; `--text` dumps the report.
 
-        La vista reemplaza el chat, así que `--text` es la única forma de leer
-        el reporte dentro del propio chat (y de copiarlo desde ahí).
+        The view replaces the chat, so `--text` is the only way to read
+        the report inside the chat itself (and to copy it from there).
         """
         value = args.strip().lower()
         if value in {'text', '--text'}:
@@ -158,7 +158,7 @@ class CommandsMixin:
         await chat.add_notice(f'Debug view {"shown" if self.debug_visible else "hidden"}.', style='cyan')
 
     async def show_context(self, chat: ChatLog) -> None:
-        """Desglose de contexto: medido, proyectado, presupuesto y turnos."""
+        """Context breakdown: measured, projected, budget and turns."""
         view = self._context_capability.last_view if self._context_capability is not None else None
         report = self._meter.report(self._history, view=view)
         lines = [render_report(report)]
@@ -175,7 +175,7 @@ class CommandsMixin:
         await chat.add_notice('\n'.join(lines), style='white')
 
     async def show_mcp(self, chat: ChatLog) -> None:
-        """Estado de los servidores MCP configurados."""
+        """State of the configured MCP servers."""
         if self._mcp_manager is None or not self._mcp_manager:
             await chat.add_notice(
                 'No MCP servers configured. Create .sigil/config.json with an `mcp_servers` section.',
@@ -186,5 +186,5 @@ class CommandsMixin:
         await chat.add_notice('Querying MCP servers…', style='cyan')
         statuses = await self._mcp_manager.describe(connect=True)
         await chat.add_notice(format_mcp_status(statuses), style='white')
-        # `/mcp` es el diagnóstico: el panel se actualiza con lo que acaba de ver.
+        # `/mcp` is the diagnostic: the panel updates with what it just saw.
         self.apply_mcp_status(statuses)

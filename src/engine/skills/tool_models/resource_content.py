@@ -1,4 +1,4 @@
-"""Contenido de un recurso de un skill."""
+"""Content of a skill resource."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class ResourceContent(BaseModel):
-    """Contenido de un recurso de un skill."""
+    """Content of a skill resource."""
 
     skill: str
     path: str

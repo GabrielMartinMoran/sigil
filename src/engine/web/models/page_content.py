@@ -1,4 +1,4 @@
-"""Contenido extraído de una URL."""
+"""Content extracted from a URL."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 
 class PageContent(BaseModel):
-    """Contenido extraído de una URL."""
+    """Content extracted from a URL."""
 
     url: str
     format: str

@@ -1,11 +1,11 @@
-"""Constantes de validación de la configuración de servidores MCP."""
+"""Validation constants for the MCP server config."""
 
 from __future__ import annotations
 
 import re
 
-# El handshake inicial de un server stdio suele incluir un arranque en frío
-# (``npx -y``, ``uvx``), así que el default de 5s de la librería queda corto.
+# The initial handshake of a stdio server usually includes a cold start
+# (``npx -y``, ``uvx``), so the library's 5s default is too short.
 DEFAULT_INIT_TIMEOUT = 30.0
 DEFAULT_READ_TIMEOUT = 300.0
 

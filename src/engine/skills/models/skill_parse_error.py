@@ -1,4 +1,4 @@
-"""El ``SKILL.md`` no cumple el formato del protocolo."""
+"""The ``SKILL.md`` does not follow the protocol format."""
 
 from __future__ import annotations
 
@@ -6,4 +6,4 @@ from src.engine.skills.models.skill_error import SkillError
 
 
 class SkillParseError(SkillError):
-    """El ``SKILL.md`` no cumple el formato del protocolo."""
+    """The ``SKILL.md`` does not follow the protocol format."""

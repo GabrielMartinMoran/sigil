@@ -1,4 +1,4 @@
-"""Selección de servidores sobre los que opera una consulta."""
+"""Selection of the servers a query operates on."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ ServerMap = Mapping[str, MCPServer]
 
 
 def require(servers: ServerMap, name: str) -> MCPServer:
-    """Servidor por nombre, validando que exista y esté disponible."""
+    """Server by name, validating that it exists and is available."""
     server = servers.get(name)
     if server is None:
         available = ', '.join(sorted(servers)) or 'none'
@@ -23,7 +23,7 @@ def require(servers: ServerMap, name: str) -> MCPServer:
 
 
 def targets(servers: ServerMap, server: str | None) -> list[MCPServer]:
-    """Servidores alcanzados por una consulta: uno puntual o todos los activos."""
+    """Servers reached by a query: a single one or every active one."""
     if server is not None:
         return [require(servers, server)]
     return [item for item in servers.values() if item.toolset is not None]

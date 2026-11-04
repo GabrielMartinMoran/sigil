@@ -1,4 +1,4 @@
-"""Desglose completo del contexto de una sesión."""
+"""Full breakdown of the context of a session."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from src.engine.context.strategy.view_result import ViewResult
 
 @dataclass(frozen=True, slots=True)
 class ContextReport:
-    """Desglose completo para `/context`."""
+    """Full breakdown for `/context`."""
 
     snapshot: ContextSnapshot
     instructions: int

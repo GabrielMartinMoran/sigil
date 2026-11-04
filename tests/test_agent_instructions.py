@@ -1,15 +1,12 @@
-"""Tests del armado de instrucciones del agente: bloques y orden."""
+"""Tests for the agent instruction assembly: blocks and order."""
 
 from __future__ import annotations
 
 import asyncio
-import os
 import tempfile
 from pathlib import Path
 
-os.environ.setdefault('LLM_MODEL', 'test/model')
-os.environ.setdefault('OPENROUTER_API_KEY', 'test-key')
-
+from pydantic_ai.models.test import TestModel
 
 from src.engine.agents.agent import create_agent
 from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
@@ -27,6 +24,12 @@ def _write_skill(root: Path, name: str, body: str) -> None:
     )
 
 
+# The agent ships a real provider, and the environment may point it at a route
+# that is unavailable or answers with a shape this SDK version rejects. What is
+# under test here is the instruction assembly, so the model is stubbed.
+TEST_MODEL = TestModel()
+
+
 def _instruction_names(agent) -> list[str | None]:
     return [getattr(item, 'name', None) for item in agent._instructions]
 
@@ -34,7 +37,7 @@ def _instruction_names(agent) -> list[str | None]:
 def test_agent_registers_workspace_and_loaded_skill_blocks():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        (root / 'AGENTS.md').write_text('# Reglas del proyecto', encoding='utf-8')
+        (root / 'AGENTS.md').write_text('# Project rules', encoding='utf-8')
         _write_skill(root, 'demo', '# Demo body')
 
         registry = SkillRegistry([('project', root)])
@@ -61,13 +64,15 @@ def test_loaded_skill_body_reaches_the_instructions():
         loaded = LoadedSkills()
         agent = create_agent(registry, loaded_skills=loaded)
 
-        # Antes de cargar, el bloque no aporta nada.
-        result = asyncio.run(agent.run('hola'))
+        # Before loading, the block contributes nothing.
+        with agent.override(model=TEST_MODEL):
+            result = asyncio.run(agent.run('hello'))
         first = result.all_messages()[0]
         assert 'Demo body' not in (first.instructions or '')
 
         loaded.add('demo')
-        result = asyncio.run(agent.run('hola de nuevo'))
+        with agent.override(model=TEST_MODEL):
+            result = asyncio.run(agent.run('hello again'))
         first = result.all_messages()[0]
         assert 'Demo body' in (first.instructions or '')
         assert 'Follow these steps.' in (first.instructions or '')
@@ -76,16 +81,17 @@ def test_loaded_skill_body_reaches_the_instructions():
 def test_workspace_block_uses_append_policy():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        (root / 'AGENTS.md').write_text('# Reglas', encoding='utf-8')
+        (root / 'AGENTS.md').write_text('# Rules', encoding='utf-8')
         agent = create_agent(
             None,
             workspace=WorkspaceInstructions(root),
             scope=ScopeTracker(root),
         )
-        result = asyncio.run(agent.run('hola'))
+        with agent.override(model=TEST_MODEL):
+            result = asyncio.run(agent.run('hello'))
         parts = result.all_messages()[0].instructions
         assert isinstance(parts, str)
-        assert '# Reglas' in parts
+        assert '# Rules' in parts
 
 
 def test_agent_without_loaded_skills_has_no_block():
@@ -94,7 +100,7 @@ def test_agent_without_loaded_skills_has_no_block():
 
 
 def test_loaded_skills_block_is_rewritten_not_appended():
-    """Cargar un skill es raro y el cuerpo es grande: duplicarlo cuesta más."""
+    """Loading a skill is rare and the body is large: duplicating it costs more."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         _write_skill(root, 'demo', '# Demo body')
@@ -103,8 +109,9 @@ def test_loaded_skills_block_is_rewritten_not_appended():
         agent = create_agent(registry, loaded_skills=loaded)
 
         loaded.add('demo')
-        result = asyncio.run(agent.run('hola'))
+        with agent.override(model=TEST_MODEL):
+            result = asyncio.run(agent.run('hello'))
         request = result.all_messages()[0]
-        # `rewrite` deja el bloque en el prefijo de instrucciones, sin deltas.
+        # `rewrite` leaves the block in the instruction prefix, without deltas.
         assert 'Demo body' in (request.instructions or '')
         assert not any(type(part).__name__ == 'InstructionDeltaPart' for part in request.parts)

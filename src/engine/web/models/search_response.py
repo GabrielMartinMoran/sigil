@@ -1,4 +1,4 @@
-"""Resultado de una búsqueda web."""
+"""Result of a web search."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from src.engine.web.models.search_result import SearchResult
 
 
 class SearchResponse(BaseModel):
-    """Resultado de una búsqueda web."""
+    """Result of a web search."""
 
     query: str
     count: int

@@ -1,4 +1,4 @@
-"""Archivo empaquetado dentro de un skill, tal como lo ve el modelo."""
+"""File bundled inside a skill, as the model sees it."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class SkillResourceInfo(BaseModel):
-    """Archivo empaquetado dentro de un skill."""
+    """File bundled inside a skill."""
 
     path: str
     size: int

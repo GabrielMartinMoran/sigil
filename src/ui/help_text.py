@@ -1,4 +1,4 @@
-"""Texto de ayuda de los comandos de barra."""
+"""Help text for the slash commands."""
 
 from __future__ import annotations
 

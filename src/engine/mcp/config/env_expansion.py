@@ -1,4 +1,4 @@
-"""Expansión de ``${VAR}`` y ``${VAR:-default}`` en la configuración."""
+"""Expansion of ``${VAR}`` and ``${VAR:-default}`` in the config."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def _expand_str(text: str, environ: Mapping[str, str]) -> str:
 
 
 def expand_env_vars(value: Any, environ: Mapping[str, str] | None = None) -> Any:
-    """Expande ``${VAR}`` y ``${VAR:-default}`` en strings, listas y dicts."""
+    """Expands ``${VAR}`` and ``${VAR:-default}`` in strings, lists and dicts."""
     env = os.environ if environ is None else environ
     if isinstance(value, str):
         return _expand_str(value, env)

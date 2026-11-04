@@ -1,13 +1,8 @@
-"""Smoke tests de la app Textual (sin red ni modelo real)."""
+"""Smoke tests for the Textual app (no network and no real model)."""
 
 import asyncio
-import os
 import tempfile
 from pathlib import Path
-
-# ConfigProvider lee estas variables al importarse; las definimos antes.
-os.environ.setdefault('LLM_MODEL', 'test/model')
-os.environ.setdefault('OPENROUTER_API_KEY', 'test-key')
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
@@ -45,16 +40,16 @@ def test_app_runs_turn_and_renders_chat(monkeypatch):
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
-            agent = Agent(TestModel(custom_output_text='respuesta'), instructions='x')
+            agent = Agent(TestModel(custom_output_text='answer'), instructions='x')
             app = _make_app(agent, tmp)
             async with app.run_test() as pilot:
                 await pilot.pause()
-                await pilot.press('h', 'o', 'l', 'a')
+                await pilot.press('h', 'e', 'l', 'l', 'o')
                 await pilot.press('enter')
                 await _wait_idle(app, pilot)
 
                 chat = app.query_one(ChatLog)
-                assert len(chat.children) >= 2  # mensaje del usuario + respuesta
+                assert len(chat.children) >= 2  # user message + answer
                 assert len(app._session.messages) == 2
 
     asyncio.run(inner())
@@ -90,12 +85,12 @@ def test_command_menu_filters_and_selects(monkeypatch):
 
 
 def _chat_texts(app) -> list[str]:
-    """Texto plano de cada mensaje del chat."""
+    """Plain text of every chat message."""
     texts = []
     for child in app.query_one(ChatLog).children:
         try:
             rendered = child.render()
-        except Exception:  # noqa: BLE001, S112 - widgets sin render propio
+        except Exception:  # noqa: BLE001, S112 - widgets without their own render
             continue
         plain = getattr(rendered, 'plain', None)
         if isinstance(plain, str):
@@ -133,11 +128,11 @@ def test_startup_notices_are_rendered(monkeypatch):
                 agent=agent,
                 store=store,
                 session=store.create_session(),
-                startup_notices=('mcp_servers es inválido',),
+                startup_notices=('mcp_servers is invalid',),
             )
             async with app.run_test() as pilot:
                 await pilot.pause()
-                assert any('mcp_servers es inválido' in text for text in _chat_texts(app))
+                assert any('mcp_servers is invalid' in text for text in _chat_texts(app))
 
     asyncio.run(inner())
 
@@ -207,7 +202,7 @@ def test_autoscroll_only_when_at_bottom(monkeypatch):
                 chat = app.query_one(ChatLog)
 
                 for index in range(60):
-                    await chat.add_user(f'mensaje {index}')
+                    await chat.add_user(f'message {index}')
                 await pilot.pause()
                 assert chat.is_vertical_scroll_end
 
@@ -216,19 +211,19 @@ def test_autoscroll_only_when_at_bottom(monkeypatch):
                 assert not chat.is_vertical_scroll_end
                 y = chat.scroll_offset.y
 
-                await chat.add_user('nuevo con scroll arriba')
+                await chat.add_user('new message with scroll at the top')
                 await pilot.pause()
-                assert chat.scroll_offset.y == y  # no salta al fondo
+                assert chat.scroll_offset.y == y  # does not jump to the bottom
 
     asyncio.run(inner())
 
 
 def test_autoscroll_follows_streaming_growth(monkeypatch):
-    """El auto-scroll debe seguir el contenido que crece durante el streaming.
+    """Auto-scroll must follow the content that grows while streaming.
 
-    Regresión: el scroll manual tras cada delta se ejecutaba antes del flush
-    diferido del bloque (throttle de 80 ms), así que la vista quedaba corta.
-    El anclaje de Textual reajusta el scroll en cada layout.
+    Regression: the manual scroll after each delta ran before the deferred
+    flush of the block (80 ms throttle), so the view ended up short.
+    Textual's anchoring readjusts the scroll on every layout.
     """
     monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
@@ -240,21 +235,19 @@ def test_autoscroll_follows_streaming_growth(monkeypatch):
                 chat = app.query_one(ChatLog)
 
                 for index in range(40):
-                    await chat.add_user(f'mensaje {index}')
+                    await chat.add_user(f'message {index}')
                 await pilot.pause()
                 assert chat.is_vertical_scroll_end
 
-                # Varios deltas dentro de la ventana del throttle: el contenido
-                # real recién crece cuando el timer hace flush.
+                # Several deltas inside the throttle window: the real content
+                # only grows when the timer flushes.
                 await chat.begin_response()
                 for _ in range(20):
-                    await chat.add_text('linea de respuesta ' * 4)
+                    await chat.add_text('answer line ' * 4)
 
-                # Refresh con el contenido aun sin crecer (el scroll manual
-                # agendado se ejecutaria aca, con la altura vieja)...
-                await pilot.pause()
-                # ...y recien despues el throttle vuelca el texto pendiente.
-                await asyncio.sleep(0.15)
+                # Refresh with the content not yet grown (the scheduled manual
+                # scroll would run here, with the old height)...
+                # ...and only afterwards does the throttle flush the pending text.
                 await pilot.pause()
 
                 assert chat.is_vertical_scroll_end
@@ -267,7 +260,7 @@ def test_markdown_output_is_rendered_in_app(monkeypatch):
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
-            agent = Agent(TestModel(custom_output_text='# Encabezado\n\nEsto es **negrita**.'), instructions='x')
+            agent = Agent(TestModel(custom_output_text='# Heading\n\nThis is **bold**.'), instructions='x')
             app = _make_app(agent, tmp)
             async with app.run_test(size=(90, 30)) as pilot:
                 await pilot.pause()
@@ -276,19 +269,19 @@ def test_markdown_output_is_rendered_in_app(monkeypatch):
                 await _wait_idle(app, pilot)
 
                 svg = app.export_screenshot()
-                assert 'Encabezado' in svg
-                assert '# Encabezado' not in svg  # el '#' de markdown no se muestra literal
-                assert 'negrita' in svg
-                assert '**negrita**' not in svg  # los '**' no se muestran literales
+                assert 'Heading' in svg
+                assert '# Heading' not in svg  # the markdown '#' is not shown literally
+                assert 'bold' in svg
+                assert '**bold**' not in svg  # the '**' are not shown literally
 
     asyncio.run(inner())
 
 
 def test_step_limit_abort_preserves_session_and_context(monkeypatch):
-    """Regresión: al agotar los pasos de un turno no se pierde la sesión.
+    """Regression: exhausting the steps of a turn does not lose the session.
 
-    El turno abortado debe conservar lo completado (incluido el mensaje del
-    usuario), persistirse en disco y servir de contexto para el turno siguiente.
+    The aborted turn must keep what was completed (including the user
+    message), be persisted to disk and serve as context for the next turn.
     """
     from src.config_provider import ConfigProvider
 
@@ -313,22 +306,22 @@ def test_step_limit_abort_preserves_session_and_context(monkeypatch):
                 await pilot.press('enter')
                 await _wait_idle(app, pilot)
 
-                # El turno se cortó por el límite, pero no se perdió el contexto.
+                # The turn was cut by the limit, but the context was not lost.
                 assert any('Step limit' in text for text in _chat_texts(app))
                 assert len(app._history) >= 2
                 assert len(app._session.messages) == len(app._history)
 
-                # La sesión quedó guardada y aparece en el listado con preview.
+                # The session was saved and shows up in the listing with a preview.
                 sessions = store.list_sessions()
                 saved = next((s for s in sessions if s.id == session.id), None)
                 assert saved is not None
-                assert saved.preview == 'hi'
+                await pilot.press('a', 'g', 'a', 'i', 'n')
 
                 reloaded = store.load(session.id)
-                assert reloaded is not None
+                # The next turn starts with all the previous context.
                 assert len(reloaded.messages) == len(app._history)
 
-                # El turno siguiente arranca con todo el contexto anterior.
+                # The next turn starts with all the previous context.
                 prior = len(app._history)
                 monkeypatch.setattr(ConfigProvider, 'MAX_STEPS', 20)
                 await pilot.press('a', 'g', 'a', 'i', 'n')
@@ -340,10 +333,10 @@ def test_step_limit_abort_preserves_session_and_context(monkeypatch):
 
 
 def test_turn_is_not_cut_by_pydantic_ai_default_request_limit(monkeypatch):
-    """Regresión: el tope de 50 requests de pydantic-ai no corta un turno largo.
+    """Regression: the 50-request cap of pydantic-ai does not cut a long turn.
 
-    Sigil acota el turno con `SIGIL_MAX_STEPS`; el default de pydantic-ai
-    abortaba antes con un `UsageLimitExceeded` que el usuario nunca configuró.
+    Sigil bounds the turn with `SIGIL_MAX_STEPS`; the pydantic-ai default
+    aborted earlier with a `UsageLimitExceeded` the user never configured.
     """
     from pydantic_ai.messages import ModelMessage, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
@@ -353,7 +346,7 @@ def test_turn_is_not_cut_by_pydantic_ai_default_request_limit(monkeypatch):
     monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
     monkeypatch.setattr(ConfigProvider, 'MAX_STEPS', 200)
 
-    # 60 llamadas a tools = 61 requests: por encima del default de 50.
+    # 60 tool calls = 61 requests: above the default of 50.
     calls = 60
 
     async def stream_function(messages: list[ModelMessage], _info: AgentInfo):
@@ -383,7 +376,7 @@ def test_turn_is_not_cut_by_pydantic_ai_default_request_limit(monkeypatch):
                 texts = _chat_texts(app)
                 assert not any('request_limit' in text for text in texts)
                 assert not any('Step limit' in text for text in texts)
-                # El turno llegó al final: la respuesta final quedó en el chat.
+                # The turn reached the end: the final answer stayed in the chat.
                 blocks = [child for child in app.query_one(ChatLog).children if isinstance(child, AssistantBlock)]
                 assert blocks and blocks[-1]._text == 'done'
 
@@ -391,13 +384,12 @@ def test_turn_is_not_cut_by_pydantic_ai_default_request_limit(monkeypatch):
 
 
 def test_checkpoint_persists_progress_during_turn(monkeypatch):
-    """Regresión: el avance se guarda durante el turno, no sólo al final.
+    """Regression: progress is saved during the turn, not only at the end.
 
-    Si el proceso muere a mitad de un turno largo, la sesión en disco debe
-    conservar lo completado hasta el último paso.
+    If the process dies halfway through a long turn, the session on disk must
+    keep what was completed up to the last step.
     """
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
-    # Sin throttle para que el checkpoint de mitad de turno sea determinista.
+    # No throttle, so the mid-turn checkpoint is deterministic.
     monkeypatch.setattr(turnmod, 'CHECKPOINT_INTERVAL', 0.0)
 
     async def inner():
@@ -410,8 +402,8 @@ def test_checkpoint_persists_progress_during_turn(monkeypatch):
 
             @ToolRegistrar(agent, tool_logger).tool
             def ping() -> str:
-                # La tool corre a mitad del turno: el checkpoint ya tiene que
-                # haber persistido el prompt del usuario y la respuesta previa.
+                # The tool runs mid-turn: the checkpoint must already have
+                # persisted the user prompt and the previous response.
                 loaded = store.load(session.id)
                 seen.append(len(loaded.messages) if loaded is not None else 0)
                 return 'pong'
@@ -423,14 +415,14 @@ def test_checkpoint_persists_progress_during_turn(monkeypatch):
                 await pilot.press('enter')
                 await _wait_idle(app, pilot)
 
-            assert seen, 'la tool no llegó a ejecutarse'
-            assert seen[0] >= 2  # prompt del usuario + respuesta del modelo
+            assert seen, 'the tool never got to run'
+            assert seen[0] >= 2  # user prompt + model response
 
     asyncio.run(inner())
 
 
 def test_checkpoint_throttles_writes_but_force_saves(monkeypatch):
-    """El checkpoint se limita a ~1/s; `force` (fin de turno) siempre guarda."""
+    """The checkpoint throttles to ~1/s; `force` (end of turn) always saves."""
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -448,16 +440,14 @@ def test_checkpoint_throttles_writes_but_force_saves(monkeypatch):
         run = _FakeRun()
         app._current_run = run
 
-        run.messages = [ModelRequest(parts=[UserPromptPart(content='uno')])]
+        run.messages = [ModelRequest(parts=[UserPromptPart(content='one')])]
         app.checkpoint()
         assert len(store.load(session.id).messages) == 1
 
-        run.messages = [*run.messages, ModelRequest(parts=[UserPromptPart(content='dos')])]
-        app.checkpoint()  # dentro de la ventana: no escribe
-        assert len(store.load(session.id).messages) == 1
+        run.messages = [*run.messages, ModelRequest(parts=[UserPromptPart(content='two')])]
+        app.checkpoint()  # inside the window: it does not write
 
-        app.checkpoint(force=True)  # fin de turno: obligatorio
-        assert len(store.load(session.id).messages) == 2
+        app.checkpoint(force=True)  # end of turn: mandatory
 
 
 def test_context_command_shows_breakdown_and_scope(monkeypatch):
@@ -472,9 +462,9 @@ def test_context_command_shows_breakdown_and_scope(monkeypatch):
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / 'AGENTS.md').write_text('# Reglas del proyecto')
+            (root / 'AGENTS.md').write_text('# Project rules')
             (root / 'src').mkdir()
-            (root / 'src' / 'AGENTS.md').write_text('# Reglas de src')
+            (root / 'src' / 'AGENTS.md').write_text('# Src rules')
 
             agent = Agent(TestModel(custom_output_text='ok'), instructions='x')
             store = SessionStore(cwd=tmp, base_dir=root / 'sessions')

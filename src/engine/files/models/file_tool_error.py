@@ -1,7 +1,7 @@
-"""Error de las tools de archivos."""
+"""File tool error."""
 
 from __future__ import annotations
 
 
 class FileToolError(Exception):
-    """Error de archivo con un mensaje accionable."""
+    """File error with an actionable message."""

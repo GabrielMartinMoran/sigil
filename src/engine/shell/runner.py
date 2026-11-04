@@ -1,8 +1,8 @@
-"""Ejecución de comandos de shell: política de timeouts, guardas y resultados.
+"""Shell command execution: timeout policy, guards and results.
 
-La API pública es ``execute_command`` (uno) y ``execute_commands`` (varios en
-paralelo). Ninguna lanza: un comando que falla, expira o no existe vuelve como
-resultado con su código de salida, porque el modelo necesita leer el fallo.
+The public API is ``execute_command`` (one) and ``execute_commands`` (several in
+parallel). Neither raises: a command that fails, expires or does not exist comes back as
+a result with its exit code, because the model needs to read the failure.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from src.engine.shell.models.run_tool_output import RunToolOutput
 from src.engine.shell.process import DrainResult, drain, kill_process_group, spawn
 
 TIMEOUT_RETURNCODE = 124
-"""Código de salida convencional de ``timeout(1)``, para un comando que expiró."""
+"""Conventional exit code of ``timeout(1)``, for a command that expired."""
 
 _REFUSED_RETURNCODE = 126
 _NOT_FOUND_RETURNCODE = 127
@@ -30,7 +30,7 @@ def _clamp_timeout(timeout_seconds: int) -> int:
 
 
 def _resolve_cwd(cwd: str | os.PathLike[str] | None) -> tuple[str | None, RunToolOutput | None]:
-    """Valida el ``cwd`` pedido. Devuelve ``(cwd, error)``."""
+    """Validates the requested ``cwd``. Returns ``(cwd, error)``."""
     if cwd is None:
         return None, None
     cwd_path = os.fspath(cwd)
@@ -49,7 +49,7 @@ def _refusal() -> RunToolOutput:
 
 
 def _from_drain(result: DrainResult) -> RunToolOutput:
-    """Traduce el resultado del drenaje a la salida pública."""
+    """Translates the drain result into the public output."""
     return RunToolOutput(
         returncode=TIMEOUT_RETURNCODE if result.timed_out else (result.returncode or 0),
         stdout=result.stdout.decode('utf-8', errors='replace'),
@@ -68,17 +68,17 @@ def execute_command(
     extra_env: dict[str, str] | None = None,
     check_self_invocation: bool = True,
 ) -> RunToolOutput:
-    """Ejecuta un comando de Bash no interactivo y devuelve su salida.
+    """Runs a non-interactive Bash command and returns its output.
 
     Args:
-        cmd: Comando a ejecutar.
-        timeout_seconds: Timeout en segundos (se recorta a 1-120).
-        cwd: Directorio de trabajo del proceso hijo.
-        extra_env: Variables de entorno adicionales para el proceso hijo.
-        check_self_invocation: Si es ``False``, no se rechaza el comando por
-            parecer una invocación anidada de Sigil. Los scripts de skills lo
-            usan para permitir nombres como ``main.py``; el guard de entorno
-            (``SELF_GUARD_ENV``) sigue activo en el proceso hijo.
+        cmd: Command to run.
+        timeout_seconds: Timeout in seconds (clamped to 1-120).
+        cwd: Working directory of the child process.
+        extra_env: Extra environment variables for the child process.
+        check_self_invocation: If ``False``, the command is not rejected for
+            looking like a nested Sigil invocation. Skill scripts use it
+            to allow names like ``main.py``; the environment guard
+            (``SELF_GUARD_ENV``) stays active in the child process.
     """
     if not cmd.strip():
         return RunToolOutput(returncode=_USAGE_RETURNCODE, stderr='Empty command.')
@@ -99,7 +99,7 @@ def execute_command(
 
     try:
         return _from_drain(drain(process, deadline))
-    except Exception as exc:  # noqa: BLE001 - un fallo de drenaje no debe tumbar el turno
+    except Exception as exc:  # noqa: BLE001 - a drain failure must not bring the turn down
         kill_process_group(process)
         try:
             process.wait(timeout=2)
@@ -112,17 +112,17 @@ async def execute_commands(
     cmds: list[str],
     timeout_seconds: int = DEFAULT_TIMEOUT,
 ) -> list[RunToolOutput]:
-    """Ejecuta varios comandos en Bash en paralelo y devuelve sus resultados.
+    """Runs several Bash commands in parallel and returns their results.
 
-    Cada comando corre de forma independiente en su propio proceso.
-    ``execute_command`` es bloqueante (usa ``selectors`` para leer la salida), así
-    que se despacha a un hilo para no bloquear el event loop y permitir que todos
-    avancen a la vez.
+    Each command runs independently in its own process.
+    ``execute_command`` is blocking (it uses ``selectors`` to read the output), so
+    it is dispatched to a thread so as not to block the event loop and allow every
+    one to advance at the same time.
 
-    Se espera a que todos terminen (cada uno con su propio timeout) y se devuelven
-    los resultados en el mismo orden que ``cmds``. Un fallo o una excepción en un
-    comando no impide que los demás se ejecuten: siempre hay un resultado por
-    comando.
+    It waits for all of them to finish (each with its own timeout) and returns
+    the results in the same order as ``cmds``. A failure or an exception in one
+    command does not prevent the others from running: there is always one result per
+    command.
     """
     if not cmds:
         return []

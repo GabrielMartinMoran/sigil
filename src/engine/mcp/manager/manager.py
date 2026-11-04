@@ -1,8 +1,8 @@
-"""Orquestación de los servidores MCP configurados.
+"""Orchestration of the configured MCP servers.
 
-El manager reúne el ciclo de vida de los servidores (construcción, estado y
-diagnóstico) y delega en ``resources`` y ``prompts``, que no son tools pero se
-exponen al modelo como meta-tools (ver ``src.engine.mcp.tools``).
+The manager gathers the lifecycle of the servers (construction, state and
+diagnostics) and delegates to ``resources`` and ``prompts``, which are not tools but
+are exposed to the model as meta-tools (see ``src.engine.mcp.tools``).
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from src.engine.tooling.logging import ToolLogger
 
 
 class MCPManager:
-    """Arma los toolsets de MCP y resuelve resources y prompts."""
+    """Builds the MCP toolsets and resolves resources and prompts."""
 
     def __init__(
         self,
@@ -43,7 +43,7 @@ class MCPManager:
         for name, spec in (servers or {}).items():
             self._servers[name] = self._build(spec)
 
-    # --- construcción -----------------------------------------------------
+    # --- construction ------------------------------------------------------
 
     def _build(self, spec: MCPServerSpec) -> MCPServer:
         if not spec.config.enabled:
@@ -51,7 +51,7 @@ class MCPManager:
 
         try:
             toolset = create_toolset(spec, self.tool_logger)
-        except Exception as exc:  # noqa: BLE001 - una entrada rota no invalida el resto
+        except Exception as exc:  # noqa: BLE001 - a broken entry does not invalidate the rest
             message = f'{type(exc).__name__}: {exc}'
             self.errors.append(f'{spec.name}: {message}')
             return MCPServer(spec=spec, error=message)
@@ -67,7 +67,7 @@ class MCPManager:
         if self.on_error is not None:
             self.on_error(server, message)
 
-    # --- consultas --------------------------------------------------------
+    # --- queries -----------------------------------------------------------
 
     @property
     def servers(self) -> dict[str, MCPServer]:
@@ -75,7 +75,7 @@ class MCPManager:
 
     @property
     def toolsets(self) -> list[AbstractToolset]:
-        """Toolsets listos para pasarle al agente."""
+        """Toolsets ready to hand to the agent."""
         return [server.agent_toolset for server in self._servers.values() if server.agent_toolset is not None]
 
     def __len__(self) -> int:
@@ -88,11 +88,11 @@ class MCPManager:
         return self._servers.get(name)
 
     def counts(self) -> tuple[int, int]:
-        """``(andando, con error)`` entre los servidores habilitados.
+        """``(ok, failed)`` among the enabled servers.
 
-        "Andando" es optimista: un servidor cuenta como sano si su toolset se
-        construyó y no falló todavía. ``describe(connect=True)`` es lo que
-        confirma que responde de verdad.
+        "Ok" is optimistic: a server counts as healthy if its toolset was
+        built and has not failed yet. ``describe(connect=True)`` is what
+        confirms it actually responds.
         """
         ok = failed = 0
         for server in self._servers.values():
@@ -105,10 +105,10 @@ class MCPManager:
         return ok, failed
 
     async def describe(self, *, connect: bool = False) -> list[ServerStatus]:
-        """Estado de cada servidor; con ``connect`` consulta las tools reales."""
+        """State of each server; with ``connect`` it queries the real tools."""
         for server in self._servers.values():
-            # Con `connect` se reintenta siempre: `/mcp` es un comando de
-            # diagnóstico, y un servidor que ya arrancó puede volver a responder.
+            # With `connect` it always retries: `/mcp` is a diagnostic
+            # command, and a server that already started may respond again.
             if connect and server.toolset is not None:
                 await self._probe(server)
         return [server.status() for server in self._servers.values()]
@@ -127,7 +127,7 @@ class MCPManager:
             display_name(server.spec.tool_prefix, tool.name) for tool in tools if includes(server.spec, tool.name)
         )
 
-    # --- resources y prompts ---------------------------------------------
+    # --- resources and prompts ---------------------------------------------
 
     async def list_resources(self, server: str | None = None) -> list[ResourceInfo]:
         return await list_resources(self._servers, server)

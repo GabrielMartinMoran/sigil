@@ -1,4 +1,4 @@
-"""Prompt expuesto por un servidor MCP."""
+"""Prompt exposed by an MCP server."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from src.engine.mcp.tool_models.prompt_argument_info import PromptArgumentInfo
 
 
 class PromptInfo(BaseModel):
-    """Prompt expuesto por un servidor MCP."""
+    """Prompt exposed by an MCP server."""
 
     server: str
     name: str

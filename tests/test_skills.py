@@ -167,7 +167,7 @@ def test_registry_unknown_skill_raises(tmp_path):
         registry.load('missing')
 
 
-# --- Carga y recursos ---------------------------------------------------------
+# --- Loading and resources ----------------------------------------------------
 
 
 def test_load_returns_body_and_resources(tmp_path):
@@ -243,7 +243,7 @@ def test_tools_are_registered_and_list_filters(tmp_path):
 
 
 def test_load_skill_tool_returns_ack_and_registers(tmp_path):
-    """El cuerpo no viaja en el resultado: se inyecta como bloque de instrucciones."""
+    """The body does not travel in the result: it is injected as an instruction block."""
     from src.engine.skills.loaded import LoadedSkills
 
     write_skill(tmp_path, 'demo', body='# Demo body', files={'references/a.md': 'A'})
@@ -259,7 +259,7 @@ def test_load_skill_tool_returns_ack_and_registers(tmp_path):
     assert [resource.path for resource in loaded.resources] == ['references/a.md']
     assert loaded_skills.names() == ('demo',)
 
-    # El cuerpo aparece en el bloque de instrucciones, no en el tool result.
+    # The body appears in the instruction block, not in the tool result.
     block = rendering.render_loaded_skills(registry, loaded_skills.names())
     assert '# Demo body' in block
     assert 'references/a.md' not in block
@@ -312,7 +312,7 @@ def test_render_available_skills_empty(tmp_path):
     assert rendering.render_available_skills(SkillRegistry([('project', tmp_path)])) == ''
 
 
-# --- Ejecución de scripts -----------------------------------------------------
+# --- Script execution ---------------------------------------------------------
 
 
 def test_run_python_script_uses_skill_cwd(tmp_path):
@@ -374,7 +374,7 @@ def test_run_script_missing_raises(tmp_path):
         asyncio.run(agent.registered['run_skill_script']('demo', 'scripts/nope.py'))
 
 
-# --- Raíces por defecto -------------------------------------------------------
+# --- Default roots ------------------------------------------------------------
 
 
 def test_default_roots_env_override(monkeypatch, tmp_path):

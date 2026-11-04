@@ -1,4 +1,4 @@
-"""Resultado de ejecutar un script empaquetado en un skill."""
+"""Result of running a script bundled in a skill."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 
 class ScriptRunResult(BaseModel):
-    """Resultado de ejecutar un script empaquetado."""
+    """Result of running a bundled script."""
 
     skill: str
     script: str

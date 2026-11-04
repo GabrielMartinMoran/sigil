@@ -1,4 +1,4 @@
-"""Hook que emite eventos de tool para un servidor MCP."""
+"""Hook that emits tool events for an MCP server."""
 
 from __future__ import annotations
 
@@ -13,10 +13,10 @@ from src.engine.tooling.logging import ToolLogger, emit_tool_event
 
 
 def tool_hook(spec: MCPServerSpec, logger: ToolLogger | None) -> Callable[..., Any]:
-    """Loguea las llamadas a tools MCP en el hub de la UI.
+    """Logs MCP tool calls into the UI hub.
 
-    Las tools que vienen de un toolset no pasan por ``ToolRegistrar``, así que
-    este hook es el único punto donde se pueden emitir eventos.
+    Tools coming from a toolset do not go through ``ToolRegistrar``, so
+    this hook is the only place where events can be emitted.
     """
 
     async def process(_ctx: Any, call_tool: Any, name: str, args: dict[str, Any]) -> Any:

@@ -1,4 +1,4 @@
-"""Vista de debug del agente: `alt+d` reemplaza el chat por lo que ve el agente."""
+"""Agent debug view: `alt+d` replaces the chat with what the agent sees."""
 
 from __future__ import annotations
 
@@ -16,20 +16,20 @@ from src.ui.widgets.debug_view import AgentDebugView
 from src.ui.widgets.prompt_input import PromptInput
 
 _EMPTY_REQUEST = RequestSnapshot()
-"""Snapshot cuando todavía no corrió ningún request en la sesión."""
+"""Snapshot when no request has run in the session yet."""
 
 _REFRESH_DELAY = 0.15
-"""Segundos de coalescencia. Durante un turno los eventos del stream llegan en
-ráfaga y re-proyectar el historial en cada uno es trabajo tirado: el cuerpo se
-repinta una vez por ventana y no se pierde ningún estado, porque todo se deriva
-del historial."""
+"""Coalescing seconds. During a turn the stream events arrive in
+bursts and re-projecting the history on each one is wasted work: the body is
+repainted once per window and no state is lost, because everything is derived
+from the history."""
 
 
 class DebugMixin:
-    """Alterna entre el chat y la vista de debug del agente.
+    """Toggles between the chat and the agent debug view.
 
-    Espera que la app defina ``_history``, ``_meter``, ``_context_capability``
-    y ``debug_visible``.
+    It expects the app to define ``_history``, ``_meter``, ``_context_capability``
+    and ``debug_visible``.
     """
 
     _history: list[ModelMessage]
@@ -42,11 +42,11 @@ class DebugMixin:
     # --- toggle ----------------------------------------------------------
 
     def toggle_debug(self) -> None:
-        """Muestra u oculta la vista de debug, reemplazando el chat."""
+        """Shows or hides the debug view, replacing the chat."""
         self.set_debug_visible(not self.debug_visible)
 
     def set_debug_visible(self, visible: bool) -> None:
-        """Fija el estado de la vista de debug y redibuja."""
+        """Sets the debug view state and redraws."""
         self.debug_visible = visible
         try:
             view = self.query_one(AgentDebugView)
@@ -55,10 +55,10 @@ class DebugMixin:
         except NoMatches:
             return
         view.display = visible
-        # Reemplaza, no convive: el espacio es el mismo y la vista es la misma
-        # conversación contada desde el otro lado. El input sigue activo y con
-        # el foco, a propósito: la vista se refresca con cada paso del turno, así
-        # se puede mandar un prompt y ver en vivo qué contexto y qué caché cuesta.
+        # It replaces, it does not coexist: the space is the same and the view is the same
+        # conversation told from the other side. The input stays active and
+        # focused, on purpose: the view refreshes on every step of the turn, so
+        # you can send a prompt and watch live what context and cache it costs.
         chat.display = not visible
         if visible:
             self.refresh_debug(immediate=True)
@@ -69,7 +69,7 @@ class DebugMixin:
     # --- reporte ---------------------------------------------------------
 
     def debug_report(self, messages: Sequence[ModelMessage] | None = None) -> DebugReport:
-        """Arma el reporte de debug con el log actual y la proyección del próximo request."""
+        """Builds the debug report with the current log and the next request projection."""
         history = list(self._history if messages is None else messages)
         capability = self._context_capability
         request: RequestSnapshot | None = None
@@ -77,10 +77,10 @@ class DebugMixin:
         if capability is not None:
             request = capability.last_request
             try:
-                # La vista del próximo request, no la del anterior: lo que el
-                # agente va a recibir con el historial de ahora.
+                # The next request's view, not the previous one's: what the
+                # agent is going to receive with the current history.
                 view_result = capability.project(history)
-            except Exception:  # noqa: BLE001 - el diagnóstico nunca rompe la UI
+            except Exception:  # noqa: BLE001 - diagnostics never break the UI
                 view_result = capability.last_view
         return build_debug_report(
             history,
@@ -92,10 +92,10 @@ class DebugMixin:
         )
 
     def refresh_debug(self, messages: Sequence[ModelMessage] | None = None, *, immediate: bool = False) -> None:
-        """Pide un repintado de la vista de debug. No hace nada si está cerrada.
+        """Requests a repaint of the debug view. It does nothing if it is closed.
 
-        Sin ``immediate`` el repintado se coalesce: se agenda uno solo por
-        ventana y el último historial gana.
+        Without ``immediate`` the repaint is coalesced: a single one is scheduled per
+        window and the latest history wins.
         """
         if not self.debug_visible:
             return
@@ -106,14 +106,14 @@ class DebugMixin:
             self._debug_timer = self.set_timer(_REFRESH_DELAY, self._flush_debug)
 
     def _cancel_debug_refresh(self) -> None:
-        """Descarta un repintado agendado: la vista ya no se ve."""
+        """Discards a scheduled repaint: the view is no longer shown."""
         if self._debug_timer is not None:
             self._debug_timer.stop()
             self._debug_timer = None
         self._debug_pending = None
 
     def _flush_debug(self) -> None:
-        """Pinta el reporte pendiente. Es el callback del timer de coalescencia."""
+        """Paints the pending report. It is the coalescing timer callback."""
         self._debug_timer = None
         pending = self._debug_pending
         self._debug_pending = None
@@ -125,14 +125,14 @@ class DebugMixin:
             return
         try:
             report = self.debug_report(pending)
-        except Exception:  # noqa: BLE001 - ni el diagnóstico tumba la app
+        except Exception:  # noqa: BLE001 - not even diagnostics bring the app down
             return
         view.update_report(report)
 
-    # --- comandos --------------------------------------------------------
+    # --- commands ---------------------------------------------------------
 
     async def show_debug_text(self) -> str:
-        """Texto plano del reporte, para `/debug --text` y para copiar."""
+        """Plain-text report, for `/debug --text` and for copying."""
         from src.engine.context.meter.debug_render import render_debug_report
 
         return render_debug_report(self.debug_report())

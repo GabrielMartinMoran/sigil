@@ -1,11 +1,11 @@
-"""Capability que aplica la estrategia de contexto a cada request.
+"""Capability that applies the context strategy to each request.
 
-Es deliberadamente **no destructiva**: toca sólo `request_context.messages`, que
-es una lista propia del request, y deja `ctx.messages` intacto. Así
-`run.all_messages()` sigue devolviendo el log completo y la sesión no pierde nada.
+It is deliberately **non-destructive**: it only touches `request_context.messages`, which
+is a list owned by the request, and leaves `ctx.messages` untouched. That way
+`run.all_messages()` keeps returning the full log and the session loses nothing.
 
-`ProcessHistory` de pydantic-ai no sirve para esto: hace `ctx.messages[:] = ...`
-y reescribe el historial persistente.
+pydantic-ai's `ProcessHistory` is no good for this: it does `ctx.messages[:] = ...`
+and rewrites the persistent history.
 """
 
 from __future__ import annotations
@@ -33,19 +33,19 @@ if TYPE_CHECKING:
 
 @dataclass
 class ContextViewCapability(AbstractCapability[Any]):
-    """Proyecta el historial a la vista del modelo antes de cada request."""
+    """Projects the history onto the model view before each request."""
 
     _: KW_ONLY
 
     strategy: ContextStrategy
     meter: ContextMeter
-    """Se actualiza con el costo real de instrucciones y tools de cada request."""
+    """Updated with the real cost of instructions and tools of each request."""
 
     on_view: Callable[[ViewResult], None] | None = None
-    """Callback de diagnóstico. No debe romper el request si falla."""
+    """Diagnostics callback. It must not break the request if it fails."""
 
     id: str | None = 'context_view'
-    """Una sola vista por agente: dos estrategias distintas no tienen sentido."""
+    """A single view per agent: two different strategies make no sense."""
 
     _last: ViewResult | None = field(default=None, init=False, repr=False)
     _snapshot: RequestSnapshot | None = field(default=None, init=False, repr=False)
@@ -56,14 +56,14 @@ class ContextViewCapability(AbstractCapability[Any]):
 
     @property
     def last_request(self) -> RequestSnapshot | None:
-        """Instrucciones y tools del último request, para el diagnóstico."""
+        """Instructions and tools of the last request, for diagnostics."""
         return self._snapshot
 
     def project(self, messages: Sequence[ModelMessage]) -> ViewResult:
-        """Proyecta un historial con la estrategia, sin tocar el estado del run.
+        """Projects a history with the strategy, without touching the run state.
 
-        Es lo que usa la vista de debug: quiere saber qué mandaría el agente
-        *ahora*, no qué mandó en el request anterior.
+        This is what the debug view uses: it wants to know what the agent would send
+        *now*, not what it sent on the previous request.
         """
         return self.strategy.view(messages, self.meter.budget())
 
@@ -72,20 +72,20 @@ class ContextViewCapability(AbstractCapability[Any]):
         ctx: RunContext[Any],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        # `ModelRequestParameters` es la fuente de verdad de lo que se manda:
-        # los instruction_parts ya resueltos y los schemas que el provider serializa.
+        # `ModelRequestParameters` is the source of truth of what gets sent:
+        # the already-resolved instruction_parts and the schemas the provider serializes.
         parameters = request_context.model_request_parameters
         instructions, tools = measure_request_parameters(parameters)
         self.meter.set_overhead(instructions=instructions, tools=tools)
         self._snapshot = snapshot_request(parameters)
 
         result = self.strategy.view(request_context.messages, self.meter.budget())
-        # Asignar la secuencia es request-only; mutar un mensaje en su lugar
-        # afectaría el historial persistente.
+        # Assigning the sequence is request-only; mutating a message in place
+        # would affect the persistent history.
         request_context.messages = result.messages
         self._last = result
         if self.on_view is not None:
-            # El diagnóstico nunca rompe el turno.
+            # Diagnostics never break the turn.
             with contextlib.suppress(Exception):
                 self.on_view(result)
         return request_context

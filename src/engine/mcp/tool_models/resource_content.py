@@ -1,4 +1,4 @@
-"""Contenido de un recurso MCP."""
+"""Content of an MCP resource."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class ResourceContent(BaseModel):
-    """Contenido de un recurso MCP."""
+    """Content of an MCP resource."""
 
     server: str
     uri: str

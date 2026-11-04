@@ -1,4 +1,4 @@
-"""Menú de comandos que aparece al escribir `/` en el input."""
+"""Command menu that appears when typing `/` in the input."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ from src.ui.widgets.prompt_input import PromptInput
 
 
 class MenuMixin:
-    """Muestra y navega el menú de comandos.
+    """Shows and navigates the command menu.
 
-    Espera que la app defina ``menu_visible`` y ``handle_command``.
+    It expects the app to define ``menu_visible`` and ``handle_command``.
     """
 
     menu_visible: bool
@@ -51,5 +51,5 @@ class MenuMixin:
             return
         self.menu_hide()
         self.query_one(PromptInput).value = ''
-        # En un worker para poder usar `push_screen_wait` (p. ej. /load).
+        # In a worker to be able to use `push_screen_wait` (e.g. /load).
         self.run_worker(self.handle_command(option.id))

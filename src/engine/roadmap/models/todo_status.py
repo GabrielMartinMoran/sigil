@@ -1,4 +1,4 @@
-"""Estados posibles de una tarea del roadmap."""
+"""Possible states of a roadmap task."""
 
 from __future__ import annotations
 

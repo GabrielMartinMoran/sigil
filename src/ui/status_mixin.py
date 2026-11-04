@@ -1,4 +1,4 @@
-"""Barra de estado: modelo, esfuerzo y porcentaje de contexto proyectado."""
+"""Status bar: model, effort and projected context percentage."""
 
 from __future__ import annotations
 
@@ -14,16 +14,16 @@ from src.ui.widgets.status_bar import StatusBar
 
 
 class StatusMixin:
-    """Pinta la barra de estado a partir del historial.
+    """Paints the status bar from the history.
 
-    Espera que la app defina ``_meter`` y ``_history``.
+    It expects the app to define ``_meter`` and ``_history``.
     """
 
     _meter: object
     _history: list[ModelMessage]
 
     def effort_in_effect(self) -> str:
-        """Esfuerzo realmente en vigor: el último aplicado en el historial o el configurado."""
+        """Effort actually in effect: the last one applied in the history, or the configured one."""
         for message in reversed(self._history):
             for part in reversed(getattr(message, 'parts', [])):
                 if isinstance(part, ModelSettingsDeltaPart):
@@ -34,18 +34,18 @@ class StatusMixin:
         return configured if configured in EFFORTS else 'default'
 
     def update_status(self, messages: Sequence[ModelMessage] | None = None) -> None:
-        """La barra muestra el **proyectado**: lo que va a pesar el próximo request.
+        """The bar shows the **projected** number: what the next request will weigh.
 
-        El medido describe el request anterior; el proyectado suma lo agregado
-        desde la última respuesta (tool results, prompt nuevo). Durante un turno
-        se le pasa el historial del run, que va por delante de `self._history`.
+        The measured one describes the previous request; the projected one adds what was added
+        since the last response (tool results, new prompt). During a turn
+        it is given the run history, which runs ahead of `self._history`.
         """
         snapshot = self._meter.snapshot(self._history if messages is None else messages)
         try:
             bar = self.query_one(StatusBar)
         except NoMatches, ScreenStackError:
-            # La app puede no estar montada (tests, arranque). El cálculo no
-            # depende de la UI, así que se descarta sólo el pintado.
+            # The app may not be mounted (tests, startup). The calculation does not
+            # depend on the UI, so only the painting is skipped.
             return
         bar.update_info(
             provider='openrouter',

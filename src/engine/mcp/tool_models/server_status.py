@@ -1,4 +1,4 @@
-"""Estado de un servidor MCP configurado."""
+"""State of a configured MCP server."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class ServerStatus(BaseModel):
-    """Estado de un servidor MCP configurado."""
+    """State of a configured MCP server."""
 
     name: str
     transport: str = Field(description='stdio or http.')

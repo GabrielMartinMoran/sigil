@@ -1,11 +1,11 @@
-"""Tests de la lógica pura de la UI (comandos y metadatos del modelo)."""
+"""Tests for the pure UI logic (commands and model metadata)."""
 
 from src.engine.agents.model_info import context_usage_percent, parse_model_info
 from src.engine.commands import match_commands
 
 
 def test_match_commands_requires_slash():
-    assert match_commands('hola') == []
+    assert match_commands('hello') == []
 
 
 def test_match_commands_filters_by_prefix():
@@ -18,7 +18,7 @@ def test_match_commands_filters_by_prefix():
 
 
 def test_match_commands_ignores_argument():
-    assert [c.name for c in match_commands('/load algo')] == ['/load']
+    assert [c.name for c in match_commands('/load something')] == ['/load']
 
 
 def test_parse_model_info_matches_id_and_slug():
@@ -57,7 +57,7 @@ def test_assistant_renderable_uses_markdown_for_text():
 
     from src.ui.widgets.chat_log import build_assistant_renderable
 
-    assert isinstance(build_assistant_renderable('pensando', ''), Text)
-    assert isinstance(build_assistant_renderable('', '# Hola'), Markdown)
-    assert isinstance(build_assistant_renderable('pensando', 'texto'), Group)
+    assert isinstance(build_assistant_renderable('thinking', ''), Text)
+    assert isinstance(build_assistant_renderable('', '# Hello'), Markdown)
+    assert isinstance(build_assistant_renderable('thinking', 'text'), Group)
     assert isinstance(build_assistant_renderable('', ''), Text)

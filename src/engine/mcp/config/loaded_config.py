@@ -1,4 +1,4 @@
-"""Resultado de leer la configuración de Sigil."""
+"""Result of reading the Sigil config."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from src.engine.mcp.config_models.server_spec import MCPServerSpec
 
 @dataclass(frozen=True, slots=True)
 class LoadedConfig:
-    """Resultado de leer la configuración: servidores válidos y errores."""
+    """Result of reading the config: valid servers and errors."""
 
     servers: dict[str, MCPServerSpec]
     errors: tuple[str, ...] = ()

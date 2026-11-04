@@ -1,9 +1,9 @@
-"""Wrapper que loguea y aplica guardas de concurrencia a una tool.
+"""Wrapper that logs and applies concurrency guards to a tool.
 
-Envolver la función —en vez de pedirle a cada tool que loguee a mano— mantiene
-las tools enfocadas en su dominio. El wrapper conserva la naturaleza sync/async
-de la función original para no cambiar cómo la ejecuta pydantic-ai ni romper
-llamadas directas desde otros módulos.
+Wrapping the function (instead of asking every tool to log by hand) keeps
+the tools focused on their domain. The wrapper preserves the sync/async nature
+of the original function so as not to change how pydantic-ai runs it nor break
+direct calls from other modules.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ def _bind_args(
     *,
     drop_first: bool,
 ) -> dict[str, Any]:
-    """Argumentos efectivos de la llamada, con los defaults aplicados."""
+    """Effective args of the call, with the defaults applied."""
     try:
         bound = inspect.signature(func).bind(*args, **kwargs)
         bound.apply_defaults()
@@ -47,22 +47,22 @@ def _bind_args(
 
 
 def _prepare_wrapper(wrapper: Callable[..., Any], func: Callable[..., Any], *, prepend_ctx: bool = False) -> None:
-    """Preserva nombre/docstring/firma y resuelve anotaciones string.
+    """Preserves name/docstring/signature and resolves string annotations.
 
-    ``functools.wraps`` copia ``__annotations__``, pero si el módulo original usa
-    ``from __future__ import annotations`` quedan como strings y pydantic-ai las
-    resolvería contra los globals del wrapper. Las evaluamos acá y dejamos tipos
-    reales en ``__annotations__`` y ``__signature__``.
+    ``functools.wraps`` copies ``__annotations__``, but if the original module uses
+    ``from __future__ import annotations`` they stay as strings and pydantic-ai would
+    resolve them against the wrapper's globals. We evaluate them here and leave real
+    types in ``__annotations__`` and ``__signature__``.
 
-    Con ``prepend_ctx`` la firma expuesta arranca con un ``RunContext``: es lo que
-    necesita una tool con guarda de concurrencia, que recibe el contexto aunque
-    su función no lo pida. pydantic-ai lo saca del schema porque la tool se
-    registra como context tool.
+    With ``prepend_ctx`` the exposed signature starts with a ``RunContext``: it is what
+    a tool with a concurrency guard needs, since it receives the context even though
+    its function does not ask for it. pydantic-ai strips it from the schema because the tool
+    is registered as a context tool.
     """
     functools.update_wrapper(wrapper, func)
     try:
         annotations = get_type_hints(func, include_extras=True)
-    except Exception:  # noqa: BLE001 - fallback a las anotaciones originales
+    except Exception:  # noqa: BLE001 - fallback to the original annotations
         annotations = dict(getattr(func, '__annotations__', {}))
     try:
         signature: inspect.Signature | None = inspect.signature(func, eval_str=True)
@@ -122,7 +122,7 @@ def _check_concurrency(
     kwargs: dict[str, Any],
     drop_first: bool,
 ) -> None:
-    """Evalúa la guarda y lanza ``ToolConflict`` si la llamada no puede correr."""
+    """Evaluates the guard and raises ``ToolConflict`` if the call cannot run."""
     call_args = _bind_args(func, args, kwargs, drop_first=drop_first)
     tool_call_id = getattr(ctx, 'tool_call_id', None)
     reason = guard(
@@ -150,28 +150,28 @@ def wrap_tool(
     takes_ctx: bool = False,
     concurrency: ConcurrencyGuard | None = None,
 ) -> Callable[..., Any]:
-    """Envuelve ``func`` para loguear inicio, éxito y error.
+    """Wraps ``func`` to log start, success and error.
 
-    ``takes_ctx`` indica que ``func`` recibe un ``RunContext`` como primer
-    argumento. Con ``concurrency`` el wrapper recibe el contexto aunque ``func``
-    no lo pida, para poder evaluar la guarda antes de ejecutar.
+    ``takes_ctx`` indicates that ``func`` receives a ``RunContext`` as its first
+    argument. With ``concurrency`` the wrapper receives the context even if ``func``
+    does not ask for it, so the guard can be evaluated before running.
     """
     wrapper_takes_ctx = takes_ctx or concurrency is not None
     prepend_ctx = concurrency is not None and not takes_ctx
 
     def split_ctx(args: tuple[Any, ...]) -> tuple[Any, tuple[Any, ...]]:
-        """Separa el ``RunContext`` del wrapper de los argumentos de ``func``.
+        """Splits the wrapper's ``RunContext`` from the args of ``func``.
 
-        Una llamada directa desde código —tests, otros módulos— no trae contexto.
-        En ese caso se ejecuta igual, sin guarda: la guarda sólo tiene sentido
-        dentro de un run, donde hay hermanos con los que comparar.
+        A direct call from code (tests, other modules) brings no context.
+        In that case it runs anyway, without a guard: the guard only makes sense
+        inside a run, where there are siblings to compare against.
         """
         if wrapper_takes_ctx and args and isinstance(args[0], RunContext):
             return args[0], args[1:]
         return None, args
 
     def forward(ctx: Any, func_args: tuple[Any, ...]) -> tuple[Any, ...]:
-        """Argumentos con los que se invoca ``func``."""
+        """Args with which ``func`` is invoked."""
         return (ctx, *func_args) if takes_ctx and ctx is not None else func_args
 
     def guard(ctx: Any, forwarded: tuple[Any, ...], kwargs: dict[str, Any]) -> None:

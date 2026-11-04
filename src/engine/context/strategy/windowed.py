@@ -1,4 +1,4 @@
-"""Vista con ventana: recorta razonamiento, tool results viejos y turnos viejos."""
+"""Windowed view: trims reasoning, old tool results and old turns."""
 
 from __future__ import annotations
 
@@ -22,14 +22,14 @@ from src.engine.context.tokens import estimate_messages_tokens
 
 @dataclass(frozen=True, slots=True)
 class WindowedStrategy:
-    """Vista con ventana: recorta razonamiento, tool results viejos y turnos viejos.
+    """Windowed view: trims reasoning, old tool results and old turns.
 
-    Orden de las palancas, de la más barata a la más destructiva:
+    Order of the levers, from cheapest to most destructive:
 
-    1. Dropear `ThinkingPart` — no aporta nada al siguiente paso y es lo más
-       voluminoso. Verificado seguro con Anthropic vía OpenRouter.
-    2. Truncar tool results de turnos viejos — el 80% del peso suele estar acá.
-    3. Descartar turnos enteros, del más viejo al más nuevo.
+    1. Drop `ThinkingPart`: it adds nothing to the next step and is the most
+       voluminous. Verified safe with Anthropic through OpenRouter.
+    2. Truncate tool results of old turns: 80% of the weight is usually there.
+    3. Discard whole turns, oldest to newest.
     """
 
     keep_recent_turns: int = DEFAULT_KEEP_RECENT_TURNS
@@ -37,10 +37,10 @@ class WindowedStrategy:
     tool_result_head_chars: int = DEFAULT_TOOL_RESULT_HEAD_CHARS
     drop_thinking: bool = True
     keep_thinking: bool = False
-    """Válvula de escape por provider: si una ruta exige round-trippear el
-    razonamiento, se prende acá y no se dropea nada."""
+    """Per-provider escape hatch: if a route requires round-tripping the
+    reasoning, you turn it on here and nothing gets dropped."""
     pinned_tools: frozenset[str] = PINNED_TOOLS
-    """Tools cuyo resultado es instrucción y no se trunca nunca."""
+    """Tools whose result is instruction and is never truncated."""
 
     def view(self, messages: Sequence[ModelMessage], budget: ContextBudget) -> ViewResult:
         working = list(messages)

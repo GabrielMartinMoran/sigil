@@ -1,4 +1,4 @@
-"""Un bloque de instrucciones con su política de cambio."""
+"""An instruction block with its change policy."""
 
 from __future__ import annotations
 
@@ -9,10 +9,10 @@ from src.engine.context.instructions.constants import InstructionChangePolicy
 
 @dataclass(frozen=True, slots=True)
 class InstructionBlock:
-    """Un bloque de instrucciones con su política de cambio."""
+    """An instruction block with its change policy."""
 
     name: str
     content: str
     on_change: InstructionChangePolicy = 'rewrite'
     source: str | None = None
-    """De dónde salió, para diagnóstico. No se manda al modelo."""
+    """Where it came from, for diagnostics. It is not sent to the model."""

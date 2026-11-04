@@ -1,8 +1,8 @@
-"""Límite duro de pasos por turno.
+"""Hard step limit per turn.
 
-Cada respuesta del modelo (mensaje) y cada llamada a una tool cuentan como un
-paso. Cuando se supera el límite configurado se lanza `StepLimitExceeded`, que
-aborta el run del agente antes de ejecutar el paso que excedería el límite.
+Every model response (message) and every tool call count as one
+step. When the configured limit is exceeded, `StepLimitExceeded` is raised, which
+aborts the agent run before executing the step that would exceed the limit.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pydantic_ai.messages import FunctionToolCallEvent, PartStartEvent
 
 
 class StepLimitExceeded(Exception):
-    """Se lanza cuando un turno supera la cantidad máxima de pasos permitidos."""
+    """Raised when a turn exceeds the maximum allowed number of steps."""
 
     def __init__(self, limit: int) -> None:
         super().__init__(f'Step limit of {limit} reached in this turn.')
@@ -21,21 +21,21 @@ class StepLimitExceeded(Exception):
 
 
 class StepLimiter:
-    """Cuenta pasos de un turno y aborta al superar el límite.
+    """Counts the steps of a turn and aborts when the limit is exceeded.
 
-    Un paso es:
-    - cada respuesta del modelo (un `PartStartEvent` de índice 0), o
-    - cada llamada a una tool (un `FunctionToolCallEvent`).
+    A step is:
+    - every model response (a `PartStartEvent` with index 0), or
+    - every tool call (a `FunctionToolCallEvent`).
     """
 
     def __init__(self, max_steps: int) -> None:
         if max_steps < 1:
-            raise ValueError('max_steps debe ser >= 1')
+            raise ValueError('max_steps must be >= 1')
         self.max_steps = max_steps
         self.steps = 0
 
     def count(self, event: Any) -> None:
-        """Registra el evento y lanza `StepLimitExceeded` si se pasa del límite."""
+        """Records the event and raises `StepLimitExceeded` if the limit is passed."""
         if isinstance(event, PartStartEvent) and event.index == 0 or isinstance(event, FunctionToolCallEvent):
             self._increment()
 

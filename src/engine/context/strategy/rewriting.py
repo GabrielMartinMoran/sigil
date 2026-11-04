@@ -1,4 +1,4 @@
-"""Palancas que reescriben el historial: razonamiento, tool results y turnos."""
+"""Levers that rewrite the history: reasoning, tool results and turns."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from src.engine.context.tokens import estimate_messages_tokens, estimate_tokens,
 
 
 def drop_thinking(messages: list[ModelMessage]) -> tuple[list[ModelMessage], int]:
-    """Saca los `ThinkingPart` de las respuestas del asistente."""
+    """Strips `ThinkingPart` from the assistant responses."""
     result: list[ModelMessage] = []
     dropped = 0
     for message in messages:
@@ -39,11 +39,11 @@ def truncate_old_tool_results(
     head_chars: int,
     pinned_tools: frozenset[str] = frozenset(),
 ) -> tuple[list[ModelMessage], int]:
-    """Trunca los tool results de los turnos viejos, dejando los recientes intactos.
+    """Truncates the tool results of the old turns, leaving the recent ones intact.
 
-    Mide el texto que el modelo realmente ve (`model_response_str()`), no el
-    `str()` del objeto: las tools de Sigil devuelven modelos pydantic, y comparar
-    contra `isinstance(content, str)` dejaba el truncado sin efecto.
+    It measures the text the model actually sees (`model_response_str()`), not the
+    object's `str()`: Sigil tools return pydantic models, and comparing
+    against `isinstance(content, str)` left the truncation without effect.
     """
     result: list[ModelMessage] = []
     truncated = 0
@@ -77,14 +77,14 @@ def fit_to_budget(
     pinned_tools: frozenset[str] = frozenset(),
     keep_head: Sequence[ModelMessage] = (),
 ) -> tuple[list[ModelMessage], int]:
-    """Descarta turnos enteros hasta entrar en el presupuesto.
+    """Discards whole turns until it fits in the budget.
 
-    Prefiere descartar turnos sin resultados pineados: si hay que elegir entre
-    perder un `read_file` viejo y perder las instrucciones de un skill, se pierde
-    el `read_file`.
+    It prefers discarding turns without pinned results: if you have to choose between
+    losing an old `read_file` and losing a skill's instructions, the
+    `read_file` is what gets lost.
 
-    ``keep_head`` son los mensajes que nunca se descartan (el resumen de
-    compactación).
+    ``keep_head`` are the messages that are never discarded (the compaction
+    summary).
     """
     head = list(keep_head)
     turns = split_turns(list(messages))
@@ -102,7 +102,7 @@ def fit_to_budget(
             None,
         )
         if victim is None:
-            # Todo lo descartable trae instrucciones: se cae el más viejo igual.
+            # Everything discardable carries instructions: the oldest one goes anyway.
             victim = 0
         dropped += len(turns[victim])
         turns.pop(victim)

@@ -1,4 +1,4 @@
-"""Resultado de resolver un prompt MCP."""
+"""Result of resolving an MCP prompt."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from src.engine.mcp.tool_models.prompt_message_info import PromptMessageInfo
 
 
 class PromptResultInfo(BaseModel):
-    """Resultado de resolver un prompt MCP."""
+    """Result of resolving an MCP prompt."""
 
     server: str
     name: str

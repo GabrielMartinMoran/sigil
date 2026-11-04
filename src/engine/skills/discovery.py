@@ -1,12 +1,12 @@
-"""Descubrimiento de skills y resolución segura de sus recursos.
+"""Skill discovery and safe resolution of their resources.
 
-Raíces por defecto, en orden de precedencia:
+Default roots, in order of precedence:
 
-1. ``<cwd>/.agents/skills``  — skills del proyecto.
-2. ``~/.agents/skills``      — skills globales del usuario.
+1. ``<cwd>/.agents/skills``: project skills.
+2. ``~/.agents/skills``: user global skills.
 
-``SIGIL_SKILLS_DIRS`` (lista separada por ``os.pathsep``) reemplaza ambas. Un
-skill del proyecto con el mismo nombre que uno global lo sombrea.
+``SIGIL_SKILLS_DIRS`` (a list separated by ``os.pathsep``) replaces both. A
+project skill with the same name as a global one shadows it.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ SKILLS_DIRNAME = Path('.agents') / 'skills'
 ENV_SKILLS_DIRS = 'SIGIL_SKILLS_DIRS'
 
 MAX_LISTED_RESOURCES = 500
-"""Tope de recursos listados por skill, para no recorrer un árbol infinito."""
+"""Cap of resources listed per skill, to avoid walking an infinite tree."""
 
 DEFAULT_MAX_READ_BYTES = 256 * 1024
 MAX_READ_BYTES = 4 * 1024 * 1024
@@ -46,7 +46,7 @@ _RESOURCE_KINDS = {'scripts': 'script', 'references': 'reference', 'assets': 'as
 
 
 def default_roots() -> list[tuple[str, Path]]:
-    """Raíces de skills como ``(origen, ruta)``."""
+    """Skill roots as ``(source, path)``."""
     env = os.environ.get(ENV_SKILLS_DIRS, '').strip()
     if env:
         return [('custom', Path(raw).expanduser()) for raw in env.split(os.pathsep) if raw.strip()]
@@ -58,14 +58,14 @@ def default_roots() -> list[tuple[str, Path]]:
 
 
 def resource_kind(relative: PurePosixPath) -> str:
-    """Clasifica un recurso por su carpeta de primer nivel."""
+    """Classifies a resource by its first-level folder."""
     if not relative.parts:
         return 'other'
     return _RESOURCE_KINDS.get(relative.parts[0], 'other')
 
 
 def is_excluded(relative: PurePosixPath) -> bool:
-    """Si un archivo del skill no debe listarse (caché, artefactos, ocultos)."""
+    """Whether a skill file must not be listed (cache, artifacts, hidden)."""
     if any(part in _EXCLUDED_DIRS for part in relative.parts):
         return True
     name = relative.name
@@ -75,7 +75,7 @@ def is_excluded(relative: PurePosixPath) -> bool:
 
 
 def list_resources(metadata: SkillMetadata) -> list[SkillResource]:
-    """Lista los archivos empaquetados (excluye ``SKILL.md`` y artefactos)."""
+    """Lists the bundled files (excludes ``SKILL.md`` and artifacts)."""
     resources: list[SkillResource] = []
     root = metadata.path
 
@@ -103,7 +103,7 @@ def list_resources(metadata: SkillMetadata) -> list[SkillResource]:
 
 
 def safe_join(metadata: SkillMetadata, relative_path: str) -> Path:
-    """Resuelve un recurso garantizando que quede dentro del skill."""
+    """Resolves a resource guaranteeing it stays inside the skill."""
     if not isinstance(relative_path, str) or not relative_path.strip():
         raise SkillResourceError('Resource path cannot be empty.')
 

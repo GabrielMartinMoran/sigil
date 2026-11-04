@@ -1,4 +1,4 @@
-"""Panel lateral con el roadmap de la tarea actual."""
+"""Side panel with the roadmap of the current task."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ _FALLBACK_ICON = '·'
 
 
 class RoadmapPanel(Static):
-    """Muestra el roadmap completo como una sola lista, en orden de plan."""
+    """Shows the whole roadmap as a single list, in plan order."""
 
     def __init__(self, store: RoadmapStore | None = None, **kwargs: Any) -> None:
         super().__init__(Text(''), **kwargs)
@@ -32,15 +32,15 @@ class RoadmapPanel(Static):
 
     @property
     def shown(self) -> bool:
-        """Si el usuario pidió ver el panel, más allá de si hay roadmap.
+        """Whether the user asked to see the panel, regardless of whether there is a roadmap.
 
-        No se llama ``visible`` porque Textual ya usa ese nombre para la regla
-        CSS ``visibility``, que reserva espacio en vez de liberarlo.
+        It is not called ``visible`` because Textual already uses that name for the
+        CSS ``visibility`` rule, which reserves space instead of releasing it.
         """
         return self._shown
 
     def set_shown(self, shown: bool) -> None:
-        """Muestra u oculta el panel y lo redibuja."""
+        """Shows or hides the panel and redraws it."""
         self._shown = shown
         self.refresh_from_store()
 
@@ -49,8 +49,8 @@ class RoadmapPanel(Static):
         self.refresh_from_store()
 
     def refresh_from_store(self) -> None:
-        # El toggle del usuario manda: un roadmap que cambia no vuelve a mostrar
-        # un panel que el usuario ocultó.
+        # The user toggle wins: a changing roadmap does not show again
+        # a panel the user hid.
         if self._store is None or not self._shown:
             self.display = False
             return

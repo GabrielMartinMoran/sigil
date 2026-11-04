@@ -1,16 +1,16 @@
-"""Descubrimiento y merge de la configuración de Sigil.
+"""Discovery and merge of the Sigil config.
 
-Rutas, en orden de precedencia (la primera gana):
+Paths, in order of precedence (the first one wins):
 
-1. ``<cwd>/.sigil/config.json`` — configuración del proyecto.
-2. ``~/.sigil/config.json``     — configuración global del usuario.
+1. ``<cwd>/.sigil/config.json``: project config.
+2. ``~/.sigil/config.json``: user global config.
 
-``SIGIL_CONFIG`` reemplaza ambas por una ruta explícita. El merge es por
-servidor: una entrada del proyecto con el mismo nombre reemplaza entera a la
-global (no se mezclan campos, para que el resultado sea predecible).
+``SIGIL_CONFIG`` replaces both with an explicit path. The merge is per
+server: a project entry with the same name replaces the global one
+entirely (fields are not mixed, so the result stays predictable).
 
-Los errores se acumulan en lugar de abortar: un servidor mal escrito no impide
-usar el resto de la configuración.
+Errors accumulate instead of aborting: a badly written server does not prevent
+using the rest of the config.
 """
 
 from __future__ import annotations
@@ -32,13 +32,13 @@ def load_config(
     cwd: str | os.PathLike[str] | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> LoadedConfig:
-    """Lee y mergea la configuración de Sigil.
+    """Reads and merges the Sigil config.
 
     Args:
-        paths: Archivos a leer, en orden de precedencia. Por defecto se usan
-            ``config_paths()``.
-        cwd: Directorio base para descubrir la config del proyecto.
-        environ: Entorno para expandir ``${VAR}`` (por defecto ``os.environ``).
+        paths: Files to read, in order of precedence. ``config_paths()`` is used
+            by default.
+        cwd: Base directory to discover the project config.
+        environ: Environment to expand ``${VAR}`` (``os.environ`` by default).
     """
     env = os.environ if environ is None else environ
     explicit = paths is None and bool(os.environ.get(ENV_CONFIG, '').strip())
@@ -48,7 +48,7 @@ def load_config(
     servers: dict[str, MCPServerSpec] = {}
     sources: list[Path] = []
 
-    # De menor a mayor precedencia: lo último leído pisa lo anterior.
+    # From lowest to highest precedence: the last one read overrides the previous one.
     for path in reversed(candidates):
         if not path.is_file():
             if explicit:

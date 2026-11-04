@@ -1,4 +1,4 @@
-"""Tests de persistencia de sesiones (conversaciones)."""
+"""Tests for session (conversation) persistence."""
 
 import json
 
@@ -14,12 +14,12 @@ from src.engine.sessions.session_store import SessionStore, cwd_hash
 
 def _sample_messages():
     return [
-        ModelRequest(parts=[UserPromptPart(content='hola')]),
+        ModelRequest(parts=[UserPromptPart(content='hello')]),
         ModelResponse(parts=[TextPart(content='hey there')]),
     ]
 
 
-# --- Hash por directorio ------------------------------------------------------
+# --- Per-directory hash -------------------------------------------------------
 
 
 def test_cwd_hash_is_stable_and_short(tmp_path):
@@ -36,7 +36,7 @@ def test_different_cwds_get_different_directories(tmp_path):
     assert a.directory.is_dir() and b.directory.is_dir()
 
 
-# --- Persistencia -------------------------------------------------------------
+# --- Persistence --------------------------------------------------------------
 
 
 def test_save_and_load_roundtrip(tmp_path):
@@ -48,7 +48,7 @@ def test_save_and_load_roundtrip(tmp_path):
     loaded = store.load(session.id)
     assert loaded is not None
     assert loaded.id == session.id
-    assert loaded.messages[0].parts[0].content == 'hola'
+    assert loaded.messages[0].parts[0].content == 'hello'
     assert loaded.messages[1].parts[0].content == 'hey there'
 
 
@@ -63,7 +63,7 @@ def test_create_session_persists_file(tmp_path):
     assert data['messages'] == []
 
 
-# --- Última sesión ------------------------------------------------------------
+# --- Last session -------------------------------------------------------------
 
 
 def test_load_last_returns_none_when_empty(tmp_path):
@@ -99,7 +99,7 @@ def test_new_store_instance_reads_last_session(tmp_path):
     assert len(last.messages) == 2
 
 
-# --- Listado y búsqueda -------------------------------------------------------
+# --- Listing and search -------------------------------------------------------
 
 
 def test_list_sessions_returns_all_and_ignores_index(tmp_path):
@@ -124,7 +124,7 @@ def test_load_unknown_session_returns_none(tmp_path):
     assert store.load('does-not-exist') is None
 
 
-# --- Robutez ----------------------------------------------------------------
+# --- Robustness ---------------------------------------------------------------
 
 
 def test_corrupt_session_file_is_ignored(tmp_path):
@@ -138,4 +138,4 @@ def test_preview_uses_first_user_message(tmp_path):
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     session = store.create_session()
     session.messages = _sample_messages()
-    assert session.preview == 'hola'
+    assert session.preview == 'hello'

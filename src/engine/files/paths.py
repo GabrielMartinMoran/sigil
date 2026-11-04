@@ -1,7 +1,7 @@
-"""Resolución de rutas dentro del workspace.
+"""Path resolution inside the workspace.
 
-Una ruta fuera del workspace se rechaza con un error explícito en vez de
-resolverse en silencio: el modelo tiene que pedir autorización, no adivinar.
+A path outside the workspace is rejected with an explicit error instead of
+being resolved silently: the model has to ask for authorization, not guess.
 """
 
 from __future__ import annotations
@@ -13,12 +13,12 @@ from src.engine.files.models.file_tool_error import FileToolError
 
 
 def workspace_root() -> Path:
-    """Raíz del workspace: el directorio de trabajo del proceso."""
+    """Workspace root: the process working directory."""
     return Path.cwd().resolve()
 
 
 def resolve(path: str) -> Path:
-    """Resuelve ``path`` contra el workspace y valida que quede adentro."""
+    """Resolves ``path`` against the workspace and validates that it stays inside."""
     root = workspace_root()
     candidate = Path(path).resolve() if os.path.isabs(path) else (root / path).resolve()
     try:

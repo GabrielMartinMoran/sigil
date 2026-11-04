@@ -1,4 +1,4 @@
-"""Tests de las tools de archivos."""
+"""Tests for the file tools."""
 
 import asyncio
 from pathlib import Path
@@ -34,15 +34,15 @@ def _tools():
 def test_write_and_read_roundtrip(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     tools = _tools()
-    result = tools['write_file'](path='notes.txt', content='hola\n')
+    result = tools['write_file'](path='notes.txt', content='hello\n')
     assert result.created is True
-    assert result.bytes_written == 5
+    assert result.bytes_written == 6
 
     read = tools['read_file'](path='notes.txt')
-    assert read.content == 'hola\n'
+    assert read.content == 'hello\n'
     assert read.binary is False
     assert read.encoding == 'utf-8'
-    assert read.size == 5
+    assert read.size == 6
 
 
 def test_read_line_range(tmp_path, monkeypatch):
@@ -191,10 +191,10 @@ def _agent_with_files():
 
 
 def test_mutating_file_tools_declare_a_concurrency_guard():
-    """Las escrituras no se serializan de prepo: declaran cuándo chocan."""
+    """Writes are not serialized blindly: they declare when they clash."""
     tools = _agent_with_files()._function_toolset.tools
 
-    # El contexto que necesita la guarda no aparece en el schema del modelo.
+    # The context the guard needs does not appear in the model schema.
     assert sorted(tools['patch_file'].function_schema.json_schema['properties']) == [
         'end_line',
         'expected_text',
@@ -206,7 +206,7 @@ def test_mutating_file_tools_declare_a_concurrency_guard():
     ]
     assert sorted(tools['write_file'].function_schema.json_schema['properties']) == ['append', 'content', 'path']
 
-    # Nada de barreras: el paralelismo queda habilitado salvo el conflicto puntual.
+    # No barriers: parallelism stays enabled except for the specific conflict.
     assert tools['patch_file'].sequential is False
     assert tools['write_file'].sequential is False
     assert tools['read_file'].sequential is False
@@ -228,7 +228,7 @@ def _run_two_calls(tmp_path, monkeypatch, calls):
 
     agent = Agent(FunctionModel(model_function), instructions='x', capabilities=[ToolErrorRecovery()])
     register_file_tools(agent)
-    return asyncio.run(agent.run('hacé las dos cosas'))
+    return asyncio.run(agent.run('do both things'))
 
 
 def _tool_returns(result):
@@ -243,7 +243,7 @@ def _tool_returns(result):
 
 
 def test_two_patches_on_the_same_file_conflict(tmp_path, monkeypatch):
-    """La primera pasa; la segunda falla en vez de pisarla en silencio."""
+    """The first goes through; the second fails instead of stomping on it silently."""
     Path(tmp_path / 'a.txt').write_text('one\ntwo\nthree\n')
 
     result = _run_two_calls(
@@ -269,12 +269,12 @@ def test_patch_and_write_on_the_same_file_conflict(tmp_path, monkeypatch):
         tmp_path,
         monkeypatch,
         [
-            ('write_file', {'path': 'a.txt', 'content': 'nuevo\n'}),
-            ('patch_file', {'path': 'a.txt', 'old_string': 'nuevo', 'new_string': 'otro'}),
+            ('write_file', {'path': 'a.txt', 'content': 'new\n'}),
+            ('patch_file', {'path': 'a.txt', 'old_string': 'new', 'new_string': 'other'}),
         ],
     )
 
-    assert Path(tmp_path / 'a.txt').read_text() == 'nuevo\n'
+    assert Path(tmp_path / 'a.txt').read_text() == 'new\n'
     assert [part.outcome for part in _tool_returns(result)] == ['success', 'failed']
 
 

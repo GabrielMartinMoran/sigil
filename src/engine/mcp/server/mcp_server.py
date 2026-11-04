@@ -1,4 +1,4 @@
-"""Servidor MCP configurado y su estado en runtime."""
+"""Configured MCP server and its runtime state."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from src.engine.mcp.tool_models.server_status import ServerStatus
 
 @dataclass
 class MCPServer:
-    """Servidor MCP configurado y su estado en runtime."""
+    """Configured MCP server and its runtime state."""
 
     spec: MCPServerSpec
     toolset: MCPToolset | None = None
@@ -31,7 +31,7 @@ class MCPServer:
 
     @property
     def active(self) -> bool:
-        """Tiene toolset y no falló al construirse."""
+        """It has a toolset and did not fail while being built."""
         return self.agent_toolset is not None and self.error is None
 
     def status(self) -> ServerStatus:

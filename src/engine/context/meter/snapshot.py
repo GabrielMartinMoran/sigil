@@ -1,4 +1,4 @@
-"""Los dos números de contexto y el presupuesto vigente."""
+"""The two context numbers and the current budget."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from src.engine.context.budget import ContextBudget
 
 
 def percent(used: int | None, window: int | None) -> float | None:
-    """Porcentaje de ventana usada, o ``None`` si falta información."""
+    """Percentage of the window used, or ``None`` if information is missing."""
     if not window or used is None:
         return None
     return max(0.0, used / window * 100.0)
@@ -16,7 +16,7 @@ def percent(used: int | None, window: int | None) -> float | None:
 
 @dataclass(frozen=True, slots=True)
 class ContextSnapshot:
-    """Los dos números de contexto y el presupuesto vigente."""
+    """The two context numbers and the current budget."""
 
     measured: int | None
     projected: int | None

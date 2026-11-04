@@ -1,4 +1,4 @@
-"""Pantalla modal para hacer preguntas al usuario."""
+"""Modal screen to ask the user questions."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ CUSTOM_ID = '__custom__'
 
 
 class QuestionScreen(ModalScreen[list[QuestionAnswer] | None]):
-    """Devuelve las respuestas o ``None`` si se cancela."""
+    """Returns the answers, or ``None`` if cancelled."""
 
     BINDINGS: ClassVar[list[Binding]] = [Binding('escape', 'cancel', 'Cancel')]
 
@@ -63,7 +63,7 @@ class QuestionScreen(ModalScreen[list[QuestionAnswer] | None]):
             label = option.label
             if option.description:
                 label = f'{label}  [dim]— {option.description}[/dim]'
-            # La primera opción siempre se muestra como recomendada.
+            # The first option is always shown as recommended.
             if option.recommended or (index == 0 and not has_recommended):
                 label = f'{label}  [bold cyan][recommended][/bold cyan]'
             options.add_option(Option(label, id=f'opt-{index}'))

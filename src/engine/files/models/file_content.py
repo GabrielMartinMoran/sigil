@@ -1,4 +1,4 @@
-"""Contenido leído de un archivo."""
+"""Content read from a file."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class FileContent(BaseModel):
-    """Contenido leído de un archivo."""
+    """Content read from a file."""
 
     path: str
     size: int

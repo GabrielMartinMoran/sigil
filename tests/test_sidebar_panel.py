@@ -1,14 +1,10 @@
-"""Tests del panel superior del sidebar: skills cargadas y conteo de MCP."""
+"""Tests for the top sidebar panel: loaded skills and MCP counts."""
 
 from __future__ import annotations
 
 import asyncio
-import os
 import tempfile
 from pathlib import Path
-
-os.environ.setdefault('LLM_MODEL', 'test/model')
-os.environ.setdefault('OPENROUTER_API_KEY', 'test-key')
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
@@ -106,7 +102,7 @@ def test_mcp_counts_ignores_disabled_servers(tmp_path):
 
 def test_mcp_counts_reports_broken_servers(tmp_path):
     config = tmp_path / 'config.json'
-    # Un transporte inválido hace fallar la construcción del toolset.
+    # An invalid transport makes the toolset construction fail.
     config.write_text('{"mcp_servers": {"broken": {"url": "not-a-url"}}}', encoding='utf-8')
     manager = MCPManager(load_config([config], environ={}).servers)
     ok, failed = manager.counts()

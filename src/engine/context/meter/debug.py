@@ -1,16 +1,16 @@
-"""Modelo de la vista de debug: qué tiene el agente en contexto y cuánto cuesta.
+"""Debug view model: what the agent has in context and what it costs.
 
-La vista de debug muestra **el lado del agente** de la conversación. Dos listas:
+The debug view shows **the agent side** of the conversation. Two lists:
 
-- **log**: los mensajes de la sesión, tal como se persisten y se ven en el chat.
-- **vista**: los mensajes que el agente recibe en el próximo request, después de
-  aplicar la estrategia de contexto (razonamiento dropeado, tool results viejos
-  truncados, turnos viejos colapsados o descartados).
+- **log**: the messages of the session, as they are persisted and seen in the chat.
+- **view**: the messages the agent receives on the next request, after
+  applying the context strategy (reasoning dropped, old tool results
+  truncated, old turns collapsed or discarded).
 
-La diferencia entre las dos es exactamente lo que la UI no muestra y lo que hace
-falta para entender por qué el agente se olvidó de algo. Además se reporta el
-costo fijo del request (instrucciones y schemas de tools) y el uso del prompt
-cache, que es lo que dice si el prefijo del prompt es estable.
+The difference between the two is exactly what the UI does not show and what it
+takes to understand why the agent forgot something. It also reports the fixed
+cost of the request (instructions and tool schemas) and the prompt cache
+usage, which is what tells whether the prompt prefix is stable.
 """
 
 from __future__ import annotations
@@ -38,15 +38,15 @@ from src.engine.context.strategy.view_result import ViewResult
 from src.engine.context.tokens import estimate_message_tokens, estimate_tokens, part_text, tool_return_text
 
 DEFAULT_PART_CHARS = 700
-"""Cuántos caracteres de cada parte se muestran. El costo real va aparte, en tokens."""
+"""How many characters of each part are shown. The real cost goes separately, in tokens."""
 
 DEFAULT_PART_LINES = 6
-"""Cuántas líneas del preview se muestran. Un tool result es 1% señal y 99% líneas."""
+"""How many preview lines are shown. A tool result is 1% signal and 99% lines."""
 
 
 @dataclass(frozen=True, slots=True)
 class DebugPart:
-    """Una parte de un mensaje, con su costo y un preview acotado."""
+    """One part of a message, with its cost and a bounded preview."""
 
     kind: str
     label: str
@@ -54,7 +54,7 @@ class DebugPart:
     chars: int
     preview: str
     clipped_chars: int = 0
-    """Caracteres que no se muestran por el recorte del preview."""
+    """Characters not shown because of the preview clipping."""
 
     @property
     def clipped(self) -> bool:
@@ -63,19 +63,19 @@ class DebugPart:
 
 @dataclass(frozen=True, slots=True)
 class DebugMessage:
-    """Un mensaje con sus partes, medido en tokens."""
+    """A message with its parts, measured in tokens."""
 
     index: int
     role: str
-    """``request`` (lo que entra al modelo) o ``response`` (lo que el modelo produjo)."""
+    """``request`` (what goes into the model) or ``response`` (what the model produced)."""
     tokens: int
     parts: tuple[DebugPart, ...] = ()
     instructions: tuple[str, ...] = ()
-    """Nombres de los bloques de instrucciones que viajan con este request."""
+    """Names of the instruction blocks that travel with this request."""
 
     @property
     def kinds(self) -> str:
-        """Resumen de una línea: ``user · tool_return ×3``."""
+        """One-line summary: ``user · tool_return ×3``."""
         if not self.parts:
             return '(empty)'
         counts: dict[str, int] = {}
@@ -86,7 +86,7 @@ class DebugMessage:
 
 @dataclass(frozen=True, slots=True)
 class DebugReport:
-    """Todo lo que pinta la vista de debug."""
+    """Everything the debug view paints."""
 
     snapshot: ContextSnapshot
     request: RequestSnapshot
@@ -103,7 +103,7 @@ class DebugReport:
 
     @property
     def dropped_tokens(self) -> int:
-        """Tokens del log que el agente no va a ver en el próximo request."""
+        """Log tokens the agent will not see on the next request."""
         return max(0, self.log_tokens - self.view_tokens)
 
     @property
@@ -118,7 +118,7 @@ class DebugReport:
 
 
 def _clip(text: str, limit: int, max_lines: int) -> tuple[str, int]:
-    """Recorta por caracteres **y** por líneas: un log de 700 chars son 100 líneas de ruido."""
+    """Clips by characters **and** by lines: a 700-char log is 100 lines of noise."""
     clipped = text[:limit]
     lines = clipped.splitlines()
     if len(lines) > max_lines:
@@ -167,7 +167,7 @@ def _response_part(part: object, limit: int, max_lines: int) -> DebugPart | None
 
 
 def _instructions_of(message: ModelMessage) -> tuple[str, ...]:
-    """Nombres de los bloques de instrucciones que viajan en el request."""
+    """Names of the instruction blocks that travel in the request."""
     instructions = getattr(message, 'instructions', None)
     if not instructions:
         return ()
@@ -185,7 +185,7 @@ def debug_messages(
     part_chars: int = DEFAULT_PART_CHARS,
     part_lines: int = DEFAULT_PART_LINES,
 ) -> list[DebugMessage]:
-    """Convierte mensajes de pydantic-ai en filas medibles para la vista."""
+    """Turns pydantic-ai messages into measurable rows for the view."""
     rows: list[DebugMessage] = []
     for index, message in enumerate(messages):
         parts: list[DebugPart] = []
@@ -229,7 +229,7 @@ def build_debug_report(
     part_chars: int = DEFAULT_PART_CHARS,
     part_lines: int = DEFAULT_PART_LINES,
 ) -> DebugReport:
-    """Arma el reporte de debug a partir del log y de la vista proyectada."""
+    """Builds the debug report from the log and the projected view."""
     log = debug_messages(messages, part_chars=part_chars, part_lines=part_lines)
     log_tokens = sum(row.tokens for row in log)
 

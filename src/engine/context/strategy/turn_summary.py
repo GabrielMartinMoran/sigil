@@ -1,4 +1,4 @@
-"""Resumen determinístico de un turno, sin llamar al modelo."""
+"""Deterministic summary of a turn, without calling the model."""
 
 from __future__ import annotations
 
@@ -17,16 +17,16 @@ from pydantic_ai.messages import (
 
 
 def clip(text: str, limit: int) -> str:
-    """Colapsa espacios y recorta a ``limit`` caracteres."""
+    """Collapses whitespace and clips to ``limit`` characters."""
     text = ' '.join(text.split())
     return text if len(text) <= limit else text[: limit - 1] + '…'
 
 
 def summarize_turn(turn: Sequence[ModelMessage], *, max_chars: int) -> str:
-    """Resumen determinístico de un turno: qué pidió el usuario y qué se hizo.
+    """Deterministic summary of a turn: what the user asked and what was done.
 
-    No llama al modelo. Conserva la intención y el rastro de tools; pierde los
-    payloads, que es exactamente lo que se quiere perder.
+    It does not call the model. It keeps the intent and the tool trail; it drops the
+    payloads, which is exactly what you want to lose.
     """
     prompt = ''
     actions: list[str] = []

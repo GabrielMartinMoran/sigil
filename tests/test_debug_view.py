@@ -1,14 +1,10 @@
-"""Tests de la vista de debug en la app: `alt+d` reemplaza el chat."""
+"""Tests for the debug view in the app: `alt+d` replaces the chat."""
 
 from __future__ import annotations
 
 import asyncio
-import os
 import tempfile
 from pathlib import Path
-
-os.environ.setdefault('LLM_MODEL', 'test/model')
-os.environ.setdefault('OPENROUTER_API_KEY', 'test-key')
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
@@ -44,12 +40,12 @@ def _make_app(tmp: str) -> SigilApp:
 
 
 def _header_text(app: SigilApp) -> str:
-    """Texto plano de la cabecera fija de la vista."""
+    """Plain text of the fixed header of the view."""
     return app.query_one(AgentDebugView)._header.render().plain
 
 
 def _report_text(app: SigilApp) -> str:
-    """El cuerpo de la vista se pinta como tablas: para asertar, se renderiza el reporte."""
+    """The view body is painted as tables: to assert, the report is rendered."""
     from src.engine.context.meter.debug_render import render_debug_report
 
     report = app.query_one(AgentDebugView).last_report
@@ -81,7 +77,7 @@ def test_alt_d_replaces_chat_with_debug_view(monkeypatch):
                 assert view.display is True
                 # Reemplaza: no conviven.
                 assert chat.display is False
-                # El input sigue usable: se puede promptear y ver el costo en vivo.
+                # The input stays usable: you can prompt and watch the cost live.
                 assert app.query_one(PromptInput).disabled is False
 
                 await pilot.press('alt+d')
@@ -103,7 +99,7 @@ def test_debug_view_renders_agent_side_sections(monkeypatch):
             app = _make_app(tmp)
             async with app.run_test() as pilot:
                 await pilot.pause()
-                await pilot.press('h', 'o', 'l', 'a')
+                await pilot.press('h', 'e', 'l', 'l', 'o')
                 await pilot.press('enter')
                 for _ in range(40):
                     await pilot.pause()
@@ -122,7 +118,7 @@ def test_debug_view_renders_agent_side_sections(monkeypatch):
                 assert 'Fixed cost per request' in body
                 assert 'Agent view' in body
                 assert 'Session log' in body
-                assert 'hola' in body
+                assert 'hello' in body
                 assert 'Prompt cache' in body
 
     asyncio.run(inner())
@@ -173,7 +169,7 @@ def test_debug_command_rejects_bad_argument(monkeypatch):
 
 
 def test_report_without_request_does_not_raise(monkeypatch):
-    """Sin ningún request corrido, la vista se pinta igual (sin datos de tools)."""
+    """With no request run, the view paints anyway (no tool data)."""
     monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
@@ -187,15 +183,15 @@ def test_report_without_request_does_not_raise(monkeypatch):
                 assert 'Fixed cost per request' in body
                 assert 'no usage reported yet' in body
                 assert '(empty session)' in body
-                # Sin request capturado, los ceros de instrucciones/tools no se
-                # muestran como si fueran una medición.
+                # The zeros for instructions/tools are not shown as if they
+                # were a measurement.
                 assert 'no request captured' in body
 
     asyncio.run(inner())
 
 
 def test_refresh_is_coalesced_while_streaming(monkeypatch):
-    """Varios refrescos en ráfaga producen un solo repintado."""
+    """Several refreshes in a burst produce a single repaint."""
     monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
@@ -218,7 +214,7 @@ def test_refresh_is_coalesced_while_streaming(monkeypatch):
 
                 for _ in range(5):
                     app.refresh_debug()
-                # Un solo timer para toda la ráfaga.
+                # A single timer for the whole burst.
                 assert app._debug_timer is not None
                 await pilot.pause(0.3)
 
@@ -251,7 +247,7 @@ def test_closing_cancels_a_pending_refresh(monkeypatch):
 
 
 def test_header_and_body_are_plain_renderables():
-    """Los builders del widget son puros: no necesitan app montada."""
+    """The widget builders are pure: they do not need a mounted app."""
     from src.engine.context.meter.debug import build_debug_report
     from src.engine.context.meter.request import snapshot_request
 

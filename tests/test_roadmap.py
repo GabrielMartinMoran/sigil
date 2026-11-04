@@ -1,4 +1,4 @@
-"""Tests del store y la tool de roadmap."""
+"""Tests for the roadmap store and tool."""
 
 import pytest
 
@@ -84,17 +84,17 @@ def test_listener_is_notified(tmp_path):
 def test_each_session_has_its_own_roadmap(tmp_path):
     store = RoadmapStore(directory=tmp_path, session_id='s1')
     tool = _tool(store)
-    tool(action='set', items=[RoadmapItemInput(title='De la sesión 1')])
+    tool(action='set', items=[RoadmapItemInput(title='From session 1')])
 
     store.bind_session('s2')
     assert store.snapshot() == []
-    tool(action='set', items=[RoadmapItemInput(title='De la sesión 2')])
+    tool(action='set', items=[RoadmapItemInput(title='From session 2')])
 
     store.bind_session('s1')
-    assert [item.title for item in store.snapshot()] == ['De la sesión 1']
+    assert [item.title for item in store.snapshot()] == ['From session 1']
 
     store.bind_session('s2')
-    assert [item.title for item in store.snapshot()] == ['De la sesión 2']
+    assert [item.title for item in store.snapshot()] == ['From session 2']
 
 
 def test_bind_session_notifies_listeners(tmp_path):

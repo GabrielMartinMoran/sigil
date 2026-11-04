@@ -1,8 +1,8 @@
-"""Índice de skills descubiertos y operaciones de carga/lectura.
+"""Index of discovered skills and load/read operations.
 
-El registry es la única pieza que conoce las raíces y el estado del índice. Las
-tools y los bloques de instrucciones le piden metadatos, cuerpos y recursos; no
-saben de dónde salieron.
+The registry is the only piece that knows the roots and the index state. The
+tools and the instruction blocks ask it for metadata, bodies and resources; they do not
+know where they came from.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from src.engine.skills.parser import parse_skill_metadata, split_frontmatter
 
 
 class SkillRegistry:
-    """Índice de skills descubiertos y operaciones de carga/lectura."""
+    """Index of discovered skills and load/read operations."""
 
     def __init__(self, roots: Sequence[tuple[str, Path]] | None = None) -> None:
         self._roots: list[tuple[str, Path]] = [
@@ -38,7 +38,7 @@ class SkillRegistry:
         self.errors: list[str] = []
         self._discover()
 
-    # --- descubrimiento ---------------------------------------------------
+    # --- discovery ---------------------------------------------------------
 
     def _discover(self) -> None:
         for source, root in self._roots:
@@ -61,25 +61,25 @@ class SkillRegistry:
                     continue
 
                 if metadata.name in self._skills:
-                    # Ya hay un skill con ese nombre en una raíz de mayor
-                    # precedencia; el actual queda sombreado.
+                    # There is already a skill with that name in a higher-precedence
+                    # root; the current one stays shadowed.
                     continue
 
                 self._skills[metadata.name] = metadata
                 self._aliases.setdefault(metadata.name, metadata.name)
-                # Permitir buscar por nombre de directorio aunque el frontmatter
-                # use otro identificador.
+                # Allow lookup by directory name even if the frontmatter
+                # uses another identifier.
                 self._aliases.setdefault(entry.name, metadata.name)
 
     def refresh(self) -> SkillRegistry:
-        """Vuelve a escanear las raíces (por si se instaló un skill)."""
+        """Rescans the roots (in case a skill was installed)."""
         self._skills.clear()
         self._aliases.clear()
         self.errors.clear()
         self._discover()
         return self
 
-    # --- consultas --------------------------------------------------------
+    # --- queries -----------------------------------------------------------
 
     @property
     def roots(self) -> tuple[tuple[str, Path], ...]:
@@ -92,11 +92,11 @@ class SkillRegistry:
         return isinstance(name, str) and self.get(name) is not None
 
     def list(self) -> list[SkillMetadata]:
-        """Todos los skills, ordenados por nombre."""
+        """All skills, sorted by name."""
         return sorted(self._skills.values(), key=lambda skill: skill.name)
 
     def get(self, name: str) -> SkillMetadata | None:
-        """Busca un skill por nombre canónico o por nombre de directorio."""
+        """Looks for a skill by canonical name or by directory name."""
         if not isinstance(name, str):
             return None
         key = name.strip()
@@ -111,10 +111,10 @@ class SkillRegistry:
             raise SkillNotFound(f"Unknown skill '{name}'. Available skills: {available}.")
         return metadata
 
-    # --- nivel 2: cuerpo del SKILL.md ------------------------------------
+    # --- level 2: SKILL.md body --------------------------------------------
 
     def load(self, name: str) -> Skill:
-        """Carga el cuerpo del ``SKILL.md`` y lista los recursos del skill."""
+        """Loads the ``SKILL.md`` body and lists the skill resources."""
         metadata = self.require(name)
         try:
             text = metadata.skill_file.read_text(encoding='utf-8')
@@ -123,13 +123,13 @@ class SkillRegistry:
         _, body = split_frontmatter(text)
         return Skill(metadata=metadata, body=body.strip(), resources=tuple(self.list_resources(metadata)))
 
-    # --- nivel 3: recursos ------------------------------------------------
+    # --- level 3: resources --------------------------------------------------
 
     def list_resources(self, metadata: SkillMetadata) -> list[SkillResource]:
         return list_resources(metadata)
 
     def resolve_resource(self, name: str, relative_path: str) -> Path:
-        """Resuelve un recurso garantizando que quede dentro del skill."""
+        """Resolves a resource guaranteeing it stays inside the skill."""
         return safe_join(self.require(name), relative_path)
 
     def read_resource(
@@ -139,7 +139,7 @@ class SkillRegistry:
         *,
         max_bytes: int = DEFAULT_MAX_READ_BYTES,
     ) -> tuple[bytes, bool, int]:
-        """Lee un recurso y devuelve ``(bytes, truncado, tamaño_total)``."""
+        """Reads a resource and returns ``(bytes, truncated, total_size)``."""
         target = self.resolve_resource(name, relative_path)
         if not target.is_file():
             raise SkillResourceError(f'Resource not found: {relative_path!r}.')
@@ -154,7 +154,7 @@ class SkillRegistry:
 
         return data[:limit], len(data) > limit, total_size
 
-    # --- diagnóstico ------------------------------------------------------
+    # --- diagnostics --------------------------------------------------------
 
     def iter_errors(self) -> Iterable[str]:
         return tuple(self.errors)

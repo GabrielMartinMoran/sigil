@@ -1,19 +1,19 @@
-"""Guardas de concurrencia para tools que se llaman en paralelo.
+"""Concurrency guards for tools called in parallel.
 
-pydantic-ai ejecuta las llamadas hermanas de una misma respuesta del modelo como
-tareas concurrentes. Para casi todas las tools eso está bien. Para las que mutan
-un recurso compartido, dos llamadas simultáneas se pisan: cada una lee el estado
-original y la última en escribir borra el trabajo de la anterior.
+pydantic-ai runs the sibling calls of the same model response as
+concurrent tasks. For almost every tool that is fine. For the ones that mutate
+a shared resource, two simultaneous calls stomp on each other: each one reads the
+original state and the last one to write erases the work of the previous one.
 
-Una guarda declara, por tool, cuándo una llamada no puede convivir con las
-llamadas anteriores de la misma respuesta. Recibe el contexto de la invocación
-—incluidas esas llamadas anteriores, en orden de emisión— y devuelve el motivo
-del conflicto, o ``None`` si la llamada puede correr en paralelo.
+A guard declares, per tool, when a call cannot coexist with the
+previous calls of the same response. It receives the invocation context
+(including those previous calls, in emission order) and returns the reason
+for the conflict, or ``None`` if the call can run in parallel.
 
-La guarda se evalúa en orden de invocación: la primera llamada de un grupo en
-conflicto siempre pasa, y las siguientes fallan con un mensaje accionable. El
-modelo ve el fallo como resultado de la tool y puede reemitir la llamada en un
-paso aparte.
+The guard is evaluated in invocation order: the first call of a conflicting
+group always goes through, and the following ones fail with an actionable message. The
+model sees the failure as a tool result and can re-emit the call in a
+separate step.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 
 @dataclass(frozen=True, slots=True)
 class SiblingCall:
-    """Una llamada emitida antes que la actual en la misma respuesta."""
+    """A call emitted before the current one in the same response."""
 
     tool_name: str
     args: dict[str, Any]
@@ -36,27 +36,27 @@ class SiblingCall:
 
 @dataclass(frozen=True, slots=True)
 class ConcurrencyContext:
-    """Lo que ve una guarda al decidir si la llamada puede correr en paralelo."""
+    """What a guard sees when deciding whether the call can run in parallel."""
 
     tool_name: str
-    """Nombre de la tool que se está por ejecutar."""
+    """Name of the tool that is about to run."""
 
     args: dict[str, Any]
-    """Argumentos efectivos de la llamada, con los defaults aplicados."""
+    """Effective args of the call, with the defaults applied."""
 
     tool_call_id: str | None
-    """Id de la llamada actual, si el modelo o el framework lo asignaron."""
+    """Id of the current call, if the model or the framework assigned one."""
 
     siblings: tuple[SiblingCall, ...]
-    """Llamadas emitidas antes que ésta en la misma respuesta, en orden."""
+    """Calls emitted before this one in the same response, in order."""
 
 
 ConcurrencyGuard = Callable[[ConcurrencyContext], str | None]
-"""Devuelve el motivo del conflicto, o ``None`` si la llamada puede correr."""
+"""Returns the reason for the conflict, or ``None`` if the call can run."""
 
 
 class ToolConflict(Exception):
-    """La llamada no puede ejecutarse junto a sus hermanas de la misma respuesta."""
+    """The call cannot run alongside its siblings of the same response."""
 
 
 def _as_sibling(part: ToolCallPart) -> SiblingCall:
@@ -73,14 +73,14 @@ def _current_index(
     tool_name: str,
     args: dict[str, Any],
 ) -> int | None:
-    """Posición de la llamada actual dentro de la respuesta."""
+    """Position of the current call inside the response."""
     if tool_call_id is not None:
         for index, part in enumerate(parts):
             if part.tool_call_id == tool_call_id:
                 return index
-    # Sin id (o con un id que no aparece) se cae al primer match por nombre y
-    # argumentos. Es una heurística, pero sólo decide qué llamadas se consideran
-    # anteriores: equivocarse de más hace fallar la guarda, nunca perder datos.
+    # Without an id (or with an id that does not appear) it falls back to the first match by name and
+    # args. It is a heuristic, but it only decides which calls are considered
+    # earlier: over-guarding makes the guard fail, it never loses data.
     for index, part in enumerate(parts):
         if part.tool_name == tool_name and part.args == args:
             return index
@@ -94,12 +94,12 @@ def earlier_siblings(
     tool_name: str,
     args: dict[str, Any],
 ) -> tuple[SiblingCall, ...]:
-    """Llamadas anteriores a la actual en la respuesta que las originó.
+    """Calls prior to the current one in the response that originated them.
 
-    Durante la ejecución de una tool, el último mensaje del run es la
-    ``ModelResponse`` que pidió todas las llamadas del lote. Si no lo es —o si
-    la llamada actual no aparece— se devuelve una tupla vacía: sin información
-    de hermanos, la guarda no tiene con qué comparar.
+    While a tool runs, the last message of the run is the
+    ``ModelResponse`` that requested every call in the batch. If it is not (or if
+    the current call does not appear) an empty tuple is returned: with no
+    sibling information, the guard has nothing to compare against.
     """
     if not messages:
         return ()

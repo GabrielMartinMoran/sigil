@@ -1,4 +1,4 @@
-"""Render de la vista de debug a texto plano (`/debug --text` y tests)."""
+"""Renders the debug view as plain text (`/debug --text` and tests)."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def _section(title: str, rows: tuple[DebugMessage, ...], *, empty: str) -> list[
 
 
 def render_debug_report(report: DebugReport) -> str:
-    """Texto plano del reporte, para tests y para `/debug --text`."""
+    """Plain-text report, for tests and for `/debug --text`."""
     snapshot = report.snapshot
     lines = [
         'Agent debug',
@@ -58,7 +58,7 @@ def render_debug_report(report: DebugReport) -> str:
         'Fixed cost per request',
     ]
     if not report.request.captured:
-        # Sin request capturado, los ceros no son una medición.
+        # With no captured request, the zeros are not a measurement.
         lines.append('  (no request captured in this process yet)')
     else:
         lines.extend(

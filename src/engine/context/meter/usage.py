@@ -1,4 +1,4 @@
-"""Desglose de costo por turno y por tool result."""
+"""Cost breakdown per turn and per tool result."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from src.engine.context.tokens import estimate_message_tokens, estimate_tokens, 
 
 @dataclass(frozen=True, slots=True)
 class TurnUsage:
-    """Costo de un turno de la conversación."""
+    """Cost of one turn of the conversation."""
 
     index: int
     label: str
@@ -23,7 +23,7 @@ class TurnUsage:
 
 @dataclass(frozen=True, slots=True)
 class ToolResultUsage:
-    """Costo de un tool result, para encontrar los que se comen la ventana."""
+    """Cost of a tool result, to find the ones that eat the window."""
 
     tool_name: str
     tokens: int
@@ -31,7 +31,7 @@ class ToolResultUsage:
 
 
 def _turn_label(turn: Sequence[ModelMessage]) -> str:
-    """Primer texto del usuario en el turno, recortado."""
+    """First user text in the turn, clipped."""
     for message in turn:
         if not isinstance(message, ModelRequest):
             continue
@@ -43,7 +43,7 @@ def _turn_label(turn: Sequence[ModelMessage]) -> str:
 
 
 def turn_usage(messages: Sequence[ModelMessage]) -> list[TurnUsage]:
-    """Costo de cada turno, en orden."""
+    """Cost of each turn, in order."""
     usage = []
     for index, turn in enumerate(split_turns(messages)):
         usage.append(
@@ -58,7 +58,7 @@ def turn_usage(messages: Sequence[ModelMessage]) -> list[TurnUsage]:
 
 
 def heaviest_tool_results(messages: Sequence[ModelMessage], limit: int = 5) -> list[ToolResultUsage]:
-    """Los ``limit`` tool results más caros."""
+    """The ``limit`` most expensive tool results."""
     results: list[ToolResultUsage] = []
     for message in messages:
         if not isinstance(message, ModelRequest):

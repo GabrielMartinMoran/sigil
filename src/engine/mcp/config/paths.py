@@ -1,4 +1,4 @@
-"""Rutas de los archivos de configuración, en orden de precedencia."""
+"""Paths of the config files, in order of precedence."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from src.engine.mcp.config.constants import CONFIG_DIRNAME, CONFIG_FILENAME, ENV
 
 
 def config_paths(cwd: str | os.PathLike[str] | None = None) -> list[Path]:
-    """Archivos de configuración en orden de precedencia (el primero gana)."""
+    """Config files in order of precedence (the first one wins)."""
     override = os.environ.get(ENV_CONFIG, '').strip()
     if override:
         return [Path(override).expanduser()]

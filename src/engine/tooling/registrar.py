@@ -1,8 +1,8 @@
-"""Registro de tools en un agente de pydantic-ai, con logging y guardas.
+"""Tool registration on a pydantic-ai agent, with logging and guards.
 
-``ToolRegistrar`` es el reemplazo de ``agent.tool_plain`` / ``agent.tool``: la
-misma API, más el wrapper que loguea cada llamada y evalúa la guarda de
-concurrencia declarada por la tool.
+``ToolRegistrar`` is the replacement for ``agent.tool_plain`` / ``agent.tool``: the
+same API, plus the wrapper that logs every call and evaluates the concurrency
+guard declared by the tool.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 class ToolRegistrar:
-    """Registra tools en un agente aplicando el wrapper de logging."""
+    """Registers tools on an agent applying the logging wrapper."""
 
     def __init__(self, agent: Agent, logger: ToolLogger | None = None) -> None:
         self.agent = agent
@@ -34,10 +34,10 @@ class ToolRegistrar:
         concurrency: ConcurrencyGuard | None = None,
         **tool_kwargs: Any,
     ) -> Any:
-        """Decorador equivalente a ``agent.tool_plain`` con logging.
+        """Decorator equivalent to ``agent.tool_plain`` with logging.
 
-        ``concurrency`` declara cuándo la llamada no puede convivir con las
-        anteriores de la misma respuesta del modelo.
+        ``concurrency`` declares when the call cannot coexist with the
+        previous ones of the same model response.
         """
         return self._make(
             func, use_context=False, name=name, description=description, concurrency=concurrency, **tool_kwargs
@@ -52,7 +52,7 @@ class ToolRegistrar:
         concurrency: ConcurrencyGuard | None = None,
         **tool_kwargs: Any,
     ) -> Any:
-        """Decorador equivalente a ``agent.tool`` (recibe ``RunContext``)."""
+        """Decorator equivalent to ``agent.tool`` (it receives a ``RunContext``)."""
         return self._make(
             func, use_context=True, name=name, description=description, concurrency=concurrency, **tool_kwargs
         )
@@ -67,7 +67,7 @@ class ToolRegistrar:
         concurrency: ConcurrencyGuard | None = None,
         **tool_kwargs: Any,
     ) -> Callable[..., Any]:
-        """Registra una función ya definida y devuelve el wrapper."""
+        """Registers an already defined function and returns the wrapper."""
         return self._make(
             func,
             use_context=use_context,
@@ -96,8 +96,8 @@ class ToolRegistrar:
                 takes_ctx=use_context,
                 concurrency=concurrency,
             )
-            # Una tool con guarda necesita el contexto, así que se registra como
-            # context tool aunque su función no lo pida.
+            # A guarded tool needs the context, so it is registered as a
+            # context tool even if its function does not ask for it.
             self._register(
                 wrapped,
                 use_context=use_context or concurrency is not None,
@@ -138,7 +138,7 @@ def register_tool(
     concurrency: ConcurrencyGuard | None = None,
     **tool_kwargs: Any,
 ) -> Any:
-    """Atajo para registrar una tool suelta con logging."""
+    """Shorthand to register a standalone tool with logging."""
     registrar = ToolRegistrar(agent, logger)
     if func is None:
 

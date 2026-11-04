@@ -1,14 +1,14 @@
-"""Gestión de contexto de Sigil.
+"""Context management for Sigil.
 
-Tres piezas con contratos distintos:
+Three pieces with different contracts:
 
-- **Log**: el historial completo de la sesión, append-only. Es lo que se persiste.
-- **Vista**: `ContextStrategy.view(log, budget)`, determinística y no destructiva.
-  Es lo que ve el modelo en cada request.
-- **Medición**: `ContextMeter`, con el número medido (ground truth del último
-  request) y el proyectado (lo que va a pesar el próximo).
+- **Log**: the full session history, append-only. It is what gets persisted.
+- **View**: `ContextStrategy.view(log, budget)`, deterministic and non-destructive.
+  It is what the model sees on every request.
+- **Measurement**: `ContextMeter`, with the measured number (ground truth of the last
+  request) and the projected one (what the next one will weigh).
 
-Ver `proposals/context-management.md` para el diseño y las decisiones.
+See `proposals/context-management.md` for the design and the decisions.
 
-Los submódulos son los puntos de import: no se re-exportan símbolos acá.
+The submodules are the import points: no symbols are re-exported here.
 """

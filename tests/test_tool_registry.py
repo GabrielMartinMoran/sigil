@@ -1,4 +1,4 @@
-"""Tests del registro de tools con logging automático."""
+"""Tests for the tool registry with automatic logging."""
 
 import asyncio
 import inspect
@@ -213,7 +213,7 @@ def test_hub_fans_out_to_sync_and_async_sinks():
 def test_hub_remove_sink():
     events: list[ToolCallEvent] = []
     hub = ToolLoggerHub([events.append])
-    hub.add_sink(events.append)  # duplicado: no se agrega
+    hub.add_sink(events.append)  # duplicate: it is not added
     assert len(hub._sinks) == 1
     hub.remove_sink(events.append)
     assert len(hub._sinks) == 0

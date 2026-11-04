@@ -1,4 +1,4 @@
-"""Consulta y resolución de prompts de los servidores MCP."""
+"""Query and resolution of prompts from MCP servers."""
 
 from __future__ import annotations
 
@@ -11,13 +11,13 @@ from src.engine.mcp.tool_models.prompt_result_info import PromptResultInfo
 
 
 async def list_prompts(servers: ServerMap, server: str | None = None) -> list[PromptInfo]:
-    """Prompts expuestos por los servidores alcanzados."""
+    """Prompts exposed by the reached servers."""
     found: list[PromptInfo] = []
     for item in targets(servers, server):
         assert item.toolset is not None
         try:
             prompts = await item.toolset.list_prompts()
-        except Exception as exc:  # noqa: BLE001 - un servidor caído no anula el resto
+        except Exception as exc:  # noqa: BLE001 - a downed server does not void the rest
             item.error = f'{type(exc).__name__}: {exc}'
             continue
         found.extend(
@@ -45,7 +45,7 @@ async def get_prompt(
     name: str,
     arguments: dict[str, str] | None = None,
 ) -> PromptResultInfo:
-    """Resuelve un prompt en sus mensajes ya renderizados."""
+    """Resolves a prompt into its already rendered messages."""
     item = require(servers, server)
     assert item.toolset is not None
     result = await item.toolset.get_prompt(name, arguments)

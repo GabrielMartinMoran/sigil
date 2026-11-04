@@ -1,7 +1,7 @@
-"""Normalización del contenido que devuelve un servidor MCP.
+"""Normalization of the content an MCP server returns.
 
-Un resource puede volver como ``str``, ``BinaryContent`` o una lista de ambos.
-El modelo necesita un payload único y predecible, así que se aplana acá.
+A resource can come back as ``str``, ``BinaryContent`` or a list of both.
+The model needs a single, predictable payload, so it is flattened here.
 """
 
 from __future__ import annotations
@@ -15,13 +15,13 @@ from src.engine.mcp.tool_models.resource_content import ResourceContent
 
 
 def content_text(content: Any) -> str:
-    """Texto de un mensaje de prompt, sea cual sea su forma."""
+    """Text of a prompt message, whatever its shape."""
     text = getattr(content, 'content', None)
     return text if isinstance(text, str) else str(content)
 
 
 def to_content(server: str, uri: str, result: Any) -> ResourceContent:
-    """Normaliza ``str | BinaryContent | list[...]`` a un único payload."""
+    """Normalizes ``str | BinaryContent | list[...]`` into a single payload."""
     if isinstance(result, list):
         return _join_contents(server, uri, result)
     if isinstance(result, BinaryContent):
@@ -37,7 +37,7 @@ def to_content(server: str, uri: str, result: Any) -> ResourceContent:
 
 
 def _join_contents(server: str, uri: str, parts: list[Any]) -> ResourceContent:
-    """Aplana una lista de contenidos en un solo payload."""
+    """Flattens a list of contents into a single payload."""
     if len(parts) == 1:
         return to_content(server, uri, parts[0])
 

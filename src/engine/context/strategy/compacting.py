@@ -1,4 +1,4 @@
-"""Vista que colapsa los turnos viejos en un resumen determinístico."""
+"""View that collapses old turns into a deterministic summary."""
 
 from __future__ import annotations
 
@@ -23,20 +23,20 @@ from src.engine.context.working_set import DEFAULT_WORKING_SET_LIMIT, render_wor
 
 @dataclass(frozen=True, slots=True)
 class CompactingStrategy:
-    """Vista que colapsa los turnos viejos en un resumen determinístico.
+    """View that collapses old turns into a deterministic summary.
 
-    Los turnos recientes quedan intactos: el modelo suele necesitar los detalles
-    exactos del último turno en el siguiente. Los viejos se reemplazan por un
-    `CompactionPart` con la intención y el rastro de tools, sin payloads.
+    Recent turns stay intact: the model usually needs the exact details of the
+    last turn on the next one. The old ones are replaced by a
+    `CompactionPart` with the intent and the tool trail, without payloads.
 
-    Los turnos que traen el resultado de una tool pineada (un skill cargado) no
-    se compactan: su contenido es instrucción, no dato.
+    Turns that carry the result of a pinned tool (a loaded skill) are not
+    compacted: their content is instruction, not data.
 
-    El resumen cierra con el **working set**: los archivos que el agente tocó,
-    derivados del log completo. Sin eso, compactar borra el rastro de qué estaba
-    editando y el agente vuelve a leer desde cero lo que ya tenía en la mano.
+    The summary closes with the **working set**: the files the agent touched,
+    derived from the full log. Without that, compacting erases the trail of what it was
+    editing and the agent re-reads from scratch what it already had at hand.
 
-    El log no se toca: la compactación es una proyección, igual que la ventana.
+    The log is not touched: compaction is a projection, just like the window.
     """
 
     keep_recent_turns: int = 2
@@ -47,9 +47,9 @@ class CompactingStrategy:
     max_summary_chars: int = 400
     pinned_tools: frozenset[str] = PINNED_TOOLS
     include_working_set: bool = True
-    """Si el resumen cierra con los archivos tocados."""
+    """Whether the summary closes with the touched files."""
     working_set_limit: int = DEFAULT_WORKING_SET_LIMIT
-    """Cuántos archivos entran en el working set."""
+    """How many files fit in the working set."""
 
     def view(self, messages: Sequence[ModelMessage], budget: ContextBudget) -> ViewResult:
         working = list(messages)
@@ -73,7 +73,7 @@ class CompactingStrategy:
 
         for turn in old_turns:
             if has_pinned_result(turn, self.pinned_tools):
-                # Instrucciones cargadas: se conservan enteras y en su lugar.
+                # Loaded instructions: kept whole and in place.
                 flush()
                 result.extend(turn)
                 continue
@@ -83,10 +83,10 @@ class CompactingStrategy:
                 compacted += 1
 
         if compacted and self.include_working_set:
-            # El working set sale del log completo, no de los turnos viejos: lo
-            # que el agente tocó hace un paso también es parte de lo que está
-            # haciendo. Va al final del resumen para que quede lo más cerca
-            # posible del turno en curso.
+            # The working set comes from the full log, not from the old turns: what
+            # the agent touched a step ago is also part of what it is
+            # doing. It goes at the end of the summary so it sits as close as
+            # possible to the turn in progress.
             working_set = render_working_set(touched_files(messages, limit=self.working_set_limit))
             if working_set:
                 pending.append(working_set)
@@ -94,7 +94,7 @@ class CompactingStrategy:
 
         truncated = 0
         for index, turn in enumerate(recent_turns):
-            # Los turnos recientes se truncan sólo si son viejos dentro de la ventana.
+            # Recent turns are truncated only if they are old inside the window.
             if index < len(recent_turns) - 1:
                 turn, count = truncate_old_tool_results(
                     [turn],
@@ -127,7 +127,7 @@ def fit_keeping_summary(
     *,
     pinned_tools: frozenset[str] = frozenset(),
 ) -> tuple[list[ModelMessage], int]:
-    """Como `fit_to_budget`, pero nunca descarta el resumen de compactación."""
+    """Like `fit_to_budget`, but it never discards the compaction summary."""
     head: list[ModelMessage] = []
     rest = list(messages)
     if rest and isinstance(rest[0], ModelRequest) and any(isinstance(part, CompactionPart) for part in rest[0].parts):

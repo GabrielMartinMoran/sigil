@@ -1,4 +1,4 @@
-"""Tests del hub y la tool de preguntas."""
+"""Tests for the hub and the question tool."""
 
 import asyncio
 
@@ -29,7 +29,7 @@ class DummyAgent:
 
 def _question():
     return QuestionItem(
-        question='¿Qué hacemos?',
+        question='What do we do?',
         options=[QuestionOption(label='A', recommended=True), QuestionOption(label='B')],
     )
 

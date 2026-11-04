@@ -1,14 +1,14 @@
-"""UI de terminal de Sigil construida con Textual.
+"""Sigil terminal UI built with Textual.
 
-La app es el punto de composición de la UI: arma el árbol de widgets y delega
-cada responsabilidad en un mixin con estado propio.
+The app is the UI composition point: it builds the widget tree and delegates
+each responsibility to a mixin with its own state.
 
-- `StatusMixin`    — barra de estado (modelo, esfuerzo, contexto proyectado).
-- `SidebarMixin`   — panel lateral: skills cargadas y servidores MCP.
-- `MenuMixin`      — menú de comandos que aparece al escribir `/`.
-- `CommandsMixin`  — comandos de barra y cambio de sesión.
-- `DebugMixin`     — vista de debug del agente (`alt+d`), que reemplaza el chat.
-- `TurnMixin`      — ejecución de un turno y checkpoints en disco.
+- `StatusMixin`    : status bar (model, effort, projected context).
+- `SidebarMixin`   : side panel: loaded skills and MCP servers.
+- `MenuMixin`      : command menu that appears when typing `/`.
+- `CommandsMixin`  : slash commands and session switching.
+- `DebugMixin`     : agent debug view (`alt+d`), which replaces the chat.
+- `TurnMixin`      : turn execution and on-disk checkpoints.
 """
 
 from __future__ import annotations
@@ -65,14 +65,14 @@ class SigilApp(
     TurnMixin,
     App,
 ):
-    """Chat de terminal: historial scrolleable, input fijo, menú y barra de estado."""
+    """Terminal chat: scrollable history, fixed input, menu and status bar."""
 
     CSS_PATH = 'theme.tcss'
     TITLE = 'Sigil'
 
-    # El foco vive en el input, que se come las teclas: el atajo necesita
-    # `priority` para llegar a la app. `escape` lo maneja `PromptInput`, que ya
-    # lo tiene tomado para el menú de comandos.
+    # Focus lives in the input, which swallows the keys: the shortcut needs
+    # `priority` to reach the app. `escape` is handled by `PromptInput`, which
+    # already uses it for the command menu.
     BINDINGS: ClassVar[list[Binding]] = [
         Binding('alt+d', 'toggle_debug', 'Debug view', priority=True, show=False),
     ]
@@ -113,15 +113,15 @@ class SigilApp(
         self._history: list[Any] = list(session.messages)
         self._context_length: int | None = None
         self.menu_visible = False
-        # Vista de debug: reemplaza el chat, no convive con él.
+        # Debug view: it replaces the chat, it does not coexist with it.
         self.debug_visible = False
         self._debug_timer: Any = None
         self._debug_pending: list[Any] | None = None
-        # Run en curso: lo usa `checkpoint` para persistir el avance del turno.
+        # Run in progress: `checkpoint` uses it to persist turn progress.
         self._current_run: Any = None
         self._last_checkpoint_at = 0.0
 
-    # --- composición -----------------------------------------------------
+    # --- composition -------------------------------------------------------
 
     def compose(self) -> ComposeResult:
         yield Vertical(
@@ -141,7 +141,7 @@ class SigilApp(
             id='root',
         )
 
-    # --- ciclo de vida ---------------------------------------------------
+    # --- lifecycle ---------------------------------------------------------
 
     async def on_mount(self) -> None:
         if self._tool_logger is not None:
@@ -178,7 +178,7 @@ class SigilApp(
         if self._roadmap_store is not None:
             self._roadmap_store.remove_listener(self.handle_roadmap_store_change)
 
-    # --- eventos de tools y modelo ---------------------------------------
+    # --- tool and model events ---------------------------------------------
 
     async def on_tool_log_message(self, message: ToolLogMessage) -> None:
         event = message.event
@@ -188,15 +188,15 @@ class SigilApp(
         elif event.phase == 'error':
             await chat.add_notice(f'✖ {event.tool_name}: {event.error}', style='bold red')
         elif event.phase == 'success' and event.tool_name == 'load_skill':
-            # El skill recién cargado aparece en el sidebar sin esperar al turno.
+            # The freshly loaded skill shows up in the sidebar without waiting for the turn.
             self.refresh_sidebar()
-        # La vista de debug sigue el turno, igual que el chat.
+        # The debug view follows the turn, just like the chat.
         self.refresh_debug()
 
-    # --- vista de debug ---------------------------------------------------
+    # --- debug view -------------------------------------------------------
 
     def action_toggle_debug(self) -> None:
-        """`alt+d`: reemplaza el chat por la vista de debug del agente."""
+        """`alt+d`: replaces the chat with the agent debug view."""
         self.toggle_debug()
 
     async def on_model_retry_notice(self, message: ModelRetryNotice) -> None:
@@ -208,23 +208,23 @@ class SigilApp(
         )
 
     def notify_model_retry(self, notice: RetryNotice) -> None:
-        """Callback de la capability de reintentos: el aviso lo pinta el handler."""
+        """Retry capability callback: the handler paints the notice."""
         self.post_message(ModelRetryNotice(notice))
 
     # --- roadmap ---------------------------------------------------------
 
     def handle_roadmap_store_change(self) -> None:
-        """Listener del store. No debe llamarse ``_on_*``: Textual trata ese
-        prefijo como handler privado del mensaje y re-postearía en loop."""
+        """Store listener. It must not be called ``_on_*``: Textual treats that
+        prefix as a private message handler and would re-post in a loop."""
         self.post_message(RoadmapChanged())
 
     def on_roadmap_changed(self, message: RoadmapChanged) -> None:
         self.query_one(RoadmapPanel).refresh_from_store()
 
-    # --- preguntas interactivas ------------------------------------------
+    # --- interactive questions --------------------------------------------
 
     async def ask_question(self, questions: list[QuestionItem]) -> list[QuestionAnswer] | None:
-        """Abre la pantalla de preguntas y espera la respuesta del usuario."""
+        """Opens the question screen and waits for the user's answer."""
         if not questions:
             return []
         future: asyncio.Future[list[QuestionAnswer] | None] = asyncio.get_running_loop().create_future()
@@ -236,13 +236,13 @@ class SigilApp(
         self.push_screen(QuestionScreen(questions), _done)
         return await future
 
-    # --- información del modelo ------------------------------------------
+    # --- model information -------------------------------------------------
 
     @work
     async def load_model_info(self) -> None:
-        """Resuelve la ventana de contexto del modelo y la publica en la barra."""
-        # pydantic-ai resuelve la ventana desde genai-prices. El fetch a
-        # OpenRouter queda como fallback cuando el perfil no la trae.
+        """Resolves the model context window and publishes it to the bar."""
+        # pydantic-ai resolves the window from genai-prices. The OpenRouter
+        # fetch remains as a fallback when the profile does not carry it.
         window = getattr(self._agent.model, 'context_window', None)
         if not window:
             info = await fetch_model_info(ConfigProvider.LLM_MODEL)

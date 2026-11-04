@@ -1,4 +1,4 @@
-"""Persistencia del roadmap en disco: un archivo JSON por sesión."""
+"""Roadmap persistence on disk: one JSON file per session."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from src.engine.roadmap.models.todo_item import TodoItem
 
 
 def default_directory() -> Path:
-    """Directorio de roadmaps del workspace actual."""
+    """Roadmap directory of the current workspace."""
     cwd_hash = hashlib.sha256(str(Path.cwd().resolve()).encode('utf-8')).hexdigest()[:16]
     return Path.home() / '.sigil' / 'roadmaps' / cwd_hash
 
@@ -20,10 +20,10 @@ def path_for(directory: Path, session_id: str | None) -> Path | None:
 
 
 def load_items(path: Path | None) -> tuple[list[TodoItem], str | None]:
-    """Lee las tareas del archivo. Devuelve ``(items, error)``.
+    """Reads the tasks from the file. Returns ``(items, error)``.
 
-    Un archivo ausente no es un error; un archivo ilegible o corrupto sí, pero
-    se reporta sin abortar: el estado en memoria sigue siendo válido.
+    A missing file is not an error; an unreadable or corrupt file is, but
+    it is reported without aborting: the in-memory state remains valid.
     """
     if path is None:
         return [], None
@@ -41,7 +41,7 @@ def load_items(path: Path | None) -> tuple[list[TodoItem], str | None]:
 
 
 def save_items(path: Path | None, items: list[TodoItem]) -> str | None:
-    """Escribe las tareas. Devuelve el error, o ``None`` si salió bien."""
+    """Writes the tasks. Returns the error, or ``None`` if it went well."""
     if path is None:
         return None
     try:

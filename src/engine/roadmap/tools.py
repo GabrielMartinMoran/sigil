@@ -1,4 +1,4 @@
-"""Tool `update_roadmap`: plan de la tarea actual, visible en el sidebar."""
+"""`update_roadmap` tool: plan of the current task, visible in the sidebar."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from src.engine.tooling.registrar import ToolRegistrar
 
 
 class RoadmapItemInput(BaseModel):
-    """Una tarea de entrada para el roadmap."""
+    """An input task for the roadmap."""
 
     title: str = Field(min_length=1)
     id: str | None = None
@@ -23,7 +23,7 @@ class RoadmapItemInput(BaseModel):
 
 
 class RoadmapSnapshot(BaseModel):
-    """Estado completo del roadmap."""
+    """Full roadmap state."""
 
     items: list[TodoItem]
     counts: dict[str, int]
@@ -80,7 +80,7 @@ def _apply_remove(store: RoadmapStore, item_id: str | None) -> None:
 
 
 def register_roadmap_tools(agent: Any, store: RoadmapStore, logger: ToolLogger | None = None) -> None:
-    """Registra la tool de roadmap en un agente de pydantic-ai."""
+    """Registers the roadmap tool on a pydantic-ai agent."""
     tools = ToolRegistrar(agent, logger)
 
     @tools.tool

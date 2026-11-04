@@ -1,4 +1,4 @@
-"""Web tools: búsqueda y extracción de páginas con ddgs."""
+"""Web tools: search and page extraction with ddgs."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def _as_result(raw: dict[str, Any]) -> SearchResult:
 
 
 def _as_page(raw: dict[str, Any], url: str, fmt: str, max_chars: int) -> PageContent:
-    """Normaliza la respuesta de ``extract`` a un payload único."""
+    """Normalizes the ``extract`` response into a single payload."""
     content = raw.get('content') or ''
     resolved_url = str(raw.get('url') or url)
 
@@ -61,7 +61,7 @@ def _as_page(raw: dict[str, Any], url: str, fmt: str, max_chars: int) -> PageCon
 
 
 def register_web_tools(agent: Any, logger: ToolLogger | None = None) -> None:
-    """Registra las tools de web en un agente de pydantic-ai."""
+    """Registers the web tools on a pydantic-ai agent."""
     tools = ToolRegistrar(agent, logger)
 
     @tools.tool

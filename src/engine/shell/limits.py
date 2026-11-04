@@ -1,10 +1,10 @@
-"""Límites de la ejecución de comandos."""
+"""Command execution limits."""
 
 DEFAULT_TIMEOUT = 15
-"""Timeout por comando, en segundos."""
+"""Timeout per command, in seconds."""
 
 MAX_TIMEOUT = 120
-"""Tope del timeout que puede pedir el modelo."""
+"""Cap of the timeout the model can request."""
 
 MAX_OUTPUT_BYTES = 64 * 1024
-"""Tope de salida por stream (stdout y stderr se cuentan por separado)."""
+"""Output cap per stream (stdout and stderr are counted separately)."""

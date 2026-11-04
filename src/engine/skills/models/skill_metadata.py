@@ -1,4 +1,4 @@
-"""Nivel 1 del protocolo Agent Skills: metadatos baratos de un skill."""
+"""Level 1 of the Agent Skills protocol: cheap skill metadata."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from typing import Any
 
 @dataclass(frozen=True, slots=True)
 class SkillMetadata:
-    """Nivel 1 del protocolo: metadatos baratos de un skill.
+    """Level 1 of the protocol: cheap skill metadata.
 
-    Es lo único que se inyecta siempre en el contexto del modelo.
+    It is the only thing always injected into the model context.
     """
 
     name: str

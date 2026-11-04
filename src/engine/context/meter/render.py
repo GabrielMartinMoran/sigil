@@ -1,4 +1,4 @@
-"""Texto de `/context`, listo para el chat."""
+"""Text of `/context`, ready for the chat."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ def _fmt_percent(value: float | None) -> str:
 
 
 def render_report(report: ContextReport) -> str:
-    """Texto de `/context`, listo para el chat."""
+    """Text of `/context`, ready for the chat."""
     snapshot = report.snapshot
     budget = snapshot.budget
     lines = [

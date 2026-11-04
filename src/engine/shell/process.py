@@ -1,8 +1,8 @@
-"""Arranque y drenaje de un proceso de shell no interactivo.
+"""Spawning and draining of a non-interactive shell process.
 
-Separado de la API pública porque son dos responsabilidades distintas: acá vive
-el manejo de ``subprocess`` y ``selectors``; en ``runner`` vive la política
-(timeouts, guardas, resultados).
+Separated from the public API because they are two distinct responsibilities: here lives
+the ``subprocess`` and ``selectors`` handling; in ``runner`` lives the policy
+(timeouts, guards, results).
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ _KILL_GRACE_SECONDS = 2
 
 @dataclass(slots=True)
 class DrainResult:
-    """Salida capturada de un proceso."""
+    """Captured output of a process."""
 
     stdout: bytes = b''
     stderr: bytes = b''
@@ -36,7 +36,7 @@ class DrainResult:
 
 @dataclass(slots=True)
 class _Buffers:
-    """Acumuladores de salida con su bandera de truncado."""
+    """Output accumulators with their truncation flag."""
 
     stdout: bytearray = field(default_factory=bytearray)
     stderr: bytearray = field(default_factory=bytearray)
@@ -55,7 +55,7 @@ class _Buffers:
 
 
 def spawn(cmd: str, *, cwd: str | None, extra_env: dict[str, str] | None) -> subprocess.Popen[bytes]:
-    """Arranca ``cmd`` en Bash, en su propio grupo de procesos y sin stdin."""
+    """Spawns ``cmd`` in Bash, in its own process group and without stdin."""
     return subprocess.Popen(
         ['/bin/bash', '--noprofile', '--norc', '-c', cmd],
         stdin=subprocess.DEVNULL,
@@ -74,7 +74,7 @@ def spawn(cmd: str, *, cwd: str | None, extra_env: dict[str, str] | None) -> sub
 
 
 def kill_process_group(process: subprocess.Popen[bytes]) -> None:
-    """Termina todo el grupo de procesos del comando."""
+    """Terminates the whole process group of the command."""
     try:
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
@@ -85,7 +85,7 @@ def kill_process_group(process: subprocess.Popen[bytes]) -> None:
 
 
 def _read_available(selector: selectors.BaseSelector, buffers: _Buffers) -> None:
-    """Lee lo que haya listo y desregistra los streams que se cerraron."""
+    """Reads whatever is ready and unregisters the streams that closed."""
     for key, _ in selector.select(timeout=_SELECT_SLICE_SECONDS):
         try:
             chunk = os.read(key.fileobj.fileno(), _READ_CHUNK_BYTES)
@@ -101,7 +101,7 @@ def _read_available(selector: selectors.BaseSelector, buffers: _Buffers) -> None
 
 
 def drain(process: subprocess.Popen[bytes], deadline: float) -> DrainResult:
-    """Lee stdout y stderr hasta que el proceso termina o vence el deadline."""
+    """Reads stdout and stderr until the process ends or the deadline expires."""
     buffers = _Buffers()
     timed_out = False
     selector = selectors.DefaultSelector()

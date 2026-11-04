@@ -1,4 +1,4 @@
-"""Lectura con cache de un archivo de instrucciones."""
+"""Cached read of an instruction file."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 @dataclass(frozen=True, slots=True)
 class CacheEntry:
-    """Contenido leído de un archivo, con la clave de invalidación."""
+    """Content read from a file, with the invalidation key."""
 
     mtime_ns: int
     size: int
@@ -17,7 +17,7 @@ class CacheEntry:
 
 
 def read_cached(path: Path, *, max_chars: int, cache: dict[Path, CacheEntry]) -> CacheEntry | None:
-    """Lee un archivo con cache por ``(mtime, size)``."""
+    """Reads a file cached by ``(mtime, size)``."""
     try:
         stat = path.stat()
     except OSError:

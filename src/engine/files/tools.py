@@ -1,8 +1,8 @@
-"""Tools de archivos: leer, escribir y parchear con validación.
+"""File tools: read, write and patch with validation.
 
-Cada tool es fina a propósito: valida la entrada, delega en ``text`` o en el
-sistema de archivos, y devuelve un modelo. La lógica de líneas y finales de
-línea vive en ``text``; la de rutas, en ``paths``.
+Each tool is thin on purpose: it validates the input, delegates to ``text`` or to the
+filesystem, and returns a model. The line and line-ending logic
+lives in ``text``; the path logic, in ``paths``.
 """
 
 from __future__ import annotations
@@ -28,9 +28,9 @@ from src.engine.tooling.registrar import ToolRegistrar
 
 
 def _read_line_range(target: Any, path: str, size: int, start_line: int | None, end_line: int | None) -> FileContent:
-    """Lee un rango de líneas de un archivo de texto."""
+    """Reads a line range from a text file."""
     try:
-        # newline='' conserva CRLF para que el texto se pueda copiar tal cual a
+        # newline='' preserves CRLF so the text can be copied as is into
         # `patch_file`.
         text = target.read_text(encoding='utf-8', newline='')
     except UnicodeDecodeError as exc:
@@ -57,7 +57,7 @@ def _read_line_range(target: Any, path: str, size: int, start_line: int | None, 
 
 
 def _read_whole(target: Any, size: int, max_bytes: int) -> FileContent:
-    """Lee el archivo completo, o sus primeros ``max_bytes``."""
+    """Reads the whole file, or its first ``max_bytes``."""
     raw = target.read_bytes()
     content, binary, encoding = decode(raw[:max_bytes])
     return FileContent(
@@ -71,7 +71,7 @@ def _read_whole(target: Any, size: int, max_bytes: int) -> FileContent:
 
 
 def _require_file(path: str) -> Any:
-    """Resuelve ``path`` y valida que sea un archivo existente."""
+    """Resolves ``path`` and validates that it is an existing file."""
     target = resolve(path)
     if not target.exists():
         raise FileToolError(f'File not found: {path!r}.')
@@ -81,9 +81,9 @@ def _require_file(path: str) -> Any:
 
 
 def _read_text_for_patch(target: Any, path: str) -> str:
-    """Lee el texto de un archivo preservando sus finales de línea."""
+    """Reads a file's text preserving its line endings."""
     try:
-        # newline='' evita reescribir en silencio un archivo CRLF a LF.
+        # newline='' avoids silently rewriting a CRLF file to LF.
         return target.read_text(encoding='utf-8', newline='')
     except UnicodeDecodeError as exc:
         raise FileToolError(f'File {path!r} is not UTF-8 text.') from exc
@@ -99,7 +99,7 @@ def _patched_text(
     expected_text: str | None,
     replace_all: bool,
 ) -> tuple[str, str, int]:
-    """Aplica el parche pedido. Devuelve ``(texto, modo, reemplazos)``."""
+    """Applies the requested patch. Returns ``(text, mode, replacements)``."""
     line_mode = start_line is not None or end_line is not None
 
     if old_string is not None:
@@ -124,7 +124,7 @@ def _patched_text(
 
 
 def register_file_tools(agent: Any, logger: ToolLogger | None = None) -> None:
-    """Registra las tools de archivos en un agente de pydantic-ai."""
+    """Registers the file tools on a pydantic-ai agent."""
     tools = ToolRegistrar(agent, logger)
 
     @tools.tool

@@ -1,4 +1,4 @@
-"""Tests de la vista de debug: caché de prompt, snapshot del request y reporte."""
+"""Tests for the debug view: prompt cache, request snapshot and report."""
 
 from __future__ import annotations
 
@@ -50,9 +50,9 @@ class _Params:
 
 
 def test_cache_rows_split_cached_from_uncached():
-    """`input_tokens` es inclusivo: los cacheados ya están adentro."""
+    """`input_tokens` is inclusive: the cached ones are already inside."""
     messages = [
-        _request(UserPromptPart(content='hola')),
+        _request(UserPromptPart(content='hello')),
         _response(input_tokens=1_000, cache_read_tokens=800, cache_write_tokens=100, output_tokens=50),
     ]
     (row,) = request_cache_rows(messages)
@@ -81,21 +81,21 @@ def test_cache_summary_aggregates_requests():
 
 
 def test_cache_summary_without_usage_is_empty():
-    summary = cache_summary([_request(UserPromptPart(content='hola'))])
+    summary = cache_summary([_request(UserPromptPart(content='hello'))])
     assert not summary.has_data
     assert summary.rows == ()
     assert summary.hit_ratio == 0.0
 
 
 def test_cache_summary_skips_responses_without_usage():
-    """Una respuesta sin usage no es un request medido: no cuenta como 0 tokens."""
+    """A response without usage is not a measured request: it does not count as 0 tokens."""
     messages = [ModelResponse(parts=[TextPart(content='x')]), _response(input_tokens=10, output_tokens=1)]
     assert len(request_cache_rows(messages)) == 1
     assert cache_summary(messages).unmeasured == 1
 
 
 def test_cache_summary_skips_unmeasured_requests():
-    """`unmeasured_requests` marca usage omitido: sus totales no son medición."""
+    """`unmeasured_requests` marks omitted usage: its totals are not a measurement."""
     messages = [_response(input_tokens=0, output_tokens=0, unmeasured_requests=1)]
     summary = cache_summary(messages)
     assert not summary.has_data
@@ -154,7 +154,7 @@ def test_snapshot_request_tolerates_missing_parameters():
     assert snapshot.tools == ()
     assert snapshot.instructions_tokens == 0
     assert snapshot.tools_tokens == 0
-    # Sin `ModelRequestParameters` no hubo request: los ceros no son medición.
+    # Without `ModelRequestParameters` there was no request: the zeros are not a measurement.
     assert snapshot.captured is False
 
 
@@ -177,9 +177,9 @@ def test_snapshot_preview_is_clipped():
 
 def test_debug_messages_label_parts_and_count_tokens():
     messages = [
-        _request(UserPromptPart(content='hola mundo')),
-        ModelResponse(parts=[ThinkingPart(content='pienso'), TextPart(content='listo')]),
-        _request(ToolReturnPart(tool_name='read_file', content='contenido', tool_call_id='1')),
+        _request(UserPromptPart(content='hello world')),
+        ModelResponse(parts=[ThinkingPart(content='thinking'), TextPart(content='done')]),
+        _request(ToolReturnPart(tool_name='read_file', content='content', tool_call_id='1')),
     ]
     rows = debug_messages(list(messages))
 
@@ -201,12 +201,12 @@ def test_debug_messages_clip_long_previews_but_keep_the_real_cost():
     assert len(part.preview) == 100
     assert part.clipped is True
     assert part.clipped_chars == 4_900
-    # El costo se mide sobre el texto completo, no sobre el preview.
+    # The cost is measured on the whole text, not on the preview.
     assert part.tokens == 1_250
 
 
 def test_debug_messages_reports_compaction_and_instructions():
-    messages = [ModelRequest(parts=[CompactionPart(content='resumen de turnos viejos')], instructions='base prompt')]
+    messages = [ModelRequest(parts=[CompactionPart(content='summary of old turns')], instructions='base prompt')]
     row = debug_messages(messages)[0]
     assert row.parts[0].kind == 'compaction'
     assert row.instructions == ('(inline)',)
@@ -223,7 +223,7 @@ def test_debug_messages_handle_tool_call_args():
 
 def _session() -> list:
     return [
-        _request(UserPromptPart(content='hola')),
+        _request(UserPromptPart(content='hello')),
         _response(input_tokens=500, cache_read_tokens=400, cache_write_tokens=0, output_tokens=20),
     ]
 

@@ -1,4 +1,4 @@
-"""Constantes del archivo de configuración de Sigil."""
+"""Constants of the Sigil config file."""
 
 from __future__ import annotations
 

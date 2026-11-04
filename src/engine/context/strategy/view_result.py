@@ -1,4 +1,4 @@
-"""Resultado de proyectar el log a la vista del modelo."""
+"""Result of projecting the log onto the model view."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pydantic_ai.messages import ModelMessage
 
 @dataclass(frozen=True, slots=True)
 class ViewResult:
-    """Resultado de proyectar el log a la vista del modelo."""
+    """Result of projecting the log onto the model view."""
 
     messages: list[ModelMessage]
     estimated_tokens: int

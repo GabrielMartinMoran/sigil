@@ -1,8 +1,8 @@
-"""Meta-tools de MCP expuestas al modelo.
+"""MCP meta-tools exposed to the model.
 
-Las tools de cada servidor llegan al agente como toolsets, pero resources y
-prompts no son tools: se exponen acá, con el mismo criterio de *progressive
-disclosure* que los Agent Skills (listar primero, traer después).
+Each server's tools reach the agent as toolsets, but resources and
+prompts are not tools: they are exposed here, with the same *progressive
+disclosure* criterion as Agent Skills (list first, fetch later).
 """
 
 from __future__ import annotations
@@ -20,10 +20,10 @@ from src.engine.tooling.registrar import ToolRegistrar
 
 
 def register_mcp_tools(agent: Any, manager: MCPManager, logger: ToolLogger | None = None) -> None:
-    """Registra las meta-tools de MCP en un agente de pydantic-ai.
+    """Registers the MCP meta-tools on a pydantic-ai agent.
 
-    Si no hay servidores configurados no registra nada: cinco tools vacías sólo
-    gastarían contexto.
+    With no configured servers it registers nothing: five empty tools would only
+    waste context.
     """
     if not manager:
         return

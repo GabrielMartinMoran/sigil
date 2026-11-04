@@ -1,4 +1,4 @@
-"""Metadatos de un skill instalado, tal como los ve el modelo."""
+"""Metadata of an installed skill, as the model sees it."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class SkillSummary(BaseModel):
-    """Metadatos de un skill instalado."""
+    """Metadata of an installed skill."""
 
     name: str
     description: str

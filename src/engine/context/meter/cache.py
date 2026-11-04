@@ -1,16 +1,16 @@
-"""Uso del prompt cache por request: cuánto input salió de caché y cuánto no.
+"""Prompt cache usage per request: how much input came from cache and how much did not.
 
-`RequestUsage` de pydantic-ai usa buckets inclusivos: `input_tokens` **incluye**
-`cache_read_tokens` y `cache_write_tokens` (los adapters normalizan así incluso a
-los providers que los reportan separados, como Anthropic). Entonces:
+pydantic-ai's `RequestUsage` uses inclusive buckets: `input_tokens` **includes**
+`cache_read_tokens` and `cache_write_tokens` (the adapters normalize this way even for
+the providers that report them separately, like Anthropic). So:
 
-    uncached = input − cache_read − cache_write
+    uncached = input - cache_read - cache_write
 
-Ese es el número caro: los tokens que el provider procesó de cero y que, si el
-prefijo del prompt fuera estable, podrían haber salido de caché. Un `uncached`
-alto en cada request después del primero es la señal de que algo invalida el
-prefijo (instrucciones que se reescriben, historial que se muta, tools que
-cambian de orden).
+That is the expensive number: the tokens the provider processed from scratch and that, if the
+prompt prefix were stable, could have come from cache. A high `uncached`
+on every request after the first is the sign that something invalidates the
+prefix (instructions being rewritten, history being mutated, tools that
+change order).
 """
 
 from __future__ import annotations
@@ -23,10 +23,10 @@ from pydantic_ai.messages import ModelMessage, ModelResponse
 
 @dataclass(frozen=True, slots=True)
 class RequestCacheRow:
-    """Uso de un request individual, tal como lo reportó el provider."""
+    """Usage of a single request, as reported by the provider."""
 
     index: int
-    """Posición del request medido en la sesión, 1-based."""
+    """Position of the measured request in the session, 1-based."""
     input_tokens: int
     cache_read: int
     cache_write: int
@@ -35,35 +35,35 @@ class RequestCacheRow:
 
     @property
     def cached(self) -> int:
-        """Tokens que el provider sirvió desde caché (leídos o escritos)."""
+        """Tokens the provider served from cache (read or written)."""
         return self.cache_read + self.cache_write
 
     @property
     def uncached(self) -> int:
-        """Input procesado de cero: lo que cuesta y no se pudo reusar."""
+        """Input processed from scratch: the expensive part that could not be reused."""
         return max(0, self.input_tokens - self.cache_read - self.cache_write)
 
     @property
     def hit_ratio(self) -> float:
-        """Fracción del input servida de caché. ``0.0`` sin input."""
+        """Fraction of the input served from cache. ``0.0`` without input."""
         return self.cached / self.input_tokens if self.input_tokens else 0.0
 
 
 @dataclass(frozen=True, slots=True)
 class CacheSummary:
-    """Agregado de todos los requests de la sesión."""
+    """Aggregate of every request in the session."""
 
     rows: tuple[RequestCacheRow, ...] = field(default_factory=tuple)
     requests: int = 0
-    """Requests con usage reportado."""
+    """Requests with reported usage."""
     unmeasured: int = 0
-    """Requests cuyo provider omitió el usage: no suman y se informan aparte."""
+    """Requests whose provider omitted the usage: they do not add up and are reported separately."""
     input_tokens: int = 0
     cache_read: int = 0
     cache_write: int = 0
     output_tokens: int = 0
     cost: float | None = None
-    """Costo reportado, o ``None`` si el provider no lo informó."""
+    """Reported cost, or ``None`` if the provider did not report it."""
 
     @property
     def has_data(self) -> bool:
@@ -79,21 +79,21 @@ class CacheSummary:
 
     @property
     def hit_ratio(self) -> float:
-        """Fracción del input total que salió de caché."""
+        """Fraction of the total input that came from cache."""
         return self.cached / self.input_tokens if self.input_tokens else 0.0
 
 
 def _cost(response: ModelResponse) -> float | None:
-    """Costo en USD del request, si el provider lo informó."""
+    """Cost of the request in USD, if the provider reported it."""
     cost = getattr(response.usage, 'cost', None)
     return float(cost) if cost is not None else None
 
 
 def request_cache_rows(messages: Sequence[ModelMessage]) -> list[RequestCacheRow]:
-    """Una fila por respuesta medida del modelo, en orden de la sesión.
+    """One row per measured model response, in session order.
 
-    Las respuestas sin usage (o con `unmeasured_requests`) no son mediciones y
-    no entran: contarlas como cero mentiría sobre el hit ratio.
+    Responses without usage (or with `unmeasured_requests`) are not measurements and
+    do not get in: counting them as zero would lie about the hit ratio.
     """
     rows: list[RequestCacheRow] = []
     for message in messages:
@@ -116,7 +116,7 @@ def request_cache_rows(messages: Sequence[ModelMessage]) -> list[RequestCacheRow
 
 
 def unmeasured_responses(messages: Sequence[ModelMessage]) -> int:
-    """Cuántas respuestas del modelo llegaron sin usage utilizable."""
+    """How many model responses arrived without usable usage."""
     count = 0
     for message in messages:
         if not isinstance(message, ModelResponse):
@@ -128,7 +128,7 @@ def unmeasured_responses(messages: Sequence[ModelMessage]) -> int:
 
 
 def cache_summary(messages: Sequence[ModelMessage]) -> CacheSummary:
-    """Agregado del uso de caché de toda la sesión."""
+    """Aggregate of the cache usage of the whole session."""
     rows = request_cache_rows(messages)
     if not rows:
         return CacheSummary(unmeasured=unmeasured_responses(messages))

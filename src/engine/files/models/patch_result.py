@@ -1,4 +1,4 @@
-"""Resultado de parchear un archivo."""
+"""Result of patching a file."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class PatchResult(BaseModel):
-    """Resultado de parchear un archivo."""
+    """Result of patching a file."""
 
     path: str
     mode: str = Field(description='`string` or `lines`.')

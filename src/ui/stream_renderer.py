@@ -1,14 +1,14 @@
-"""Render incremental en vivo de las respuestas del modelo.
+"""Incremental live rendering of the model responses.
 
-El agente se ejecuta con `agent.run_sync(..., event_stream_handler=...)`, de modo
-que el loop del agente corre hasta el final (ejecutando todas las tool calls) y,
-como efecto colateral, nos entrega un stream de eventos. Este renderer consume
-esos eventos e imprime los deltas de pensamiento y de texto apenas llegan.
+The agent runs with `agent.run_sync(..., event_stream_handler=...)`, so
+the agent loop runs to the end (executing every tool call) and,
+as a side effect, hands us an event stream. This renderer consumes
+those events and prints the thinking and text deltas as soon as they arrive.
 
-Cada request al modelo emite su propio bloque de eventos que arranca con un
-`PartStartEvent` de índice 0. Cuando detectamos uno, cerramos la línea anterior
-y reseteamos el estado, de forma que cada mensaje (incluidos los intermedios que
-acompañan a una tool call) quede en líneas separadas.
+Each model request emits its own block of events that starts with a
+`PartStartEvent` with index 0. When we detect one, we close the previous line
+and reset the state, so that each message (including the intermediate ones that
+accompany a tool call) ends up on separate lines.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from rich.console import Console
 
 
 class StreamRenderer:
-    """Imprime en vivo los deltas de pensamiento y texto de una respuesta."""
+    """Prints the thinking and text deltas of a response live."""
 
     def __init__(self, console: Console | None = None) -> None:
         self._console = console or Console()
@@ -36,24 +36,24 @@ class StreamRenderer:
         self._printing_text = False
 
     async def handle_event(self, _ctx: Any, events: AsyncIterable[Any]) -> None:
-        """Handler async para `event_stream_handler` de pydantic-ai."""
+        """Async handler for pydantic-ai's `event_stream_handler`."""
         async for event in events:
             self.render_event(event)
 
     def render_events(self, events: AsyncIterable[Any]) -> None:
-        """Consume un iterable async de eventos en contexto sync (para tests)."""
+        """Consumes an async event iterable in a sync context (for tests)."""
         import asyncio
 
         asyncio.run(self.handle_event(None, events))
 
     def finish(self) -> None:
-        """Cierra la línea en curso al terminar el turno completo."""
+        """Closes the current line when the whole turn ends."""
         self._finish()
 
     def render_event(self, event: Any) -> None:
         if isinstance(event, PartStartEvent):
             if event.index == 0:
-                # Nueva respuesta del modelo: cerramos la línea anterior.
+                # New model response: we close the previous line.
                 self._finish()
             self._render_part(event.part)
         elif isinstance(event, PartDeltaEvent):

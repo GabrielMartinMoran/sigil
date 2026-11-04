@@ -1,15 +1,15 @@
-"""Resolución de los archivos de instrucciones del árbol de directorios.
+"""Resolution of the instruction files of the directory tree.
 
-El bloque `workspace` resuelve `AGENTS.md` (o `CLAUDE.md` en su defecto) sobre el
-árbol de directorios activo:
+The `workspace` block resolves `AGENTS.md` (or `CLAUDE.md` as a fallback) over the
+active directory tree:
 
-- La raíz de la sesión aplica siempre.
-- Un subdirectorio aplica sólo cuando el agente opera dentro de él.
-- El orden es padre → hijo: el hijo va último y tiene precedencia.
-- En un mismo directorio, `AGENTS.md` gana sobre `CLAUDE.md`.
+- The session root always applies.
+- A subdirectory applies only when the agent operates inside it.
+- The order is parent -> child: the child goes last and takes precedence.
+- In the same directory, `AGENTS.md` wins over `CLAUDE.md`.
 
-Es contenido de operador, no del usuario: viaja por el canal de instrucciones,
-nunca como mensaje de usuario.
+It is operator content, not user content: it travels through the instructions channel,
+never as a user message.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from src.engine.context.instructions.workspace_file import WorkspaceFile
 
 
 class WorkspaceInstructions:
-    """Resuelve los archivos de instrucciones del árbol de directorios."""
+    """Resolves the instruction files of the directory tree."""
 
     def __init__(
         self,
@@ -52,7 +52,7 @@ class WorkspaceInstructions:
         return read_cached(path, max_chars=self._max_file_chars, cache=self._cache)
 
     def _file_for(self, directory: Path) -> Path | None:
-        """`AGENTS.md` si existe; si no, `CLAUDE.md`."""
+        """`AGENTS.md` if present; otherwise `CLAUDE.md`."""
         for filename in (AGENTS_FILENAME, FALLBACK_FILENAME):
             candidate = directory / filename
             if candidate.is_file():
@@ -60,7 +60,7 @@ class WorkspaceInstructions:
         return None
 
     def resolve(self, scopes: Iterable[Path]) -> list[WorkspaceFile]:
-        """Archivos de instrucciones para los directorios dados, padre → hijo."""
+        """Instruction files for the given directories, parent -> child."""
         ordered = sorted(set(scopes), key=lambda path: (len(path.parts), str(path)))
         found: list[WorkspaceFile] = []
         total = 0
@@ -99,7 +99,7 @@ class WorkspaceInstructions:
         return found
 
     def render(self, scopes: Iterable[Path]) -> str:
-        """Texto del bloque `workspace`, listo para las instrucciones."""
+        """Text of the `workspace` block, ready for the instructions."""
         files = self.resolve(scopes)
         if not files:
             return ''
@@ -123,11 +123,11 @@ class WorkspaceInstructions:
         return '\n'.join(lines).rstrip() + '\n'
 
     def block(self, scopes: Iterable[Path]) -> InstructionBlock | None:
-        """El bloque `workspace`, o ``None`` si no hay archivos.
+        """The `workspace` block, or ``None`` if there are no files.
 
-        `on_change='append'`: el scope se amplía a mitad de turno cuando una tool
-        entra en un subdirectorio nuevo. Agregar el texto del hijo preserva el
-        prefijo de instrucciones; reescribirlo invalidaría el prompt cache.
+        `on_change='append'`: the scope widens mid-turn when a tool
+        enters a new subdirectory. Appending the child text preserves the
+        instruction prefix; rewriting it would invalidate the prompt cache.
         """
         content = self.render(scopes)
         if not content:
@@ -135,5 +135,5 @@ class WorkspaceInstructions:
         return InstructionBlock(name='workspace', content=content, on_change='append', source='AGENTS.md/CLAUDE.md')
 
     def describe(self, scopes: Iterable[Path]) -> Sequence[str]:
-        """Rutas relativas de los archivos resueltos, para la UI."""
+        """Relative paths of the resolved files, for the UI."""
         return [file.relative for file in self.resolve(scopes)]

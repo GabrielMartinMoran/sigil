@@ -1,4 +1,4 @@
-"""Medición del contexto de una sesión y armado del presupuesto."""
+"""Measuring the context of a session and building the budget."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from src.engine.context.tokens import estimate_messages_tokens, measured_tokens,
 
 
 class ContextMeter:
-    """Mide el contexto de una sesión y arma el presupuesto."""
+    """Measures the context of a session and builds the budget."""
 
     def __init__(self, *, window: int | None = None, output_reserve: int = DEFAULT_OUTPUT_RESERVE) -> None:
         self._window = window if window and window > 0 else None
@@ -32,7 +32,7 @@ class ContextMeter:
             self._window = window
 
     def set_overhead(self, *, instructions: int | None = None, tools: int | None = None) -> None:
-        """Fija el costo de los bloques que se mandan siempre."""
+        """Sets the cost of the blocks that are always sent."""
         if instructions is not None:
             self._instructions = instructions
         if tools is not None:

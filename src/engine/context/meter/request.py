@@ -1,9 +1,9 @@
-"""Lo que viaja en cada request además del historial: instrucciones y tools.
+"""What travels on each request besides the history: instructions and tools.
 
-`ModelRequestParameters` es la fuente de verdad de lo que el provider serializa:
-los `instruction_parts` ya resueltos (con nombre y si son dinámicos) y las
-definiciones de tools. Medir desde acá, y no introspeccionando el agente, evita
-que el diagnóstico mienta cuando una instrucción cambia entre requests.
+`ModelRequestParameters` is the source of truth of what the provider serializes:
+the already-resolved `instruction_parts` (with their name and whether they are dynamic) and the
+tool definitions. Measuring from here, and not by introspecting the agent, avoids
+the diagnostics lying when an instruction changes between requests.
 """
 
 from __future__ import annotations
@@ -15,40 +15,40 @@ from src.engine.context.tokens import estimate_tokens
 
 @dataclass(frozen=True, slots=True)
 class InstructionRow:
-    """Un bloque de instrucciones tal como se mandó."""
+    """An instruction block as it was sent."""
 
     name: str
     dynamic: bool
-    """Si el contenido se recalcula en cada request (y por lo tanto puede romper el prefijo)."""
+    """Whether the content is recomputed on every request (and can therefore break the prefix)."""
     tokens: int
     preview: str
 
 
 @dataclass(frozen=True, slots=True)
 class ToolRow:
-    """Un schema de tool tal como se mandó."""
+    """A tool schema as it was sent."""
 
     name: str
     tokens: int
     deferred: bool = False
-    """Si el schema quedó diferido (no viaja hasta que el historial lo revela)."""
+    """Whether the schema was deferred (it does not travel until the history reveals it)."""
 
 
 @dataclass(frozen=True, slots=True)
 class RequestSnapshot:
-    """Costo fijo del último request: instrucciones y schemas de tools."""
+    """Fixed cost of the last request: instructions and tool schemas."""
 
     instructions: tuple[InstructionRow, ...] = ()
     tools: tuple[ToolRow, ...] = ()
     native_tools: int = 0
-    """Tools nativas del provider (no viajan como schema JSON)."""
+    """Native provider tools (they do not travel as a JSON schema)."""
 
     captured: bool = False
-    """Si el snapshot viene de un request real. En falso, los ceros no son una medición.
+    """Whether the snapshot comes from a real request. When false, the zeros are not a measurement.
 
-    Pasa en una sesión recién cargada con `/load`: hay historial, pero ningún
-    request corrió en este proceso y por lo tanto no hay instrucciones ni tools
-    observadas.
+    It happens in a freshly loaded session with `/load`: there is history, but no
+    request ran in this process and therefore there are no observed instructions or
+    tools.
     """
 
     @property
@@ -61,7 +61,7 @@ class RequestSnapshot:
 
     @property
     def dynamic_instructions(self) -> tuple[InstructionRow, ...]:
-        """Bloques que se recalculan por request: candidatos a invalidar el caché."""
+        """Blocks recomputed per request: candidates to invalidate the cache."""
         return tuple(row for row in self.instructions if row.dynamic)
 
 
@@ -71,10 +71,10 @@ def _preview(text: str, limit: int = 120) -> str:
 
 
 def snapshot_request(parameters: object, *, preview_chars: int = 120) -> RequestSnapshot:
-    """Arma el snapshot del request desde `ModelRequestParameters`.
+    """Builds the request snapshot from `ModelRequestParameters`.
 
-    Sin parámetros no hubo request: devuelve un snapshot vacío y **no capturado**,
-    para que el diagnóstico no confunda "no medí" con "no hay instrucciones".
+    Without parameters there was no request: it returns an empty and **not captured**
+    snapshot, so the diagnostics do not confuse "I did not measure" with "there are no instructions".
     """
     if parameters is None:
         return RequestSnapshot()
@@ -106,7 +106,7 @@ def snapshot_request(parameters: object, *, preview_chars: int = 120) -> Request
 
 
 def _tool_payload(tool: object) -> str:
-    """Serialización aproximada del schema, igual que `overhead.measure_tool_definitions`."""
+    """Approximate schema serialization, same as `overhead.measure_tool_definitions`."""
     import json
 
     payload = {

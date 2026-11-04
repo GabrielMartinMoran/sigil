@@ -1,4 +1,4 @@
-"""Resultado de un comando ejecutado."""
+"""Result of an executed command."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 
 class RunToolOutput(BaseModel):
-    """Resultado de un comando ejecutado."""
+    """Result of an executed command."""
 
     returncode: int
     stdout: str | None = None

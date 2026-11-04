@@ -1,4 +1,4 @@
-"""Configuración validada de un servidor MCP."""
+"""Validated config of an MCP server."""
 
 from __future__ import annotations
 
@@ -14,26 +14,26 @@ from src.engine.mcp.config_models.constants import (
 
 
 class MCPServerConfig(BaseModel):
-    """Configuración de un servidor MCP.
+    """Config of an MCP server.
 
-    Un servidor es stdio (``command``) o HTTP (``url``), nunca ambos.
+    A server is either stdio (``command``) or HTTP (``url``), never both.
     """
 
     model_config = ConfigDict(extra='forbid', frozen=True)
 
-    # --- transporte stdio ---
+    # --- stdio transport ---
     command: str | None = None
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
     cwd: str | None = None
     keep_alive: bool = True
 
-    # --- transporte HTTP ---
+    # --- HTTP transport ---
     url: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)
     transport: Literal['http', 'sse'] | None = None
 
-    # --- comportamiento ---
+    # --- behavior ---
     enabled: bool = True
     prefix: str | None = None
     include_instructions: bool = True

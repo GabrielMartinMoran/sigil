@@ -7,8 +7,8 @@ from src.sigil import run
 
 
 def main() -> None:
-    # Autoprotección: si estamos siendo arrancados como hijo de la tool `run`,
-    # negarnos a iniciar otra instancia de Sigil (evita recursión/bloqueos).
+    # Self-protection: if we are being launched as a child of the `run` tool,
+    # refuse to start another Sigil instance (avoids recursion/deadlocks).
     if os.environ.get(SELF_GUARD_ENV) == '1':
         raise SystemExit(
             f'Refusing to start Sigil: detected nested invocation ({SELF_GUARD_ENV}=1). '

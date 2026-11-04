@@ -1,4 +1,4 @@
-"""Estrategia que manda el historial tal cual."""
+"""Strategy that sends the history as is."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from src.engine.context.tokens import estimate_messages_tokens
 
 @dataclass(frozen=True, slots=True)
 class PassthroughStrategy:
-    """Manda el historial tal cual. Es el comportamiento previo a este módulo."""
+    """Sends the history as is. It is the behavior before this module."""
 
     def view(self, messages: Sequence[ModelMessage], budget: ContextBudget) -> ViewResult:
         view = list(messages)

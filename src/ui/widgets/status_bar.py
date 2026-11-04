@@ -1,4 +1,4 @@
-"""Barra inferior con provider, modelo, esfuerzo de razonamiento y contexto."""
+"""Bottom bar with provider, model, reasoning effort and context."""
 
 from __future__ import annotations
 

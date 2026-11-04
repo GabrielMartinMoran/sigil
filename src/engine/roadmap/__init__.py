@@ -1,5 +1,5 @@
-"""Estado del roadmap de la tarea actual.
+"""Roadmap state of the current task.
 
-El store vive en ``store``, los modelos en ``models`` y la persistencia en
-``persistence``. El paquete no re-exporta símbolos: importá del módulo dueño.
+The store lives in ``store``, the models in ``models`` and persistence in
+``persistence``. The package re-exports no symbols: import from the owning module.
 """

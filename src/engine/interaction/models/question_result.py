@@ -1,4 +1,4 @@
-"""Resultado de una tanda de preguntas interactivas."""
+"""Result of a batch of interactive questions."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from src.engine.interaction.models.question_answer import QuestionAnswer
 
 
 class QuestionResult(BaseModel):
-    """Resultado de una tanda de preguntas."""
+    """Result of a batch of questions."""
 
     answers: list[QuestionAnswer]
     cancelled: bool = False

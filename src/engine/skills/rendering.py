@@ -1,4 +1,4 @@
-"""Bloques de instrucciones que el registry de skills aporta al agente."""
+"""Instruction blocks the skill registry contributes to the agent."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from src.engine.skills.registry import SkillRegistry
 
 
 def render_available_skills(registry: SkillRegistry) -> str:
-    """Bloque de metadatos para inyectar en las instrucciones del agente."""
+    """Metadata block to inject into the agent instructions."""
     skills = [skill for skill in registry.list() if skill.model_invocable]
     if not skills:
         return ''
@@ -31,13 +31,13 @@ def render_available_skills(registry: SkillRegistry) -> str:
 
 
 def render_loaded_skills(registry: SkillRegistry, names: Sequence[str]) -> str:
-    """Bloque de instrucciones con el cuerpo de los skills cargados.
+    """Instruction block with the body of the loaded skills.
 
-    El cuerpo del ``SKILL.md`` va acá y no como resultado de tool: así
-    sobrevive a la compactación y no compite por el presupuesto del
-    historial. Los recursos empaquetados quedan afuera a propósito — se leen
-    on demand con ``read_skill_resource``, que es lo que mantiene barato el
-    bloque.
+    The ``SKILL.md`` body goes here and not as a tool result: that way it
+    survives compaction and does not compete for the history
+    budget. The bundled resources are left out on purpose: they are read
+    on demand with ``read_skill_resource``, which is what keeps the block
+    cheap.
     """
     if not names:
         return ''

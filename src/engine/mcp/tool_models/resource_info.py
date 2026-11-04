@@ -1,4 +1,4 @@
-"""Recurso expuesto por un servidor MCP."""
+"""Resource exposed by an MCP server."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 
 class ResourceInfo(BaseModel):
-    """Recurso expuesto por un servidor MCP."""
+    """Resource exposed by an MCP server."""
 
     server: str
     uri: str

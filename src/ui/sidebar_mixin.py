@@ -1,4 +1,4 @@
-"""Panel lateral: skills cargadas y estado de los servidores MCP."""
+"""Side panel: loaded skills and MCP server state."""
 
 from __future__ import annotations
 
@@ -10,16 +10,16 @@ from src.ui.widgets.sidebar_panel import MCPServerState, SidebarPanel
 
 
 class SidebarMixin:
-    """Mantiene el panel lateral al día.
+    """Keeps the side panel up to date.
 
-    Espera que la app defina ``_loaded_skills`` y ``_mcp_manager``.
+    It expects the app to define ``_loaded_skills`` and ``_mcp_manager``.
     """
 
     _loaded_skills: object | None
     _mcp_manager: object | None
 
     def refresh_sidebar(self) -> None:
-        """Skills cargadas en la sesión, arriba del roadmap."""
+        """Skills loaded in the session, above the roadmap."""
         try:
             panel = self.query_one(SidebarPanel)
         except NoMatches, ScreenStackError:
@@ -29,21 +29,21 @@ class SidebarMixin:
 
     @work(exclusive=True)
     async def refresh_mcp_status(self) -> None:
-        """Conteo real de servidores MCP: conecta y actualiza el panel.
+        """Real MCP server count: it connects and updates the panel.
 
-        Corre en un worker para no bloquear el arranque: levantar los servidores
-        puede tardar. Si falla, el panel se queda con lo que ya sabía.
+        It runs in a worker so as not to block startup: bringing the servers
+        up can take time. If it fails, the panel keeps what it already knew.
         """
         if self._mcp_manager is None or not self._mcp_manager:
             return
         try:
             statuses = await self._mcp_manager.describe(connect=True)
-        except Exception:  # noqa: BLE001 - el diagnóstico nunca rompe la app
+        except Exception:  # noqa: BLE001 - diagnostics never break the app
             return
         self.apply_mcp_status(statuses)
 
     def apply_mcp_status(self, statuses: list[object]) -> None:
-        """Vuelca el estado de MCP al panel lateral."""
+        """Dumps the MCP state into the side panel."""
         servers = [MCPServerState(name=status.name, ok=not status.error) for status in statuses if status.enabled]
         try:
             self.query_one(SidebarPanel).update_mcp(servers)

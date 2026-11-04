@@ -1,4 +1,4 @@
-"""Roadmap de una sesión, con persistencia y notificación a la UI."""
+"""Roadmap of a session, with persistence and UI notification."""
 
 from __future__ import annotations
 
@@ -12,15 +12,15 @@ from src.engine.roadmap.persistence import default_directory, load_items, path_f
 
 
 class RoadmapStore:
-    """Roadmap de una sesión, con persistencia y notificación a la UI.
+    """Roadmap of a session, with persistence and UI notification.
 
-    Cada sesión tiene su propio archivo: el roadmap nace vacío con la sesión,
-    avanza con ella y se recupera al cargarla. ``bind_session`` reapunta el
-    store al roadmap de otra sesión sin recrear el objeto, de modo que la tool
-    del agente siempre escribe en la sesión activa.
+    Each session has its own file: the roadmap is born empty with the session,
+    advances with it and is recovered when loading it. ``bind_session`` re-points the
+    store to another session's roadmap without recreating the object, so the
+    agent's tool always writes to the active session.
 
-    La persistencia es best-effort: si falla, el estado en memoria sigue
-    funcionando y el error queda en ``persistence_error``.
+    Persistence is best-effort: if it fails, the in-memory state keeps
+    working and the error stays in ``persistence_error``.
     """
 
     def __init__(self, directory: str | Path | None = None, session_id: str | None = None) -> None:
@@ -42,7 +42,7 @@ class RoadmapStore:
         return self._path
 
     def bind_session(self, session_id: str | None) -> None:
-        """Reapunta el store al roadmap de ``session_id`` y lo recarga."""
+        """Re-points the store to the roadmap of ``session_id`` and reloads it."""
         with self._lock:
             if session_id == self._session_id:
                 return
@@ -139,7 +139,7 @@ class RoadmapStore:
         for listener in tuple(self._listeners):
             try:
                 listener()
-            except Exception:  # noqa: BLE001, S110 - la UI no debe romper el estado
+            except Exception:  # noqa: BLE001, S110 - the UI must not break the state
                 pass
 
     def _load(self) -> None:

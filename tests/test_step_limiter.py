@@ -1,4 +1,4 @@
-"""Tests del límite duro de pasos por turno."""
+"""Tests for the hard step limit per turn."""
 
 import pytest
 from pydantic_ai.messages import (
@@ -31,7 +31,7 @@ def test_counts_model_messages_and_tool_calls():
 
 def test_ignores_non_step_events():
     limiter = StepLimiter(max_steps=10)
-    limiter.count(PartStartEvent(index=1, part=TextPart(content='x')))  # no es inicio de mensaje
+    limiter.count(PartStartEvent(index=1, part=TextPart(content='x')))  # not a message start
     limiter.count(PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='x')))
     assert limiter.steps == 0
 

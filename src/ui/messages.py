@@ -1,4 +1,4 @@
-"""Mensajes internos de la UI de Sigil."""
+"""Internal messages of the Sigil UI."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ from src.engine.agents.retry import RetryNotice
 
 
 class RoadmapChanged(Message):
-    """El store del roadmap cambió y el panel tiene que repintarse."""
+    """The roadmap store changed and the panel has to repaint."""
 
 
 class ModelRetryNotice(Message):
-    """Aviso de que un fallo transitorio del modelo dispara un reintento."""
+    """Notice that a transient model failure triggers a retry."""
 
     def __init__(self, notice: RetryNotice) -> None:
         super().__init__()

@@ -1,4 +1,4 @@
-"""Argumento de un prompt MCP."""
+"""Argument of an MCP prompt."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 
 class PromptArgumentInfo(BaseModel):
-    """Argumento de un prompt MCP."""
+    """Argument of an MCP prompt."""
 
     name: str
     description: str | None = None

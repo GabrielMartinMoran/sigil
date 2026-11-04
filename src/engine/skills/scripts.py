@@ -1,7 +1,7 @@
-"""Ejecución de scripts empaquetados dentro de un skill.
+"""Execution of scripts bundled inside a skill.
 
-La extensión manda sobre el shebang para los lenguajes conocidos: así un ``.py``
-usa el intérprete de Sigil (con sus dependencias) aunque el script declare
+The extension wins over the shebang for known languages: that way a ``.py``
+uses the Sigil interpreter (with its dependencies) even if the script declares
 ``#!/usr/bin/env python3``.
 """
 
@@ -26,7 +26,7 @@ _KNOWN_INTERPRETERS = {
 
 
 def _shebang(path: Path) -> list[str]:
-    """Intérprete declarado en la primera línea, si hay."""
+    """Interpreter declared on the first line, if any."""
     try:
         first_line = path.open('rb').readline(256).decode('utf-8', errors='replace').strip()
     except OSError:
@@ -37,10 +37,10 @@ def _shebang(path: Path) -> list[str]:
 
 
 def interpreter_for(path: Path) -> list[str]:
-    """Elige cómo ejecutar un script según extensión, shebang o permisos.
+    """Chooses how to run a script based on extension, shebang or permissions.
 
-    Una lista vacía significa "ejecutalo directamente": el archivo es ejecutable
-    y su shebang se encarga.
+    An empty list means "run it directly": the file is executable
+    and its shebang takes care of it.
     """
     known = _KNOWN_INTERPRETERS.get(path.suffix.lower())
     if known is not None:

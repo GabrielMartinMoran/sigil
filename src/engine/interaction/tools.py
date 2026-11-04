@@ -1,4 +1,4 @@
-"""Tool `ask_user`: preguntas de opción múltiple dentro de la UI."""
+"""`ask_user` tool: multiple-choice questions inside the UI."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from src.engine.tooling.registrar import ToolRegistrar
 
 
 def register_interaction_tools(agent: Any, hub: QuestionHub, logger: ToolLogger | None = None) -> None:
-    """Registra la tool de preguntas en un agente de pydantic-ai."""
+    """Registers the question tool on a pydantic-ai agent."""
     tools = ToolRegistrar(agent, logger)
 
     @tools.tool

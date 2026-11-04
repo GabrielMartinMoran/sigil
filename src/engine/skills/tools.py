@@ -1,11 +1,11 @@
-"""Tools del protocolo Agent Skills expuestas al modelo.
+"""Agent Skills protocol tools exposed to the model.
 
-Implementan los tres niveles de *progressive disclosure*:
+They implement the three levels of *progressive disclosure*:
 
-1. ``list_skills``          — metadatos (nombre + descripción).
-2. ``load_skill``           — cuerpo del ``SKILL.md`` + inventario de recursos.
-3. ``read_skill_resource``  — lectura puntual de un recurso.
-   ``run_skill_script``     — ejecución de un script empaquetado.
+1. ``list_skills``          : metadata (name + description).
+2. ``load_skill``           : ``SKILL.md`` body + resource inventory.
+3. ``read_skill_resource``  : targeted read of one resource.
+   ``run_skill_script``     : execution of a bundled script.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ def _summary(metadata: SkillMetadata) -> SkillSummary:
 
 
 def _decode(data: bytes) -> tuple[str, bool, str]:
-    """Devuelve ``(contenido, es_binario, encoding)``."""
+    """Returns ``(content, is_binary, encoding)``."""
     if b'\x00' in data:
         return base64.b64encode(data).decode('ascii'), True, 'base64'
     try:
@@ -57,7 +57,7 @@ def _decode(data: bytes) -> tuple[str, bool, str]:
 
 
 def _script_env(metadata: SkillMetadata) -> dict[str, str]:
-    """Entorno del script: el skill se puede importar a sí mismo."""
+    """Script environment: the skill can import itself."""
     python_path = os.environ.get('PYTHONPATH')
     return {
         'SIGIL_SKILL': metadata.name,
@@ -76,10 +76,10 @@ def register_skill_tools(
     logger: ToolLogger | None = None,
     loaded: LoadedSkills | None = None,
 ) -> None:
-    """Registra las tools de skills en un agente de pydantic-ai.
+    """Registers the skills tools on a pydantic-ai agent.
 
-    Con ``loaded``, ``load_skill`` registra el skill para que su cuerpo se
-    inyecte como bloque de instrucciones en el request siguiente.
+    With ``loaded``, ``load_skill`` registers the skill so its body is
+    injected as an instruction block on the next request.
     """
     tools = ToolRegistrar(agent, logger)
 
@@ -95,7 +95,7 @@ def register_skill_tools(
         Args:
             query: Optional case-insensitive filter over name and description.
         """
-        # Re-escanear permite descubrir skills instalados durante la sesión.
+        # Rescanning allows discovering skills installed during the session.
         registry.refresh()
         skills = registry.list()
         if query:

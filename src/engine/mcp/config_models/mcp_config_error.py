@@ -1,7 +1,7 @@
-"""Error de configuración de MCP."""
+"""MCP config error."""
 
 from __future__ import annotations
 
 
 class MCPConfigError(Exception):
-    """La configuración de MCP es inválida o falta."""
+    """The MCP config is invalid or missing."""

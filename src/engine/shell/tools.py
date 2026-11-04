@@ -1,4 +1,4 @@
-"""Tool `run`: comandos de shell en paralelo para el modelo."""
+"""`run` tool: parallel shell commands for the model."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from src.engine.tooling.registrar import ToolRegistrar
 
 
 def register_shell_tools(agent: Any, logger: ToolLogger | None = None) -> None:
-    """Registra la tool de shell en un agente de pydantic-ai."""
+    """Registers the shell tool on a pydantic-ai agent."""
     tools = ToolRegistrar(agent, logger)
 
     @tools.tool

@@ -1,12 +1,12 @@
-"""Persistencia de sesiones (conversaciones) de Sigil.
+"""Persistence of Sigil sessions (conversations).
 
-Cada sesión es una conversación completa: se guarda como un archivo JSON dentro
-de ``~/.sigil/sessions/<hash-del-cwd>/``. El hash del *current working directory*
-permite asociar las sesiones al directorio desde el que se lanzó Sigil sin
-exponer la ruta completa como nombre de carpeta.
+Each session is a full conversation: it is saved as a JSON file inside
+``~/.sigil/sessions/<cwd-hash>/``. The hash of the *current working directory*
+associates the sessions with the directory Sigil was launched from without
+exposing the full path as a folder name.
 
-Cada directorio mantiene además un ``index.json`` con el id de la última sesión,
-de modo que al arrancar se pueda restaurar automáticamente.
+Each directory also keeps an ``index.json`` with the last session id,
+so that it can be restored automatically on startup.
 """
 
 from __future__ import annotations
@@ -36,14 +36,14 @@ def _now() -> str:
 
 
 def cwd_hash(cwd: str | Path) -> str:
-    """Devuelve un hash estable y corto para un directorio de trabajo."""
+    """Returns a stable, short hash for a working directory."""
     real = os.path.realpath(str(cwd))
     return hashlib.sha256(real.encode('utf-8')).hexdigest()[:16]
 
 
 @dataclass
 class Session:
-    """Una conversación con su historial de mensajes de pydantic-ai."""
+    """A conversation with its pydantic-ai message history."""
 
     id: str
     cwd: str
@@ -61,7 +61,7 @@ class Session:
 
     @property
     def preview(self) -> str:
-        """Primer mensaje del usuario, útil para listar sesiones."""
+        """First user message, useful to list sessions."""
         for message in self.messages:
             if not isinstance(message, ModelRequest):
                 continue
@@ -74,7 +74,7 @@ class Session:
 
 
 class SessionStore:
-    """Lee y escribe sesiones para un directorio de trabajo concreto."""
+    """Reads and writes sessions for a specific working directory."""
 
     def __init__(self, cwd: str | Path | None = None, base_dir: str | Path | None = None) -> None:
         self.cwd = os.path.realpath(str(cwd if cwd is not None else Path.cwd()))
@@ -83,16 +83,16 @@ class SessionStore:
         self.directory.mkdir(parents=True, exist_ok=True)
         self.index_path = self.directory / INDEX_FILENAME
 
-    # --- API pública ---------------------------------------------------------
+    # --- public API ----------------------------------------------------------
 
     def create_session(self, title: str | None = None) -> Session:
-        """Crea una sesión vacía y la persiste inmediatamente."""
+        """Creates an empty session and persists it immediately."""
         session = Session(id=uuid.uuid4().hex, cwd=self.cwd, title=title)
         self.save(session)
         return session
 
     def save(self, session: Session) -> None:
-        """Persiste la sesión y la marca como la última usada."""
+        """Persists the session and marks it as the last one used."""
         session.touch()
         self._atomic_write(self._session_path(session.id), self._serialize(session))
 
@@ -102,7 +102,7 @@ class SessionStore:
         self._atomic_write(self.index_path, index)
 
     def load(self, session_id: str) -> Session | None:
-        """Carga una sesión por id y la marca como la última usada."""
+        """Loads a session by id and marks it as the last one used."""
         path = self._session_path(session_id)
         if not path.is_file():
             return None
@@ -119,7 +119,7 @@ class SessionStore:
         return session
 
     def load_last(self) -> Session | None:
-        """Carga la última sesión usada, o la más reciente si no hay índice."""
+        """Loads the last session used, or the most recent one if there is no index."""
         last_id = self._read_index().get('last_session_id')
         if last_id:
             session = self.load(last_id)
@@ -130,7 +130,7 @@ class SessionStore:
         return sessions[0] if sessions else None
 
     def list_sessions(self) -> list[Session]:
-        """Lista las sesiones del directorio, de la más reciente a la más vieja."""
+        """Lists the sessions of the directory, newest first."""
         sessions: list[Session] = []
         for path in self.directory.glob(f'*{SESSION_SUFFIX}'):
             if path.name == INDEX_FILENAME:
@@ -138,20 +138,20 @@ class SessionStore:
             try:
                 sessions.append(self._deserialize(json.loads(path.read_text(encoding='utf-8'))))
             except OSError, ValueError, KeyError:
-                # Archivos corruptos o incompletos se ignoran en lugar de romper la app.
+                # Corrupt or incomplete files are ignored instead of breaking the app.
                 continue
 
         sessions.sort(key=lambda session: session.updated_at, reverse=True)
         return sessions
 
     def find(self, token: str) -> list[Session]:
-        """Busca sesiones cuyo id empiece por ``token``."""
+        """Looks for sessions whose id starts with ``token``."""
         token = token.strip()
         if not token:
             return []
         return [session for session in self.list_sessions() if session.id.startswith(token)]
 
-    # --- Serialización -------------------------------------------------------
+    # --- Serialization -------------------------------------------------------
 
     def _session_path(self, session_id: str) -> Path:
         return self.directory / f'{session_id}{SESSION_SUFFIX}'
@@ -176,7 +176,7 @@ class SessionStore:
             title=data.get('title'),
         )
 
-    # --- Índice y escritura atómica -----------------------------------------
+    # --- Index and atomic write ----------------------------------------------
 
     def _read_index(self) -> dict:
         try:

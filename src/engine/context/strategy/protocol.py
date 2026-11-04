@@ -1,4 +1,4 @@
-"""Contrato de una estrategia de vista del historial."""
+"""Contract of a history view strategy."""
 
 from __future__ import annotations
 
@@ -12,6 +12,6 @@ from src.engine.context.strategy.view_result import ViewResult
 
 
 class ContextStrategy(Protocol):
-    """Proyecta el log de la sesión a lo que se manda al modelo."""
+    """Projects the session log onto what gets sent to the model."""
 
     def view(self, messages: Sequence[ModelMessage], budget: ContextBudget) -> ViewResult: ...

@@ -1,4 +1,4 @@
-"""Agrupación del historial en turnos autocontenidos."""
+"""Grouping of the history into self-contained turns."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart, Use
 
 
 def split_turns(messages: Sequence[ModelMessage]) -> list[list[ModelMessage]]:
-    """Agrupa el historial en turnos, delimitados por el prompt del usuario.
+    """Groups the history into turns, delimited by the user prompt.
 
-    Un turno es autocontenido: prompt → respuestas → tool calls → tool returns.
-    Por eso se puede descartar entero sin dejar un `ToolReturnPart` huérfano, que
-    es lo que el provider rechaza con un 400.
+    A turn is self-contained: prompt -> responses -> tool calls -> tool returns.
+    That is why it can be discarded whole without leaving an orphan `ToolReturnPart`, which
+    is what the provider rejects with a 400.
     """
     turns: list[list[ModelMessage]] = []
     current: list[ModelMessage] = []
@@ -30,7 +30,7 @@ def split_turns(messages: Sequence[ModelMessage]) -> list[list[ModelMessage]]:
 
 
 def has_pinned_result(turn: Sequence[ModelMessage], pinned: frozenset[str]) -> bool:
-    """Si el turno trae el resultado de una tool pineada (instrucciones)."""
+    """Whether the turn carries the result of a pinned tool (instructions)."""
     if not pinned:
         return False
     return any(

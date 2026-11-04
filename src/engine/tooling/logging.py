@@ -1,8 +1,8 @@
-"""Emisión de eventos de tools hacia sinks inyectables.
+"""Emitting tool events towards injectable sinks.
 
-El engine no conoce la UI: emite eventos a un ``ToolLogger`` y la UI enchufa un
-sink que los escribe donde corresponda. Un sink puede ser sync o async, y un
-fallo suyo nunca interrumpe la tool que lo disparó.
+The engine does not know the UI: it emits events to a ``ToolLogger`` and the UI plugs in a
+sink that writes them where appropriate. A sink can be sync or async, and a
+failure in it never interrupts the tool that triggered it.
 """
 
 from __future__ import annotations
@@ -15,14 +15,14 @@ from typing import Any
 from src.engine.tooling.events import ToolCallEvent
 
 ToolLogger = Callable[[ToolCallEvent], Any]
-"""Sink de eventos. Puede ser sync o async; el retorno se ignora."""
+"""Event sink. It can be sync or async; the return value is ignored."""
 
 
 async def emit_tool_event(logger: ToolLogger | None, event: ToolCallEvent) -> None:
-    """Emite un evento a un sink, ignorando cualquier fallo del logging.
+    """Emits an event to a sink, ignoring any logging failure.
 
-    Público para integraciones que no pasan por ``wrap_tool`` — por ejemplo las
-    tools de un servidor MCP, que se ejecutan dentro de un toolset.
+    Public for integrations that do not go through ``wrap_tool``, for example the
+    tools of an MCP server, which run inside a toolset.
     """
     if logger is None:
         return
@@ -30,12 +30,12 @@ async def emit_tool_event(logger: ToolLogger | None, event: ToolCallEvent) -> No
         result = logger(event)
         if inspect.isawaitable(result):
             await result
-    except Exception:  # noqa: BLE001, S110 - el logging nunca debe romper una tool
+    except Exception:  # noqa: BLE001, S110 - logging must never break a tool
         pass
 
 
 def emit_tool_event_sync(logger: ToolLogger | None, event: ToolCallEvent) -> None:
-    """Emite desde una tool sync; programa los sinks async en el loop actual."""
+    """Emits from a sync tool; it schedules the async sinks on the current loop."""
     if logger is None:
         return
     try:
@@ -47,15 +47,15 @@ def emit_tool_event_sync(logger: ToolLogger | None, event: ToolCallEvent) -> Non
                 asyncio.run(result)
             else:
                 loop.create_task(result)
-    except Exception:  # noqa: BLE001, S110 - el logging nunca debe romper una tool
+    except Exception:  # noqa: BLE001, S110 - logging must never break a tool
         pass
 
 
 class ToolLoggerHub:
-    """Fan-out de eventos de tools hacia uno o varios sinks.
+    """Fan-out of tool events towards one or several sinks.
 
-    Es el punto de inyección entre engine y UI: el composition root crea el hub,
-    se lo pasa a las tools y a la app, y la app agrega su sink al montar.
+    It is the injection point between engine and UI: the composition root creates the hub,
+    passes it to the tools and to the app, and the app adds its sink on mount.
     """
 
     def __init__(self, sinks: Sequence[ToolLogger] = ()) -> None:

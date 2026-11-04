@@ -1,8 +1,8 @@
-"""Operaciones de texto sobre archivos: líneas, finales de línea y decodificación.
+"""Text operations on files: lines, line endings and decoding.
 
-Todo lo que sabe de ``\\n``, ``\\r\\n`` y UTF-8 vive acá. Las tools de archivos
-sólo orquestan; así el manejo de finales de línea se puede razonar y testear
-aislado del I/O.
+Everything that knows about ``\\n``, ``\\r\\n`` and UTF-8 lives here. The file tools
+only orchestrate; that way line-ending handling can be reasoned about and tested
+in isolation from I/O.
 """
 
 from __future__ import annotations
@@ -13,16 +13,15 @@ import codecs
 from src.engine.files.models.file_tool_error import FileToolError
 
 PREVIEW_LIMIT = 300
-"""Caracteres que se conservan en el preview de un parche."""
+"""Characters kept in a patch preview."""
 
 
 def decode(data: bytes) -> tuple[str, bool, str]:
-    """Devuelve ``(contenido, es_binario, encoding)``.
+    """Returns ``(content, is_binary, encoding)``.
 
-    Un límite de bytes puede cortar una secuencia multibyte al medio. Eso es un
-    archivo de texto truncado, no binario: se descarta la cola incompleta y se
-    conserva el texto legible. Bytes inválidos en cualquier otra posición sí
-    significan binario.
+    A byte limit can cut a multibyte sequence in half. That is a truncated text
+    file, not a binary one: the incomplete tail is discarded and the readable
+    text is kept. Invalid bytes in any other position do mean binary.
     """
     if b'\x00' in data:
         return base64.b64encode(data).decode('ascii'), True, 'base64'
@@ -37,12 +36,12 @@ def decode(data: bytes) -> tuple[str, bool, str]:
 
 
 def split_lines(text: str) -> list[str]:
-    """Corta por ``\\n`` conservando el final de cada línea.
+    """Splits on ``\\n`` keeping the end of each line.
 
-    ``str.splitlines`` también corta en ``\\x0b``, ``\\x0c`` y separadores
-    Unicode, lo que haría que los números de línea no coincidan con el editor.
-    Conservar los finales permite que un parche devuelva un archivo CRLF byte a
-    byte igual.
+    ``str.splitlines`` also splits on ``\\x0b``, ``\\x0c`` and Unicode
+    separators, which would make the line numbers not match the editor.
+    Keeping the endings lets a patch return a CRLF file byte for
+    byte identical.
     """
     if not text:
         return []
@@ -54,7 +53,7 @@ def split_lines(text: str) -> list[str]:
 
 
 def strip_eol(value: str) -> str:
-    """Quita un único final de línea, para que ``'a'`` y ``'a\\n'`` comparen igual."""
+    """Removes a single line ending, so ``'a'`` and ``'a\\n'`` compare equal."""
     if value.endswith('\r\n'):
         return value[:-2]
     if value.endswith('\n'):
@@ -63,12 +62,12 @@ def strip_eol(value: str) -> str:
 
 
 def detect_newline(text: str) -> str:
-    """Final de línea dominante del archivo."""
+    """Dominant line ending of the file."""
     return '\r\n' if '\r\n' in text else '\n'
 
 
 def find_occurrences(text: str, needle: str) -> list[int]:
-    """Posiciones de todas las apariciones de ``needle``."""
+    """Positions of every occurrence of ``needle``."""
     starts: list[int] = []
     index = text.find(needle)
     while index != -1:
@@ -78,18 +77,18 @@ def find_occurrences(text: str, needle: str) -> list[int]:
 
 
 def line_of(text: str, index: int) -> int:
-    """Número de línea (1-indexado) de una posición del texto."""
+    """Line number (1-indexed) of a position in the text."""
     return text.count('\n', 0, index) + 1
 
 
 def preview(value: str, limit: int = PREVIEW_LIMIT) -> str:
-    """Resumen de una línea de un texto."""
+    """One-line summary of a text."""
     collapsed = ' '.join(value.split())
     return collapsed if len(collapsed) <= limit else collapsed[: limit - 1] + '…'
 
 
 def apply_string_patch(text: str, old: str, new: str, replace_all: bool) -> tuple[str, int]:
-    """Reemplaza ``old`` por ``new``. Devuelve ``(texto, reemplazos)``."""
+    """Replaces ``old`` with ``new``. Returns ``(text, replacements)``."""
     if old == '':
         raise FileToolError('`old_string` cannot be empty.')
 
@@ -116,7 +115,7 @@ def apply_line_patch(
     new: str,
     expected_text: str | None,
 ) -> tuple[str, str]:
-    """Reemplaza un rango de líneas. Devuelve ``(texto, región original)``."""
+    """Replaces a line range. Returns ``(text, original region)``."""
     newline = detect_newline(text)
     lines = split_lines(text)
     total = len(lines)
@@ -131,8 +130,8 @@ def apply_line_patch(
         )
 
     replacement = new.replace('\r\n', '\n').replace('\n', newline) if new else ''
-    # Un reemplazo sin salto final igual necesita uno, salvo que caiga en la
-    # última línea de un archivo que no termina en salto.
+    # A replacement without a trailing newline still needs one, unless it falls on the
+    # last line of a file that does not end with a newline.
     if replacement and not replacement.endswith('\n') and (end_line < total or region.endswith('\n')):
         replacement += newline
 

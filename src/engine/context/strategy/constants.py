@@ -1,20 +1,20 @@
-"""Constantes de las estrategias de vista."""
+"""View strategy constants."""
 
 from __future__ import annotations
 
 DEFAULT_KEEP_RECENT_TURNS = 3
-"""Turnos que se mantienen intactos antes de empezar a recortar."""
+"""Turns kept intact before starting to trim."""
 
 DEFAULT_MAX_TOOL_RESULT_CHARS = 4_000
-"""Tope de un tool result viejo. Los recientes no se tocan."""
+"""Cap of an old tool result. Recent ones are not touched."""
 
 DEFAULT_TOOL_RESULT_HEAD_CHARS = 400
-"""Cuánto se conserva de un tool result truncado, para no perder la señal."""
+"""How much of a truncated tool result is kept, so the signal is not lost."""
 
 PINNED_TOOLS: frozenset[str] = frozenset({'load_skill', 'read_skill_resource'})
-"""Tools cuyo resultado es **instrucción**, no dato: nunca se truncan ni se compactan.
+"""Tools whose result is **instruction**, not data: they are never truncated or compacted.
 
-El cuerpo de un skill es lo que el agente tiene que seguir haciendo. Truncarlo a
-un stub o colapsarlo en "load_skill → ok" le saca las instrucciones en medio de
-la tarea. Medido: los skills instalados pesan entre 454 y 8.256 tokens.
+A skill body is what the agent has to keep doing. Truncating it to
+a stub or collapsing it into "load_skill -> ok" takes the instructions away mid-
+task. Measured: the installed skills weigh between 454 and 8,256 tokens.
 """

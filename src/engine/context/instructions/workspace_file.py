@@ -1,4 +1,4 @@
-"""Un archivo de instrucciones encontrado en el árbol."""
+"""An instruction file found in the tree."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 @dataclass(frozen=True, slots=True)
 class WorkspaceFile:
-    """Un archivo de instrucciones encontrado en el árbol."""
+    """An instruction file found in the tree."""
 
     path: Path
     relative: str

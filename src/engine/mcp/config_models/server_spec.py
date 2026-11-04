@@ -1,4 +1,4 @@
-"""Servidor MCP validado, con el contexto del archivo que lo declaró."""
+"""Validated MCP server, with the context of the file that declared it."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from src.engine.mcp.config_models.server_config import MCPServerConfig
 
 @dataclass(frozen=True, slots=True)
 class MCPServerSpec:
-    """Servidor validado, con el contexto del archivo que lo declaró."""
+    """Validated server, with the context of the file that declared it."""
 
     name: str
     config: MCPServerConfig
@@ -24,13 +24,13 @@ class MCPServerSpec:
 
     @property
     def tool_prefix(self) -> str:
-        """Prefijo de las tools; ``None`` usa el nombre del server, ``''`` no prefija."""
+        """Tool prefix; ``None`` uses the server name, ``''`` adds no prefix."""
         prefix = self.config.prefix
         return self.name if prefix is None else prefix
 
     @property
     def cwd_path(self) -> Path | None:
-        """``cwd`` resuelto: ``~`` expandido y rutas relativas al archivo de config."""
+        """Resolved ``cwd``: ``~`` expanded and paths relative to the config file."""
         raw = self.config.cwd
         if not raw:
             return None

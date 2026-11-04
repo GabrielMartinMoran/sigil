@@ -1,24 +1,24 @@
-"""Registro de los skills cargados durante la sesión.
+"""Registry of the skills loaded during the session.
 
-El cuerpo de un skill cargado no viaja como resultado de tool: se inyecta como
-bloque de instrucciones. Eso lo hace sobrevivir a la compactación y lo saca del
-presupuesto del historial, donde competiría con los datos.
+The body of a loaded skill does not travel as a tool result: it is injected as an
+instruction block. That makes it survive compaction and takes it out of the
+history budget, where it would compete with the data.
 
-Este registro es el puente entre la tool `load_skill` (que lo alimenta) y la
-función de instrucciones (que lo lee en cada request).
+This registry is the bridge between the `load_skill` tool (which feeds it) and the
+instructions function (which reads it on every request).
 """
 
 from __future__ import annotations
 
 
 class LoadedSkills:
-    """Nombres de los skills cargados, en orden de carga y sin repetir."""
+    """Names of the loaded skills, in load order and without repeats."""
 
     def __init__(self) -> None:
         self._names: list[str] = []
 
     def add(self, name: str) -> bool:
-        """Registra un skill. Devuelve ``True`` si no estaba ya cargado."""
+        """Registers a skill. Returns ``True`` if it was not already loaded."""
         if name in self._names:
             return False
         self._names.append(name)
@@ -28,7 +28,7 @@ class LoadedSkills:
         return tuple(self._names)
 
     def reset(self) -> None:
-        """Vacía el registro. Se llama al cambiar de sesión."""
+        """Empties the registry. It is called when switching sessions."""
         self._names.clear()
 
     def __contains__(self, name: object) -> bool:

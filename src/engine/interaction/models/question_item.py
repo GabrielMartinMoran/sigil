@@ -1,4 +1,4 @@
-"""Una pregunta interactiva con sus opciones."""
+"""An interactive question with its options."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from src.engine.interaction.models.question_option import QuestionOption
 
 
 class QuestionItem(BaseModel):
-    """Una pregunta con sus opciones."""
+    """A question with its options."""
 
     question: str = Field(min_length=1)
     options: list[QuestionOption] = Field(min_length=2, max_length=3)

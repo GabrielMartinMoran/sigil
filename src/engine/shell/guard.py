@@ -1,11 +1,11 @@
-"""Guarda anti-autoarranque: Sigil no puede lanzar otra instancia de Sigil.
+"""Anti-self-launch guard: Sigil cannot launch another Sigil instance.
 
-Dos capas, porque una sola no alcanza:
+Two layers, because one is not enough:
 
-- ``SELF_GUARD_ENV`` viaja en el entorno de cada proceso hijo. Si alguien
-  arranca Sigil desde adentro, el ``main.py`` del hijo lo detecta y se niega.
-- ``is_self_invocation`` inspecciona el comando antes de ejecutarlo, para
-  rechazarlo con un mensaje claro en vez de dejar que el hijo falle.
+- ``SELF_GUARD_ENV`` travels in the environment of every child process. If someone
+  launches Sigil from inside, the child's ``main.py`` detects it and refuses.
+- ``is_self_invocation`` inspects the command before running it, to
+  reject it with a clear message instead of letting the child fail.
 """
 
 from __future__ import annotations
@@ -15,10 +15,10 @@ import re
 import shlex
 
 SELF_GUARD_ENV = 'SIGIL_SELF_GUARD'
-"""Marca de entorno que heredan los procesos hijos."""
+"""Environment mark that child processes inherit."""
 
 _WRAPPERS = {'env', 'exec', 'command', 'nohup', 'sudo', 'time', 'uv', 'run'}
-"""Programas que sólo envuelven a otro comando (p. ej. ``uv run ./main.py``)."""
+"""Programs that only wrap another command (e.g. ``uv run ./main.py``)."""
 
 _PYTHON_RE = re.compile(r'^python(\d+(\.\d+)?)?$')
 
@@ -26,7 +26,7 @@ _SIGIL_PROGRAMS = frozenset({'sigil', 'main.py', 'sigil.py'})
 
 
 def _first_program(segment: str) -> str | None:
-    """Primer programa real de un segmento, salteando los wrappers."""
+    """First real program of a segment, skipping the wrappers."""
     words = segment.split()
     index = 0
     while index < len(words):
@@ -39,7 +39,7 @@ def _first_program(segment: str) -> str | None:
 
 
 def is_self_invocation(cmd: str) -> bool:
-    """Detecta si el comando intenta arrancar Sigil (u ``main.py``) a sí mismo."""
+    """Detects whether the command tries to launch Sigil (or ``main.py``) itself."""
     try:
         tokens = shlex.split(cmd)
     except ValueError:
