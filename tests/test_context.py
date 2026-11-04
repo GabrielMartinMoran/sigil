@@ -33,7 +33,9 @@ from src.engine.context import (
     measured_tokens,
     projected_tokens,
     render_report,
+    render_working_set,
     split_turns,
+    touched_files,
 )
 
 # --- helpers ---------------------------------------------------------------
@@ -609,3 +611,120 @@ def test_fit_to_budget_prefers_dropping_unpinned_turns():
         if isinstance(message, ModelRequest)
         for part in message.parts
     )
+
+
+# --- working set -----------------------------------------------------------
+
+
+def test_touched_files_collects_paths_from_path_tools():
+    messages = [
+        _user('leé y editá'),
+        _tool_call('read_file', {'path': 'src/a.py'}, 'c1'),
+        _tool_return('read_file', 'x', 'c1'),
+        _tool_call('patch_file', {'path': 'src/a.py'}, 'c2'),
+        _tool_return('patch_file', 'ok', 'c2'),
+    ]
+    files = touched_files(messages)
+    assert [file.path for file in files] == ['src/a.py']
+    assert files[0].tools == ('read_file', 'patch_file')
+    assert files[0].written is True
+
+
+def test_touched_files_ignores_tools_without_paths():
+    messages = [
+        _user('corré algo'),
+        _tool_call('run', {'command': 'ls'}, 'c1'),
+        _tool_return('run', 'a.py', 'c1'),
+        _tool_call('web_search', {'query': 'x'}, 'c2'),
+        _tool_return('web_search', 'y', 'c2'),
+    ]
+    assert touched_files(messages) == []
+
+
+def test_touched_files_orders_by_most_recent_interaction():
+    messages = [
+        _user('uno'),
+        _tool_call('read_file', {'path': 'a.py'}, 'c1'),
+        _tool_return('read_file', 'x', 'c1'),
+        _user('dos'),
+        _tool_call('read_file', {'path': 'b.py'}, 'c2'),
+        _tool_return('read_file', 'x', 'c2'),
+        _user('tres'),
+        _tool_call('patch_file', {'path': 'a.py'}, 'c3'),
+        _tool_return('patch_file', 'ok', 'c3'),
+    ]
+    files = touched_files(messages)
+    # `a.py` se tocó último, así que va primero aunque apareció antes.
+    assert [file.path for file in files] == ['a.py', 'b.py']
+    assert files[0].tools == ('read_file', 'patch_file')
+
+
+def test_touched_files_normalizes_relative_prefixes():
+    messages = [
+        _user('leé'),
+        _tool_call('read_file', {'path': './src/a.py'}, 'c1'),
+        _tool_return('read_file', 'x', 'c1'),
+        _tool_call('read_file', {'path': 'src/a.py'}, 'c2'),
+        _tool_return('read_file', 'x', 'c2'),
+    ]
+    files = touched_files(messages)
+    assert [file.path for file in files] == ['src/a.py']
+
+
+def test_touched_files_parses_json_string_args():
+    """pydantic-ai deja `args` como string cuando el modelo no validó el schema."""
+    messages = [
+        _user('leé'),
+        ModelResponse(parts=[ToolCallPart(tool_name='read_file', args='{"path": "a.py"}', tool_call_id='c1')]),
+        _tool_return('read_file', 'x', 'c1'),
+    ]
+    assert [file.path for file in touched_files(messages)] == ['a.py']
+
+
+def test_touched_files_ignores_unparseable_args():
+    messages = [
+        _user('leé'),
+        ModelResponse(parts=[ToolCallPart(tool_name='read_file', args='{not json', tool_call_id='c1')]),
+        _tool_return('read_file', 'x', 'c1'),
+    ]
+    assert touched_files(messages) == []
+
+
+def test_touched_files_respects_limit():
+    messages = [_user('muchos')]
+    for index in range(5):
+        messages.append(_tool_call('read_file', {'path': f'f{index}.py'}, f'c{index}'))
+        messages.append(_tool_return('read_file', 'x', f'c{index}'))
+    files = touched_files(messages, limit=2)
+    assert [file.path for file in files] == ['f4.py', 'f3.py']
+
+
+def test_render_working_set_is_empty_without_files():
+    assert render_working_set([]) == ''
+
+
+def test_compacting_summary_includes_working_set():
+    messages = [*_turn(1), *_turn(2), *_turn(3), *_turn(4)]
+    result = CompactingStrategy(keep_recent_turns=2).view(messages, ContextBudget(window=None))
+
+    summary = next(part.content for part in result.messages[0].parts if isinstance(part, CompactionPart))
+    assert 'Files touched so far' in summary
+    # Los cuatro turnos tocaron f1..f4; el más reciente va primero.
+    working_set = summary[summary.index('Files touched so far') :]
+    assert working_set.index('f4.py') < working_set.index('f1.py')
+
+
+def test_compacting_working_set_can_be_disabled():
+    messages = [*_turn(1), *_turn(2), *_turn(3), *_turn(4)]
+    result = CompactingStrategy(keep_recent_turns=2, include_working_set=False).view(
+        messages, ContextBudget(window=None)
+    )
+    summary = next(part.content for part in result.messages[0].parts if isinstance(part, CompactionPart))
+    assert 'Files touched' not in summary
+
+
+def test_compacting_without_compaction_has_no_working_set():
+    """Sin turnos viejos no hay resumen, y por lo tanto tampoco working set."""
+    messages = [*_turn(1), *_turn(2)]
+    result = CompactingStrategy(keep_recent_turns=5).view(messages, ContextBudget(window=None))
+    assert not any(isinstance(part, CompactionPart) for message in result.messages for part in message.parts)

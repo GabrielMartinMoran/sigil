@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
 
 from src.engine.context.budget import ContextBudget
 from src.engine.context.tokens import estimate_messages_tokens, estimate_tokens, tool_return_text
+from src.engine.context.working_set import DEFAULT_WORKING_SET_LIMIT, render_working_set, touched_files
 
 DEFAULT_KEEP_RECENT_TURNS = 3
 """Turnos que se mantienen intactos antes de empezar a recortar."""
@@ -313,6 +314,10 @@ class CompactingStrategy:
     Los turnos que traen el resultado de una tool pineada (un skill cargado) no
     se compactan: su contenido es instrucción, no dato.
 
+    El resumen cierra con el **working set**: los archivos que el agente tocó,
+    derivados del log completo. Sin eso, compactar borra el rastro de qué estaba
+    editando y el agente vuelve a leer desde cero lo que ya tenía en la mano.
+
     El log no se toca: la compactación es una proyección, igual que la ventana.
     """
 
@@ -323,6 +328,10 @@ class CompactingStrategy:
     keep_thinking: bool = False
     max_summary_chars: int = 400
     pinned_tools: frozenset[str] = PINNED_TOOLS
+    include_working_set: bool = True
+    """Si el resumen cierra con los archivos tocados."""
+    working_set_limit: int = DEFAULT_WORKING_SET_LIMIT
+    """Cuántos archivos entran en el working set."""
 
     def view(self, messages: Sequence[ModelMessage], budget: ContextBudget) -> ViewResult:
         working = list(messages)
@@ -354,6 +363,15 @@ class CompactingStrategy:
             if text:
                 pending.append(text)
                 compacted += 1
+
+        if compacted and self.include_working_set:
+            # El working set sale del log completo, no de los turnos viejos: lo
+            # que el agente tocó hace un paso también es parte de lo que está
+            # haciendo. Va al final del resumen para que quede lo más cerca
+            # posible del turno en curso.
+            working_set = render_working_set(touched_files(messages, limit=self.working_set_limit))
+            if working_set:
+                pending.append(working_set)
         flush()
 
         truncated = 0

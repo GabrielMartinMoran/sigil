@@ -47,9 +47,16 @@ from src.engine.context.tokens import (
     projected_tokens,
     tool_return_text,
 )
+from src.engine.context.working_set import (
+    DEFAULT_WORKING_SET_LIMIT,
+    TouchedFile,
+    render_working_set,
+    touched_files,
+)
 
 __all__ = [
     'AGENTS_FILENAME',
+    'DEFAULT_WORKING_SET_LIMIT',
     'FALLBACK_FILENAME',
     'PATH_TOOLS',
     'PINNED_TOOLS',
@@ -65,6 +72,7 @@ __all__ = [
     'ScopeSink',
     'ScopeTracker',
     'ToolResultUsage',
+    'TouchedFile',
     'TurnUsage',
     'ViewResult',
     'WindowedStrategy',
@@ -79,6 +87,8 @@ __all__ = [
     'measured_tokens',
     'projected_tokens',
     'render_report',
+    'render_working_set',
     'split_turns',
     'tool_return_text',
+    'touched_files',
 ]
