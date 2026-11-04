@@ -1,21 +1,22 @@
-"""Descubrimiento y acceso a los skills instalados.
+"""Índice de skills descubiertos y operaciones de carga/lectura.
 
-Raíces por defecto (en orden de precedencia):
-
-1. ``<cwd>/.agents/skills``  — skills del proyecto.
-2. ``~/.agents/skills``      — skills globales del usuario.
-
-Si existe la variable de entorno ``SIGIL_SKILLS_DIRS`` (lista separada por
-``os.pathsep``), se usan esas rutas en su lugar. Un skill del proyecto con el
-mismo nombre que uno global gana (sombra al global).
+El registry es la única pieza que conoce las raíces y el estado del índice. Las
+tools y los bloques de instrucciones le piden metadatos, cuerpos y recursos; no
+saben de dónde salieron.
 """
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterable, Sequence
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
+from src.engine.skills.discovery import (
+    DEFAULT_MAX_READ_BYTES,
+    MAX_READ_BYTES,
+    default_roots,
+    list_resources,
+    safe_join,
+)
 from src.engine.skills.models import (
     Skill,
     SkillError,
@@ -26,63 +27,6 @@ from src.engine.skills.models import (
     SkillResourceError,
 )
 from src.engine.skills.parser import parse_skill_metadata, split_frontmatter
-
-SKILLS_DIRNAME = Path('.agents') / 'skills'
-ENV_SKILLS_DIRS = 'SIGIL_SKILLS_DIRS'
-
-MAX_LISTED_RESOURCES = 500
-DEFAULT_MAX_READ_BYTES = 256 * 1024
-MAX_READ_BYTES = 4 * 1024 * 1024
-
-_EXCLUDED_DIRS = {
-    '__pycache__',
-    '.git',
-    '.hg',
-    '.svn',
-    '.venv',
-    'venv',
-    'node_modules',
-    '.ruff_cache',
-    '.pytest_cache',
-    '.mypy_cache',
-}
-_EXCLUDED_SUFFIXES = {'.pyc', '.pyo'}
-_EXCLUDED_NAMES = {'.DS_Store', 'Thumbs.db'}
-
-
-def default_roots() -> list[tuple[str, Path]]:
-    """Devuelve las raíces de skills como ``(origen, ruta)``."""
-    env = os.environ.get(ENV_SKILLS_DIRS, '').strip()
-    if env:
-        roots: list[tuple[str, Path]] = []
-        for raw in env.split(os.pathsep):
-            raw = raw.strip()
-            if raw:
-                roots.append(('custom', Path(raw).expanduser()))
-        return roots
-
-    return [
-        ('project', Path.cwd() / SKILLS_DIRNAME),
-        ('global', Path.home() / SKILLS_DIRNAME),
-    ]
-
-
-def _resource_kind(relative: PurePosixPath) -> str:
-    if not relative.parts:
-        return 'other'
-    top = relative.parts[0]
-    if top in {'scripts', 'references', 'assets'}:
-        return top.removesuffix('s')
-    return 'other'
-
-
-def _is_excluded(relative: PurePosixPath) -> bool:
-    if any(part in _EXCLUDED_DIRS for part in relative.parts):
-        return True
-    name = relative.name
-    if name in _EXCLUDED_NAMES or name.startswith('.'):
-        return True
-    return relative.suffix.lower() in _EXCLUDED_SUFFIXES
 
 
 class SkillRegistry:
@@ -126,8 +70,8 @@ class SkillRegistry:
 
                 self._skills[metadata.name] = metadata
                 self._aliases.setdefault(metadata.name, metadata.name)
-                # Permitir buscar por nombre de directorio aunque el
-                # frontmatter use otro identificador.
+                # Permitir buscar por nombre de directorio aunque el frontmatter
+                # use otro identificador.
                 self._aliases.setdefault(entry.name, metadata.name)
 
     def refresh(self) -> SkillRegistry:
@@ -161,8 +105,7 @@ class SkillRegistry:
         key = name.strip()
         if not key:
             return None
-        canonical = self._aliases.get(key, key)
-        return self._skills.get(canonical)
+        return self._skills.get(self._aliases.get(key, key))
 
     def require(self, name: str) -> SkillMetadata:
         metadata = self.get(name)
@@ -186,53 +129,11 @@ class SkillRegistry:
     # --- nivel 3: recursos ------------------------------------------------
 
     def list_resources(self, metadata: SkillMetadata) -> list[SkillResource]:
-        """Lista los archivos empaquetados (excluye SKILL.md y artefactos)."""
-        resources: list[SkillResource] = []
-        root = metadata.path
-
-        for current, dirnames, filenames in os.walk(root, followlinks=False):
-            current_path = Path(current)
-            dirnames[:] = sorted(name for name in dirnames if name not in _EXCLUDED_DIRS and not name.startswith('.'))
-
-            for filename in sorted(filenames):
-                file_path = current_path / filename
-                try:
-                    relative = PurePosixPath(file_path.relative_to(root).as_posix())
-                except ValueError:
-                    continue
-                if relative.as_posix() == 'SKILL.md' or _is_excluded(relative):
-                    continue
-                try:
-                    size = file_path.stat().st_size
-                except OSError:
-                    continue
-                resources.append(SkillResource(path=relative.as_posix(), size=size, kind=_resource_kind(relative)))
-                if len(resources) >= MAX_LISTED_RESOURCES:
-                    return resources
-
-        return resources
+        return list_resources(metadata)
 
     def resolve_resource(self, name: str, relative_path: str) -> Path:
         """Resuelve un recurso garantizando que quede dentro del skill."""
-        metadata = self.require(name)
-        return self._safe_join(metadata, relative_path)
-
-    def _safe_join(self, metadata: SkillMetadata, relative_path: str) -> Path:
-        if not isinstance(relative_path, str) or not relative_path.strip():
-            raise SkillResourceError('Resource path cannot be empty.')
-
-        raw = relative_path.strip().replace('\\', '/')
-        relative = PurePosixPath(raw)
-        if relative.is_absolute():
-            raise SkillResourceError(f'Resource path must be relative to the skill: {relative_path!r}.')
-        if any(part == '..' for part in relative.parts):
-            raise SkillResourceError(f'Resource path cannot contain `..`: {relative_path!r}.')
-
-        root = metadata.path.resolve()
-        target = (root / Path(*relative.parts)).resolve()
-        if not target.is_relative_to(root):
-            raise SkillResourceError(f'Resource path escapes the skill directory: {relative_path!r}.')
-        return target
+        return safe_join(self.require(name), relative_path)
 
     def read_resource(
         self,
@@ -254,8 +155,7 @@ class SkillRegistry:
         except OSError as exc:
             raise SkillResourceError(f'Cannot read resource {relative_path!r}: {exc}') from exc
 
-        truncated = len(data) > limit
-        return data[:limit], truncated, total_size
+        return data[:limit], len(data) > limit, total_size
 
     # --- instrucciones ----------------------------------------------------
 
@@ -277,17 +177,17 @@ class SkillRegistry:
             '',
         ]
         for skill in skills:
-            description = ' '.join(skill.description.split())
-            lines.append(f'- `{skill.name}`: {description}')
+            lines.append(f'- `{skill.name}`: {" ".join(skill.description.split())}')
         return '\n'.join(lines)
 
     def render_loaded_skills(self, names: Sequence[str]) -> str:
         """Bloque de instrucciones con el cuerpo de los skills cargados.
 
-        El cuerpo del `SKILL.md` va acá y no como resultado de tool: así sobrevive
-        a la compactación y no compite por el presupuesto del historial. Los
-        recursos empaquetados quedan afuera a propósito — se leen on demand con
-        `read_skill_resource`, que es lo que mantiene barato el bloque.
+        El cuerpo del ``SKILL.md`` va acá y no como resultado de tool: así
+        sobrevive a la compactación y no compite por el presupuesto del
+        historial. Los recursos empaquetados quedan afuera a propósito — se leen
+        on demand con ``read_skill_resource``, que es lo que mantiene barato el
+        bloque.
         """
         if not names:
             return ''

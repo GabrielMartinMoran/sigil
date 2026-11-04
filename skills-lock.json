@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "clean-architecture": {
+      "source": "pproenca/dot-skills",
+      "sourceType": "github",
+      "skillPath": "skills/.experimental/clean-architecture/SKILL.md",
+      "computedHash": "b2c7b292831a701fa97907a59e0e39a3760df4a7da75c9fcb1351005bf04b5a8"
+    },
     "clean-code": {
       "source": "gabrielmartinmoran/skills",
       "sourceType": "github",

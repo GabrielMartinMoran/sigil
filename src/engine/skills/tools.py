@@ -14,81 +14,25 @@ import asyncio
 import base64
 import os
 import shlex
-import sys
-from pathlib import Path
+from typing import Any
 
-from pydantic import BaseModel, Field
-
+from src.engine.shell.runner import execute_command
+from src.engine.skills.discovery import DEFAULT_MAX_READ_BYTES
 from src.engine.skills.loaded import LoadedSkills
 from src.engine.skills.models import SkillMetadata, SkillResourceError
-from src.engine.skills.registry import DEFAULT_MAX_READ_BYTES, SkillRegistry
-from src.engine.tools.tool_registry import ToolLogger, ToolRegistrar
+from src.engine.skills.registry import SkillRegistry
+from src.engine.skills.scripts import interpreter_for
+from src.engine.skills.tool_models import (
+    LoadedSkill,
+    ResourceContent,
+    ScriptRunResult,
+    SkillResourceInfo,
+    SkillSummary,
+)
+from src.engine.tooling.logging import ToolLogger
+from src.engine.tooling.registrar import ToolRegistrar
 
 DEFAULT_SCRIPT_TIMEOUT = 30
-
-
-class SkillSummary(BaseModel):
-    """Metadatos de un skill instalado."""
-
-    name: str
-    description: str
-    source: str = Field(description='Where the skill was found: project, global or custom.')
-    path: str
-    license: str | None = None
-    compatibility: str | None = None
-    model_invocable: bool = True
-
-
-class SkillResourceInfo(BaseModel):
-    """Archivo empaquetado dentro de un skill."""
-
-    path: str
-    size: int
-    kind: str = Field(description='scripts, reference, asset or other.')
-
-
-class LoadedSkill(BaseModel):
-    """Acuse de carga de un skill (nivel 2).
-
-    El cuerpo del `SKILL.md` **no** viaja acá: se inyecta como bloque de
-    instrucciones para que sobreviva a la compactación y no compita por el
-    presupuesto del historial. Este resultado sólo confirma la carga y lista los
-    recursos que se pueden leer on demand.
-    """
-
-    name: str
-    description: str
-    source: str
-    path: str
-    resources: list[SkillResourceInfo]
-    note: str = Field(
-        description='Where the skill body went and what to do next.',
-    )
-
-
-class ResourceContent(BaseModel):
-    """Contenido de un recurso de un skill."""
-
-    skill: str
-    path: str
-    size: int
-    truncated: bool
-    binary: bool
-    encoding: str = Field(description='utf-8 for text, base64 for binary content.')
-    content: str
-
-
-class ScriptRunResult(BaseModel):
-    """Resultado de ejecutar un script empaquetado."""
-
-    skill: str
-    script: str
-    returncode: int
-    stdout: str | None = None
-    stderr: str | None = None
-    timed_out: bool = False
-    stdout_truncated: bool = False
-    stderr_truncated: bool = False
 
 
 def _summary(metadata: SkillMetadata) -> SkillSummary:
@@ -113,52 +57,30 @@ def _decode(data: bytes) -> tuple[str, bool, str]:
         return base64.b64encode(data).decode('ascii'), True, 'base64'
 
 
-def _interpreter_for(path: Path) -> list[str]:
-    """Elige cómo ejecutar un script según extensión, shebang o permisos.
+def _script_env(metadata: SkillMetadata) -> dict[str, str]:
+    """Entorno del script: el skill se puede importar a sí mismo."""
+    python_path = os.environ.get('PYTHONPATH')
+    return {
+        'SIGIL_SKILL': metadata.name,
+        'SIGIL_SKILL_DIR': str(metadata.path),
+        'PYTHONPATH': str(metadata.path) + (os.pathsep + python_path if python_path else ''),
+    }
 
-    La extensión manda sobre el shebang para los lenguajes conocidos: así un
-    ``.py`` usa el intérprete de Sigil (con sus dependencias) aunque el script
-    declare ``#!/usr/bin/env python3``.
-    """
-    suffix = path.suffix.lower()
-    if suffix == '.py':
-        return [sys.executable]
-    if suffix in {'.sh', '.bash'}:
-        return ['/bin/bash']
-    if suffix in {'.js', '.mjs', '.cjs'}:
-        return ['node']
-    if suffix == '.rb':
-        return ['ruby']
 
-    try:
-        first_line = path.open('rb').readline(256).decode('utf-8', errors='replace').strip()
-    except OSError:
-        first_line = ''
-
-    if first_line.startswith('#!'):
-        shebang = shlex.split(first_line[2:].strip())
-        if shebang:
-            return shebang
-
-    if os.access(path, os.X_OK):
-        return []
-
-    raise SkillResourceError(
-        f'Cannot determine how to run {path.name!r}. Use a .py/.sh/.js/.rb script, '
-        'add a shebang and make it executable, or run it through the `run` tool.'
-    )
+def _matches(skill: SkillMetadata, needle: str) -> bool:
+    return needle in skill.name.lower() or needle in skill.description.lower()
 
 
 def register_skill_tools(
-    agent,
+    agent: Any,
     registry: SkillRegistry,
     logger: ToolLogger | None = None,
     loaded: LoadedSkills | None = None,
 ) -> None:
     """Registra las tools de skills en un agente de pydantic-ai.
 
-    Con ``loaded``, `load_skill` registra el skill para que su cuerpo se inyecte
-    como bloque de instrucciones en el request siguiente.
+    Con ``loaded``, ``load_skill`` registra el skill para que su cuerpo se
+    inyecte como bloque de instrucciones en el request siguiente.
     """
     tools = ToolRegistrar(agent, logger)
 
@@ -179,7 +101,7 @@ def register_skill_tools(
         skills = registry.list()
         if query:
             needle = query.strip().lower()
-            skills = [skill for skill in skills if needle in skill.name.lower() or needle in skill.description.lower()]
+            skills = [skill for skill in skills if _matches(skill, needle)]
         return [_summary(skill) for skill in skills]
 
     @tools.tool
@@ -267,27 +189,18 @@ def register_skill_tools(
             args: Optional list of command-line arguments.
             timeout_seconds: Execution timeout in seconds (1-120).
         """
-        from src.engine.tools.tool_manager import execute_command
-
         metadata = registry.require(name)
         target = registry.resolve_resource(name, script)
         if not target.is_file():
             raise SkillResourceError(f'Script not found: {script!r}.')
 
-        command = [*_interpreter_for(target), str(target), *(args or [])]
-        python_path = os.environ.get('PYTHONPATH')
-        extra_env = {
-            'SIGIL_SKILL': metadata.name,
-            'SIGIL_SKILL_DIR': str(metadata.path),
-            'PYTHONPATH': str(metadata.path) + (os.pathsep + python_path if python_path else ''),
-        }
-
+        command = [*interpreter_for(target), str(target), *(args or [])]
         result = await asyncio.to_thread(
             execute_command,
             shlex.join(command),
             timeout_seconds=timeout_seconds,
             cwd=str(metadata.path),
-            extra_env=extra_env,
+            extra_env=_script_env(metadata),
             check_self_invocation=False,
         )
         return ScriptRunResult(
@@ -300,13 +213,3 @@ def register_skill_tools(
             stdout_truncated=result.stdout_truncated,
             stderr_truncated=result.stderr_truncated,
         )
-
-
-__all__ = [
-    'LoadedSkill',
-    'ResourceContent',
-    'ScriptRunResult',
-    'SkillResourceInfo',
-    'SkillSummary',
-    'register_skill_tools',
-]

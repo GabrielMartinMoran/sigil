@@ -25,7 +25,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from src.engine.mcp.models import (
+from src.engine.mcp.config_models import (
     SERVER_NAME_RE,
     MCPConfigError,
     MCPServerConfig,
