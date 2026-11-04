@@ -18,10 +18,6 @@ from src.ui.widgets.command_menu import CommandMenu
 from src.ui.widgets.prompt_input import PromptInput
 
 
-async def _fake_fetch(model_id):
-    return None
-
-
 async def _wait_idle(app, pilot, attempts: int = 40) -> None:
     for _ in range(attempts):
         await pilot.pause()
@@ -36,7 +32,6 @@ def _make_app(agent: Agent, tmp: str, tool_logger: ToolLoggerHub | None = None) 
 
 
 def test_app_runs_turn_and_renders_chat(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -56,7 +51,6 @@ def test_app_runs_turn_and_renders_chat(monkeypatch):
 
 
 def test_command_menu_filters_and_selects(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -70,7 +64,7 @@ def test_command_menu_filters_and_selects(monkeypatch):
 
                 menu = app.query_one(CommandMenu)
                 assert menu.display is True
-                assert menu.option_count == 8
+                assert menu.option_count == 11
 
                 await pilot.press('n')
                 await pilot.pause()
@@ -99,7 +93,6 @@ def _chat_texts(app) -> list[str]:
 
 
 def test_mcp_command_without_servers_explains_how_to_configure(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -118,7 +111,6 @@ def test_mcp_command_without_servers_explains_how_to_configure(monkeypatch):
 
 
 def test_startup_notices_are_rendered(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -138,7 +130,6 @@ def test_startup_notices_are_rendered(monkeypatch):
 
 
 def test_tool_call_and_result_are_rendered(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -167,7 +158,6 @@ def test_tool_call_and_result_are_rendered(monkeypatch):
 
 
 def test_tool_error_is_rendered_as_notice(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -192,7 +182,6 @@ def test_tool_error_is_rendered_as_notice(monkeypatch):
 
 
 def test_autoscroll_only_when_at_bottom(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -225,7 +214,6 @@ def test_autoscroll_follows_streaming_growth(monkeypatch):
     flush of the block (80 ms throttle), so the view ended up short.
     Textual's anchoring readjusts the scroll on every layout.
     """
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -256,7 +244,6 @@ def test_autoscroll_follows_streaming_growth(monkeypatch):
 
 
 def test_markdown_output_is_rendered_in_app(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -283,10 +270,9 @@ def test_step_limit_abort_preserves_session_and_context(monkeypatch):
     The aborted turn must keep what was completed (including the user
     message), be persisted to disk and serve as context for the next turn.
     """
-    from src.config_provider import ConfigProvider
+    from src.engine.settings import SigilSettings
 
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
-    monkeypatch.setattr(ConfigProvider, 'MAX_STEPS', 2)
+    monkeypatch.setattr(appmod, 'load_settings', lambda *a, **k: SigilSettings(max_steps=2))
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -323,7 +309,7 @@ def test_step_limit_abort_preserves_session_and_context(monkeypatch):
 
                 # The next turn starts with all the previous context.
                 prior = len(app._history)
-                monkeypatch.setattr(ConfigProvider, 'MAX_STEPS', 20)
+                monkeypatch.setattr(appmod, 'load_settings', lambda *a, **k: SigilSettings(max_steps=20))
                 await pilot.press('a', 'g', 'a', 'i', 'n')
                 await pilot.press('enter')
                 await _wait_idle(app, pilot)
@@ -341,10 +327,9 @@ def test_turn_is_not_cut_by_pydantic_ai_default_request_limit(monkeypatch):
     from pydantic_ai.messages import ModelMessage, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 
-    from src.config_provider import ConfigProvider
+    from src.engine.settings import SigilSettings
 
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
-    monkeypatch.setattr(ConfigProvider, 'MAX_STEPS', 200)
+    monkeypatch.setattr(appmod, 'load_settings', lambda *a, **k: SigilSettings(max_steps=200))
 
     # 60 tool calls = 61 requests: above the default of 50.
     calls = 60
@@ -451,7 +436,6 @@ def test_checkpoint_throttles_writes_but_force_saves(monkeypatch):
 
 
 def test_context_command_shows_breakdown_and_scope(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     from src.engine.context.capability import ContextViewCapability
     from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions

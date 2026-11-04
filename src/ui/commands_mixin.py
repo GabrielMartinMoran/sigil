@@ -7,6 +7,7 @@ from textual.widgets import Input
 from src.engine.context.meter.render import render_report
 from src.ui.help_text import HELP_TEXT
 from src.ui.mcp_report import format_mcp_status
+from src.ui.messages import ChatNotice
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.session_picker import SessionPicker
@@ -48,6 +49,9 @@ class CommandsMixin:
         handlers = {
             '/new': lambda: self.new_session(chat),
             '/load': lambda: self.load_session(chat),
+            '/provider': lambda: self.show_providers(chat),
+            '/model': lambda: self.show_models(chat, args),
+            '/effort': lambda: self.show_effort(chat, args),
             '/sidebar': lambda: self.handle_sidebar(args, chat),
             '/mcp': lambda: self.show_mcp(chat),
             '/context': lambda: self.show_context(chat),
@@ -76,7 +80,6 @@ class CommandsMixin:
         self.refresh_sidebar()
         await chat.clear()
         await chat.add_notice(f'New session {self._session.short_id}.', style='green')
-        self.update_status()
 
     async def load_session(self, chat: ChatLog) -> None:
         """Loads a session chosen by the user."""
@@ -96,18 +99,37 @@ class CommandsMixin:
             self._scope.reset()
         if self._loaded_skills is not None:
             self._loaded_skills.reset()
+        self._restore_session_model(loaded)
         self.refresh_sidebar()
         await chat.clear()
         await chat.render_history(loaded.messages)
         chat.finalize()
         await chat.add_notice(f'Loaded session {loaded.short_id}.', style='green')
-        self.update_status()
 
     def bind_session(self, session: object) -> None:
         """Points the app at ``session``: history, roadmap and persistence."""
         self._session = session
         self._history = session.messages
         self.bind_roadmap()
+
+    def _restore_session_model(self, session) -> None:
+        """Re-applies the model the conversation was using.
+
+        A session keeps its selection on purpose: resuming a conversation on a
+        different model would silently change cost and behaviour. When that
+        account no longer exists, the turn keeps the current model and the chat
+        says so instead of pretending nothing happened.
+        """
+        service = getattr(self, '_model_service', None)
+        if service is None or session.selection is None:
+            return
+        try:
+            service.apply(session.selection)
+        except Exception as exc:  # noqa: BLE001 - a stale account must not break /load
+            self.post_message(ChatNotice(f'Kept the current model: {exc}', style='yellow'))
+            return
+        self.load_model_window()
+        self.refresh_sidebar()
 
     def bind_roadmap(self) -> None:
         """The roadmap follows the active session: each session has its own."""
@@ -116,8 +138,16 @@ class CommandsMixin:
 
     def persist(self) -> None:
         """Saves the current session if it has messages."""
+        self._sync_session_selection()
         if self._session.messages:
             self._store.save(self._session)
+
+    def _sync_session_selection(self) -> None:
+        """Copies the active model into the session before it is written."""
+        service = getattr(self, '_model_service', None)
+        if service is None:
+            return
+        self._session.selection = service.snapshot().selection
 
     async def handle_sidebar(self, args: str, chat: ChatLog) -> None:
         """`/sidebar` toggles; `/sidebar on|off` sets the state."""

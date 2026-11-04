@@ -7,7 +7,6 @@ from pathlib import Path
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-import src.ui.app as appmod
 from src.engine.roadmap.models.todo_item import TodoItem
 from src.engine.roadmap.store import RoadmapStore
 from src.engine.sessions.session_store import SessionStore
@@ -17,12 +16,7 @@ from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.roadmap_panel import RoadmapPanel
 
 
-async def _fake_fetch(model_id):
-    return None
-
-
 def test_roadmap_panel_shows_and_updates(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -51,7 +45,6 @@ def test_roadmap_panel_shows_and_updates(monkeypatch):
 
 
 def test_new_session_gets_its_own_empty_roadmap(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -82,7 +75,6 @@ def test_new_session_gets_its_own_empty_roadmap(monkeypatch):
 
 
 def test_loading_a_session_restores_its_roadmap(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -141,7 +133,6 @@ def _sidebar_app(tmp: str, roadmap: RoadmapStore, session) -> SigilApp:
 
 
 def test_sidebar_command_hides_and_shows_the_panel(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -170,7 +161,6 @@ def test_sidebar_command_hides_and_shows_the_panel(monkeypatch):
 
 
 def test_sidebar_command_without_argument_toggles(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -195,7 +185,6 @@ def test_sidebar_command_without_argument_toggles(monkeypatch):
 
 
 def test_hidden_sidebar_stays_hidden_when_the_roadmap_changes(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -220,7 +209,6 @@ def test_hidden_sidebar_stays_hidden_when_the_roadmap_changes(monkeypatch):
 
 
 def test_sidebar_command_rejects_unknown_arguments(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -244,7 +232,6 @@ def test_sidebar_command_rejects_unknown_arguments(monkeypatch):
 
 def test_sidebar_command_typed_in_the_prompt(monkeypatch):
     """The argument arrives from the prompt, not only from a direct call."""
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:

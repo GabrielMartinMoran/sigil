@@ -3,21 +3,18 @@ from __future__ import annotations
 import os
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
-from openai import AsyncOpenAI
 from pydantic_ai import Agent
-from pydantic_ai.models.openrouter import OpenRouterModel
-from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_ai.providers.openrouter import OpenRouterProvider
 
-from src.config_provider import ConfigProvider
 from src.engine.agents.retry import RetryTransientModelErrors
 from src.engine.agents.tool_errors import ToolErrorRecovery
+from src.engine.providers.factory.unconfigured import UnconfiguredModel
+from src.engine.settings import DEFAULT_MODEL_MAX_ATTEMPTS
 from src.engine.skills.rendering import render_available_skills, render_loaded_skills
 
 if TYPE_CHECKING:
     from pydantic_ai.capabilities import AbstractCapability
+    from pydantic_ai.models import Model
     from pydantic_ai.toolsets import AbstractToolset
 
     from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
@@ -36,6 +33,7 @@ def _load_prompt() -> str:
 def create_agent(
     skill_registry: SkillRegistry | None = None,
     *,
+    model: Model | None = None,
     toolsets: Sequence[AbstractToolset] | None = None,
     model_retry: RetryTransientModelErrors | None = None,
     workspace: WorkspaceInstructions | None = None,
@@ -43,28 +41,20 @@ def create_agent(
     loaded_skills: LoadedSkills | None = None,
     extra_capabilities: Sequence[AbstractCapability] | None = None,
 ) -> Agent:
+    """Builds the agent.
 
-    if ConfigProvider.LLM_PROVIDER == 'opencode-go':
-        client = AsyncOpenAI(
-            api_key=ConfigProvider.OPENCODE_GO_API_KEY,
-            base_url='https://opencode.ai/inference/go/openai/v1',
-            default_headers={
-                'User-Agent': 'sigil/0.1.0',
-                'x-opencode-session': str(uuid4()),
-            },
-        )
-        model = OpenRouterModel(model_name=ConfigProvider.LLM_MODEL, provider=OpenAIProvider(openai_client=client))
-    else:
-        model = OpenRouterModel(
-            model_name=ConfigProvider.LLM_MODEL, provider=OpenRouterProvider(api_key=ConfigProvider.OPENROUTER_API_KEY)
-        )
-
+    Args:
+        model: What the agent talks to. The provider layer supplies a
+            ``ModelRouter`` that the service swaps between turns; when nothing is
+            configured yet it is an ``UnconfiguredModel`` that refuses to run with
+            an actionable message instead of failing at import time.
+    """
     # Provider 502/429/timeouts are retried before bringing the turn down.
     if model_retry is None:
-        model_retry = RetryTransientModelErrors(max_attempts=ConfigProvider.MODEL_MAX_ATTEMPTS)
+        model_retry = RetryTransientModelErrors(max_attempts=DEFAULT_MODEL_MAX_ATTEMPTS)
 
     agent = Agent(
-        model,
+        model if model is not None else UnconfiguredModel(),
         name='Sigil',
         description='A helpful coding assistant.',
         # Static block: it goes first so the prefix stays cacheable.

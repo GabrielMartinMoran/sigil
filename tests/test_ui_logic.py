@@ -1,7 +1,12 @@
-"""Tests for the pure UI logic (commands and model metadata)."""
+"""Tests for the pure UI logic (command registry and effort wording)."""
 
-from src.engine.agents.model_info import context_usage_percent, parse_model_info
 from src.engine.commands import match_commands
+from src.engine.providers.domain.model_capability import ModelCapability
+from src.engine.providers.domain.provider_account import ProviderAccount
+from src.engine.providers.domain.provider_kind import ProviderKind
+from src.engine.providers.domain.selection import Selection
+from src.engine.providers.snapshot import ModelSnapshot
+from src.ui.model_view_mixin import effort_label
 
 
 def test_match_commands_requires_slash():
@@ -10,9 +15,21 @@ def test_match_commands_requires_slash():
 
 def test_match_commands_filters_by_prefix():
     names = [command.name for command in match_commands('/')]
-    assert names == ['/new', '/load', '/sidebar', '/mcp', '/context', '/debug', '/help', '/quit']
+    assert names == [
+        '/new',
+        '/load',
+        '/provider',
+        '/model',
+        '/effort',
+        '/sidebar',
+        '/mcp',
+        '/context',
+        '/debug',
+        '/help',
+        '/quit',
+    ]
 
-    assert [c.name for c in match_commands('/n')] == ['/new']
+    assert [c.name for c in match_commands('/n')] == ['/new']  # '/new' only: '/model' does not start with '/n'
     assert [c.name for c in match_commands('/l')] == ['/load']
     assert match_commands('/zzz') == []
 
@@ -21,33 +38,22 @@ def test_match_commands_ignores_argument():
     assert [c.name for c in match_commands('/load something')] == ['/load']
 
 
-def test_parse_model_info_matches_id_and_slug():
-    data = [
-        {'id': 'other/model', 'name': 'Other', 'canonical_slug': 'other/model', 'context_length': 1000},
-        {'id': 'acme/model', 'name': 'Acme', 'canonical_slug': 'acme/model-2024', 'context_length': 200000},
-    ]
-    info = parse_model_info(data, 'acme/model')
-    assert info is not None
-    assert info.name == 'Acme'
-    assert info.context_length == 200000
-
-    alias = parse_model_info(data, '~acme/model')
-    assert alias is not None and alias.context_length == 200000
-
-    assert parse_model_info(data, 'missing/model') is None
+def test_match_commands_covers_the_provider_commands():
+    assert [c.name for c in match_commands('/prov')] == ['/provider']
+    assert [c.name for c in match_commands('/mod')] == ['/model']
+    assert [c.name for c in match_commands('/eff')] == ['/effort']
 
 
-def test_parse_model_info_rejects_bad_context_length():
-    data = [{'id': 'x/y', 'name': 'X', 'canonical_slug': 'x/y', 'context_length': 0}]
-    info = parse_model_info(data, 'x/y')
-    assert info is not None and info.context_length is None
-
-
-def test_context_usage_percent():
-    assert context_usage_percent(500, 1000) == 50.0
-    assert context_usage_percent(None, 1000) is None
-    assert context_usage_percent(500, None) is None
-    assert context_usage_percent(2000, 1000) == 200.0
+def test_effort_label_falls_back_to_the_selection():
+    account = ProviderAccount.create('work', ProviderKind.OPENROUTER)
+    snapshot = ModelSnapshot(
+        account=account,
+        selection=Selection(account_id=account.id, model='m', thinking='high'),
+        capability=ModelCapability(name='m'),
+    )
+    assert effort_label(snapshot, 'high') == 'high'
+    assert effort_label(snapshot, 'bogus') == 'high'
+    assert effort_label(ModelSnapshot(), 'bogus') == 'default'
 
 
 def test_assistant_renderable_uses_markdown_for_text():

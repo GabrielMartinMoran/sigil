@@ -1,0 +1,38 @@
+{
+  "data": [
+    {
+      "id": "anthropic/claude-sonnet-4.6",
+      "canonical_slug": "anthropic/claude-sonnet-4.6",
+      "name": "Anthropic: Claude Sonnet 4.6",
+      "context_length": 1000000,
+      "supported_parameters": ["tools", "reasoning", "reasoning_effort", "temperature"],
+      "reasoning": { "mandatory": false, "supported_efforts": ["max", "high", "medium", "low", "none"], "default_effort": "medium" }
+    },
+    {
+      "id": "anthropic/claude-haiku-4.5",
+      "canonical_slug": "anthropic/claude-haiku-4.5",
+      "name": "Anthropic: Claude Haiku 4.5",
+      "context_length": 200000,
+      "supported_parameters": ["tools", "reasoning"],
+      "reasoning": { "mandatory": false, "supported_efforts": ["high", "low"] }
+    },
+    {
+      "id": "openai/gpt-4o-mini",
+      "canonical_slug": "openai/gpt-4o-mini",
+      "name": "OpenAI: GPT-4o mini",
+      "context_length": 128000,
+      "supported_parameters": ["tools", "temperature"]
+    },
+    {
+      "id": "meta/llama-free",
+      "canonical_slug": "meta/llama-free",
+      "name": "Meta: Llama (free)",
+      "supported_parameters": ["max_tokens"]
+    },
+    {
+      "id": 42,
+      "name": "Broken: no string id",
+      "context_length": 1000
+    }
+  ]
+}

@@ -3,10 +3,11 @@
 The app is the UI composition point: it builds the widget tree and delegates
 each responsibility to a mixin with its own state.
 
-- `StatusMixin`    : status bar (model, effort, projected context).
-- `SidebarMixin`   : side panel: loaded skills and MCP servers.
+- `ModelViewMixin` : the active model and effort in effect, read by the chrome.
+- `SidebarMixin`   : side panel: active model, context, skills and MCP servers.
 - `MenuMixin`      : command menu that appears when typing `/`.
 - `CommandsMixin`  : slash commands and session switching.
+- `ProviderMixin`  : `/provider`, `/model`, `/effort` and their screens.
 - `DebugMixin`     : agent debug view (`alt+d`), which replaces the chat.
 - `TurnMixin`      : turn execution and on-disk checkpoints.
 """
@@ -23,8 +24,6 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 
-from src.config_provider import ConfigProvider
-from src.engine.agents.model_info import fetch_model_info
 from src.engine.agents.retry import RetryNotice, RetryTransientModelErrors
 from src.engine.context.capability import ContextViewCapability
 from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
@@ -34,16 +33,19 @@ from src.engine.interaction.hub import QuestionHub
 from src.engine.interaction.models.question_answer import QuestionAnswer
 from src.engine.interaction.models.question_item import QuestionItem
 from src.engine.mcp.manager.manager import MCPManager
+from src.engine.providers.service import ModelService
 from src.engine.roadmap.store import RoadmapStore
 from src.engine.sessions.session_store import Session, SessionStore
+from src.engine.settings import SigilSettings, load_settings
 from src.engine.skills.loaded import LoadedSkills
 from src.engine.tooling.logging import ToolLoggerHub
 from src.ui.commands_mixin import CommandsMixin
 from src.ui.debug_mixin import DebugMixin
 from src.ui.menu_mixin import MenuMixin
-from src.ui.messages import ModelRetryNotice, RoadmapChanged
+from src.ui.messages import ChatNotice, ModelRetryNotice, RoadmapChanged
+from src.ui.model_view_mixin import ModelViewMixin
+from src.ui.provider_mixin import ProviderMixin
 from src.ui.sidebar_mixin import SidebarMixin
-from src.ui.status_mixin import StatusMixin
 from src.ui.tool_logging import ChatToolLogSink, ToolLogMessage
 from src.ui.turn_mixin import TurnMixin
 from src.ui.widgets.chat_log import ChatLog
@@ -57,22 +59,23 @@ from src.ui.widgets.status_bar import StatusBar
 
 
 class SigilApp(
-    StatusMixin,
+    ModelViewMixin,
     SidebarMixin,
     MenuMixin,
     CommandsMixin,
+    ProviderMixin,
     DebugMixin,
     TurnMixin,
     App,
 ):
-    """Terminal chat: scrollable history, fixed input, menu and status bar."""
+    """Terminal chat: scrollable history, fixed input, menu and side panel."""
 
     CSS_PATH = 'theme.tcss'
     TITLE = 'Sigil'
 
-    # Focus lives in the input, which swallows the keys: the shortcut needs
-    # `priority` to reach the app. `escape` is handled by `PromptInput`, which
-    # already uses it for the command menu.
+    # Focus lives in the input, which swallows the keys. The pickers therefore
+    # read `ctrl+m` / `ctrl+t` in `PromptInput.on_key` instead of here: a global
+    # binding would claim Enter on terminals that cannot tell it from Ctrl+M.
     BINDINGS: ClassVar[list[Binding]] = [
         Binding('alt+d', 'toggle_debug', 'Debug view', priority=True, show=False),
     ]
@@ -82,6 +85,9 @@ class SigilApp(
         agent: Agent,
         store: SessionStore,
         session: Session,
+        settings: SigilSettings | None = None,
+        model_service: ModelService | None = None,
+        login_flow: Any = None,
         tool_logger: ToolLoggerHub | None = None,
         mcp_manager: MCPManager | None = None,
         startup_notices: Sequence[str] = (),
@@ -95,23 +101,25 @@ class SigilApp(
         loaded_skills: LoadedSkills | None = None,
     ) -> None:
         super().__init__()
+        self._settings = settings or load_settings({})
         self._agent = agent
         self._store = store
         self._session = session
+        self._model_service = model_service
+        self._login_flow = login_flow
         self._tool_logger = tool_logger
         self._mcp_manager = mcp_manager
         self._startup_notices = tuple(startup_notices)
         self._question_hub = question_hub
         self._roadmap_store = roadmap_store
         self._model_retry = model_retry
-        self._meter = meter or ContextMeter(output_reserve=ConfigProvider.CONTEXT_OUTPUT_RESERVE)
+        self._meter = meter or ContextMeter(output_reserve=self._settings.output_reserve)
         self._context_capability = context_capability
         self._scope = scope
         self._workspace = workspace
         self._loaded_skills = loaded_skills
         self._tool_log_sink: ChatToolLogSink | None = None
         self._history: list[Any] = list(session.messages)
-        self._context_length: int | None = None
         self.menu_visible = False
         # Debug view: it replaces the chat, it does not coexist with it.
         self.debug_visible = False
@@ -120,6 +128,12 @@ class SigilApp(
         # Run in progress: `checkpoint` uses it to persist turn progress.
         self._current_run: Any = None
         self._last_checkpoint_at = 0.0
+        self._wire_busy_flag()
+
+    def _wire_busy_flag(self) -> None:
+        """Lets the service refuse a model swap while a turn is running."""
+        if self._model_service is not None:
+            self._model_service.is_busy = lambda: self._current_run is not None
 
     # --- composition -------------------------------------------------------
 
@@ -155,7 +169,6 @@ class SigilApp(
             self._roadmap_store.add_listener(self.handle_roadmap_store_change)
             self.query_one(RoadmapPanel).set_store(self._roadmap_store)
         self.query_one(CommandMenu).display = False
-        self.update_status()
         self.refresh_sidebar()
         self.refresh_mcp_status()
         for notice in self._startup_notices:
@@ -165,7 +178,8 @@ class SigilApp(
             await chat.render_history(self._history)
             chat.finalize()
         self.query_one(PromptInput).focus()
-        self.load_model_info()
+        self.load_model_window()
+        self.resolve_model_capabilities()
 
     async def on_unmount(self) -> None:
         if self._model_retry is not None:
@@ -179,6 +193,10 @@ class SigilApp(
             self._roadmap_store.remove_listener(self.handle_roadmap_store_change)
 
     # --- tool and model events ---------------------------------------------
+
+    async def on_chat_notice(self, message: ChatNotice) -> None:
+        """Appends a notice posted from a synchronous context."""
+        await self.query_one(ChatLog).add_notice(message.text, style=message.style)
 
     async def on_tool_log_message(self, message: ToolLogMessage) -> None:
         event = message.event
@@ -198,6 +216,13 @@ class SigilApp(
     def action_toggle_debug(self) -> None:
         """`alt+d`: replaces the chat with the agent debug view."""
         self.toggle_debug()
+
+    def action_tab_noop(self) -> None:
+        """Tab outside the command menu does nothing.
+
+        It exists so `PromptInput` always has a target for the key: without it the
+        focus would move to another widget and the prompt would stop receiving text.
+        """
 
     async def on_model_retry_notice(self, message: ModelRetryNotice) -> None:
         notice = message.notice
@@ -238,16 +263,31 @@ class SigilApp(
 
     # --- model information -------------------------------------------------
 
-    @work
-    async def load_model_info(self) -> None:
-        """Resolves the model context window and publishes it to the bar."""
-        # pydantic-ai resolves the window from genai-prices. The OpenRouter
-        # fetch remains as a fallback when the profile does not carry it.
+    def load_model_window(self) -> None:
+        """Publishes the active model's context window to the meter.
+
+        The window comes from the catalogue entry that built the model, so there
+        is one source of truth: the profile the provider was built with. It only
+        sets state; the caller repaints the panel.
+        """
         window = getattr(self._agent.model, 'context_window', None)
-        if not window:
-            info = await fetch_model_info(ConfigProvider.LLM_MODEL)
-            window = info.context_length if info is not None else None
-        if window:
-            self._context_length = window
-            self._meter.set_window(window)
-        self.update_status()
+        snapshot = self._model_snapshot()
+        self._meter.set_window(window if window else snapshot.window)
+
+    @work(exclusive=True)
+    async def resolve_model_capabilities(self) -> None:
+        """Fetches the catalogue once on startup, if nothing has it cached.
+
+        A turn needs the window and the effort levels; making the user wait for the
+        first turn (or open `/model`) to learn them is what left the panel on `?`
+        and the effort picker empty right after a start.
+        """
+        service = getattr(self, '_model_service', None)
+        if service is None or not service.is_configured():
+            return
+        try:
+            snapshot = await service.refresh_capability()
+        except Exception:  # noqa: BLE001 - an offline start is not an error
+            return
+        self._meter.set_window(snapshot.window)
+        self.refresh_sidebar()

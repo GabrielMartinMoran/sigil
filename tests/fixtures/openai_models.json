@@ -1,0 +1,12 @@
+{
+  "object": "list",
+  "data": [
+    { "id": "gpt-5.1", "object": "model", "owned_by": "openai" },
+    { "id": "gpt-4.1", "object": "model", "owned_by": "openai" },
+    { "id": "o3", "object": "model", "owned_by": "openai" },
+    { "id": "gpt-4o-audio-preview", "object": "model", "owned_by": "openai" },
+    { "id": "text-embedding-3-small", "object": "model", "owned_by": "openai" },
+    { "id": "dall-e-3", "object": "model", "owned_by": "openai" },
+    { "id": "whisper-1", "object": "model", "owned_by": "openai" }
+  ]
+}

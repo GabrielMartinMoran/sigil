@@ -143,3 +143,73 @@ QuestionScreen {
     margin-top: 1;
     color: $text-muted;
 }
+
+/* --- provider screens ---------------------------------------------------- */
+
+ProviderScreen,
+AccountFormScreen,
+ModelPickerScreen,
+ConfirmScreen,
+TextPromptScreen {
+    align: center middle;
+}
+
+#provider-box {
+    width: 80%;
+    height: auto;
+    max-height: 85%;
+    border: round $accent;
+    background: $panel;
+    padding: 1 2;
+}
+
+#provider-title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#provider-list,
+#form-options,
+#picker-models,
+#confirm-options {
+    height: auto;
+    max-height: 16;
+}
+
+#provider-empty,
+#confirm-question {
+    margin-bottom: 1;
+}
+
+#form-alias,
+#form-secret,
+#picker-filter,
+#prompt-text {
+    margin-top: 1;
+}
+
+#form-status,
+#picker-status,
+#prompt-status {
+    margin-top: 1;
+    height: auto;
+}
+
+#provider-hint {
+    margin-top: 1;
+    color: $text-muted;
+}
+
+#effort-options {
+    height: auto;
+    max-height: 12;
+}
+
+#effort-status {
+    margin-bottom: 1;
+    height: auto;
+}
+
+EffortScreen {
+    align: center middle;
+}

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.config_provider import ConfigProvider
+from dotenv import load_dotenv
+
 from src.engine.agents.agent import create_agent
 from src.engine.agents.retry import RetryTransientModelErrors
 from src.engine.context.capability import ContextViewCapability
@@ -20,9 +21,17 @@ from src.engine.interaction.tools import register_interaction_tools
 from src.engine.mcp.config.loader import load_config
 from src.engine.mcp.manager.manager import MCPManager
 from src.engine.mcp.tools import register_mcp_tools
+from src.engine.paths import providers_dir
+from src.engine.providers.bootstrap import ProviderPaths, build_service
+from src.engine.providers.factory.unconfigured import UnconfiguredModel
+from src.engine.providers.login.chatgpt_flow import ChatGPTLoginFlow
+from src.engine.providers.login.credential_source import chatgpt_provider_factory
+from src.engine.providers.store.secret_store import FileSecretStore
+from src.engine.providers.store.state_store import FileStateStore
 from src.engine.roadmap.store import RoadmapStore
 from src.engine.roadmap.tools import register_roadmap_tools
 from src.engine.sessions.session_store import SessionStore
+from src.engine.settings import SigilSettings, load_settings
 from src.engine.shell.tools import register_shell_tools
 from src.engine.skills.loaded import LoadedSkills
 from src.engine.skills.registry import SkillRegistry
@@ -32,29 +41,34 @@ from src.engine.web.tools import register_web_tools
 from src.ui.app import SigilApp
 
 
-def _build_strategy():
+def _build_strategy(settings: SigilSettings):
     """View strategy based on configuration.
 
     - `windowed` (default): trims reasoning, old tool results and old turns.
     - `compacting`: also collapses old turns into a deterministic summary.
     - `passthrough`: sends the history as is.
     """
-    if ConfigProvider.CONTEXT_STRATEGY == 'passthrough':
+    if settings.context_strategy == 'passthrough':
         return PassthroughStrategy()
-    if ConfigProvider.CONTEXT_STRATEGY == 'compacting':
+    if settings.context_strategy == 'compacting':
         return CompactingStrategy(
-            keep_recent_turns=ConfigProvider.CONTEXT_KEEP_RECENT_TURNS,
-            max_tool_result_chars=ConfigProvider.CONTEXT_MAX_TOOL_RESULT_CHARS,
-            keep_thinking=ConfigProvider.CONTEXT_KEEP_THINKING,
+            keep_recent_turns=settings.keep_recent_turns,
+            max_tool_result_chars=settings.max_tool_result_chars,
+            keep_thinking=settings.keep_thinking,
         )
     return WindowedStrategy(
-        keep_recent_turns=ConfigProvider.CONTEXT_KEEP_RECENT_TURNS,
-        max_tool_result_chars=ConfigProvider.CONTEXT_MAX_TOOL_RESULT_CHARS,
-        keep_thinking=ConfigProvider.CONTEXT_KEEP_THINKING,
+        keep_recent_turns=settings.keep_recent_turns,
+        max_tool_result_chars=settings.max_tool_result_chars,
+        keep_thinking=settings.keep_thinking,
     )
 
 
 def run() -> None:
+    # The only place the process environment is read. Everything below receives
+    # values, so importing any module cannot freeze a setting or pull `.env` in.
+    load_dotenv()
+    settings = load_settings()
+
     # A single skill registry shared by the agent instructions
     # (metadata) and by the tools (load, resources and scripts).
     skill_registry = SkillRegistry()
@@ -73,14 +87,35 @@ def run() -> None:
     workspace = WorkspaceInstructions(workspace_root)
     tool_logger.add_sink(ScopeSink(scope))
 
-    meter = ContextMeter(output_reserve=ConfigProvider.CONTEXT_OUTPUT_RESERVE)
-    context_capability = ContextViewCapability(strategy=_build_strategy(), meter=meter)
-
+    meter = ContextMeter(output_reserve=settings.output_reserve)
+    context_capability = ContextViewCapability(strategy=_build_strategy(settings), meter=meter)
     # Active session: the roadmap and the history hang off it.
     store = SessionStore()
     session = store.load_last()
     if session is None:
         session = store.create_session()
+
+    # Providers: accounts, credentials and the model the agent talks to. The
+    # router starts on a model that refuses to run until something is configured,
+    # so the app opens and `/provider` is reachable from a cold start.
+    provider_paths = ProviderPaths(providers_dir())
+    secrets = FileSecretStore(provider_paths.credentials)
+    state = FileStateStore(provider_paths.state)
+    model_service = build_service(
+        provider_paths,
+        session_id=session.id,
+        initial_model=UnconfiguredModel(),
+        oauth_provider_factory=chatgpt_provider_factory(secrets),
+    )
+    selected = model_service.resolve(session.selection)
+    if selected is not None:
+        model_service.apply(selected)
+        session.selection = model_service.state.last_selection()
+
+    # The meter needs the window before the UI exists, or the first turn of a cold
+    # start shows `ctx: ?` and cannot budget. The selection carries the last known
+    # value, so this needs no network.
+    meter.set_window(model_service.stored_window())
 
     # Bridge for interactive questions and roadmap state: the engine
     # updates, the UI consumes them. The roadmap is per session: it is born empty with
@@ -95,10 +130,11 @@ def run() -> None:
 
     # Retries on transient model failures. The instance is shared
     # with the UI so it announces every retry in the chat.
-    model_retry = RetryTransientModelErrors(max_attempts=ConfigProvider.MODEL_MAX_ATTEMPTS)
+    model_retry = RetryTransientModelErrors(max_attempts=settings.model_max_attempts)
 
     agent = create_agent(
         skill_registry,
+        model=model_service.current_model(),
         toolsets=mcp_manager.toolsets,
         model_retry=model_retry,
         workspace=workspace,
@@ -119,6 +155,9 @@ def run() -> None:
         agent=agent,
         store=store,
         session=session,
+        settings=settings,
+        model_service=model_service,
+        login_flow=ChatGPTLoginFlow(state=state),
         tool_logger=tool_logger,
         mcp_manager=mcp_manager,
         startup_notices=(*config.errors, *mcp_manager.errors),

@@ -14,17 +14,91 @@ from src.engine.mcp.manager.manager import MCPManager
 from src.engine.sessions.session_store import SessionStore
 from src.engine.skills.loaded import LoadedSkills
 from src.ui.app import SigilApp
-from src.ui.widgets.sidebar_panel import MCPServerState, SidebarPanel
+from src.ui.widgets.sidebar_panel import ContextState, MCPServerState, ModelState, SidebarPanel
+from src.ui.widgets.status_bar import StatusBar
 
 
 def _panel() -> SidebarPanel:
     return SidebarPanel()
 
 
+def _configured() -> SidebarPanel:
+    panel = _panel()
+    panel._model = ModelState(alias='work', provider='OpenRouter', model='anthropic/x', effort='high')
+    return panel
+
+
 def test_panel_without_skills_says_so():
     text = _panel()._build().plain
     assert 'Loaded skills' in text
     assert 'none yet' in text
+
+
+def test_panel_hides_the_context_until_a_model_is_configured():
+    panel = _panel()
+    panel._context_state = ContextState(percent=12.0, used=24_000, window=200_000)
+    assert 'Context' not in panel._build().plain
+
+
+def test_panel_shows_the_percentage_and_the_compacted_pair():
+    panel = _configured()
+    panel._context_state = ContextState(percent=66.0, used=132_000, window=200_000)
+    text = panel._build().plain
+    assert 'Context' in text
+    assert '66%' in text
+    assert '(132K / 200K)' in text
+
+
+def test_panel_rounds_the_percentage_to_whole_numbers():
+    panel = _configured()
+    panel._context_state = ContextState(percent=12.4, used=24_800, window=200_000)
+    assert '12%' in panel._build().plain
+    assert '12.4%' not in panel._build().plain
+
+
+def test_panel_shows_a_question_mark_without_a_window():
+    panel = _configured()
+    panel._context_state = ContextState(percent=None, used=None, window=None)
+    text = panel._build().plain
+    assert 'Context' in text
+    assert '?' in text
+    # Without a percentage there is no pair to compare against.
+    assert '(' not in text
+
+
+def test_panel_omits_the_pair_when_only_the_window_is_known():
+    panel = _configured()
+    panel._context_state = ContextState(percent=None, used=None, window=200_000)
+    text = panel._build().plain
+    assert 'Context' in text
+    assert '?' in text
+    assert '(/ 200K)' not in text
+    assert '?' + ' (' not in text
+
+
+def test_panel_escalates_the_context_colour():
+    panel = _configured()
+
+    def colour(percent: float) -> set[str | None]:
+        panel._context_state = ContextState(percent=percent, used=int(percent * 2000), window=200_000)
+        return {span.style for span in panel._build().spans}
+
+    assert 'green' in colour(41.0)
+    assert 'yellow' in colour(75.0)
+    assert 'bold red' in colour(93.0)
+
+
+def test_panel_orders_context_between_the_model_and_the_skills():
+    panel = _configured()
+    panel._skills = ('clean-code',)
+    panel._context_state = ContextState(percent=66.0, used=132_000, window=200_000)
+    text = panel._build().plain
+    assert text.index('Model') < text.index('Context') < text.index('Loaded skills')
+
+
+def test_status_bar_paints_nothing():
+    bar = StatusBar()
+    assert bar.content.plain == ''
 
 
 def test_panel_lists_loaded_skills():

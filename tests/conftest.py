@@ -1,55 +1,42 @@
 """Hermetic test environment.
 
-The app reads its configuration from the process environment, and
-``ConfigProvider`` calls ``load_dotenv()`` in its class body. Two things followed
-from that:
+The suite must not depend on the developer's shell, their ``.env``, or their
+``~/.sigil``. Two independent reasons, both now enforced by construction rather
+than by import order:
 
-- Importing ``src.config_provider`` pulled the repo ``.env`` into ``os.environ``,
-  so the suite inherited whatever the developer had there. A local
-  ``LLM_PROVIDER=opencode-go`` was enough to break three instruction tests.
-- Real credentials sat in ``os.environ`` for the whole run, one accidental call
-  away from being used or printed by a failing assertion.
+- **Settings are read by an explicit loader.** ``load_settings()`` takes the
+  environment as an argument, so a test builds the configuration it wants and
+  nothing else in the process can freeze a value by being imported first.
+- **Provider credentials never come from the environment at all.** They live in
+  ``~/.sigil/providers/credentials.json`` and are configured from the UI, so
+  there is nothing to scrub.
 
-This module runs before any test module, so it settles both inputs first:
-
-1. ``dotenv.load_dotenv`` becomes a no-op, so ``ConfigProvider`` cannot load any
-   ``.env`` file, now or later in the session.
-2. Credentials and ``SIGIL_*`` overrides are removed from the inherited
-   environment, then the minimum the code requires is pinned to test values.
-
-Tests that need a non-default value patch ``ConfigProvider`` itself with
-``monkeypatch.setattr``, which is explicit and scoped to that test.
+What this module still does: point ``SIGIL_HOME`` at a per-run temporary
+directory, so any code that resolves a path (sessions, roadmaps, providers) writes
+inside the sandbox instead of the developer's home. Test modules that need their
+own directory use ``tmp_path`` and pass it explicitly.
 """
 
+import atexit
 import os
+import shutil
+import tempfile
 
 import dotenv
 
-# 1. Disable the `.env` loader before `src.config_provider` imports the name.
-#    `from dotenv import load_dotenv` binds whatever this attribute holds at
-#    import time, so patching it here is enough.
+# 1. Disable the `.env` loader: `src/sigil.py` calls it, and a local file must not
+#    reach the process during tests.
 dotenv.load_dotenv = lambda *args, **kwargs: False
 
 
-# 2. Drop the inherited values that would otherwise leak into the run. `SIGIL_*`
-#    covers every override the app reads (step limit, context strategy, MCP
-#    config path, skills roots, the self-launch guard); the rest are the
-#    credential names this project and its local tooling use.
-SCRUBBED = (
-    'OPENROUTER_API_KEY',
-    '_OPENROUTER_API_KEY',
-    'OPENCODE_GO_API_KEY',
-    'OPENCODE_SERVER_PASSWORD',
-)
-for _name in [name for name in os.environ if name.startswith('SIGIL_') or name in SCRUBBED]:
+# 2. Sandbox every path Sigil owns.
+SANDBOX = tempfile.mkdtemp(prefix='sigil-tests-')
+os.environ['SIGIL_HOME'] = SANDBOX
+atexit.register(shutil.rmtree, SANDBOX, True)
+
+
+# 3. Drop the tuning overrides the shell may carry, so a value set for daily use
+#    does not change an assertion. Every test that needs a non-default value
+#    passes it to `load_settings` explicitly.
+for _name in [name for name in os.environ if name.startswith('SIGIL_') and name != 'SIGIL_HOME']:
     del os.environ[_name]
-
-
-# 3. Pin the minimum the code requires, to values that never reach a network.
-os.environ['LLM_PROVIDER'] = 'openrouter'
-os.environ['LLM_MODEL'] = 'test/model'
-os.environ['OPENROUTER_API_KEY'] = 'test-key'
-os.environ['OPENCODE_GO_API_KEY'] = 'test-key'
-
-# Every other setting keeps its documented default, so a test never depends on
-# the machine it runs on.

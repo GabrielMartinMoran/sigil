@@ -14,6 +14,9 @@ class Command:
 COMMANDS: tuple[Command, ...] = (
     Command('/new', 'Start a new session'),
     Command('/load', 'Load a saved session'),
+    Command('/provider', 'Manage provider accounts (add, remove, activate)'),
+    Command('/model', 'Pick the model for the active account'),
+    Command('/effort', 'Show or set the reasoning effort'),
     Command('/sidebar', 'Show or hide the sidebar (on/off)'),
     Command('/mcp', 'Show MCP server status'),
     Command('/context', 'Show the context usage breakdown'),

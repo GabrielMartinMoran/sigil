@@ -18,9 +18,8 @@ from pydantic_ai.messages import (
 from pydantic_ai.usage import UsageLimits
 from textual import work
 
-from src.config_provider import ConfigProvider
 from src.engine.agents.step_limiter import StepLimiter, StepLimitExceeded
-from src.ui.efforts import EFFORTS
+from src.engine.providers.domain.thinking import settings_value as thinking_settings
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 
@@ -32,7 +31,7 @@ class TurnMixin:
     """Runs the agent turn against the app.
 
     It expects the app to define ``_agent``, ``_history``, ``_session``, ``_store``,
-    ``_current_run``, ``_last_checkpoint_at`` and ``_update_status``.
+    ``_current_run``, ``_last_checkpoint_at`` and ``_refresh_context``.
     """
 
     _agent: Any
@@ -41,13 +40,20 @@ class TurnMixin:
     _store: Any
     _current_run: Any
     _last_checkpoint_at: float
+    _settings: Any
 
     def model_settings(self) -> dict[str, Any] | None:
-        """Per-request settings: the configured reasoning effort."""
-        effort = ConfigProvider.REASONING_EFFORT
-        if effort in EFFORTS:
-            return {'thinking': effort}
-        return None
+        """Per-request settings: the reasoning level of the active model.
+
+        `default` sends nothing so the model keeps its own behaviour; `off` maps
+        to `False` (the lowest effort a model accepts, or reasoning disabled
+        where the route allows it); a level goes as is.
+        """
+        service = getattr(self, '_model_service', None)
+        if service is None:
+            return None
+        value = thinking_settings(service.snapshot().thinking)
+        return None if value is None else {'thinking': value}
 
     def checkpoint(self, *, force: bool = False) -> None:
         """Persists the progress of the current turn, at most once per second.
@@ -73,8 +79,8 @@ class TurnMixin:
         self._last_checkpoint_at = now
         self._session.messages = list(messages)
         self._store.save(self._session)
-        # The bar updates per step, not only when the turn closes.
-        self.update_status(messages)
+        # The context section updates per step, not only when the turn closes.
+        self.refresh_context(messages)
         # The debug view too (it is a no-op if closed).
         refresh_debug = getattr(self, 'refresh_debug', None)
         if callable(refresh_debug):
@@ -118,7 +124,7 @@ class TurnMixin:
         """Runs a full turn, persisting progress along the way."""
         chat = self.query_one(ChatLog)
         prompt = self.query_one(PromptInput)
-        limiter = StepLimiter(ConfigProvider.MAX_STEPS)
+        limiter = StepLimiter(self._settings.max_steps)
         handler = self.turn_handler(limiter, chat)
         prompt.disabled = True
         # `agent.iter` (instead of `agent.run`) keeps the run accessible: if the
@@ -151,7 +157,7 @@ class TurnMixin:
             if run is not None:
                 history = run.all_messages()
             await chat.add_notice(
-                f'Step limit of {ConfigProvider.MAX_STEPS} reached; turn aborted.',
+                f'Step limit of {self._settings.max_steps} reached; turn aborted.',
                 style='bold red',
             )
         except Exception as exc:  # noqa: BLE001
@@ -167,7 +173,7 @@ class TurnMixin:
         self._history = history
         self._session.messages = self._history
         self._store.save(self._session)
-        self.update_status()
+        self.refresh_sidebar()
         # The debug view shows the cost of the turn just closed.
         refresh_debug = getattr(self, 'refresh_debug', None)
         if callable(refresh_debug):

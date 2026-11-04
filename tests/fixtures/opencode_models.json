@@ -1,0 +1,751 @@
+{
+ "object": "list",
+ "data": [
+  {
+   "id": "big-pickle",
+   "object": "model",
+   "created": 1793818214,
+   "owned_by": "opencode",
+   "name": "Big Pickle",
+   "type": "chat",
+   "description": "Reasoning model for deliberate analysis, multi-step problem solving, and tool use",
+   "family": "big-pickle",
+   "open_weights": false,
+   "knowledge": "2025-01",
+   "release_date": "2025-10-17",
+   "last_updated": "2025-10-17",
+   "modalities": {
+    "input": [
+     "text"
+    ],
+    "output": [
+     "text"
+    ]
+   },
+   "capabilities": {
+    "tools": {
+     "supported": true
+    },
+    "reasoning": {
+     "supported": true
+    },
+    "structured_output": true,
+    "temperature": true,
+    "system_updates": false,
+    "effort_updates": false
+   },
+   "limit": {
+    "context": 200000,
+    "input": 160000,
+    "output": 32000
+   },
+   "cost": {
+    "text": {
+     "input": {
+      "price": 0,
+      "cache": {
+       "read": 0,
+       "write": 0
+      }
+     },
+     "output": {
+      "price": 0
+     }
+    }
+   },
+   "api": {
+    "chat-completions": {
+     "base_url": "https://opencode.ai/inference/openai/v1",
+     "sdk": {
+      "aisdk": "@ai-sdk/openai-compatible",
+      "opencodeai": "@opencode/ai/providers/openai-compatible"
+     },
+     "compatibility": {
+      "reasoning_field": "reasoning_content"
+     },
+     "capabilities": {
+      "tools": {
+       "updates": false
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "mimo-v2.6-flash-free",
+   "object": "model",
+   "created": 1793818214,
+   "owned_by": "opencode",
+   "name": "MiMo-V2.6-Flash Free",
+   "canonical_id": "xiaomi/mimo-v2.6-flash",
+   "type": "chat",
+   "description": "MiMo Flash model for multimodal coding agents and long-context automation",
+   "family": "mimo",
+   "open_weights": true,
+   "release_date": "2026-09-22",
+   "last_updated": "2026-09-22",
+   "modalities": {
+    "input": [
+     "text",
+     "image/jpeg",
+     "image/png",
+     "image/gif",
+     "image/webp",
+     "image/bmp",
+     "audio/mpeg",
+     "audio/wav",
+     "audio/flac",
+     "audio/mp4",
+     "audio/ogg",
+     "video/mp4",
+     "video/quicktime",
+     "video/x-msvideo",
+     "video/x-ms-wmv"
+    ],
+    "output": [
+     "text"
+    ]
+   },
+   "capabilities": {
+    "tools": {
+     "supported": true
+    },
+    "reasoning": {
+     "supported": true
+    },
+    "temperature": true,
+    "top_p": true,
+    "top_k": true,
+    "system_updates": true,
+    "effort_updates": false
+   },
+   "limit": {
+    "context": 200000,
+    "output": 32000
+   },
+   "cost": {
+    "text": {
+     "input": {
+      "price": 0,
+      "cache": {
+       "read": 0
+      }
+     },
+     "output": {
+      "price": 0
+     }
+    }
+   },
+   "api": {
+    "chat-completions": {
+     "base_url": "https://opencode.ai/inference/openai/v1",
+     "sdk": {
+      "aisdk": "@ai-sdk/openai-compatible",
+      "opencodeai": "@opencode/ai/providers/openai-compatible"
+     },
+     "compatibility": {
+      "reasoning_field": "reasoning_content"
+     },
+     "capabilities": {
+      "tools": {
+       "strict": true,
+       "choice": [
+        "auto"
+       ],
+       "updates": false
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "claude-opus-4-5",
+   "object": "model",
+   "created": 1793818214,
+   "owned_by": "opencode",
+   "name": "Claude Opus 4.5",
+   "canonical_id": "anthropic/claude-opus-4-5",
+   "type": "chat",
+   "description": "Flagship Claude model for deep reasoning, coding, and long-horizon agents",
+   "family": "claude-opus",
+   "open_weights": false,
+   "knowledge": "2025-05",
+   "release_date": "2025-11-24",
+   "last_updated": "2025-11-24",
+   "modalities": {
+    "input": [
+     "text",
+     "image/jpeg",
+     "image/png",
+     "image/gif",
+     "image/webp",
+     "application/pdf"
+    ],
+    "output": [
+     "text"
+    ]
+   },
+   "capabilities": {
+    "tools": {
+     "supported": true
+    },
+    "reasoning": {
+     "supported": true,
+     "effort": [
+      "low",
+      "medium",
+      "high"
+     ],
+     "budget": {
+      "min": 1024
+     }
+    },
+    "cache": {
+     "explicit": {
+      "ttl": [
+       "5m",
+       "1h"
+      ],
+      "max_breakpoints": 4,
+      "targets": [
+       "tools",
+       "system",
+       "messages"
+      ],
+      "min_tokens": 4096
+     }
+    },
+    "temperature": true,
+    "top_p": true,
+    "top_k": true,
+    "system_updates": false,
+    "effort_updates": false
+   },
+   "limit": {
+    "context": 200000,
+    "output": 64000
+   },
+   "cost": {
+    "text": {
+     "input": {
+      "price": 5,
+      "cache": {
+       "read": 0.5,
+       "write": 6.25
+      }
+     },
+     "output": {
+      "price": 25
+     }
+    }
+   },
+   "api": {
+    "messages": {
+     "base_url": "https://opencode.ai/inference/anthropic/v1",
+     "sdk": {
+      "aisdk": "@ai-sdk/anthropic",
+      "opencodeai": "@opencode/ai/providers/anthropic"
+     },
+     "capabilities": {
+      "tools": {
+       "strict": true,
+       "choice": [
+        "auto",
+        "none",
+        "required",
+        "tool"
+       ],
+       "search": true,
+       "updates": false
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "claude-sonnet-4-6",
+   "object": "model",
+   "created": 1793818214,
+   "owned_by": "opencode",
+   "name": "Claude Sonnet 4.6",
+   "canonical_id": "anthropic/claude-sonnet-4-6",
+   "type": "chat",
+   "description": "Balanced Claude model for coding, analysis, agent workflows, and cost control",
+   "family": "claude-sonnet",
+   "open_weights": false,
+   "knowledge": "2025-08-31",
+   "release_date": "2026-02-17",
+   "last_updated": "2026-03-13",
+   "modalities": {
+    "input": [
+     "text",
+     "image/jpeg",
+     "image/png",
+     "image/gif",
+     "image/webp",
+     "application/pdf"
+    ],
+    "output": [
+     "text"
+    ]
+   },
+   "capabilities": {
+    "tools": {
+     "supported": true
+    },
+    "reasoning": {
+     "supported": true,
+     "effort": [
+      "low",
+      "medium",
+      "high",
+      "max"
+     ],
+     "budget": {
+      "min": 1024
+     }
+    },
+    "cache": {
+     "explicit": {
+      "ttl": [
+       "5m",
+       "1h"
+      ],
+      "max_breakpoints": 4,
+      "targets": [
+       "tools",
+       "system",
+       "messages"
+      ],
+      "min_tokens": 1024
+     }
+    },
+    "temperature": true,
+    "top_p": true,
+    "top_k": true,
+    "system_updates": false,
+    "effort_updates": false
+   },
+   "limit": {
+    "context": 1000000,
+    "output": 64000
+   },
+   "cost": {
+    "text": {
+     "input": {
+      "price": 3,
+      "cache": {
+       "read": 0.3,
+       "write": 3.75
+      }
+     },
+     "output": {
+      "price": 15
+     }
+    }
+   },
+   "api": {
+    "messages": {
+     "base_url": "https://opencode.ai/inference/anthropic/v1",
+     "sdk": {
+      "aisdk": "@ai-sdk/anthropic",
+      "opencodeai": "@opencode/ai/providers/anthropic"
+     },
+     "capabilities": {
+      "tools": {
+       "strict": true,
+       "choice": [
+        "auto",
+        "none",
+        "required",
+        "tool"
+       ],
+       "search": true,
+       "updates": false
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "gemini-3.8-flash",
+   "object": "model",
+   "created": 1793818214,
+   "owned_by": "opencode",
+   "name": "Gemini 3.8 Flash",
+   "canonical_id": "google/gemini-3.8-flash",
+   "type": "chat",
+   "description": "Google's most intelligent Flash model, engineered for long-horizon software engineering, autonomous agents, and complex enterprise workflows",
+   "family": "gemini-flash",
+   "open_weights": false,
+   "release_date": "2026-09-02",
+   "last_updated": "2026-09-02",
+   "modalities": {
+    "input": [
+     "text",
+     "image/png",
+     "image/jpeg",
+     "image/webp",
+     "image/heic",
+     "image/heif",
+     "video/mp4",
+     "video/mpeg",
+     "video/mov",
+     "video/avi",
+     "video/x-flv",
+     "video/mpg",
+     "video/webm",
+     "video/wmv",
+     "video/3gpp",
+     "audio/wav",
+     "audio/mp3",
+     "audio/aiff",
+     "audio/aac",
+     "audio/ogg",
+     "audio/flac",
+     "audio/mpeg",
+     "audio/m4a",
+     "audio/l16",
+     "audio/opus",
+     "audio/alaw",
+     "audio/mulaw",
+     "audio/webm",
+     "application/pdf"
+    ],
+    "output": [
+     "text"
+    ]
+   },
+   "capabilities": {
+    "tools": {
+     "supported": true
+    },
+    "reasoning": {
+     "supported": true,
+     "effort": [
+      "low",
+      "medium",
+      "high"
+     ]
+    },
+    "cache": {
+     "implicit": true
+    },
+    "structured_output": true,
+    "temperature": true,
+    "top_p": true,
+    "top_k": true,
+    "system_updates": false,
+    "effort_updates": false
+   },
+   "limit": {
+    "context": 1048576,
+    "output": 65536
+   },
+   "cost": {
+    "text": {
+     "input": {
+      "price": 1.5,
+      "cache": {
+       "read": 0.15
+      }
+     },
+     "output": {
+      "price": 7.5
+     }
+    },
+    "audio": {
+     "input": {
+      "price": 1.5
+     }
+    }
+   },
+   "api": {
+    "generate-content": {
+     "base_url": "https://opencode.ai/inference/google/v1beta",
+     "sdk": {
+      "aisdk": "@ai-sdk/google",
+      "opencodeai": "@opencode/ai/providers/google"
+     },
+     "capabilities": {
+      "tools": {
+       "choice": [
+        "auto",
+        "none",
+        "required",
+        "tool"
+       ],
+       "updates": false
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "glm-5.3",
+   "object": "model",
+   "created": 1793818214,
+   "owned_by": "opencode",
+   "name": "GLM-5.3",
+   "canonical_id": "zhipuai/glm-5.3",
+   "type": "chat",
+   "description": "Flagship GLM model for long-horizon coding, agents, and complex project delivery",
+   "family": "glm",
+   "open_weights": true,
+   "release_date": "2026-08-14",
+   "last_updated": "2026-08-14",
+   "modalities": {
+    "input": [
+     "text"
+    ],
+    "output": [
+     "text"
+    ]
+   },
+   "capabilities": {
+    "tools": {
+     "supported": true
+    },
+    "reasoning": {
+     "supported": true,
+     "effort": [
+      "low",
+      "high",
+      "max"
+     ]
+    },
+    "cache": {
+     "implicit": true
+    },
+    "structured_output": true,
+    "temperature": true,
+    "top_p": true,
+    "top_k": true,
+    "system_updates": true,
+    "effort_updates": false
+   },
+   "limit": {
+    "context": 1000000,
+    "output": 131072
+   },
+   "cost": {
+    "text": {
+     "input": {
+      "price": 1.4,
+      "cache": {
+       "read": 0.26
+      }
+     },
+     "output": {
+      "price": 4.4
+     }
+    }
+   },
+   "api": {
+    "chat-completions": {
+     "base_url": "https://opencode.ai/inference/openai/v1",
+     "sdk": {
+      "aisdk": "@ai-sdk/openai-compatible",
+      "opencodeai": "@opencode/ai/providers/openai-compatible"
+     },
+     "compatibility": {
+      "reasoning_field": "reasoning_content"
+     },
+     "capabilities": {
+      "tools": {
+       "choice": [
+        "auto"
+       ],
+       "updates": false
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "gpt-5",
+   "object": "model",
+   "created": 1793818214,
+   "owned_by": "opencode",
+   "name": "GPT-5",
+   "canonical_id": "openai/gpt-5",
+   "type": "chat",
+   "description": "GPT model for general reasoning, writing, coding, and tool-assisted tasks",
+   "family": "gpt",
+   "open_weights": false,
+   "knowledge": "2024-09-30",
+   "release_date": "2025-08-07",
+   "last_updated": "2025-08-07",
+   "modalities": {
+    "input": [
+     "text",
+     "image/jpeg",
+     "image/png",
+     "image/gif",
+     "image/webp"
+    ],
+    "output": [
+     "text"
+    ]
+   },
+   "capabilities": {
+    "tools": {
+     "supported": true
+    },
+    "reasoning": {
+     "supported": true,
+     "effort": [
+      "minimal",
+      "low",
+      "medium",
+      "high"
+     ]
+    },
+    "structured_output": true,
+    "temperature": false,
+    "top_p": false,
+    "top_k": false,
+    "system_updates": true,
+    "effort_updates": false
+   },
+   "limit": {
+    "context": 400000,
+    "input": 272000,
+    "output": 128000
+   },
+   "cost": {
+    "text": {
+     "input": {
+      "price": 1.07,
+      "cache": {
+       "read": 0.107
+      }
+     },
+     "output": {
+      "price": 8.5
+     }
+    }
+   },
+   "api": {
+    "responses": {
+     "base_url": "https://opencode.ai/inference/openai/v1",
+     "sdk": {
+      "aisdk": "@ai-sdk/openai",
+      "opencodeai": "@opencode/ai/providers/openai/responses"
+     },
+     "capabilities": {
+      "tools": {
+       "strict": true,
+       "choice": [
+        "auto",
+        "none",
+        "required",
+        "tool"
+       ],
+       "freeform": [
+        "text",
+        "lark",
+        "regex"
+       ],
+       "updates": true
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "gpt-5-nano",
+   "object": "model",
+   "created": 1793818214,
+   "owned_by": "opencode",
+   "name": "GPT-5 Nano",
+   "canonical_id": "openai/gpt-5-nano",
+   "type": "chat",
+   "description": "Compact GPT model for low-latency assistance and high-volume workloads",
+   "family": "gpt-nano",
+   "open_weights": false,
+   "knowledge": "2024-05-30",
+   "release_date": "2025-08-07",
+   "last_updated": "2025-08-07",
+   "modalities": {
+    "input": [
+     "text",
+     "image/jpeg",
+     "image/png",
+     "image/gif",
+     "image/webp"
+    ],
+    "output": [
+     "text"
+    ]
+   },
+   "capabilities": {
+    "tools": {
+     "supported": true
+    },
+    "reasoning": {
+     "supported": true,
+     "effort": [
+      "minimal",
+      "low",
+      "medium",
+      "high"
+     ]
+    },
+    "cache": {
+     "implicit": true
+    },
+    "structured_output": true,
+    "temperature": false,
+    "top_p": false,
+    "top_k": false,
+    "system_updates": true,
+    "effort_updates": false
+   },
+   "limit": {
+    "context": 400000,
+    "input": 272000,
+    "output": 128000
+   },
+   "cost": {
+    "text": {
+     "input": {
+      "price": 0.05,
+      "cache": {
+       "read": 0.005
+      }
+     },
+     "output": {
+      "price": 0.4
+     }
+    }
+   },
+   "api": {
+    "responses": {
+     "base_url": "https://opencode.ai/inference/openai/v1",
+     "sdk": {
+      "aisdk": "@ai-sdk/openai",
+      "opencodeai": "@opencode/ai/providers/openai/responses"
+     },
+     "capabilities": {
+      "tools": {
+       "strict": true,
+       "choice": [
+        "auto",
+        "none",
+        "required",
+        "tool"
+       ],
+       "freeform": [
+        "text",
+        "lark",
+        "regex"
+       ],
+       "updates": true
+      }
+     }
+    }
+   }
+  }
+ ]
+}

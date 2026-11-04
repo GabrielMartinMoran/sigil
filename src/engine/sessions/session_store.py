@@ -26,6 +26,8 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
+from src.engine.providers.domain.selection import Selection
+
 DEFAULT_SESSIONS_DIR = Path.home() / '.sigil' / 'sessions'
 INDEX_FILENAME = 'index.json'
 SESSION_SUFFIX = '.json'
@@ -33,6 +35,13 @@ SESSION_SUFFIX = '.json'
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _selection_from(raw: object) -> Selection | None:
+    """Rebuilds a stored selection, tolerating the old format (which had none)."""
+    if not isinstance(raw, dict):
+        return None
+    return Selection.from_dict(raw)
 
 
 def cwd_hash(cwd: str | Path) -> str:
@@ -51,6 +60,12 @@ class Session:
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
     title: str | None = None
+    selection: Selection | None = None
+    """Provider account, model and reasoning level the conversation runs on.
+
+    It travels with the session on purpose: resuming a conversation on a
+    different model would silently change cost and behaviour.
+    """
 
     def touch(self) -> None:
         self.updated_at = _now()
@@ -163,6 +178,7 @@ class SessionStore:
             'created_at': session.created_at,
             'updated_at': session.updated_at,
             'title': session.title,
+            'selection': session.selection.to_dict() if session.selection is not None else None,
             'messages': ModelMessagesTypeAdapter.dump_python(session.messages, mode='json'),
         }
 
@@ -174,6 +190,7 @@ class SessionStore:
             created_at=data.get('created_at') or _now(),
             updated_at=data.get('updated_at') or _now(),
             title=data.get('title'),
+            selection=_selection_from(data.get('selection')),
         )
 
     # --- Index and atomic write ----------------------------------------------

@@ -1,39 +1,115 @@
-"""Tests for the hermetic test environment set up in ``conftest.py``.
+"""Tests for the configuration contract.
 
-These guard the contract: the suite must not read the repo ``.env`` nor the
-developer's shell. Without them, a future import order change could quietly
-reintroduce the leak that made three tests fail for environment reasons.
+These guard the property that replaced the old import-time environment reads:
+settings come from an explicit loader that accepts the environment as an
+argument, and nothing on the provider side is read from the environment at all.
 """
 
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
+from pathlib import Path
 
 import dotenv
+import pytest
 
-from src.config_provider import ConfigProvider
+from src.engine.settings import (
+    DEFAULT_CONTEXT_STRATEGY,
+    DEFAULT_MAX_STEPS,
+    DEFAULT_MODEL_MAX_ATTEMPTS,
+    SigilSettings,
+    load_settings,
+)
+
+REPO = Path(__file__).resolve().parent.parent
 
 
 def test_dotenv_loader_is_disabled():
     assert dotenv.load_dotenv('.env') is False
 
 
-def test_config_does_not_come_from_the_repo_env_file():
-    # `.env` in the repo root points the app at a real provider; the suite must
-    # run on the pinned test values instead.
-    assert ConfigProvider.LLM_PROVIDER == 'openrouter'
-    assert ConfigProvider.LLM_MODEL == 'test/model'
+def test_defaults_are_used_when_the_environment_is_empty():
+    settings = load_settings({})
+    assert settings.max_steps == DEFAULT_MAX_STEPS
+    assert settings.model_max_attempts == DEFAULT_MODEL_MAX_ATTEMPTS
+    assert settings.context_strategy == DEFAULT_CONTEXT_STRATEGY
 
 
-def test_credentials_from_the_shell_are_not_visible():
-    assert os.environ.get('OPENROUTER_API_KEY') == 'test-key'
-    assert os.environ.get('OPENCODE_GO_API_KEY') == 'test-key'
-    assert 'OPENCODE_SERVER_PASSWORD' not in os.environ
+def test_the_loader_reads_the_mapping_it_is_given_not_the_process():
+    settings = load_settings({'SIGIL_MAX_STEPS': '7', 'SIGIL_CONTEXT_STRATEGY': 'passthrough'})
+    assert settings.max_steps == 7
+    assert settings.context_strategy == 'passthrough'
 
 
-def test_sigil_overrides_from_the_shell_are_cleared():
-    # `SIGIL_MAX_STEPS` and friends would otherwise change behavior per machine.
-    assert not [name for name in os.environ if name.startswith('SIGIL_')]
-    assert ConfigProvider.MAX_STEPS == 256
-    assert ConfigProvider.CONTEXT_STRATEGY == 'windowed'
-    assert ConfigProvider.REASONING_EFFORT == ''
+def test_the_process_environment_is_irrelevant_when_a_mapping_is_passed(monkeypatch):
+    monkeypatch.setenv('SIGIL_MAX_STEPS', '999')
+    assert load_settings({}).max_steps == DEFAULT_MAX_STEPS
+
+
+@pytest.mark.parametrize('value', ['0', '-1'])
+def test_a_step_limit_below_one_is_rejected(value):
+    with pytest.raises(ValueError):
+        load_settings({'SIGIL_MAX_STEPS': value})
+
+
+def test_a_non_numeric_value_fails_loudly_instead_of_falling_back():
+    with pytest.raises(ValueError) as error:
+        load_settings({'SIGIL_MAX_STEPS': 'many'})
+    assert 'SIGIL_MAX_STEPS' in str(error.value)
+
+
+def test_an_unknown_context_strategy_is_rejected():
+    with pytest.raises(ValueError):
+        load_settings({'SIGIL_CONTEXT_STRATEGY': 'magic'})
+
+
+@pytest.mark.parametrize('raw', ['1', 'true', 'YES', 'on'])
+def test_truthy_flags(raw):
+    assert load_settings({'SIGIL_CONTEXT_KEEP_THINKING': raw}).keep_thinking
+
+
+@pytest.mark.parametrize('raw', ['', '0', 'false', 'no'])
+def test_falsey_flags(raw):
+    assert not load_settings({'SIGIL_CONTEXT_KEEP_THINKING': raw}).keep_thinking
+
+
+def test_settings_are_immutable():
+    from dataclasses import FrozenInstanceError
+
+    settings = SigilSettings()
+    with pytest.raises(FrozenInstanceError):
+        settings.max_steps = 5  # type: ignore[misc]
+
+
+def test_the_sigil_home_sandbox_is_active():
+    assert os.environ['SIGIL_HOME'].startswith('/')
+
+
+def test_no_module_reads_the_provider_environment_at_import():
+    """The regression this whole refactor exists for.
+
+    A fresh interpreter imports the application with a hostile environment and
+    must not need any provider variable, nor leave one behind as a requirement.
+    """
+    env = {
+        'PATH': os.environ.get('PATH', ''),
+        'SIGIL_HOME': os.environ['SIGIL_HOME'],
+    }
+    completed = subprocess.run(
+        [sys.executable, '-c', 'import src.sigil; print("ok")'],
+        cwd=REPO,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip().endswith('ok')
+
+
+def test_the_legacy_provider_module_is_gone():
+    """`ConfigProvider` read the environment in its class body; it must not come back."""
+    assert not (REPO / 'src' / 'config_provider.py').exists()

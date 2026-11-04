@@ -28,8 +28,8 @@ class ContextMeter:
         return self._window
 
     def set_window(self, window: int | None) -> None:
-        if window and window > 0:
-            self._window = window
+        """Sets the window. A falsy value clears it, so the bar shows `?`."""
+        self._window = window if window and window > 0 else None
 
     def set_overhead(self, *, instructions: int | None = None, tools: int | None = None) -> None:
         """Sets the cost of the blocks that are always sent."""

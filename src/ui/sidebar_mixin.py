@@ -1,31 +1,74 @@
-"""Side panel: loaded skills and MCP server state."""
+"""Side panel: active model, context usage, loaded skills and MCP state."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
+from pydantic_ai.messages import ModelMessage
 from textual import work
 from textual.app import ScreenStackError
 from textual.css.query import NoMatches
 
-from src.ui.widgets.sidebar_panel import MCPServerState, SidebarPanel
+from src.engine.context.meter.context_meter import ContextMeter
+from src.engine.skills.loaded import LoadedSkills
+from src.ui.widgets.sidebar_panel import ContextState, MCPServerState, SidebarPanel
 
 
 class SidebarMixin:
     """Keeps the side panel up to date.
 
-    It expects the app to define ``_loaded_skills`` and ``_mcp_manager``.
+    It expects the app to define ``_loaded_skills``, ``_mcp_manager``, ``_meter``
+    and ``_history``.
     """
 
-    _loaded_skills: object | None
+    _loaded_skills: LoadedSkills | None
     _mcp_manager: object | None
+    _meter: ContextMeter
+    _history: list[ModelMessage]
 
     def refresh_sidebar(self) -> None:
-        """Skills loaded in the session, above the roadmap."""
+        """Model, context, skills loaded in the session, above the roadmap."""
         try:
             panel = self.query_one(SidebarPanel)
         except NoMatches, ScreenStackError:
             return
         names = self._loaded_skills.names() if self._loaded_skills is not None else ()
+        state = getattr(self, 'model_state', None)
+        panel.update_model(state() if callable(state) else None)
+        panel.update_context(self.context_state())
         panel.update_skills(names)
+
+    def refresh_context(self, messages: Sequence[ModelMessage] | None = None) -> None:
+        """Repaints only the context section.
+
+        It is the hot path: a turn calls it on every checkpoint, and the model and
+        the skills did not move. During a turn it is given the run history, which
+        runs ahead of `self._history`.
+        """
+        try:
+            panel = self.query_one(SidebarPanel)
+        except NoMatches, ScreenStackError:
+            return
+        panel.update_context(self.context_state(messages))
+
+    def context_state(self, messages: Sequence[ModelMessage] | None = None) -> ContextState:
+        """How full the window is, from the meter.
+
+        The **projected** number, not the measured one: the panel answers whether
+        the next request fits, and the measured value describes the previous one.
+
+        With no history there is nothing measured and nothing estimated, so the
+        real usage is zero. Reporting it as unknown would paint `?` on every cold
+        start, which is the moment the panel is read most.
+        """
+        snapshot = self._meter.snapshot(self._history if messages is None else messages)
+        if snapshot.projected is None and snapshot.window:
+            return ContextState(percent=0.0, used=0, window=snapshot.window)
+        return ContextState(
+            percent=snapshot.projected_percent,
+            used=snapshot.projected,
+            window=snapshot.window,
+        )
 
     @work(exclusive=True)
     async def refresh_mcp_status(self) -> None:

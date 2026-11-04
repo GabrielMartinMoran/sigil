@@ -367,6 +367,107 @@ pydantic-ai brings its own cap of 50 requests per run. Sigil disables it
 died with a `UsageLimitExceeded` nobody configured, before reaching the real
 limit.
 
+## Providers and models
+
+Sigil talks to three provider families, and everything about them is configured
+from the UI: no key goes in an environment variable and nothing needs a restart.
+
+| Provider | Product | Sign-in | Models come from |
+| --- | --- | --- | --- |
+| OpenRouter | — | API key | its public catalogue |
+| OpenCode | Zen | API key | its public catalogue |
+| OpenCode | Go | API key | the Zen catalogue plus free text (Go publishes no list) |
+| OpenAI | — | API key or ChatGPT plan | `/v1/models` plus pydantic-ai's profiles |
+
+### Accounts
+
+An **account** is one credential plus a name you choose. You can have as many as
+you want, including several of the same provider — two OpenRouter keys, a personal
+and a work OpenAI org — and switch between them with `/provider`.
+
+```
+/provider                 open the list: activate, add, rename, remove
+/model                    pick a model for the active account
+/effort [level]           open the effort picker, or set a level directly
+```
+
+| Shortcut | What it opens |
+| --- | --- |
+| `ctrl+t` | the reasoning-effort picker |
+| `ctrl+m` | the model picker |
+| `alt+d` | the agent debug view |
+
+`ctrl+m` and `ctrl+t` are read by the prompt itself rather than bound globally, so
+Enter keeps working: on a terminal without the Kitty keyboard protocol, Ctrl+M and
+Enter are the same byte (CR, `0x0D`). Textual enables the protocol's
+"disambiguate escape codes" flag, so a capable terminal sends a distinct sequence
+for Ctrl+M and both shortcuts work; a legacy terminal sends Enter and the message
+is sent, exactly as before. Nothing is swallowed either way.
+
+In every list: `↑`/`↓` move, `PgUp`/`PgDn` jump, `Enter` chooses, `Tab`
+completes (writes the highlighted value into the input without committing), `Esc`
+goes back. In the command menu, `Tab` completes the highlighted command and adds
+a trailing space when it takes an argument.
+
+Adding an account asks for the provider, the product and the sign-in method, and
+only offers the combinations that exist. The key is checked before it is saved:
+a key the provider rejects is never written. If the check cannot decide (you are
+offline, or the plan's quota is spent), the account is saved anyway with a
+warning — a bad network must not be a dead end.
+
+Switching an account, a model or the effort takes effect on the **next turn**,
+with no restart: the agent holds a router whose target is swapped between turns.
+
+### What a model choice carries
+
+Each catalogue entry brings the context window and the reasoning levels that
+model actually accepts, so:
+
+- the side panel shows the real window instead of a guess;
+- `/effort` only offers levels the model supports, and refuses the others with
+  the list of what it does accept;
+- switching models keeps the effort when the new model accepts it, and falls back
+  to the model default when it does not.
+
+Both values are stored with the selection, so a cold start knows them without a
+request; the app also refreshes the catalogue once on startup when it has nothing
+cached, which is what fills the effort picker for a model chosen in a previous
+session.
+
+If the catalogue cannot be reached, the built-in list is used — and it carries the
+window and the levels too, because those are persisted: a fallback that claimed
+"no effort control" would write that into the state file and the picker would stay
+empty even after the network came back.
+
+### Where it is stored
+
+```
+~/.sigil/providers/
+  accounts.json    0644  aliases, provider family, product, sign-in method
+  credentials.json 0600  the keys and OAuth tokens
+  state.json       0644  last model used, OAuth client registrations
+```
+
+`credentials.json` is created owner-read-only. It is a plain file, not an OS
+keyring: anyone who can read your home directory as your user can read it, which
+is the same exposure as a `.env` but with the right permissions and no risk of
+committing it. Deleting an account deletes its credential.
+
+Set `SIGIL_HOME` to move all of it somewhere else (a test sandbox, an encrypted
+volume).
+
+### A session remembers its model
+
+The model, the account and the reasoning level are saved with the conversation,
+together with the context window and the accepted effort levels. `/load` restores
+them, on purpose: resuming a long conversation on a different model would silently
+change cost and behaviour. If that account was removed, the current model stays and
+the chat says why.
+
+Carrying the window is what makes a cold start show the real context size instead
+of `?`: the catalogue is a network resource, and the side panel must not depend on
+a request to paint.
+
 ## Commands
 
 Commands are typed in the prompt and start with `/`. The menu filters them as you
@@ -376,6 +477,9 @@ type.
 | --- | --- |
 | `/new` | Starts a new session, with its empty roadmap |
 | `/load` | Loads a saved session and its roadmap |
+| `/provider` | Manage provider accounts: add, rename, remove, activate |
+| `/model` | Picks the model for the active account |
+| `/effort [level]` | Opens the effort picker; with a level, sets it directly |
 | `/sidebar [on\|off]` | Shows or hides the sidebar; without an argument, toggles |
 | `/mcp` | Queries the state of the MCP servers |
 | `/context` | Shows the breakdown of the used context |
@@ -390,6 +494,12 @@ updating it and it comes back with `/sidebar on`.
 
 Above the roadmap, the session panel shows:
 
+- **Model**: the active account alias, its provider family, the model and the
+  reasoning level in effect. Before anything is configured it says `not
+  configured — /provider`, which is the first thing to do on a fresh install.
+- **Context**: the percentage of the window the next request is going to take,
+  with the pair it comes from in parentheses. It is hidden until a model is
+  configured, and it colours green, yellow and red across 70% and 90%.
 - **Loaded skills**: the skills the agent loaded in this session, in load order.
   It is the quick diagnostic of whether it is following the protocol.
 - **MCP**: the count goes inline with the title, in parentheses. Below, each
@@ -397,6 +507,16 @@ Above the roadmap, the session panel shows:
   that do not. With no configured servers, the section does not appear.
 
 The interface, the code and the documentation are all in English.
+
+```
+Context
+ 66% (132K / 200K)
+```
+
+The tokens are compacted so the pair fits in a 34-column panel: `K` for
+thousands and `M` for millions, no decimals once the number is `>= 100K` and
+never for millions. Below 100K a single decimal survives when it says something
+—`12.4K`, `5.5K`— and disappears when it would read `.0`.
 
 ```
 MCP (3, 1 ✗)
@@ -444,7 +564,7 @@ turn on the next one.
 
 ### Measurement
 
-The status bar shows the **projected** number: the measured value of the last
+The side panel shows the **projected** number: the measured value of the last
 request plus an estimate of what was added since then. The measured one describes
 the past; the projected one is what matters to know whether the next request fits
 in the window. `/context` shows both, the budget and the breakdown per turn.
@@ -496,16 +616,27 @@ there or copy it.
 
 ### Configuration
 
+Settings are read once, at startup, by `load_settings()` in the composition root.
+Nothing reads the environment at import time, so a test (or a stale `.env`) cannot
+change behaviour behind your back.
+
 | Variable | Default | What it does |
 | --- | --- | --- |
+| `SIGIL_MAX_STEPS` | `256` | Hard step limit per turn. |
+| `SIGIL_MODEL_MAX_ATTEMPTS` | `5` | Attempts per model request on transient failures. |
+| `SIGIL_HOME` | `~/.sigil` | Where sessions, roadmaps and provider credentials live. |
 | `SIGIL_CONTEXT_STRATEGY` | `windowed` | `windowed`, `compacting` or `passthrough`. |
 | `SIGIL_CONTEXT_KEEP_THINKING` | empty | If turned on, the view does not drop reasoning. |
 | `SIGIL_CONTEXT_KEEP_RECENT_TURNS` | `3` | Turns kept intact before trimming. |
 | `SIGIL_CONTEXT_MAX_TOOL_RESULT_CHARS` | `4000` | Cap of an old tool result. |
 | `SIGIL_CONTEXT_OUTPUT_RESERVE` | `8000` | Tokens reserved for the response. |
 
+A value that cannot be parsed fails loudly at startup instead of silently falling
+back to the default. `.env.example` lists all of them.
+
 The full design and the verifications against the provider are in
-[`proposals/context-management.md`](proposals/context-management.md).
+[`proposals/context-management.md`](proposals/context-management.md). The provider
+layer plan is in [`proposals/model-providers.md`](proposals/model-providers.md).
 
 ## Development
 

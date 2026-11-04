@@ -8,6 +8,9 @@ from src.engine.commands import match_commands
 from src.ui.widgets.command_menu import CommandMenu
 from src.ui.widgets.prompt_input import PromptInput
 
+ARITY_ONE = frozenset({'/model', '/effort'})
+"""Commands whose first argument is a single word worth completing verbatim."""
+
 
 class MenuMixin:
     """Shows and navigates the command menu.
@@ -43,6 +46,24 @@ class MenuMixin:
     def menu_hide(self) -> None:
         self.query_one(CommandMenu).display = False
         self.menu_visible = False
+
+    def menu_complete(self) -> None:
+        """Tab in the menu: writes the highlighted command into the input.
+
+        It does not close the menu. After completing `/new` there is nothing left to
+        pick, so the menu filters itself down to that one entry; after completing
+        `/model` the menu is gone (the typed text no longer matches a command name),
+        which is exactly what should happen before typing the argument.
+        """
+        menu = self.query_one(CommandMenu)
+        option = menu.highlighted_option
+        if option is None or option.id is None:
+            return
+
+        name = str(option.id)
+        field = self.query_one(PromptInput)
+        field.value = f'{name} ' if name in ARITY_ONE else name
+        field.cursor_position = len(field.value)
 
     async def menu_choose(self) -> None:
         menu = self.query_one(CommandMenu)

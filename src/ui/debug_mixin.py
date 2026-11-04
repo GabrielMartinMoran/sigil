@@ -8,7 +8,6 @@ from typing import Any
 from pydantic_ai.messages import ModelMessage
 from textual.css.query import NoMatches
 
-from src.config_provider import ConfigProvider
 from src.engine.context.meter.debug import DebugReport, build_debug_report
 from src.engine.context.meter.request import RequestSnapshot
 from src.ui.widgets.chat_log import ChatLog
@@ -88,7 +87,7 @@ class DebugMixin:
             request=request or _EMPTY_REQUEST,
             view_result=view_result,
             effort=self.effort_in_effect(),
-            model=ConfigProvider.LLM_MODEL,
+            model=self._model_snapshot().label,
         )
 
     def refresh_debug(self, messages: Sequence[ModelMessage] | None = None, *, immediate: bool = False) -> None:

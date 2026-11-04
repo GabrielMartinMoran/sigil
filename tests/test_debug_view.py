@@ -9,7 +9,6 @@ from pathlib import Path
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-import src.ui.app as appmod
 from src.engine.context.capability import ContextViewCapability
 from src.engine.context.meter.context_meter import ContextMeter
 from src.engine.context.strategy.windowed import WindowedStrategy
@@ -18,10 +17,6 @@ from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.debug_view import AgentDebugView, build_debug_body, build_debug_header
 from src.ui.widgets.prompt_input import PromptInput
-
-
-async def _fake_fetch(model_id):
-    return None
 
 
 def _make_app(tmp: str) -> SigilApp:
@@ -59,7 +54,6 @@ def _chat_text(app: SigilApp) -> str:
 
 
 def test_alt_d_replaces_chat_with_debug_view(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -92,7 +86,6 @@ def test_alt_d_replaces_chat_with_debug_view(monkeypatch):
 
 
 def test_debug_view_renders_agent_side_sections(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -125,7 +118,6 @@ def test_debug_view_renders_agent_side_sections(monkeypatch):
 
 
 def test_debug_command_toggles_and_text_mode(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -153,7 +145,6 @@ def test_debug_command_toggles_and_text_mode(monkeypatch):
 
 
 def test_debug_command_rejects_bad_argument(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -170,7 +161,6 @@ def test_debug_command_rejects_bad_argument(monkeypatch):
 
 def test_report_without_request_does_not_raise(monkeypatch):
     """With no request run, the view paints anyway (no tool data)."""
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -192,7 +182,6 @@ def test_report_without_request_does_not_raise(monkeypatch):
 
 def test_refresh_is_coalesced_while_streaming(monkeypatch):
     """Several refreshes in a burst produce a single repaint."""
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -225,7 +214,6 @@ def test_refresh_is_coalesced_while_streaming(monkeypatch):
 
 
 def test_closing_cancels_a_pending_refresh(monkeypatch):
-    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
