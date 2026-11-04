@@ -73,7 +73,7 @@ def test_command_menu_filters_and_selects(monkeypatch):
 
                 menu = app.query_one(CommandMenu)
                 assert menu.display is True
-                assert menu.option_count == 4
+                assert menu.option_count == 5
 
                 await pilot.press('n')
                 await pilot.pause()
@@ -83,6 +83,59 @@ def test_command_menu_filters_and_selects(monkeypatch):
                 await pilot.press('enter')
                 await pilot.pause()
                 assert menu.display is False
+
+    asyncio.run(inner())
+
+
+def _chat_texts(app) -> list[str]:
+    """Texto plano de cada mensaje del chat."""
+    texts = []
+    for child in app.query_one(ChatLog).children:
+        try:
+            rendered = child.render()
+        except Exception:  # noqa: BLE001, S112 - widgets sin render propio
+            continue
+        plain = getattr(rendered, 'plain', None)
+        if isinstance(plain, str):
+            texts.append(plain)
+    return texts
+
+
+def test_mcp_command_without_servers_explains_how_to_configure(monkeypatch):
+    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = Agent(TestModel(custom_output_text='ok'), instructions='x')
+            app = _make_app(agent, tmp)
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press('/')
+                await pilot.press('m', 'c', 'p')
+                await pilot.press('enter')
+                await pilot.pause()
+
+                assert any('mcp_servers' in text for text in _chat_texts(app))
+
+    asyncio.run(inner())
+
+
+def test_startup_notices_are_rendered(monkeypatch):
+    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = Agent(TestModel(custom_output_text='ok'), instructions='x')
+            store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
+            app = SigilApp(
+                agent=agent,
+                store=store,
+                session=store.create_session(),
+                startup_notices=('mcp_servers es inválido',),
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                assert any('mcp_servers es inválido' in text for text in _chat_texts(app))
 
     asyncio.run(inner())
 

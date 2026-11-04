@@ -210,3 +210,9 @@ tempCodeRunnerFile.py
 
 # Ruff stuff:
 .ruff_cache/
+
+.codegraph/
+
+.sigil/config.json
+
+lab/

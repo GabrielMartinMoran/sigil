@@ -14,6 +14,7 @@ class Command:
 COMMANDS: tuple[Command, ...] = (
     Command('/new', 'Iniciar una sesión nueva'),
     Command('/load', 'Cargar una sesión guardada'),
+    Command('/mcp', 'Ver el estado de los servidores MCP'),
     Command('/help', 'Mostrar la ayuda de comandos'),
     Command('/quit', 'Salir de Sigil'),
 )

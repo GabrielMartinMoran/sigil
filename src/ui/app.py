@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from pydantic_ai import Agent
@@ -26,8 +27,10 @@ from src.config_provider import ConfigProvider
 from src.engine.agents.model_info import context_usage_percent, fetch_model_info
 from src.engine.agents.step_limiter import StepLimiter, StepLimitExceeded
 from src.engine.commands import COMMANDS, match_commands
+from src.engine.mcp.manager import MCPManager
 from src.engine.sessions.session_store import Session, SessionStore
 from src.engine.tools.tool_registry import ToolLoggerHub
+from src.ui.mcp_report import format_mcp_status
 from src.ui.tool_logging import ChatToolLogSink, ToolLogMessage
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.command_menu import CommandMenu
@@ -51,12 +54,16 @@ class SigilApp(App):
         store: SessionStore,
         session: Session,
         tool_logger: ToolLoggerHub | None = None,
+        mcp_manager: MCPManager | None = None,
+        startup_notices: Sequence[str] = (),
     ) -> None:
         super().__init__()
         self._agent = agent
         self._store = store
         self._session = session
         self._tool_logger = tool_logger
+        self._mcp_manager = mcp_manager
+        self._startup_notices = tuple(startup_notices)
         self._tool_log_sink: ChatToolLogSink | None = None
         self._history: list[ModelMessage] = list(session.messages)
         self._context_length: int | None = None
@@ -79,6 +86,8 @@ class SigilApp(App):
             self._tool_logger.add_sink(self._tool_log_sink)
         self.query_one(CommandMenu).display = False
         self._update_status()
+        for notice in self._startup_notices:
+            await self.query_one(ChatLog).add_notice(notice, style='yellow')
         if self._history:
             chat = self.query_one(ChatLog)
             await chat.render_history(self._history)
@@ -222,12 +231,26 @@ class SigilApp(App):
                     chat.finalize()
                     await chat.add_notice(f'Cargada sesión {loaded.short_id}.', style='green')
                     self._update_status()
+        elif name == '/mcp':
+            await self._show_mcp(chat)
         elif name == '/help':
             await chat.add_notice(_HELP, style='cyan')
         elif name == '/quit':
             self.exit()
         else:
             await chat.add_notice(f'Comando desconocido: {name}', style='red')
+
+    async def _show_mcp(self, chat: ChatLog) -> None:
+        if self._mcp_manager is None or not self._mcp_manager:
+            await chat.add_notice(
+                'No hay servidores MCP configurados. Creá .sigil/config.json con una sección `mcp_servers`.',
+                style='yellow',
+            )
+            return
+
+        await chat.add_notice('Consultando servidores MCP…', style='cyan')
+        statuses = await self._mcp_manager.describe(connect=True)
+        await chat.add_notice(format_mcp_status(statuses), style='white')
 
     def _persist(self) -> None:
         if self._session.messages:

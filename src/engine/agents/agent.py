@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from pydantic_ai import Agent
@@ -10,6 +11,8 @@ from pydantic_ai.providers.openrouter import OpenRouterProvider
 from src.config_provider import ConfigProvider
 
 if TYPE_CHECKING:
+    from pydantic_ai.toolsets import AbstractToolset
+
     from src.engine.skills.registry import SkillRegistry
 
 _SIGIL_PROMPT = os.path.join(os.path.dirname(__file__), 'prompts', 'sigil.md')
@@ -20,7 +23,11 @@ def _load_prompt() -> str:
         return f.read()
 
 
-def create_agent(skill_registry: SkillRegistry | None = None) -> Agent:
+def create_agent(
+    skill_registry: SkillRegistry | None = None,
+    *,
+    toolsets: Sequence[AbstractToolset] | None = None,
+) -> Agent:
     model = OpenRouterModel(
         model_name=ConfigProvider.LLM_MODEL, provider=OpenRouterProvider(api_key=ConfigProvider.OPENROUTER_API_KEY)
     )
@@ -31,6 +38,9 @@ def create_agent(skill_registry: SkillRegistry | None = None) -> Agent:
         description='A helpful coding assistant.',
         instructions=_load_prompt(),
         end_strategy='exhaustive',
+        # Toolsets externos (p. ej. servidores MCP); las tools de funciones se
+        # siguen registrando después con `ToolManager`.
+        toolsets=list(toolsets or []),
     )
 
     if skill_registry is not None:

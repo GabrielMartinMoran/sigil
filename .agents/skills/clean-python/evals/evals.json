@@ -1,0 +1,96 @@
+{
+  "skill_name": "clean-python",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I am starting a Python 3.12 FastAPI application with PostgreSQL and Redis. Propose the initial project setup, quality commands, and repository files. Use uv, Ruff, basedpyright, pytest, pytest-cov, pre-commit, a Makefile, Dockerfile, Docker Compose, and a documented .env.example. Explain which dependencies are conditional and how configuration should be loaded.",
+      "expected_output": "A Python application setup that uses the required toolchain, includes operational files, keeps configuration at the startup boundary, documents environment variables, and separates unconditional tools from FastAPI, Pydantic, SQLAlchemy, and Compose concerns.",
+      "files": [],
+      "expectations": [
+        "The response includes uv, Ruff, basedpyright, pytest, pytest-cov, and pre-commit with Ruff.",
+        "The response includes a Makefile, Dockerfile, Docker Compose guidance, and a root .env.example for the application.",
+        "The response does not require all conditional libraries for every Python project and explains why FastAPI, Pydantic, SQLAlchemy, and Redis-related services apply here.",
+        "The response loads local environment values at startup while preserving variables already supplied by the process environment.",
+        "The response does not recommend PYTHONPATH overrides or committing real secrets."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Review this Python application structure: app/users/__init__.py imports User from app/users/model.py; app/api/__init__.py imports and registers every router; tests only pass because the Makefile exports PYTHONPATH=.; config.py calls load_dotenv(override=True) at import time; and there is no .env.example. Explain the problems and propose a minimal correction.",
+      "expected_output": "A focused review that removes hidden application re-exports and registration, replaces PYTHONPATH workarounds with correct package installation, moves dotenv loading to startup without overriding runtime variables, and adds a documented safe .env.example.",
+      "files": [],
+      "expectations": [
+        "It recommends direct imports from defining modules in the application.",
+        "It rejects router registration and configuration loading as __init__.py or import-time side effects.",
+        "It identifies PYTHONPATH in the Makefile as a portability and tooling problem.",
+        "It recommends loading dotenv at the application boundary with existing environment variables taking precedence.",
+        "It requires a root .env.example with documented variables and no real secrets."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Design a FastAPI feature for users and orders. Show how to split endpoints into routers, compose them into the app, and add request/response logging middleware. The logs must include method, path, status, duration, and a correlation ID, but must not leak credentials or request bodies. Keep business logic outside the routers and describe the tests to add.",
+      "expected_output": "A FastAPI design with capability-specific routers, explicit router composition, safe HTTP middleware, boundary error mapping, and tests at HTTP and application layers.",
+      "files": [],
+      "expectations": [
+        "Users and orders are placed in separate coherent router modules.",
+        "The app composes routers explicitly outside package __init__.py files.",
+        "Middleware logs method, path, status, duration, and correlation metadata while redacting secrets and bodies.",
+        "Business rules remain outside routers and HTTP exceptions remain at the transport boundary.",
+        "The response proposes tests for routing, validation, middleware, error mapping, and application behavior."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "I maintain a reusable Python library distributed on PyPI. Should I create a Dockerfile, Docker Compose file, Makefile, .env.example, and package-level __init__.py exports? Give a recommendation that distinguishes library requirements from application requirements and explains when each artifact is justified.",
+      "expected_output": "A nuanced library recommendation that does not force application-only artifacts, permits deliberate stable __init__.py exports, and identifies concrete cases where containers, Make targets, or environment documentation become useful.",
+      "files": [],
+      "expectations": [
+        "It does not impose Dockerfile, Docker Compose, or .env.example as universal library requirements.",
+        "It permits explicit stable public exports from a library __init__.py without import-time side effects.",
+        "It explains that a Makefile can be useful for repeatable contributor and release commands without being mandatory.",
+        "It distinguishes library build/test configuration from deployable application operations.",
+        "It recommends documenting environment variables only when the library genuinely requires runtime configuration."
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "Configure Ruff for a Python project so local formatting also sorts imports and removes unused imports, while CI remains non-mutating. Explain the commands, the relevant rule families, the pre-commit order, and how a library should protect intentional __init__.py exports.",
+      "expected_output": "A Ruff configuration and workflow that distinguishes formatting from lint fixes, enables import sorting and unused-import detection, runs mutating fixes locally and checks in CI, and preserves deliberate library exports.",
+      "files": [],
+      "expectations": [
+        "The response states that ruff format alone does not sort imports.",
+        "The response enables the I rule family for import sorting and the F rule family, including F401, for unused imports.",
+        "The local workflow runs ruff check --fix before ruff format.",
+        "The CI workflow uses non-mutating ruff check and ruff format --check commands.",
+        "The response explains how __all__, explicit aliases, or a narrow exception protect intentional library exports."
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "Review this authentication design: passwords are encrypted with a database key, reset tokens use random.random(), bcrypt passwords are silently truncated to 72 characters, and a shared pepper is committed in the repository. Propose a secure Python design using appropriate libraries and explain what must be stored, rotated, logged, and tested.",
+      "expected_output": "A security review that distinguishes password hashing from encryption, prefers Argon2id through argon2-cffi, treats bcrypt as a compatibility fallback, handles salts and pepper safely, uses cryptographically secure reset tokens, and defines security tests and logging restrictions.",
+      "files": [],
+      "expectations": [
+        "The response rejects reversible encryption for passwords and recommends adaptive password hashing.",
+        "The response recommends argon2-cffi/Argon2id for new applications and treats bcrypt as a compatibility fallback with its input limit considered.",
+        "The response explains that salts are generated by the password library and that a pepper belongs in a secret manager, not source control or the database.",
+        "The response replaces random.random() with secrets-based one-time tokens with expiry and single-use behavior.",
+        "The response prohibits logging passwords, reset tokens, peppers, and encryption keys."
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "Design JWT authentication for a FastAPI service using PyJWT. Explain signing-key choices, allowed algorithms, required claims, token lifetimes, refresh rotation, key rotation, and what the decoder must never trust from the token itself.",
+      "expected_output": "A JWT design that uses PyJWT with explicit algorithm allowlists and claim validation, chooses keys according to deployment topology, avoids sensitive claims, and defines short-lived access tokens, refresh handling, and key rotation.",
+      "files": [],
+      "expectations": [
+        "The response uses PyJWT only as a conditional choice for an explicit JWT requirement.",
+        "The response requires an explicit allowed algorithm list and says not to derive it from the token header.",
+        "The response validates signature and relevant claims such as exp, iat, nbf, iss, aud, and sub.",
+        "The response covers short-lived access tokens, refresh rotation or revocation, and signing-key rotation.",
+        "The response states that signed JWTs are not encrypted and must not contain passwords, keys, or unnecessary sensitive data."
+      ]
+    }
+  ]
+}

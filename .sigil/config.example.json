@@ -1,0 +1,31 @@
+{
+  "mcp_servers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/me/proyectos"],
+      "enabled": true,
+      "prefix": "fs",
+      "include_instructions": true,
+      "init_timeout": 30,
+      "read_timeout": 300,
+      "keep_alive": true
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}" },
+      "prefix": "github"
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest", "--output-dir", "/tmp/sigil-shots"],
+      "cwd": "/tmp"
+    },
+    "remoto": {
+      "url": "https://ejemplo.com/mcp",
+      "headers": { "Authorization": "Bearer ${MCP_TOKEN:-}" },
+      "transport": "http",
+      "enabled": false
+    }
+  }
+}

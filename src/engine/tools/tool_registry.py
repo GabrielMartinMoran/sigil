@@ -73,6 +73,15 @@ async def _emit(logger: ToolLogger | None, event: ToolCallEvent) -> None:
         pass
 
 
+async def emit_tool_event(logger: ToolLogger | None, event: ToolCallEvent) -> None:
+    """Emite un evento a un sink, ignorando cualquier fallo del logging.
+
+    Público para integraciones que no pasan por ``wrap_tool`` — por ejemplo las
+    tools de un servidor MCP, que se ejecutan dentro de un toolset.
+    """
+    await _emit(logger, event)
+
+
 def _bind_args(
     func: Callable[..., Any],
     args: tuple[Any, ...],
@@ -346,6 +355,7 @@ __all__ = [
     'ToolLogger',
     'ToolLoggerHub',
     'ToolRegistrar',
+    'emit_tool_event',
     'preview',
     'register_tool',
     'wrap_tool',
