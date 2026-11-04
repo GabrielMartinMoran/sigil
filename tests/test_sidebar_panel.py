@@ -13,7 +13,8 @@ os.environ.setdefault('OPENROUTER_API_KEY', 'test-key')
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-from src.engine.mcp import MCPManager, load_config
+from src.engine.mcp.config.loader import load_config
+from src.engine.mcp.manager.manager import MCPManager
 from src.engine.sessions.session_store import SessionStore
 from src.engine.skills.loaded import LoadedSkills
 from src.ui.app import SigilApp
@@ -128,7 +129,7 @@ def test_sidebar_reflects_loaded_skills():
                 assert 'none yet' in panel._build().plain
 
                 loaded.add('clean-code')
-                app._refresh_sidebar()
+                app.refresh_sidebar()
                 await pilot.pause()
                 assert 'clean-code' in panel._build().plain
 

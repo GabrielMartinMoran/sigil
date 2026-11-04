@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 
 from src.engine.shell.guard import SELF_GUARD_ENV
-from src.engine.shell.models import MAX_OUTPUT_BYTES
+from src.engine.shell.limits import MAX_OUTPUT_BYTES
 
 _READ_CHUNK_BYTES = 8192
 _SELECT_SLICE_SECONDS = 0.2

@@ -8,7 +8,7 @@ import os
 import time
 
 from src.engine.shell.guard import SELF_GUARD_ENV
-from src.engine.shell.models import MAX_OUTPUT_BYTES
+from src.engine.shell.limits import MAX_OUTPUT_BYTES
 from src.engine.shell.runner import execute_command, execute_commands
 from src.engine.shell.tools import register_shell_tools
 

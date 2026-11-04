@@ -12,7 +12,8 @@ os.environ.setdefault('OPENROUTER_API_KEY', 'test-key')
 
 
 from src.engine.agents.agent import create_agent
-from src.engine.context import ScopeTracker, WorkspaceInstructions
+from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
+from src.engine.context.scope import ScopeTracker
 from src.engine.skills.loaded import LoadedSkills
 from src.engine.skills.registry import SkillRegistry
 

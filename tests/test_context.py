@@ -19,24 +19,18 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import RunUsage
 
-from src.engine.context import (
-    CompactingStrategy,
-    ContextBudget,
-    ContextMeter,
-    ContextViewCapability,
-    PassthroughStrategy,
-    ScopeSink,
-    ScopeTracker,
-    WindowedStrategy,
-    WorkspaceInstructions,
-    estimate_tokens,
-    measured_tokens,
-    projected_tokens,
-    render_report,
-    render_working_set,
-    split_turns,
-    touched_files,
-)
+from src.engine.context.budget import ContextBudget
+from src.engine.context.capability import ContextViewCapability
+from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
+from src.engine.context.meter.context_meter import ContextMeter
+from src.engine.context.meter.render import render_report
+from src.engine.context.scope import ScopeSink, ScopeTracker
+from src.engine.context.strategy.compacting import CompactingStrategy
+from src.engine.context.strategy.passthrough import PassthroughStrategy
+from src.engine.context.strategy.turns import split_turns
+from src.engine.context.strategy.windowed import WindowedStrategy
+from src.engine.context.tokens import estimate_tokens, measured_tokens, projected_tokens
+from src.engine.context.working_set import render_working_set, touched_files
 
 # --- helpers ---------------------------------------------------------------
 
@@ -482,7 +476,7 @@ def test_capability_is_not_destructive():
 
 def _pydantic_turn(index: int, *, content_chars: int = 200_000) -> list[ModelMessage]:
     """Un turno cuyo tool result es un modelo pydantic, como todas las tools de Sigil."""
-    from src.engine.files.models import FileContent
+    from src.engine.files.models.file_content import FileContent
 
     payload = FileContent(
         path=f'f{index}.py',
@@ -502,7 +496,7 @@ def _pydantic_turn(index: int, *, content_chars: int = 200_000) -> list[ModelMes
 
 def test_tool_return_text_uses_model_response_str():
     """El tamaño se mide sobre lo que ve el modelo, no sobre el repr de Python."""
-    from src.engine.context import tool_return_text
+    from src.engine.context.tokens import tool_return_text
 
     turn = _pydantic_turn(1, content_chars=5_000)
     part = next(
@@ -595,7 +589,7 @@ def test_fit_to_budget_prefers_dropping_unpinned_turns():
         *_turn(2, result_chars=4_000),
         *_turn(3, result_chars=4_000),
     ]
-    from src.engine.context import estimate_messages_tokens
+    from src.engine.context.tokens import estimate_messages_tokens
 
     # Presupuesto justo para que alcance con descartar el turno sin instrucciones.
     total = estimate_messages_tokens(messages)

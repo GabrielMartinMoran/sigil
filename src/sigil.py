@@ -7,21 +7,20 @@ from pathlib import Path
 from src.config_provider import ConfigProvider
 from src.engine.agents.agent import create_agent
 from src.engine.agents.retry import RetryTransientModelErrors
-from src.engine.context import (
-    CompactingStrategy,
-    ContextMeter,
-    ContextViewCapability,
-    PassthroughStrategy,
-    ScopeSink,
-    ScopeTracker,
-    WindowedStrategy,
-    WorkspaceInstructions,
-)
+from src.engine.context.capability import ContextViewCapability
+from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
+from src.engine.context.meter.context_meter import ContextMeter
+from src.engine.context.scope import ScopeSink, ScopeTracker
+from src.engine.context.strategy.compacting import CompactingStrategy
+from src.engine.context.strategy.passthrough import PassthroughStrategy
+from src.engine.context.strategy.windowed import WindowedStrategy
 from src.engine.files.tools import register_file_tools
 from src.engine.interaction.hub import QuestionHub
 from src.engine.interaction.tools import register_interaction_tools
-from src.engine.mcp import MCPManager, load_config, register_mcp_tools
-from src.engine.roadmap import RoadmapStore
+from src.engine.mcp.config.loader import load_config
+from src.engine.mcp.manager.manager import MCPManager
+from src.engine.mcp.tools import register_mcp_tools
+from src.engine.roadmap.store import RoadmapStore
 from src.engine.roadmap.tools import register_roadmap_tools
 from src.engine.sessions.session_store import SessionStore
 from src.engine.shell.tools import register_shell_tools

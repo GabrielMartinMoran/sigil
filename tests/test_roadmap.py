@@ -2,7 +2,8 @@
 
 import pytest
 
-from src.engine.roadmap.store import RoadmapStore, TodoItem
+from src.engine.roadmap.models.todo_item import TodoItem
+from src.engine.roadmap.store import RoadmapStore
 from src.engine.roadmap.tools import RoadmapItemInput, register_roadmap_tools
 
 

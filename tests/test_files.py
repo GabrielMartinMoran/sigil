@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from src.engine.files.models import FileToolError
+from src.engine.files.models.file_tool_error import FileToolError
 from src.engine.files.tools import register_file_tools
 
 

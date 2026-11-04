@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic_ai.messages import BinaryContent
 
-from src.engine.mcp.tool_models import ResourceContent
+from src.engine.mcp.tool_models.resource_content import ResourceContent
 
 
 def content_text(content: Any) -> str:

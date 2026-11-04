@@ -10,7 +10,10 @@ from ddgs import DDGS
 
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.registrar import ToolRegistrar
-from src.engine.web.models import MAX_PAGE_CHARS, MAX_SEARCH_RESULTS, PageContent, SearchResponse, SearchResult
+from src.engine.web.limits import MAX_PAGE_CHARS, MAX_SEARCH_RESULTS
+from src.engine.web.models.page_content import PageContent
+from src.engine.web.models.search_response import SearchResponse
+from src.engine.web.models.search_result import SearchResult
 
 
 def _search(

@@ -7,8 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from src.engine.skills.models import SkillNotFound, SkillResourceError
-from src.engine.skills.parser import SkillParseError, parse_skill_metadata, split_frontmatter
+from src.engine.skills import rendering
+from src.engine.skills.models.skill_not_found import SkillNotFound
+from src.engine.skills.models.skill_parse_error import SkillParseError
+from src.engine.skills.models.skill_resource_error import SkillResourceError
+from src.engine.skills.parser import parse_skill_metadata, split_frontmatter
 from src.engine.skills.registry import SkillRegistry
 from src.engine.skills.tools import register_skill_tools
 
@@ -257,7 +260,7 @@ def test_load_skill_tool_returns_ack_and_registers(tmp_path):
     assert loaded_skills.names() == ('demo',)
 
     # El cuerpo aparece en el bloque de instrucciones, no en el tool result.
-    block = registry.render_loaded_skills(loaded_skills.names())
+    block = rendering.render_loaded_skills(registry, loaded_skills.names())
     assert '# Demo body' in block
     assert 'references/a.md' not in block
 
@@ -278,7 +281,7 @@ def test_load_skill_is_idempotent_in_the_registry(tmp_path):
 
 def test_render_loaded_skills_is_empty_without_names(tmp_path):
     registry = SkillRegistry([('project', tmp_path)])
-    assert registry.render_loaded_skills(()) == ''
+    assert rendering.render_loaded_skills(registry, ()) == ''
 
 
 def test_read_skill_resource_tool_decodes_binary(tmp_path):
@@ -300,13 +303,13 @@ def test_render_available_skills_excludes_disabled(tmp_path):
     write_skill(tmp_path, 'hidden', description='Hidden skill', frontmatter='disable-model-invocation: true\n')
     registry = SkillRegistry([('project', tmp_path)])
 
-    rendered = registry.render_available_skills()
+    rendered = rendering.render_available_skills(registry)
     assert '`visible`' in rendered
     assert '`hidden`' not in rendered
 
 
 def test_render_available_skills_empty(tmp_path):
-    assert SkillRegistry([('project', tmp_path)]).render_available_skills() == ''
+    assert rendering.render_available_skills(SkillRegistry([('project', tmp_path)])) == ''
 
 
 # --- Ejecución de scripts -----------------------------------------------------

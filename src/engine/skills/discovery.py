@@ -14,7 +14,9 @@ from __future__ import annotations
 import os
 from pathlib import Path, PurePosixPath
 
-from src.engine.skills.models import SkillMetadata, SkillResource, SkillResourceError
+from src.engine.skills.models.skill_metadata import SkillMetadata
+from src.engine.skills.models.skill_resource import SkillResource
+from src.engine.skills.models.skill_resource_error import SkillResourceError
 
 SKILLS_DIRNAME = Path('.agents') / 'skills'
 ENV_SKILLS_DIRS = 'SIGIL_SKILLS_DIRS'

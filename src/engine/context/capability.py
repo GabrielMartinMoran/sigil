@@ -17,9 +17,10 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.capabilities import AbstractCapability
 
-from src.engine.context.meter import ContextMeter
+from src.engine.context.meter.context_meter import ContextMeter
 from src.engine.context.overhead import measure_request_parameters
-from src.engine.context.strategy import ContextStrategy, ViewResult
+from src.engine.context.strategy.protocol import ContextStrategy
+from src.engine.context.strategy.view_result import ViewResult
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext

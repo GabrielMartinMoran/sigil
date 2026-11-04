@@ -10,7 +10,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 
-from src.engine.interaction.models import QuestionAnswer, QuestionItem
+from src.engine.interaction.models.question_answer import QuestionAnswer
+from src.engine.interaction.models.question_item import QuestionItem
 
 QuestionAsker = Callable[[list[QuestionItem]], Awaitable[list[QuestionAnswer] | None]]
 """Función de la UI que pregunta. ``None`` significa que el usuario canceló."""

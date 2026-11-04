@@ -9,14 +9,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.engine.mcp.manager import MCPManager
-from src.engine.mcp.tool_models import (
-    PromptInfo,
-    PromptResultInfo,
-    ResourceContent,
-    ResourceInfo,
-    ServerStatus,
-)
+from src.engine.mcp.manager.manager import MCPManager
+from src.engine.mcp.tool_models.prompt_info import PromptInfo
+from src.engine.mcp.tool_models.prompt_result_info import PromptResultInfo
+from src.engine.mcp.tool_models.resource_content import ResourceContent
+from src.engine.mcp.tool_models.resource_info import ResourceInfo
+from src.engine.mcp.tool_models.server_status import ServerStatus
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.registrar import ToolRegistrar
 

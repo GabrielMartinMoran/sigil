@@ -11,7 +11,8 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from src.engine.interaction.models import QuestionAnswer, QuestionItem, QuestionOption
+from src.engine.interaction.models.question_answer import QuestionAnswer
+from src.engine.interaction.models.question_item import QuestionItem, QuestionOption
 
 CUSTOM_ID = '__custom__'
 

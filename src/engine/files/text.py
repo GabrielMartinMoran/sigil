@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 import codecs
 
-from src.engine.files.models import FileToolError
+from src.engine.files.models.file_tool_error import FileToolError
 
 PREVIEW_LIMIT = 300
 """Caracteres que se conservan en el preview de un parche."""

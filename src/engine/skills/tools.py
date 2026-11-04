@@ -19,16 +19,15 @@ from typing import Any
 from src.engine.shell.runner import execute_command
 from src.engine.skills.discovery import DEFAULT_MAX_READ_BYTES
 from src.engine.skills.loaded import LoadedSkills
-from src.engine.skills.models import SkillMetadata, SkillResourceError
+from src.engine.skills.models.skill_metadata import SkillMetadata
+from src.engine.skills.models.skill_resource_error import SkillResourceError
 from src.engine.skills.registry import SkillRegistry
 from src.engine.skills.scripts import interpreter_for
-from src.engine.skills.tool_models import (
-    LoadedSkill,
-    ResourceContent,
-    ScriptRunResult,
-    SkillResourceInfo,
-    SkillSummary,
-)
+from src.engine.skills.tool_models.loaded_skill import LoadedSkill
+from src.engine.skills.tool_models.resource_content import ResourceContent
+from src.engine.skills.tool_models.script_run_result import ScriptRunResult
+from src.engine.skills.tool_models.skill_resource_info import SkillResourceInfo
+from src.engine.skills.tool_models.skill_summary import SkillSummary
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.registrar import ToolRegistrar
 

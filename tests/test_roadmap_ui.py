@@ -12,7 +12,8 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
 import src.ui.app as appmod
-from src.engine.roadmap.store import RoadmapStore, TodoItem
+from src.engine.roadmap.models.todo_item import TodoItem
+from src.engine.roadmap.store import RoadmapStore
 from src.engine.sessions.session_store import SessionStore
 from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
@@ -74,7 +75,7 @@ def test_new_session_gets_its_own_empty_roadmap(monkeypatch):
                 panel = app.query_one(RoadmapPanel)
                 assert 'Tarea vieja' in panel.render().plain
 
-                await app._handle_command('/new')
+                await app.handle_command('/new')
                 await pilot.pause()
 
                 assert roadmap.session_id == app._session.id
@@ -110,7 +111,7 @@ def test_loading_a_session_restores_its_roadmap(monkeypatch):
                 assert 'Tarea de la segunda' in panel.render().plain
 
                 app._session = store.load(first.id)
-                app._bind_roadmap()
+                app.bind_roadmap()
                 await pilot.pause()
 
                 assert 'Tarea de la primera' in panel.render().plain
@@ -159,12 +160,12 @@ def test_sidebar_command_hides_and_shows_the_panel(monkeypatch):
                 panel = app.query_one(RoadmapPanel)
                 assert panel.display is True
 
-                await app._handle_command('/sidebar', 'off')
+                await app.handle_command('/sidebar', 'off')
                 await pilot.pause()
                 assert panel.display is False
                 assert panel.shown is False
 
-                await app._handle_command('/sidebar', 'on')
+                await app.handle_command('/sidebar', 'on')
                 await pilot.pause()
                 assert panel.display is True
                 assert panel.shown is True
@@ -186,11 +187,11 @@ def test_sidebar_command_without_argument_toggles(monkeypatch):
                 await pilot.pause()
                 panel = app.query_one(RoadmapPanel)
 
-                await app._handle_command('/sidebar')
+                await app.handle_command('/sidebar')
                 await pilot.pause()
                 assert panel.display is False
 
-                await app._handle_command('/sidebar')
+                await app.handle_command('/sidebar')
                 await pilot.pause()
                 assert panel.display is True
 
@@ -211,7 +212,7 @@ def test_hidden_sidebar_stays_hidden_when_the_roadmap_changes(monkeypatch):
                 await pilot.pause()
                 panel = app.query_one(RoadmapPanel)
 
-                await app._handle_command('/sidebar', 'off')
+                await app.handle_command('/sidebar', 'off')
                 await pilot.pause()
 
                 roadmap.set_items([TodoItem(title='Tarea nueva', status='in_progress')])
@@ -236,7 +237,7 @@ def test_sidebar_command_rejects_unknown_arguments(monkeypatch):
                 await pilot.pause()
                 panel = app.query_one(RoadmapPanel)
 
-                await app._handle_command('/sidebar', 'quizás')
+                await app.handle_command('/sidebar', 'quizás')
                 await pilot.pause()
 
                 assert panel.display is True

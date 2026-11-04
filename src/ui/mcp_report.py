@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from src.engine.mcp.tool_models import ServerStatus
+from src.engine.mcp.tool_models.server_status import ServerStatus
 
 
 def server_state(status: ServerStatus) -> str:

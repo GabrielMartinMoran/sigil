@@ -12,7 +12,7 @@ import shlex
 import sys
 from pathlib import Path
 
-from src.engine.skills.models import SkillResourceError
+from src.engine.skills.models.skill_resource_error import SkillResourceError
 
 _KNOWN_INTERPRETERS = {
     '.py': lambda: [sys.executable],

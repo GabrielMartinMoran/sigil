@@ -11,12 +11,13 @@ from pydantic_ai.providers.openrouter import OpenRouterProvider
 from src.config_provider import ConfigProvider
 from src.engine.agents.retry import RetryTransientModelErrors
 from src.engine.agents.tool_errors import ToolErrorRecovery
+from src.engine.skills.rendering import render_available_skills, render_loaded_skills
 
 if TYPE_CHECKING:
     from pydantic_ai.capabilities import AbstractCapability
     from pydantic_ai.toolsets import AbstractToolset
 
-    from src.engine.context.blocks import WorkspaceInstructions
+    from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
     from src.engine.context.scope import ScopeTracker
     from src.engine.skills.loaded import LoadedSkills
     from src.engine.skills.registry import SkillRegistry
@@ -78,7 +79,7 @@ def create_agent(
         # más que el cache miss de una sola vez.
         @agent.instructions(name='loaded-skills')
         def _loaded_skills() -> str:
-            return skill_registry.render_loaded_skills(loaded_skills.names())
+            return render_loaded_skills(skill_registry, loaded_skills.names())
 
     if skill_registry is not None:
         # Progressive disclosure, nivel 1: los metadatos (nombre + descripción)
@@ -86,6 +87,6 @@ def create_agent(
         # agregado durante la sesión aparece sin reiniciar el agente.
         @agent.instructions(name='skills')
         def _skills_metadata() -> str:
-            return skill_registry.render_available_skills()
+            return render_available_skills(skill_registry)
 
     return agent

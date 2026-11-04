@@ -10,13 +10,11 @@ from __future__ import annotations
 from typing import Any
 
 from src.engine.files.conflicts import same_file_conflict
-from src.engine.files.models import (
-    MAX_READ_BYTES,
-    FileContent,
-    FileToolError,
-    PatchResult,
-    WriteResult,
-)
+from src.engine.files.limits import MAX_READ_BYTES
+from src.engine.files.models.file_content import FileContent
+from src.engine.files.models.file_tool_error import FileToolError
+from src.engine.files.models.patch_result import PatchResult
+from src.engine.files.models.write_result import WriteResult
 from src.engine.files.paths import resolve
 from src.engine.files.text import (
     apply_line_patch,

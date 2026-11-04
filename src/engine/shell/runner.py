@@ -13,7 +13,8 @@ import subprocess
 import time
 
 from src.engine.shell.guard import SELF_GUARD_ENV, is_self_invocation
-from src.engine.shell.models import DEFAULT_TIMEOUT, MAX_TIMEOUT, RunToolOutput
+from src.engine.shell.limits import DEFAULT_TIMEOUT, MAX_TIMEOUT
+from src.engine.shell.models.run_tool_output import RunToolOutput
 from src.engine.shell.process import DrainResult, drain, kill_process_group, spawn
 
 TIMEOUT_RETURNCODE = 124

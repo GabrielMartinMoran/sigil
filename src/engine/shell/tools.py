@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.engine.shell.models import DEFAULT_TIMEOUT, RunToolOutput
+from src.engine.shell.limits import DEFAULT_TIMEOUT
+from src.engine.shell.models.run_tool_output import RunToolOutput
 from src.engine.shell.runner import execute_commands
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.registrar import ToolRegistrar

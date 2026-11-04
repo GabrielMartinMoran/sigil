@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from src.engine.interaction.hub import QuestionHub
-from src.engine.interaction.models import QuestionItem, QuestionResult
+from src.engine.interaction.models.question_item import QuestionItem
+from src.engine.interaction.models.question_result import QuestionResult
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.registrar import ToolRegistrar
 

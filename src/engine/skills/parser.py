@@ -8,7 +8,8 @@ from typing import Any
 
 import yaml
 
-from src.engine.skills.models import SkillMetadata, SkillParseError
+from src.engine.skills.models.skill_metadata import SkillMetadata
+from src.engine.skills.models.skill_parse_error import SkillParseError
 
 # El frontmatter debe abrir en la primera línea con ``---`` y cerrar con otra
 # línea ``---``. Soportamos finales de línea CRLF y BOM inicial.

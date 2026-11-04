@@ -6,7 +6,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from src.engine.roadmap.store import RoadmapStore, TodoItem, TodoStatus
+from src.engine.roadmap.models.todo_item import TodoItem
+from src.engine.roadmap.models.todo_status import TodoStatus
+from src.engine.roadmap.store import RoadmapStore
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.registrar import ToolRegistrar
 

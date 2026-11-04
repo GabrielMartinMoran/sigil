@@ -5,11 +5,9 @@ import asyncio
 import pytest
 
 from src.engine.interaction.hub import QuestionHub
-from src.engine.interaction.models import (
-    QuestionAnswer,
-    QuestionItem,
-    QuestionOption,
-)
+from src.engine.interaction.models.question_answer import QuestionAnswer
+from src.engine.interaction.models.question_item import QuestionItem
+from src.engine.interaction.models.question_option import QuestionOption
 from src.engine.interaction.tools import register_interaction_tools
 
 

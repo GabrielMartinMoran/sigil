@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from src.engine.files.models import FileToolError
+from src.engine.files.models.file_tool_error import FileToolError
 
 
 def workspace_root() -> Path:

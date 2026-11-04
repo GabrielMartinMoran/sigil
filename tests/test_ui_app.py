@@ -13,6 +13,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
 import src.ui.app as appmod
+import src.ui.turn_mixin as turnmod
 from src.engine.sessions.session_store import SessionStore
 from src.engine.tooling.logging import ToolLoggerHub
 from src.engine.tooling.registrar import ToolRegistrar
@@ -397,7 +398,7 @@ def test_checkpoint_persists_progress_during_turn(monkeypatch):
     """
     monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
     # Sin throttle para que el checkpoint de mitad de turno sea determinista.
-    monkeypatch.setattr(appmod, 'CHECKPOINT_INTERVAL', 0.0)
+    monkeypatch.setattr(turnmod, 'CHECKPOINT_INTERVAL', 0.0)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -448,27 +449,25 @@ def test_checkpoint_throttles_writes_but_force_saves(monkeypatch):
         app._current_run = run
 
         run.messages = [ModelRequest(parts=[UserPromptPart(content='uno')])]
-        app._checkpoint()
+        app.checkpoint()
         assert len(store.load(session.id).messages) == 1
 
         run.messages = [*run.messages, ModelRequest(parts=[UserPromptPart(content='dos')])]
-        app._checkpoint()  # dentro de la ventana: no escribe
+        app.checkpoint()  # dentro de la ventana: no escribe
         assert len(store.load(session.id).messages) == 1
 
-        app._checkpoint(force=True)  # fin de turno: obligatorio
+        app.checkpoint(force=True)  # fin de turno: obligatorio
         assert len(store.load(session.id).messages) == 2
 
 
 def test_context_command_shows_breakdown_and_scope(monkeypatch):
     monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
 
-    from src.engine.context import (
-        ContextMeter,
-        ContextViewCapability,
-        ScopeTracker,
-        WindowedStrategy,
-        WorkspaceInstructions,
-    )
+    from src.engine.context.capability import ContextViewCapability
+    from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
+    from src.engine.context.meter.context_meter import ContextMeter
+    from src.engine.context.scope import ScopeTracker
+    from src.engine.context.strategy.windowed import WindowedStrategy
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:

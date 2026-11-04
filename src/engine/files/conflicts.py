@@ -8,7 +8,7 @@ al modelo cómo seguir.
 
 from __future__ import annotations
 
-from src.engine.files.models import FileToolError
+from src.engine.files.models.file_tool_error import FileToolError
 from src.engine.files.paths import resolve
 from src.engine.tooling.concurrency import ConcurrencyContext
 
