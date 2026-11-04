@@ -8,7 +8,6 @@ se exponen al modelo como meta-tools (ver ``tools``).
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any
 
 from pydantic_ai.toolsets import AbstractToolset
 
@@ -140,9 +139,7 @@ class MCPManager:
 
         server.error = None
         server.tools = tuple(
-            display_name(server.spec.tool_prefix, tool.name)
-            for tool in tools
-            if includes(server.spec, tool.name)
+            display_name(server.spec.tool_prefix, tool.name) for tool in tools if includes(server.spec, tool.name)
         )
 
     # --- resources y prompts ---------------------------------------------

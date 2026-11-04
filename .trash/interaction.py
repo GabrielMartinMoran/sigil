@@ -7,7 +7,6 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from pydantic import BaseModel, Field
-
 from src.engine.tools.tool_registry import ToolLogger, ToolRegistrar
 
 

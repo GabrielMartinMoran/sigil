@@ -480,7 +480,7 @@ def test_capability_is_not_destructive():
 
 def _pydantic_turn(index: int, *, content_chars: int = 200_000) -> list[ModelMessage]:
     """Un turno cuyo tool result es un modelo pydantic, como todas las tools de Sigil."""
-    from src.engine.tools.files import FileContent
+    from src.engine.files.models import FileContent
 
     payload = FileContent(
         path=f'f{index}.py',

@@ -4,13 +4,13 @@ import asyncio
 
 import pytest
 
-from src.engine.tools.interaction import (
+from src.engine.interaction.hub import QuestionHub
+from src.engine.interaction.models import (
     QuestionAnswer,
-    QuestionHub,
     QuestionItem,
     QuestionOption,
-    register_interaction_tools,
 )
+from src.engine.interaction.tools import register_interaction_tools
 
 
 class DummyAgent:

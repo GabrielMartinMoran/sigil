@@ -4,7 +4,7 @@ import asyncio
 
 from textual.app import App
 
-from src.engine.tools.interaction import QuestionAnswer, QuestionItem, QuestionOption
+from src.engine.interaction.models import QuestionAnswer, QuestionItem, QuestionOption
 from src.ui.widgets.question_screen import CUSTOM_ID, QuestionScreen
 
 

@@ -7,13 +7,10 @@ import asyncio
 import os
 import time
 
-from src.engine.tools.tool_manager import (
-    MAX_OUTPUT_BYTES,
-    SELF_GUARD_ENV,
-    ToolManager,
-    execute_command,
-    execute_commands,
-)
+from src.engine.shell.guard import SELF_GUARD_ENV
+from src.engine.shell.models import MAX_OUTPUT_BYTES
+from src.engine.shell.runner import execute_command, execute_commands
+from src.engine.shell.tools import register_shell_tools
 
 # --- 1. Comando simple --------------------------------------------------------
 
@@ -134,7 +131,7 @@ def test_timeout_vs_normal_are_distinguishable():
     assert timed.timed_out and timed.returncode == 124
 
 
-# --- 12. Integración con ToolManager / agente ---------------------------------
+# --- 12. Integración con el agente --------------------------------------------
 
 
 class _DummyAgent:
@@ -146,10 +143,9 @@ class _DummyAgent:
         return func
 
 
-def test_tool_manager_registers_run():
-    manager = ToolManager()
+def test_register_shell_tools_registers_run():
     agent = _DummyAgent()
-    manager.register_tools(agent)
+    register_shell_tools(agent)
 
     assert 'run' in agent.registered
     result = asyncio.run(agent.registered['run'](['pwd']))

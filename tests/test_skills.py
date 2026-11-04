@@ -375,7 +375,7 @@ def test_run_script_missing_raises(tmp_path):
 
 
 def test_default_roots_env_override(monkeypatch, tmp_path):
-    from src.engine.skills.registry import ENV_SKILLS_DIRS, default_roots
+    from src.engine.skills.discovery import ENV_SKILLS_DIRS, default_roots
 
     first = tmp_path / 'one'
     second = tmp_path / 'two'

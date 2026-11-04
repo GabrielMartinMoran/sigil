@@ -42,8 +42,7 @@ def _refusal() -> RunToolOutput:
     return RunToolOutput(
         returncode=_REFUSED_RETURNCODE,
         stderr=(
-            'Refusing to run nested Sigil: launching Sigil from inside the '
-            f'agent is not allowed ({SELF_GUARD_ENV}=1).'
+            f'Refusing to run nested Sigil: launching Sigil from inside the agent is not allowed ({SELF_GUARD_ENV}=1).'
         ),
     )
 

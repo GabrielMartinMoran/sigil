@@ -6,13 +6,10 @@ from typing import get_type_hints
 
 import pytest
 
-from src.engine.tools.tool_registry import (
-    ToolCallEvent,
-    ToolLoggerHub,
-    ToolRegistrar,
-    register_tool,
-    wrap_tool,
-)
+from src.engine.tooling.events import ToolCallEvent
+from src.engine.tooling.logging import ToolLoggerHub
+from src.engine.tooling.registrar import ToolRegistrar, register_tool
+from src.engine.tooling.wrapper import wrap_tool
 
 
 class RecordingLogger:
@@ -222,29 +219,23 @@ def test_hub_remove_sink():
     assert len(hub._sinks) == 0
 
 
-def test_tool_manager_register_tool(tmp_path):
-    from src.engine.skills.registry import SkillRegistry
-    from src.engine.tools.tool_manager import ToolManager
-
+def test_register_tool_wraps_an_external_function():
     agent = DummyAgent()
-    manager = ToolManager(skill_registry=SkillRegistry([('project', tmp_path)]))
 
     def external(value: int) -> int:
         return value
 
-    manager.register_tool(agent, external)
+    register_tool(agent, external)
     assert 'external' in agent.registered
 
 
-def test_tool_manager_passes_logger_to_all_tools(tmp_path):
-    from src.engine.skills.registry import SkillRegistry
-    from src.engine.tools.tool_manager import ToolManager
+def test_register_shell_tools_passes_the_logger():
+    from src.engine.shell.tools import register_shell_tools
 
     events: list[ToolCallEvent] = []
     hub = ToolLoggerHub([events.append])
     agent = DummyAgent()
-    manager = ToolManager(skill_registry=SkillRegistry([('project', tmp_path)]), tool_logger=hub)
-    manager.register_tools(agent)
+    register_shell_tools(agent, logger=hub)
 
     asyncio.run(agent.registered['run'](['true']))
 

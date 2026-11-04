@@ -39,12 +39,13 @@ from src.engine.context import (
     WorkspaceInstructions,
     render_report,
 )
+from src.engine.interaction.hub import QuestionHub
+from src.engine.interaction.models import QuestionAnswer, QuestionItem
 from src.engine.mcp.manager import MCPManager
 from src.engine.roadmap.store import RoadmapStore
 from src.engine.sessions.session_store import Session, SessionStore
 from src.engine.skills.loaded import LoadedSkills
-from src.engine.tools.interaction import QuestionAnswer, QuestionHub, QuestionItem
-from src.engine.tools.tool_registry import ToolLoggerHub
+from src.engine.tooling.logging import ToolLoggerHub
 from src.ui.mcp_report import format_mcp_status
 from src.ui.tool_logging import ChatToolLogSink, ToolLogMessage
 from src.ui.widgets.chat_log import ChatLog

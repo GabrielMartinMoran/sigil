@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 from pydantic_ai import Agent
-
 from src.engine.tools.tool_registry import ToolLogger, ToolRegistrar
 
 if TYPE_CHECKING:

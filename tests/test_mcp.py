@@ -15,10 +15,11 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset
 
-from src.engine.mcp.config import expand_env_vars, load_config
+from src.engine.mcp.config_loader import expand_env_vars, load_config
+from src.engine.mcp.config_models import MCPConfigError
 from src.engine.mcp.manager import MCPManager
-from src.engine.mcp.models import MCPConfigError, ServerStatus
 from src.engine.mcp.resilient import ResilientToolset
+from src.engine.mcp.tool_models import ServerStatus
 from src.engine.mcp.tools import register_mcp_tools
 from src.ui.mcp_report import format_mcp_status
 

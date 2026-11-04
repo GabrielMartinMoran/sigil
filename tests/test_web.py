@@ -2,7 +2,7 @@
 
 import asyncio
 
-from src.engine.tools.web import register_web_tools
+from src.engine.web.tools import register_web_tools
 
 
 class DummyAgent:
@@ -33,7 +33,7 @@ class FakeDDGS:
 
 
 def _tools(monkeypatch):
-    monkeypatch.setattr('src.engine.tools.web.DDGS', FakeDDGS)
+    monkeypatch.setattr('src.engine.web.tools.DDGS', FakeDDGS)
     agent = DummyAgent()
     register_web_tools(agent)
     return agent.tools

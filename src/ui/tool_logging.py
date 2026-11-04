@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from textual.message import Message
 
-from src.engine.tools.tool_registry import ToolCallEvent
+from src.engine.tooling.events import ToolCallEvent
 
 if TYPE_CHECKING:
     from src.ui.app import SigilApp

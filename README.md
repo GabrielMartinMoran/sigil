@@ -52,7 +52,8 @@ la UI lo refleja en el chat. Funciona igual para tools sync, async y con
 `RunContext`.
 
 ```python
-from src.engine.tools import ToolLoggerHub, ToolRegistrar
+from src.engine.tooling.logging import ToolLoggerHub
+from src.engine.tooling.registrar import ToolRegistrar
 
 hub = ToolLoggerHub()  # la app le agrega su sink al montar
 registrar = ToolRegistrar(agent, hub)
@@ -70,8 +71,6 @@ Para tools externas que ya existen como función:
 
 ```python
 registrar.register(existing_function, name='external-tool')
-# o, desde un ToolManager:
-tool_manager.register_tool(agent, existing_function)
 ```
 
 ### Concurrencia entre tools
@@ -87,7 +86,7 @@ argumentos efectivos y las llamadas anteriores, en orden de emisión, y devuelve
 el motivo del conflicto o `None`.
 
 ```python
-from src.engine.tools import ConcurrencyContext
+from src.engine.tooling.concurrency import ConcurrencyContext
 
 
 def no_same_key(ctx: ConcurrencyContext) -> str | None:

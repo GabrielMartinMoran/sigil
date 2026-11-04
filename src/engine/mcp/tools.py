@@ -10,14 +10,15 @@ from __future__ import annotations
 from typing import Any
 
 from src.engine.mcp.manager import MCPManager
-from src.engine.mcp.models import (
+from src.engine.mcp.tool_models import (
     PromptInfo,
     PromptResultInfo,
     ResourceContent,
     ResourceInfo,
     ServerStatus,
 )
-from src.engine.tools.tool_registry import ToolLogger, ToolRegistrar
+from src.engine.tooling.logging import ToolLogger
+from src.engine.tooling.registrar import ToolRegistrar
 
 
 def register_mcp_tools(agent: Any, manager: MCPManager, logger: ToolLogger | None = None) -> None:

@@ -14,7 +14,8 @@ from pydantic_ai.models.test import TestModel
 
 import src.ui.app as appmod
 from src.engine.sessions.session_store import SessionStore
-from src.engine.tools.tool_registry import ToolLoggerHub, ToolRegistrar
+from src.engine.tooling.logging import ToolLoggerHub
+from src.engine.tooling.registrar import ToolRegistrar
 from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.command_menu import CommandMenu

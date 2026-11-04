@@ -2,7 +2,7 @@ import os
 
 import rich
 
-from src.engine.tools.tool_manager import SELF_GUARD_ENV
+from src.engine.shell.guard import SELF_GUARD_ENV
 from src.sigil import run
 
 

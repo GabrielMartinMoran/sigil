@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from src.engine.tools.files import FileToolError, register_file_tools
+from src.engine.files.models import FileToolError
+from src.engine.files.tools import register_file_tools
 
 
 class DummyAgent:

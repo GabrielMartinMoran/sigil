@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
-
 from src.engine.tools.concurrency import ConcurrencyContext
 from src.engine.tools.tool_registry import ToolLogger, ToolRegistrar
 

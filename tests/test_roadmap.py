@@ -3,7 +3,7 @@
 import pytest
 
 from src.engine.roadmap.store import RoadmapStore, TodoItem
-from src.engine.tools.roadmap import RoadmapItemInput, register_roadmap_tools
+from src.engine.roadmap.tools import RoadmapItemInput, register_roadmap_tools
 
 
 class DummyAgent:

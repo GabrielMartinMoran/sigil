@@ -15,13 +15,13 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from src.engine.agents.tool_errors import ToolErrorRecovery
-from src.engine.tools.concurrency import (
+from src.engine.tooling.concurrency import (
     ConcurrencyContext,
     SiblingCall,
     ToolConflict,
     earlier_siblings,
 )
-from src.engine.tools.tool_registry import ToolRegistrar
+from src.engine.tooling.registrar import ToolRegistrar
 
 
 def _response(*calls: tuple[str, dict, str | None]) -> ModelResponse:

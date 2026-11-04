@@ -8,7 +8,6 @@ from typing import Any, Literal
 
 from ddgs import DDGS
 from pydantic import BaseModel
-
 from src.engine.tools.tool_registry import ToolLogger, ToolRegistrar
 
 MAX_PAGE_CHARS = 40_000

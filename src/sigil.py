@@ -17,17 +17,19 @@ from src.engine.context import (
     WindowedStrategy,
     WorkspaceInstructions,
 )
+from src.engine.files.tools import register_file_tools
+from src.engine.interaction.hub import QuestionHub
+from src.engine.interaction.tools import register_interaction_tools
 from src.engine.mcp import MCPManager, load_config, register_mcp_tools
 from src.engine.roadmap import RoadmapStore
+from src.engine.roadmap.tools import register_roadmap_tools
 from src.engine.sessions.session_store import SessionStore
+from src.engine.shell.tools import register_shell_tools
 from src.engine.skills.loaded import LoadedSkills
 from src.engine.skills.registry import SkillRegistry
-from src.engine.tools.files import register_file_tools
-from src.engine.tools.interaction import QuestionHub, register_interaction_tools
-from src.engine.tools.roadmap import register_roadmap_tools
-from src.engine.tools.tool_manager import ToolManager
-from src.engine.tools.tool_registry import ToolLoggerHub
-from src.engine.tools.web import register_web_tools
+from src.engine.skills.tools import register_skill_tools
+from src.engine.tooling.logging import ToolLoggerHub
+from src.engine.web.tools import register_web_tools
 from src.ui.app import SigilApp
 
 
@@ -106,8 +108,8 @@ def run() -> None:
         extra_capabilities=[context_capability],
     )
 
-    tool_manager = ToolManager(skill_registry=skill_registry, tool_logger=tool_logger, loaded_skills=loaded_skills)
-    tool_manager.register_tools(agent)
+    register_shell_tools(agent, logger=tool_logger)
+    register_skill_tools(agent, skill_registry, logger=tool_logger, loaded=loaded_skills)
     register_mcp_tools(agent, mcp_manager, logger=tool_logger)
     register_web_tools(agent, logger=tool_logger)
     register_file_tools(agent, logger=tool_logger)

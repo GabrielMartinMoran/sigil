@@ -22,7 +22,7 @@ El módulo cubre:
 - degradación controlada cuando un servidor no responde.
 """
 
-from src.engine.mcp.config import (
+from src.engine.mcp.config_loader import (
     CONFIG_DIRNAME,
     CONFIG_FILENAME,
     ENV_CONFIG,
@@ -31,13 +31,17 @@ from src.engine.mcp.config import (
     expand_env_vars,
     load_config,
 )
-from src.engine.mcp.manager import MCPManager, MCPServer
-from src.engine.mcp.models import (
+from src.engine.mcp.config_models import (
     DEFAULT_INIT_TIMEOUT,
     DEFAULT_READ_TIMEOUT,
     MCPConfigError,
     MCPServerConfig,
     MCPServerSpec,
+)
+from src.engine.mcp.manager import MCPManager
+from src.engine.mcp.resilient import ResilientToolset
+from src.engine.mcp.server import MCPServer
+from src.engine.mcp.tool_models import (
     PromptArgumentInfo,
     PromptInfo,
     PromptMessageInfo,
@@ -46,7 +50,6 @@ from src.engine.mcp.models import (
     ResourceInfo,
     ServerStatus,
 )
-from src.engine.mcp.resilient import ResilientToolset
 from src.engine.mcp.tools import register_mcp_tools
 
 __all__ = [
