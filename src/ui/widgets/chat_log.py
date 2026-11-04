@@ -1,4 +1,4 @@
-"""Historial de chat scrolleable con auto-scroll anclado al final."""
+"""Scrollable chat history with auto-scroll anchored to the bottom."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def _preview(value: Any, limit: int = 160) -> str:
 
 
 def build_assistant_renderable(thinking: str, text: str):
-    """Arma el contenido del mensaje: razonamiento plano + texto en Markdown."""
+    """Builds the message content: plain reasoning + Markdown text."""
     parts: list[object] = []
     if thinking:
         parts.append(Text(thinking, style='italic dim'))
@@ -41,14 +41,14 @@ def build_assistant_renderable(thinking: str, text: str):
     return Group(*parts)
 
 
-_RENDER_INTERVAL = 0.08  # segundos: throttle del re-render de Markdown en streaming
+_RENDER_INTERVAL = 0.08  # seconds: Markdown re-render throttle while streaming
 
 
 class AssistantBlock(Static):
-    """Un bloque de respuesta del modelo (pensamiento + texto).
+    """One model response block (thinking + text).
 
-    El Markdown se re-renderiza como máximo cada `_RENDER_INTERVAL` segundos para
-    no re-parsearlo en cada delta; se garantiza un flush final con `finalize()`.
+    The Markdown is re-rendered at most every `_RENDER_INTERVAL` seconds so as
+    not to re-parse it on every delta; a final flush is guaranteed with `finalize()`.
     """
 
     def __init__(self, **kwargs: Any) -> None:
@@ -90,7 +90,7 @@ class AssistantBlock(Static):
         self.update(build_assistant_renderable(self._thinking, self._text))
 
     def finalize(self) -> None:
-        """Vuelca ya el contenido pendiente (fin del turno)."""
+        """Flushes the pending content right away (end of the turn)."""
         if self._timer is not None:
             self._timer.stop()
             self._timer = None
@@ -98,15 +98,15 @@ class AssistantBlock(Static):
 
 
 class ChatLog(VerticalScroll):
-    """Historial de chat con auto-scroll anclado al final.
+    """Chat history with auto-scroll anchored to the bottom.
 
-    Usa la API de anclaje de Textual (`anchor`): mientras el widget esté anclado,
-    el compositor mantiene la vista al final en cada layout, de modo que el
-    contenido que crece (incluido el streaming con flush diferido) se sigue
-    automáticamente, sin scrolls manuales ni problemas de timing.
+    It uses Textual's anchoring API (`anchor`): while the widget is anchored,
+    the compositor keeps the view at the bottom on every layout, so the
+    growing content (including streaming with a deferred flush) is followed
+    automatically, with no manual scrolls and no timing issues.
 
-    Al scrollear hacia arriba el anclaje se libera y se restaura solo cuando el
-    usuario vuelve al final, así se respeta a quien está leyendo historial.
+    When scrolling up the anchor is released and it is restored only when the
+    user goes back to the bottom, so whoever is reading history is respected.
     """
 
     def __init__(self, **kwargs: Any) -> None:
@@ -114,11 +114,11 @@ class ChatLog(VerticalScroll):
         self._current: AssistantBlock | None = None
 
     def on_mount(self) -> None:
-        # Ancla la vista al final desde el arranque.
+        # Anchors the view to the bottom from the start.
         self.anchor()
 
     async def _append(self, widget: Static) -> None:
-        # El anclaje se encarga del scroll; no hace falta forzar scroll_end.
+        # Anchoring takes care of the scroll; there is no need to force scroll_end.
         await self.mount(widget)
 
     async def add_user(self, text: str) -> None:
@@ -137,7 +137,7 @@ class ChatLog(VerticalScroll):
         await self._append(Static(Text(f'↳ {_preview(output)}', style=style), classes='tool-result'))
 
     async def begin_response(self) -> None:
-        """Marca el inicio de una nueva respuesta del modelo."""
+        """Marks the start of a new model response."""
         self._current = None
 
     async def _ensure_block(self) -> None:
@@ -156,7 +156,7 @@ class ChatLog(VerticalScroll):
         self._current.add_text(delta)
 
     def finalize(self) -> None:
-        """Fuerza el render pendiente de todos los bloques (fin de turno/historial)."""
+        """Forces the pending render of every block (end of turn/history)."""
         for child in self.children:
             if isinstance(child, AssistantBlock):
                 child.finalize()
@@ -164,11 +164,11 @@ class ChatLog(VerticalScroll):
     async def clear(self) -> None:
         self._current = None
         await self.remove_children()
-        # Tras limpiar, el historial nuevo vuelve a seguir el final.
+        # After clearing, the new history follows the bottom again.
         self.anchor()
 
     async def render_history(self, messages: list[ModelMessage]) -> None:
-        """Reconstruye el historial a partir de los mensajes de pydantic-ai."""
+        """Rebuilds the history from the pydantic-ai messages."""
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:

@@ -1,10 +1,10 @@
-"""Toolset que degrada en vez de tumbar el turno.
+"""Toolset that degrades instead of bringing the turn down.
 
-Un ``MCPToolset`` que no puede conectar (server caído, comando inexistente,
-timeout del handshake) propaga la excepción al entrar, y con ella se cae el
-run entero del agente. Este wrapper la captura: el servidor aporta cero tools,
-el resto de la conversación sigue andando y el error queda disponible para que
-la UI lo muestre.
+An ``MCPToolset`` that cannot connect (downed server, nonexistent command,
+handshake timeout) propagates the exception on enter, and it takes down the
+agent's whole run. This wrapper catches it: the server contributes zero tools,
+the rest of the conversation keeps going and the error stays available so
+the UI can show it.
 """
 
 from __future__ import annotations
@@ -18,14 +18,14 @@ from pydantic_ai.toolsets import WrapperToolset
 
 @dataclass
 class ResilientToolset(WrapperToolset[Any]):
-    """Envuelve un toolset y absorbe sus fallos de conexión."""
+    """Wraps a toolset and absorbs its connection failures."""
 
     on_error: Callable[[str], None] | None = None
     error: str | None = field(default=None)
 
     def __post_init__(self) -> None:
-        # Atributo, no campo: un `replace()` del framework no debe arrastrar el
-        # estado de entrada de la instancia anterior.
+        # An attribute, not a field: a framework `replace()` must not carry over the
+        # entry state of the previous instance.
         self._entered = False
 
     @property
@@ -35,7 +35,7 @@ class ResilientToolset(WrapperToolset[Any]):
     async def __aenter__(self) -> Self:
         try:
             await self.wrapped.__aenter__()
-        except Exception as exc:  # noqa: BLE001 - degradar es el punto de este wrapper
+        except Exception as exc:  # noqa: BLE001 - degrading is the point of this wrapper
             self._fail(exc)
         else:
             self._entered = True
@@ -43,8 +43,8 @@ class ResilientToolset(WrapperToolset[Any]):
 
     async def __aexit__(self, *args: object) -> bool | None:
         if not self._entered:
-            # El `__aenter__` del wrapped nunca completó: delegar rompería su
-            # conteo interno de entradas.
+            # The wrapped `__aenter__` never completed: delegating would break its
+            # internal entry count.
             return None
         self._entered = False
         try:
@@ -68,7 +68,7 @@ class ResilientToolset(WrapperToolset[Any]):
         if self.on_error is not None:
             try:
                 self.on_error(self.error)
-            except Exception:  # noqa: BLE001, S110 - reportar nunca debe romper el run
+            except Exception:  # noqa: BLE001, S110 - reporting must never break the run
                 pass
 
 

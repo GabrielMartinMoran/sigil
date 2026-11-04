@@ -1,7 +1,7 @@
-"""Soporte del Model Context Protocol (MCP) para Sigil.
+"""Model Context Protocol (MCP) support for Sigil.
 
-Los servidores se declaran en ``.sigil/config.json`` (o ``~/.sigil/config.json``)
-bajo la clave ``mcp_servers``, con claves en snake_case::
+Servers are declared in ``.sigil/config.json`` (or ``~/.sigil/config.json``)
+under the ``mcp_servers`` key, with snake_case keys::
 
     {
       "mcp_servers": {
@@ -13,64 +13,13 @@ bajo la clave ``mcp_servers``, con claves en snake_case::
       }
     }
 
-El módulo cubre:
+The module covers:
 
-- descubrimiento, merge y validación de la configuración,
-- transportes stdio y HTTP (Streamable HTTP y SSE),
-- tools de cada servidor como toolsets del agente, con prefijo por servidor,
-- resources y prompts como meta-tools,
-- degradación controlada cuando un servidor no responde.
+- config discovery, merge and validation,
+- stdio and HTTP transports (Streamable HTTP and SSE),
+- each server's tools as agent toolsets, with a per-server prefix,
+- resources and prompts as meta-tools,
+- controlled degradation when a server does not respond.
+
+The package re-exports no symbols: import from the owning module.
 """
-
-from src.engine.mcp.config import (
-    CONFIG_DIRNAME,
-    CONFIG_FILENAME,
-    ENV_CONFIG,
-    LoadedConfig,
-    config_paths,
-    expand_env_vars,
-    load_config,
-)
-from src.engine.mcp.manager import MCPManager, MCPServer
-from src.engine.mcp.models import (
-    DEFAULT_INIT_TIMEOUT,
-    DEFAULT_READ_TIMEOUT,
-    MCPConfigError,
-    MCPServerConfig,
-    MCPServerSpec,
-    PromptArgumentInfo,
-    PromptInfo,
-    PromptMessageInfo,
-    PromptResultInfo,
-    ResourceContent,
-    ResourceInfo,
-    ServerStatus,
-)
-from src.engine.mcp.resilient import ResilientToolset
-from src.engine.mcp.tools import register_mcp_tools
-
-__all__ = [
-    'CONFIG_DIRNAME',
-    'CONFIG_FILENAME',
-    'DEFAULT_INIT_TIMEOUT',
-    'DEFAULT_READ_TIMEOUT',
-    'ENV_CONFIG',
-    'LoadedConfig',
-    'MCPConfigError',
-    'MCPManager',
-    'MCPServer',
-    'MCPServerConfig',
-    'MCPServerSpec',
-    'PromptArgumentInfo',
-    'PromptInfo',
-    'PromptMessageInfo',
-    'PromptResultInfo',
-    'ResilientToolset',
-    'ResourceContent',
-    'ResourceInfo',
-    'ServerStatus',
-    'config_paths',
-    'expand_env_vars',
-    'load_config',
-    'register_mcp_tools',
-]

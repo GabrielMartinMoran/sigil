@@ -1,7 +1,7 @@
-"""Panel superior del sidebar: skills cargadas y estado de los MCP.
+"""Top sidebar panel: loaded skills and MCP state.
 
-Es el diagnóstico rápido de "¿el agente está haciendo lo que debería?": qué
-skills cargó en la sesión y qué servidores MCP están andando.
+It is the quick diagnostic of "is the agent doing what it should?": which
+skills it loaded in the session and which MCP servers are up.
 """
 
 from __future__ import annotations
@@ -19,14 +19,14 @@ _FAIL_MARK = '✗'
 
 @dataclass(frozen=True, slots=True)
 class MCPServerState:
-    """Estado de un servidor MCP para el panel."""
+    """State of an MCP server for the panel."""
 
     name: str
     ok: bool
 
 
 class SidebarPanel(Static):
-    """Skills cargadas en la sesión y estado de los servidores MCP."""
+    """Skills loaded in the session and MCP server state."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(Text(''), **kwargs)
@@ -39,7 +39,7 @@ class SidebarPanel(Static):
         self.update(self._build())
 
     def update_mcp(self, servers: Sequence[MCPServerState]) -> None:
-        """Estado de los servidores MCP. Sin servidores, la sección no aparece."""
+        """MCP server state. With no servers, the section does not appear."""
         self._servers = tuple(servers)
         self._mcp_known = True
         self.update(self._build())

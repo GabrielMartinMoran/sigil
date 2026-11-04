@@ -1,13 +1,13 @@
-"""Presupuesto de contexto: reservas nombradas sobre la ventana del modelo.
+"""Context budget: named reservations over the model window.
 
-La ventana no es toda para el historial. Antes de repartir hay que descontar lo
-que se manda siempre y lo que el modelo necesita para responder:
+The window is not all for the history. Before splitting it up you must subtract what
+is always sent and what the model needs in order to answer:
 
-    ventana
-      − tools (schemas)          ← medido, suele ser el bloque más grande
-      − instructions (bloques)   ← medido
-      − output (max_tokens)      ← reservado
-      = disponible para historial
+    window
+      - tools (schemas)          <- measured, usually the largest block
+      - instructions (blocks)    <- measured
+      - output (max_tokens)      <- reserved
+      = available for history
 """
 
 from __future__ import annotations
@@ -15,46 +15,46 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 DEFAULT_OUTPUT_RESERVE = 8_000
-"""Tokens que se dejan libres para la respuesta del modelo."""
+"""Tokens left free for the model response."""
 
 
 @dataclass(frozen=True, slots=True)
 class ContextBudget:
-    """Reparto de la ventana de contexto entre bloques fijos e historial."""
+    """Split of the context window between fixed blocks and history."""
 
     window: int | None
-    """Ventana del modelo, o ``None`` si se desconoce."""
+    """Model window, or ``None`` if unknown."""
 
     tools: int = 0
-    """Tokens de los schemas de tools."""
+    """Tokens of the tool schemas."""
 
     instructions: int = 0
-    """Tokens de los bloques de instrucciones."""
+    """Tokens of the instruction blocks."""
 
     output_reserve: int = DEFAULT_OUTPUT_RESERVE
-    """Tokens reservados para la respuesta del modelo."""
+    """Tokens reserved for the model response."""
 
     @property
     def fixed(self) -> int:
-        """Lo que se manda en cada request sin importar la conversación."""
+        """What is sent on every request regardless of the conversation."""
         return self.tools + self.instructions
 
     @property
     def available_for_history(self) -> int | None:
-        """Tokens que quedan para el historial, o ``None`` si no hay ventana."""
+        """Tokens left for the history, or ``None`` if there is no window."""
         if self.window is None:
             return None
         return max(0, self.window - self.fixed - self.output_reserve)
 
     def fits(self, history_tokens: int) -> bool | None:
-        """Si un historial entra en el presupuesto. ``None`` si no hay ventana."""
+        """Whether a history fits in the budget. ``None`` if there is no window."""
         available = self.available_for_history
         if available is None:
             return None
         return history_tokens <= available
 
     def with_measurements(self, *, tools: int | None = None, instructions: int | None = None) -> ContextBudget:
-        """Copia con las mediciones actualizadas."""
+        """Copy with the measurements updated."""
         return ContextBudget(
             window=self.window,
             tools=self.tools if tools is None else tools,

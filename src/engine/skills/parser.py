@@ -1,4 +1,4 @@
-"""Parseo y validación del ``SKILL.md`` (frontmatter YAML + Markdown)."""
+"""Parsing and validation of ``SKILL.md`` (YAML frontmatter + Markdown)."""
 
 from __future__ import annotations
 
@@ -8,10 +8,11 @@ from typing import Any
 
 import yaml
 
-from src.engine.skills.models import SkillMetadata, SkillParseError
+from src.engine.skills.models.skill_metadata import SkillMetadata
+from src.engine.skills.models.skill_parse_error import SkillParseError
 
-# El frontmatter debe abrir en la primera línea con ``---`` y cerrar con otra
-# línea ``---``. Soportamos finales de línea CRLF y BOM inicial.
+# The frontmatter must open on the first line with ``---`` and close with another
+# ``---`` line. We support CRLF line endings and a leading BOM.
 _FRONTMATTER_RE = re.compile(
     r'\A---[ \t]*\r?\n(?P<frontmatter>.*?)\r?\n---[ \t]*(?:\r?\n|\Z)',
     re.DOTALL,
@@ -22,8 +23,8 @@ _MAX_NAME_LENGTH = 64
 _MAX_DESCRIPTION_LENGTH = 1024
 _MAX_COMPATIBILITY_LENGTH = 500
 
-# Claves que el protocolo reconoce. Las desconocidas se conservan en ``extra``
-# para no rechazar skills de ecosistemas que agregan campos propios.
+# Keys the protocol recognizes. Unknown ones are kept in ``extra``
+# so as not to reject skills from ecosystems that add their own fields.
 _KNOWN_KEYS = {
     'name',
     'description',
@@ -36,10 +37,10 @@ _KNOWN_KEYS = {
 
 
 def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
-    """Separa el frontmatter YAML del cuerpo Markdown.
+    """Splits the YAML frontmatter from the Markdown body.
 
-    Devuelve ``(frontmatter, cuerpo)``. Lanza ``SkillParseError`` si el
-    documento no respeta el formato del protocolo.
+    Returns ``(frontmatter, body)``. Raises ``SkillParseError`` if the
+    document does not follow the protocol format.
     """
     text = text.removeprefix('\ufeff')
 
@@ -99,7 +100,7 @@ def build_metadata(
     skill_file: Path,
     source: str,
 ) -> SkillMetadata:
-    """Valida el frontmatter y construye ``SkillMetadata``."""
+    """Validates the frontmatter and builds ``SkillMetadata``."""
     warnings: list[str] = []
 
     if 'name' not in data:
@@ -172,13 +173,13 @@ def build_metadata(
 
 
 def parse_frontmatter(text: str) -> dict[str, Any]:
-    """Devuelve sólo el frontmatter parseado de un ``SKILL.md``."""
+    """Returns only the parsed frontmatter of a ``SKILL.md``."""
     data, _ = split_frontmatter(text)
     return data
 
 
 def parse_skill_metadata(skill_file: Path, *, source: str) -> SkillMetadata:
-    """Lee y valida el ``SKILL.md`` de un skill."""
+    """Reads and validates the ``SKILL.md`` of a skill."""
     skill_file = Path(skill_file)
     try:
         text = skill_file.read_text(encoding='utf-8')

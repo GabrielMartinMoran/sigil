@@ -1,19 +1,16 @@
-"""Tests del panel superior del sidebar: skills cargadas y conteo de MCP."""
+"""Tests for the top sidebar panel: loaded skills and MCP counts."""
 
 from __future__ import annotations
 
 import asyncio
-import os
 import tempfile
 from pathlib import Path
-
-os.environ.setdefault('LLM_MODEL', 'test/model')
-os.environ.setdefault('OPENROUTER_API_KEY', 'test-key')
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-from src.engine.mcp import MCPManager, load_config
+from src.engine.mcp.config.loader import load_config
+from src.engine.mcp.manager.manager import MCPManager
 from src.engine.sessions.session_store import SessionStore
 from src.engine.skills.loaded import LoadedSkills
 from src.ui.app import SigilApp
@@ -105,7 +102,7 @@ def test_mcp_counts_ignores_disabled_servers(tmp_path):
 
 def test_mcp_counts_reports_broken_servers(tmp_path):
     config = tmp_path / 'config.json'
-    # Un transporte inválido hace fallar la construcción del toolset.
+    # An invalid transport makes the toolset construction fail.
     config.write_text('{"mcp_servers": {"broken": {"url": "not-a-url"}}}', encoding='utf-8')
     manager = MCPManager(load_config([config], environ={}).servers)
     ok, failed = manager.counts()
@@ -128,7 +125,7 @@ def test_sidebar_reflects_loaded_skills():
                 assert 'none yet' in panel._build().plain
 
                 loaded.add('clean-code')
-                app._refresh_sidebar()
+                app.refresh_sidebar()
                 await pilot.pause()
                 assert 'clean-code' in panel._build().plain
 

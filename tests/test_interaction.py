@@ -1,16 +1,14 @@
-"""Tests del hub y la tool de preguntas."""
+"""Tests for the hub and the question tool."""
 
 import asyncio
 
 import pytest
 
-from src.engine.tools.interaction import (
-    QuestionAnswer,
-    QuestionHub,
-    QuestionItem,
-    QuestionOption,
-    register_interaction_tools,
-)
+from src.engine.interaction.hub import QuestionHub
+from src.engine.interaction.models.question_answer import QuestionAnswer
+from src.engine.interaction.models.question_item import QuestionItem
+from src.engine.interaction.models.question_option import QuestionOption
+from src.engine.interaction.tools import register_interaction_tools
 
 
 class DummyAgent:
@@ -31,7 +29,7 @@ class DummyAgent:
 
 def _question():
     return QuestionItem(
-        question='¿Qué hacemos?',
+        question='What do we do?',
         options=[QuestionOption(label='A', recommended=True), QuestionOption(label='B')],
     )
 

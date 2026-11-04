@@ -1,4 +1,4 @@
-"""Tests de la gestión de contexto: medición, bloques, scope y estrategias."""
+"""Tests for context management: measurement, blocks, scope and strategies."""
 
 from __future__ import annotations
 
@@ -19,22 +19,18 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import RunUsage
 
-from src.engine.context import (
-    CompactingStrategy,
-    ContextBudget,
-    ContextMeter,
-    ContextViewCapability,
-    PassthroughStrategy,
-    ScopeSink,
-    ScopeTracker,
-    WindowedStrategy,
-    WorkspaceInstructions,
-    estimate_tokens,
-    measured_tokens,
-    projected_tokens,
-    render_report,
-    split_turns,
-)
+from src.engine.context.budget import ContextBudget
+from src.engine.context.capability import ContextViewCapability
+from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
+from src.engine.context.meter.context_meter import ContextMeter
+from src.engine.context.meter.render import render_report
+from src.engine.context.scope import ScopeSink, ScopeTracker
+from src.engine.context.strategy.compacting import CompactingStrategy
+from src.engine.context.strategy.passthrough import PassthroughStrategy
+from src.engine.context.strategy.turns import split_turns
+from src.engine.context.strategy.windowed import WindowedStrategy
+from src.engine.context.tokens import estimate_tokens, measured_tokens, projected_tokens
+from src.engine.context.working_set import render_working_set, touched_files
 
 # --- helpers ---------------------------------------------------------------
 
@@ -60,12 +56,12 @@ def _tool_return(name: str, content: str, call_id: str, *, outcome: str = 'succe
 
 
 def _turn(index: int, *, result_chars: int = 100, thinking: str | None = None) -> list[ModelMessage]:
-    """Un turno completo: prompt, tool call, tool result, respuesta final."""
+    """A whole turn: prompt, tool call, tool result, final answer."""
     return [
-        _user(f'pedido {index}'),
+        _user(f'request {index}'),
         _tool_call('read_file', {'path': f'f{index}.py'}, f'c{index}'),
         _tool_return('read_file', 'x' * result_chars, f'c{index}'),
-        _assistant(f'listo {index}', thinking=thinking),
+        _assistant(f'done {index}', thinking=thinking),
     ]
 
 
@@ -86,7 +82,7 @@ def test_measured_tokens_uses_last_response():
 
 
 def test_measured_tokens_none_without_response():
-    assert measured_tokens([_user('hola')]) is None
+    assert measured_tokens([_user('hello')]) is None
 
 
 def test_projected_tokens_adds_trailing_messages():
@@ -94,18 +90,18 @@ def test_projected_tokens_adds_trailing_messages():
     measured = measured_tokens(base)
     assert measured is not None
 
-    with_trailing = [*base, _user('otra cosa')]
+    with_trailing = [*base, _user('another thing')]
     projected = projected_tokens(with_trailing)
     assert projected is not None
     assert projected > measured
 
 
 def test_projected_tokens_estimates_when_no_response():
-    projected = projected_tokens([_user('hola mundo')])
+    projected = projected_tokens([_user('hello world')])
     assert projected is not None and projected > 0
 
 
-# --- presupuesto -----------------------------------------------------------
+# --- budget ----------------------------------------------------------------
 
 
 def test_budget_subtracts_fixed_costs():
@@ -127,7 +123,7 @@ def test_budget_never_negative():
     assert budget.available_for_history == 0
 
 
-# --- turnos ----------------------------------------------------------------
+# --- turns -----------------------------------------------------------------
 
 
 def test_split_turns_groups_by_user_prompt():
@@ -138,13 +134,13 @@ def test_split_turns_groups_by_user_prompt():
 
 
 def test_split_turns_keeps_leading_messages_without_prompt():
-    messages = [_assistant('suelto'), *_turn(1)]
+    messages = [_assistant('loose'), *_turn(1)]
     turns = split_turns(messages)
     assert len(turns) == 2
     assert turns[0] == [messages[0]]
 
 
-# --- estrategias -----------------------------------------------------------
+# --- strategies ------------------------------------------------------------
 
 
 def test_passthrough_returns_everything():
@@ -155,14 +151,14 @@ def test_passthrough_returns_everything():
 
 
 def test_windowed_drops_thinking():
-    messages = [*_turn(1, thinking='razonamiento largo'), *_turn(2, thinking='más razonamiento')]
+    messages = [*_turn(1, thinking='long reasoning'), *_turn(2, thinking='more reasoning')]
     result = WindowedStrategy().view(messages, ContextBudget(window=None))
     assert result.dropped_thinking == 2
     assert not any(isinstance(part, ThinkingPart) for message in result.messages for part in message.parts)
 
 
 def test_windowed_keeps_thinking_when_asked():
-    messages = [*_turn(1, thinking='razonamiento')]
+    messages = [*_turn(1, thinking='reasoning')]
     result = WindowedStrategy(keep_thinking=True).view(messages, ContextBudget(window=None))
     assert result.dropped_thinking == 0
     assert any(isinstance(part, ThinkingPart) for message in result.messages for part in message.parts)
@@ -182,7 +178,7 @@ def test_windowed_truncates_only_old_tool_results():
         for part in message.parts
         if isinstance(part, ToolReturnPart)
     ]
-    # El turno más reciente queda intacto.
+    # The most recent turn stays intact.
     assert len(returns[-1].content) == 20_000
     assert 'truncated' in returns[0].content
 
@@ -213,7 +209,7 @@ def test_windowed_drops_oldest_turns_to_fit_budget():
     result = WindowedStrategy(keep_recent_turns=4).view(messages, ContextBudget(window=100, output_reserve=0))
     assert result.dropped_messages > 0
     assert len(result.messages) < len(messages)
-    # Siempre queda al menos un turno.
+    # There is always at least one turn left.
     assert result.messages
 
 
@@ -232,9 +228,9 @@ def test_compacting_collapses_old_turns_into_summary():
     assert isinstance(first, ModelRequest)
     compaction = [part for part in first.parts if isinstance(part, CompactionPart)]
     assert len(compaction) == 1
-    assert 'pedido 1' in compaction[0].content
+    assert 'request 1' in compaction[0].content
     assert 'read_file' in compaction[0].content
-    # Los turnos recientes quedan enteros.
+    # Recent turns stay whole.
     assert len(result.messages) == 1 + 2 * 4
 
 
@@ -327,7 +323,7 @@ def test_scope_sink_feeds_tracker():
         assert 'a' in tracker.relative_scopes()
 
 
-# --- bloques de workspace --------------------------------------------------
+# --- workspace blocks ------------------------------------------------------
 
 
 def test_workspace_prefers_agents_over_claude():
@@ -402,12 +398,12 @@ def test_workspace_cache_invalidates_on_change():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         path = root / 'AGENTS.md'
-        path.write_text('uno')
+        path.write_text('one')
         workspace = WorkspaceInstructions(root)
-        assert workspace.resolve([root])[0].content == 'uno'
+        assert workspace.resolve([root])[0].content == 'one'
 
-        path.write_text('dos, más largo')
-        assert workspace.resolve([root])[0].content == 'dos, más largo'
+        path.write_text('two, longer')
+        assert workspace.resolve([root])[0].content == 'two, longer'
 
 
 # --- meter -----------------------------------------------------------------
@@ -446,12 +442,12 @@ def test_meter_ignores_invalid_window():
 
 
 def test_capability_is_not_destructive():
-    """La vista cambia el request, no el historial persistente."""
+    """The view changes the request, not the persistent history."""
     from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.test import TestModel
     from pydantic_ai.tools import RunContext
 
-    messages = [*_turn(1, thinking='razonamiento'), *_turn(2, thinking='más')]
+    messages = [*_turn(1, thinking='reasoning'), *_turn(2, thinking='more')]
     meter = ContextMeter(window=100_000)
     capability = ContextViewCapability(strategy=WindowedStrategy(), meter=meter)
 
@@ -468,19 +464,19 @@ def test_capability_is_not_destructive():
 
     result = asyncio.run(capability.before_model_request(ctx, request_context))
 
-    # El request perdió el razonamiento...
+    # The request lost the reasoning...
     assert not any(isinstance(part, ThinkingPart) for message in result.messages for part in message.parts)
-    # ...pero el historial persistente sigue intacto.
+    # ...but the persistent history stays intact.
     assert any(isinstance(part, ThinkingPart) for message in ctx.messages for part in message.parts)
     assert capability.last_view is not None
 
 
-# --- tool results que no son str -------------------------------------------
+# --- tool results that are not str -----------------------------------------
 
 
 def _pydantic_turn(index: int, *, content_chars: int = 200_000) -> list[ModelMessage]:
-    """Un turno cuyo tool result es un modelo pydantic, como todas las tools de Sigil."""
-    from src.engine.tools.files import FileContent
+    """A turn whose tool result is a pydantic model, like every Sigil tool."""
+    from src.engine.files.models.file_content import FileContent
 
     payload = FileContent(
         path=f'f{index}.py',
@@ -491,16 +487,16 @@ def _pydantic_turn(index: int, *, content_chars: int = 200_000) -> list[ModelMes
         content='x' * content_chars,
     )
     return [
-        _user(f'leé f{index}.py'),
+        _user(f'read f{index}.py'),
         _tool_call('read_file', {'path': f'f{index}.py'}, f'c{index}'),
         ModelRequest(parts=[ToolReturnPart(tool_name='read_file', content=payload, tool_call_id=f'c{index}')]),
-        _assistant(f'listo {index}'),
+        _assistant(f'done {index}'),
     ]
 
 
 def test_tool_return_text_uses_model_response_str():
-    """El tamaño se mide sobre lo que ve el modelo, no sobre el repr de Python."""
-    from src.engine.context import tool_return_text
+    """The size is measured on what the model sees, not on the Python repr."""
+    from src.engine.context.tokens import tool_return_text
 
     turn = _pydantic_turn(1, content_chars=5_000)
     part = next(
@@ -516,7 +512,7 @@ def test_tool_return_text_uses_model_response_str():
 
 
 def test_windowed_truncates_pydantic_tool_results():
-    """Regresión: comparar contra `isinstance(content, str)` dejaba el truncado sin efecto."""
+    """Regression: comparing against `isinstance(content, str)` left the truncation without effect."""
     messages = [*_pydantic_turn(1), *_pydantic_turn(2), *_pydantic_turn(3)]
     result = WindowedStrategy(keep_recent_turns=1, max_tool_result_chars=1_000).view(
         messages, ContextBudget(window=None)
@@ -531,18 +527,18 @@ def test_windowed_truncates_pydantic_tool_results():
         if isinstance(part, ToolReturnPart)
     ]
     assert len(returns[0].model_response_str()) < 1_500
-    # El turno más reciente queda intacto.
+    # The most recent turn stays intact.
     assert len(returns[-1].model_response_str()) > 200_000
 
 
 def test_windowed_never_truncates_pinned_tools():
-    """El cuerpo de un skill es instrucción: truncarlo le saca la tarea al agente."""
+    """A skill body is instruction: truncating it takes the task away from the agent."""
     body = 'y' * 30_000
     messages = [
-        _user('cargá el skill'),
+        _user('load the skill'),
         _tool_call('load_skill', {'name': 'clean-code'}, 's1'),
         ModelRequest(parts=[ToolReturnPart(tool_name='load_skill', content=body, tool_call_id='s1')]),
-        _assistant('cargado'),
+        _assistant('loaded'),
         *_turn(2),
         *_turn(3),
     ]
@@ -562,17 +558,17 @@ def test_windowed_never_truncates_pinned_tools():
 def test_compacting_keeps_pinned_turns_intact():
     body = 'y' * 10_000
     messages = [
-        _user('cargá el skill'),
+        _user('load the skill'),
         _tool_call('load_skill', {'name': 'clean-code'}, 's1'),
         ModelRequest(parts=[ToolReturnPart(tool_name='load_skill', content=body, tool_call_id='s1')]),
-        _assistant('cargado'),
+        _assistant('loaded'),
         *_turn(2),
         *_turn(3),
         *_turn(4),
     ]
     result = CompactingStrategy(keep_recent_turns=1).view(messages, ContextBudget(window=None))
 
-    # El turno del skill sobrevive entero; los demás turnos viejos se compactan.
+    # The skill turn survives whole; the other old turns get compacted.
     assert any(
         isinstance(part, ToolReturnPart) and part.tool_name == 'load_skill' and part.content == body
         for message in result.messages
@@ -583,19 +579,19 @@ def test_compacting_keeps_pinned_turns_intact():
 
 
 def test_fit_to_budget_prefers_dropping_unpinned_turns():
-    """Si hay que elegir, se pierde un read_file viejo antes que las instrucciones."""
+    """If you have to choose, an old read_file is lost before the instructions."""
     body = 'y' * 4_000
     messages = [
-        _user('cargá el skill'),
+        _user('load the skill'),
         _tool_call('load_skill', {'name': 'x'}, 's1'),
         ModelRequest(parts=[ToolReturnPart(tool_name='load_skill', content=body, tool_call_id='s1')]),
-        _assistant('cargado'),
+        _assistant('loaded'),
         *_turn(2, result_chars=4_000),
         *_turn(3, result_chars=4_000),
     ]
-    from src.engine.context import estimate_messages_tokens
+    from src.engine.context.tokens import estimate_messages_tokens
 
-    # Presupuesto justo para que alcance con descartar el turno sin instrucciones.
+    # Budget just enough to fit by discarding the turn without instructions.
     total = estimate_messages_tokens(messages)
     unpinned = estimate_messages_tokens(_turn(2, result_chars=4_000))
     window = total - unpinned + 50
@@ -609,3 +605,120 @@ def test_fit_to_budget_prefers_dropping_unpinned_turns():
         if isinstance(message, ModelRequest)
         for part in message.parts
     )
+
+
+# --- working set -----------------------------------------------------------
+
+
+def test_touched_files_collects_paths_from_path_tools():
+    messages = [
+        _user('read and edit'),
+        _tool_call('read_file', {'path': 'src/a.py'}, 'c1'),
+        _tool_return('read_file', 'x', 'c1'),
+        _tool_call('patch_file', {'path': 'src/a.py'}, 'c2'),
+        _tool_return('patch_file', 'ok', 'c2'),
+    ]
+    files = touched_files(messages)
+    assert [file.path for file in files] == ['src/a.py']
+    assert files[0].tools == ('read_file', 'patch_file')
+    assert files[0].written is True
+
+
+def test_touched_files_ignores_tools_without_paths():
+    messages = [
+        _user('run something'),
+        _tool_call('run', {'command': 'ls'}, 'c1'),
+        _tool_return('run', 'a.py', 'c1'),
+        _tool_call('web_search', {'query': 'x'}, 'c2'),
+        _tool_return('web_search', 'y', 'c2'),
+    ]
+    assert touched_files(messages) == []
+
+
+def test_touched_files_orders_by_most_recent_interaction():
+    messages = [
+        _user('one'),
+        _tool_call('read_file', {'path': 'a.py'}, 'c1'),
+        _tool_return('read_file', 'x', 'c1'),
+        _user('two'),
+        _tool_call('read_file', {'path': 'b.py'}, 'c2'),
+        _tool_return('read_file', 'x', 'c2'),
+        _user('three'),
+        _tool_call('patch_file', {'path': 'a.py'}, 'c3'),
+        _tool_return('patch_file', 'ok', 'c3'),
+    ]
+    files = touched_files(messages)
+    # `a.py` was touched last, so it goes first even though it appeared earlier.
+    assert [file.path for file in files] == ['a.py', 'b.py']
+    assert files[0].tools == ('read_file', 'patch_file')
+
+
+def test_touched_files_normalizes_relative_prefixes():
+    messages = [
+        _user('read'),
+        _tool_call('read_file', {'path': './src/a.py'}, 'c1'),
+        _tool_return('read_file', 'x', 'c1'),
+        _tool_call('read_file', {'path': 'src/a.py'}, 'c2'),
+        _tool_return('read_file', 'x', 'c2'),
+    ]
+    files = touched_files(messages)
+    assert [file.path for file in files] == ['src/a.py']
+
+
+def test_touched_files_parses_json_string_args():
+    """pydantic-ai leaves `args` as a string when the model did not validate the schema."""
+    messages = [
+        _user('read'),
+        ModelResponse(parts=[ToolCallPart(tool_name='read_file', args='{"path": "a.py"}', tool_call_id='c1')]),
+        _tool_return('read_file', 'x', 'c1'),
+    ]
+    assert [file.path for file in touched_files(messages)] == ['a.py']
+
+
+def test_touched_files_ignores_unparseable_args():
+    messages = [
+        _user('read'),
+        ModelResponse(parts=[ToolCallPart(tool_name='read_file', args='{not json', tool_call_id='c1')]),
+        _tool_return('read_file', 'x', 'c1'),
+    ]
+    assert touched_files(messages) == []
+
+
+def test_touched_files_respects_limit():
+    messages = [_user('muchos')]
+    for index in range(5):
+        messages.append(_tool_call('read_file', {'path': f'f{index}.py'}, f'c{index}'))
+        messages.append(_tool_return('read_file', 'x', f'c{index}'))
+    files = touched_files(messages, limit=2)
+    assert [file.path for file in files] == ['f4.py', 'f3.py']
+
+
+def test_render_working_set_is_empty_without_files():
+    assert render_working_set([]) == ''
+
+
+def test_compacting_summary_includes_working_set():
+    messages = [*_turn(1), *_turn(2), *_turn(3), *_turn(4)]
+    result = CompactingStrategy(keep_recent_turns=2).view(messages, ContextBudget(window=None))
+
+    summary = next(part.content for part in result.messages[0].parts if isinstance(part, CompactionPart))
+    assert 'Files touched so far' in summary
+    # The four turns touched f1..f4; the most recent one goes first.
+    working_set = summary[summary.index('Files touched so far') :]
+    assert working_set.index('f4.py') < working_set.index('f1.py')
+
+
+def test_compacting_working_set_can_be_disabled():
+    messages = [*_turn(1), *_turn(2), *_turn(3), *_turn(4)]
+    result = CompactingStrategy(keep_recent_turns=2, include_working_set=False).view(
+        messages, ContextBudget(window=None)
+    )
+    summary = next(part.content for part in result.messages[0].parts if isinstance(part, CompactionPart))
+    assert 'Files touched' not in summary
+
+
+def test_compacting_without_compaction_has_no_working_set():
+    """With no old turns there is no summary, and therefore no working set either."""
+    messages = [*_turn(1), *_turn(2)]
+    result = CompactingStrategy(keep_recent_turns=5).view(messages, ContextBudget(window=None))
+    assert not any(isinstance(part, CompactionPart) for message in result.messages for part in message.parts)

@@ -1,4 +1,4 @@
-"""Pantalla modal para elegir una sesión guardada."""
+"""Modal screen to pick a saved session."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from src.engine.sessions.session_store import Session
 
 
 class SessionPicker(ModalScreen[str | None]):
-    """Devuelve el id de la sesión elegida (o ``None`` si se cancela)."""
+    """Returns the id of the chosen session (or ``None`` if cancelled)."""
 
     BINDINGS: ClassVar[list[Binding]] = [Binding('escape', 'cancel', 'Cancel')]
 

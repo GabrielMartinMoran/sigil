@@ -2,7 +2,7 @@
   "mcp_servers": {
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/me/proyectos"],
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/me/projects"],
       "enabled": true,
       "prefix": "fs",
       "include_instructions": true,
@@ -21,8 +21,8 @@
       "args": ["-y", "@playwright/mcp@latest", "--output-dir", "/tmp/sigil-shots"],
       "cwd": "/tmp"
     },
-    "remoto": {
-      "url": "https://ejemplo.com/mcp",
+    "remote": {
+      "url": "https://example.com/mcp",
       "headers": { "Authorization": "Bearer ${MCP_TOKEN:-}" },
       "transport": "http",
       "enabled": false

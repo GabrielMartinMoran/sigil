@@ -1,15 +1,15 @@
-"""Medición y estimación de tokens de contexto.
+"""Context token measurement and estimation.
 
-Hay dos números distintos y no hay que confundirlos:
+There are two different numbers and they must not be confused:
 
-- **Medido**: los tokens de input que el provider reportó para el último request.
-  Es ground truth de lo que se mandó, pero describe el pasado.
-- **Proyectado**: el medido más una estimación de lo agregado desde entonces
-  (tool results nuevos, prompt nuevo). Es lo que importa para saber si el próximo
-  request entra en la ventana.
+- **Measured**: the input tokens the provider reported for the last request.
+  It is ground truth of what was sent, but it describes the past.
+- **Projected**: the measured one plus an estimate of what was added since then
+  (new tool results, new prompt). It is what matters to know whether the next
+  request fits in the window.
 
-La estimación es ``chars / 4``. No pretende ser exacta: sirve para comparar
-bloques entre sí y para proyectar un delta. El número exacto es el medido.
+The estimate is ``chars / 4``. It does not claim to be exact: it serves to compare
+blocks against each other and to project a delta. The exact number is the measured one.
 """
 
 from __future__ import annotations
@@ -33,24 +33,24 @@ from pydantic_ai.messages import (
 )
 
 CHARS_PER_TOKEN = 4
-"""Heurística de estimación. El medido del provider manda cuando existe."""
+"""Estimation heuristic. The provider's measured value wins when it exists."""
 
-# Mismo namespace que usa pydantic-ai para marcar el tamaño real de contexto de
-# una respuesta cuyo usage suma varios requests (decodes largos de Google,
-# compactaciones de Anthropic). Ver `pydantic_ai._context_size`.
+# Same namespace pydantic-ai uses to mark the real context size of
+# a response whose usage adds up several requests (long Google decodes,
+# Anthropic compactions). See `pydantic_ai._context_size`.
 _METADATA_KEY = '__pydantic_ai__'
 _CONTEXT_INPUT_TOKENS_KEYS = ('context_input_tokens', 'initial_input_tokens')
 
 
 def estimate_tokens(text: str) -> int:
-    """Estimación de tokens de un texto. Vacío es cero, no uno."""
+    """Token estimate of a text. Empty is zero, not one."""
     if not text:
         return 0
     return max(1, round(len(text) / CHARS_PER_TOKEN))
 
 
 def _as_text(value: Any) -> str:
-    """Convierte el contenido de una parte a texto plano, sin romperse."""
+    """Converts a part's content to plain text, without breaking."""
     if value is None:
         return ''
     if isinstance(value, str):
@@ -66,7 +66,7 @@ def _as_text(value: Any) -> str:
 
 
 def part_text(part: Any) -> str:
-    """Texto que aporta una parte al contexto, para estimar su costo."""
+    """Text a part contributes to the context, to estimate its cost."""
     if isinstance(part, SystemPromptPart | TextPart | ThinkingPart | CompactionPart):
         return part.content or ''
     if isinstance(part, UserPromptPart):
@@ -82,26 +82,26 @@ def part_text(part: Any) -> str:
 
 
 def tool_return_text(part: Any) -> str:
-    """Texto que el modelo ve de un tool result.
+    """Text the model sees from a tool result.
 
-    Las tools de Sigil devuelven modelos pydantic (`FileContent`, `PatchResult`,
-    `LoadedSkill`), no strings. `model_response_str()` es la serialización exacta
-    que viaja al provider; `str(content)` daría el repr de Python y mentiría
-    sobre el tamaño.
+    Sigil tools return pydantic models (`FileContent`, `PatchResult`,
+    `LoadedSkill`), not strings. `model_response_str()` is the exact serialization
+    that travels to the provider; `str(content)` would give the Python repr and lie
+    about the size.
     """
     model_response_str = getattr(part, 'model_response_str', None)
     if callable(model_response_str):
-        # La estimación nunca debe romper el request.
+        # Estimation must never break the request.
         with contextlib.suppress(Exception):
             return model_response_str()
     return _as_text(getattr(part, 'content', ''))
 
 
 def estimate_message_tokens(message: ModelMessage) -> int:
-    """Estimación del costo de un mensaje completo."""
+    """Cost estimate of a whole message."""
     total = sum(estimate_tokens(part_text(part)) for part in getattr(message, 'parts', ()))
-    # Las instrucciones viajan en el request pero no son partes del mensaje.
-    # Pueden ser un string ya renderizado o una lista de `InstructionPart`.
+    # Instructions travel on the request but are not message parts.
+    # They can be an already rendered string or a list of `InstructionPart`.
     instructions = getattr(message, 'instructions', None)
     if isinstance(instructions, str):
         total += estimate_tokens(instructions)
@@ -115,7 +115,7 @@ def estimate_messages_tokens(messages: Sequence[ModelMessage]) -> int:
 
 
 def _marked_context_input_tokens(response: ModelResponse) -> int | None:
-    """Input tokens que miden el contexto, cuando el usage suma varios requests."""
+    """Input tokens that measure the context, when the usage adds up several requests."""
     namespace = (response.metadata or {}).get(_METADATA_KEY)
     if not isinstance(namespace, dict):
         return None
@@ -127,11 +127,11 @@ def _marked_context_input_tokens(response: ModelResponse) -> int | None:
 
 
 def response_context_tokens(response: ModelResponse) -> int:
-    """Contexto que deja una respuesta: input (medido) más output generado.
+    """Context a response leaves behind: input (measured) plus generated output.
 
-    Espeja `pydantic_ai._context_size.context_tokens`, que es privado. Si cambia
-    de semántica, el medido se degrada a ``usage.input_tokens + output_tokens``,
-    que sigue siendo una cota razonable.
+    It mirrors `pydantic_ai._context_size.context_tokens`, which is private. If it changes
+    semantics, the measured value degrades to ``usage.input_tokens + output_tokens``,
+    which is still a reasonable bound.
     """
     marked = _marked_context_input_tokens(response)
     input_tokens = response.usage.input_tokens if marked is None else marked
@@ -146,7 +146,7 @@ def last_response_index(messages: Sequence[ModelMessage]) -> int | None:
 
 
 def measured_tokens(messages: Sequence[ModelMessage]) -> int | None:
-    """Tokens del último request que el provider reportó, o ``None`` si no hay."""
+    """Tokens of the last request the provider reported, or ``None`` if there is none."""
     index = last_response_index(messages)
     if index is None:
         return None
@@ -158,10 +158,10 @@ def measured_tokens(messages: Sequence[ModelMessage]) -> int | None:
 
 
 def projected_tokens(messages: Sequence[ModelMessage]) -> int | None:
-    """Estimación del próximo request: medido más lo agregado desde la última respuesta.
+    """Estimate of the next request: measured plus what was added since the last response.
 
-    Si todavía no hay respuesta (primer request del turno), proyecta el historial
-    completo por estimación.
+    If there is no response yet (first request of the turn), it projects the whole
+    history by estimation.
     """
     index = last_response_index(messages)
     if index is None:

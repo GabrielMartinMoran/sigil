@@ -1,4 +1,4 @@
-"""Input de la barra inferior con navegación del menú de comandos."""
+"""Bottom bar input with command menu navigation."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from textual.widgets import Input
 
 
 class PromptInput(Input):
-    """Input siempre visible; ↑/↓/Enter/Esc operan el menú cuando está abierto."""
+    """Always visible input; Up/Down/Enter/Esc drive the menu when it is open."""
 
     BINDINGS: ClassVar[list[Binding]] = [
         Binding('up', 'menu_up', show=False, priority=True),

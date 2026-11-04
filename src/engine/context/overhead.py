@@ -1,8 +1,8 @@
-"""Medición del costo fijo de un request: instrucciones y schemas de tools.
+"""Measurement of the fixed cost of a request: instructions and tool schemas.
 
-Se mide desde `ModelRequestParameters`, que es la fuente de verdad de lo que se
-manda: los `instruction_parts` ya resueltos y las definiciones de tools que el
-provider va a serializar. Nada de introspección del agente.
+It is measured from `ModelRequestParameters`, which is the source of truth of what
+gets sent: the already-resolved `instruction_parts` and the tool definitions the
+provider is going to serialize. No agent introspection.
 """
 
 from __future__ import annotations
@@ -15,14 +15,14 @@ from src.engine.context.tokens import estimate_tokens
 
 
 def measure_instruction_parts(parts: Iterable[Any] | None) -> int:
-    """Tokens de los bloques de instrucciones resueltos."""
+    """Tokens of the resolved instruction blocks."""
     if not parts:
         return 0
     return sum(estimate_tokens(getattr(part, 'content', '') or '') for part in parts)
 
 
 def measure_tool_definitions(tools: Sequence[Any] | None) -> int:
-    """Tokens de los schemas de tools, tal como los serializa el provider."""
+    """Tokens of the tool schemas, as the provider serializes them."""
     if not tools:
         return 0
     total = 0
@@ -41,7 +41,7 @@ def measure_tool_definitions(tools: Sequence[Any] | None) -> int:
 
 
 def measure_request_parameters(parameters: Any) -> tuple[int, int]:
-    """``(instrucciones, tools)`` de un `ModelRequestParameters`."""
+    """``(instructions, tools)`` of a `ModelRequestParameters`."""
     if parameters is None:
         return 0, 0
     instructions = measure_instruction_parts(getattr(parameters, 'instruction_parts', None))

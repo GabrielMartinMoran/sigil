@@ -1,15 +1,15 @@
-"""Convierte errores de tools en resultados fallidos que el modelo puede leer.
+"""Turns tool errors into failed results the model can read.
 
-Sin esto, una excepción de una tool —un `patch_file` que no encuentra el
-`old_string`, un `read_file` sobre una ruta inexistente— aborta el run entero:
-el turno muere, el usuario recupera el control y el agente nunca se entera de
-qué falló ni puede corregirse.
+Without this, a tool exception (a `patch_file` that does not find the
+`old_string`, a `read_file` on a nonexistent path) aborts the whole run:
+the turn dies, the user takes back control and the agent never learns
+what failed and cannot correct itself.
 
-pydantic-ai deja pasar la excepción por defecto. `ToolFailed` la convierte en un
-`ToolReturnPart` con `outcome='failed'` que el modelo ve en el siguiente paso.
-A diferencia de `ModelRetry`, no consume el presupuesto de reintentos de la tool
-ni le pide al modelo que repita la misma llamada: le informa el fallo para que
-adapte el plan.
+pydantic-ai lets the exception through by default. `ToolFailed` turns it into a
+`ToolReturnPart` with `outcome='failed'` that the model sees on the next step.
+Unlike `ModelRetry`, it does not consume the tool's retry budget
+nor does it ask the model to repeat the same call: it reports the failure so it
+can adapt the plan.
 """
 
 from __future__ import annotations
@@ -23,11 +23,11 @@ from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
 MAX_ERROR_CHARS = 2000
-"""Tope del mensaje que se le devuelve al modelo, para no inflar el contexto."""
+"""Cap of the message returned to the model, so the context is not inflated."""
 
 
 def describe_tool_error(error: BaseException) -> str:
-    """Mensaje de una tool fallida, con el tipo de excepción adelante."""
+    """Message of a failed tool, with the exception type up front."""
     detail = ' '.join(str(error).split()) or '(no detail)'
     if len(detail) > MAX_ERROR_CHARS:
         detail = detail[: MAX_ERROR_CHARS - 1] + '…'
@@ -36,7 +36,7 @@ def describe_tool_error(error: BaseException) -> str:
 
 @dataclass
 class ToolErrorRecovery(AbstractCapability[AgentDepsT]):
-    """Devuelve el error de una tool al modelo en vez de tumbar el turno."""
+    """Returns a tool error to the model instead of bringing the turn down."""
 
     id: str | None = 'tool_error_recovery'
 

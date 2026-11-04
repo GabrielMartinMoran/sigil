@@ -1,8 +1,8 @@
-"""Tests del soporte MCP (sin red ni LLM real).
+"""Tests for the MCP support (no network and no real LLM).
 
-El test de integración levanta un servidor MCP real por stdio usando el SDK
-oficial (``mcp.server.mcpserver``), que ya viene instalado como dependencia del
-cliente de FastMCP.
+The integration test brings up a real MCP server over stdio using the official
+SDK (``mcp.server.mcpserver``), which already ships as a dependency of the
+FastMCP client.
 """
 
 import asyncio
@@ -15,10 +15,12 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset
 
-from src.engine.mcp.config import expand_env_vars, load_config
-from src.engine.mcp.manager import MCPManager
-from src.engine.mcp.models import MCPConfigError, ServerStatus
+from src.engine.mcp.config.env_expansion import expand_env_vars
+from src.engine.mcp.config.loader import load_config
+from src.engine.mcp.config_models.mcp_config_error import MCPConfigError
+from src.engine.mcp.manager.manager import MCPManager
 from src.engine.mcp.resilient import ResilientToolset
+from src.engine.mcp.tool_models.server_status import ServerStatus
 from src.engine.mcp.tools import register_mcp_tools
 from src.ui.mcp_report import format_mcp_status
 
@@ -78,7 +80,7 @@ class DummyAgent:
 
 
 class BrokenToolset(AbstractToolset):
-    """Toolset que no puede conectar."""
+    """Toolset that cannot connect."""
 
     @property
     def id(self):
@@ -94,7 +96,7 @@ class BrokenToolset(AbstractToolset):
         raise NotImplementedError
 
 
-# --- expansión de variables de entorno ---------------------------------------
+# --- environment variable expansion ------------------------------------------
 
 
 def test_expand_env_vars_supports_defaults():
@@ -110,7 +112,7 @@ def test_expand_env_vars_raises_without_default():
         expand_env_vars('${MISSING}', {})
 
 
-# --- validación de la configuración ------------------------------------------
+# --- config validation -------------------------------------------------------
 
 
 def test_config_rejects_camel_case_key(tmp_path):
@@ -217,7 +219,7 @@ def test_env_vars_are_expanded_in_config(tmp_path):
     assert config.servers['x'].config.env == {'TOKEN': 'secret'}
 
 
-# --- construcción de toolsets ------------------------------------------------
+# --- toolset construction ----------------------------------------------------
 
 
 def test_disabled_server_has_no_toolset(tmp_path):
@@ -241,14 +243,14 @@ def test_empty_prefix_disables_prefixing(tmp_path):
     assert manager.get('github').spec.tool_prefix == ''
 
 
-# --- degradación -------------------------------------------------------------
+# --- degradation -------------------------------------------------------------
 
 
 def test_resilient_toolset_degrades_instead_of_failing_the_run():
     wrapper = ResilientToolset(BrokenToolset())
     agent = Agent(TestModel(custom_output_text='ok'), toolsets=[wrapper])
 
-    result = asyncio.run(agent.run('hola'))
+    result = asyncio.run(agent.run('hello'))
 
     assert result.output == 'ok'
     assert wrapper.error is not None
@@ -265,7 +267,7 @@ def test_resilient_toolset_reports_the_error():
     assert asyncio.run(wrapper.get_tools(None)) == {}
 
 
-# --- integración con un servidor real ----------------------------------------
+# --- integration with a real server ------------------------------------------
 
 
 def test_stdio_server_end_to_end(tmp_path):
@@ -273,7 +275,7 @@ def test_stdio_server_end_to_end(tmp_path):
     manager = MCPManager(load_config([path], environ={}).servers)
     agent = Agent(TestModel(call_tools=['probe_add']), toolsets=manager.toolsets)
 
-    result = asyncio.run(agent.run('sumá 2 y 3'))
+    result = asyncio.run(agent.run('add 2 and 3'))
 
     assert 'probe_add' in result.output
     assert manager.errors == []
@@ -329,14 +331,14 @@ def test_tool_calls_are_logged_with_the_prefix(tmp_path):
     manager = MCPManager(load_config([path], environ={}).servers, tool_logger=events.append)
     agent = Agent(TestModel(call_tools=['probe_add']), toolsets=manager.toolsets)
 
-    asyncio.run(agent.run('sumá'))
+    asyncio.run(agent.run('add'))
 
     phases = [(event.tool_name, event.phase) for event in events]
     assert ('probe_add', 'start') in phases
     assert ('probe_add', 'success') in phases
 
 
-# --- reporte de estado --------------------------------------------------------
+# --- state report -----------------------------------------------------------
 
 
 def test_format_mcp_status_shows_tools_errors_and_state():
@@ -363,7 +365,7 @@ def test_broken_server_does_not_block_the_others(tmp_path):
         tmp_path / 'config.json',
         {
             'probe': stdio_server(tmp_path),
-            'roto': {'command': '/nonexistent/binary', 'keep_alive': False},
+            'broken': {'command': '/nonexistent/binary', 'keep_alive': False},
         },
     )
     manager = MCPManager(load_config([path], environ={}).servers)
@@ -372,7 +374,7 @@ def test_broken_server_does_not_block_the_others(tmp_path):
 
     assert statuses['probe'].tools == ['probe_add']
     assert statuses['probe'].error is None
-    assert statuses['roto'].error is not None
+    assert statuses['broken'].error is not None
 
 
 def test_agent_runs_with_a_broken_server_configured(tmp_path):
@@ -380,12 +382,12 @@ def test_agent_runs_with_a_broken_server_configured(tmp_path):
         tmp_path / 'config.json',
         {
             'probe': stdio_server(tmp_path),
-            'roto': {'command': '/nonexistent/binary', 'keep_alive': False},
+            'broken': {'command': '/nonexistent/binary', 'keep_alive': False},
         },
     )
     manager = MCPManager(load_config([path], environ={}).servers)
     agent = Agent(TestModel(custom_output_text='ok'), toolsets=manager.toolsets)
 
-    result = asyncio.run(agent.run('hola'))
+    result = asyncio.run(agent.run('hello'))
 
     assert result.output == 'ok'

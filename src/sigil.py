@@ -1,4 +1,4 @@
-"""Punto de entrada de Sigil: arma el agente, las tools, la sesión y la UI."""
+"""Sigil entry point: builds the agent, the tools, the session and the UI."""
 
 from __future__ import annotations
 
@@ -7,36 +7,37 @@ from pathlib import Path
 from src.config_provider import ConfigProvider
 from src.engine.agents.agent import create_agent
 from src.engine.agents.retry import RetryTransientModelErrors
-from src.engine.context import (
-    CompactingStrategy,
-    ContextMeter,
-    ContextViewCapability,
-    PassthroughStrategy,
-    ScopeSink,
-    ScopeTracker,
-    WindowedStrategy,
-    WorkspaceInstructions,
-)
-from src.engine.mcp import MCPManager, load_config, register_mcp_tools
-from src.engine.roadmap import RoadmapStore
+from src.engine.context.capability import ContextViewCapability
+from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
+from src.engine.context.meter.context_meter import ContextMeter
+from src.engine.context.scope import ScopeSink, ScopeTracker
+from src.engine.context.strategy.compacting import CompactingStrategy
+from src.engine.context.strategy.passthrough import PassthroughStrategy
+from src.engine.context.strategy.windowed import WindowedStrategy
+from src.engine.files.tools import register_file_tools
+from src.engine.interaction.hub import QuestionHub
+from src.engine.interaction.tools import register_interaction_tools
+from src.engine.mcp.config.loader import load_config
+from src.engine.mcp.manager.manager import MCPManager
+from src.engine.mcp.tools import register_mcp_tools
+from src.engine.roadmap.store import RoadmapStore
+from src.engine.roadmap.tools import register_roadmap_tools
 from src.engine.sessions.session_store import SessionStore
+from src.engine.shell.tools import register_shell_tools
 from src.engine.skills.loaded import LoadedSkills
 from src.engine.skills.registry import SkillRegistry
-from src.engine.tools.files import register_file_tools
-from src.engine.tools.interaction import QuestionHub, register_interaction_tools
-from src.engine.tools.roadmap import register_roadmap_tools
-from src.engine.tools.tool_manager import ToolManager
-from src.engine.tools.tool_registry import ToolLoggerHub
-from src.engine.tools.web import register_web_tools
+from src.engine.skills.tools import register_skill_tools
+from src.engine.tooling.logging import ToolLoggerHub
+from src.engine.web.tools import register_web_tools
 from src.ui.app import SigilApp
 
 
 def _build_strategy():
-    """Estrategia de vista según configuración.
+    """View strategy based on configuration.
 
-    - `windowed` (default): recorta razonamiento, tool results viejos y turnos viejos.
-    - `compacting`: además colapsa los turnos viejos en un resumen determinístico.
-    - `passthrough`: manda el historial tal cual.
+    - `windowed` (default): trims reasoning, old tool results and old turns.
+    - `compacting`: also collapses old turns into a deterministic summary.
+    - `passthrough`: sends the history as is.
     """
     if ConfigProvider.CONTEXT_STRATEGY == 'passthrough':
         return PassthroughStrategy()
@@ -54,19 +55,19 @@ def _build_strategy():
 
 
 def run() -> None:
-    # Un único registro de skills compartido por las instrucciones del agente
-    # (metadatos) y por las tools (carga, recursos y scripts).
+    # A single skill registry shared by the agent instructions
+    # (metadata) and by the tools (load, resources and scripts).
     skill_registry = SkillRegistry()
 
-    # Skills cargados en la sesión: la tool `load_skill` los registra y la
-    # función de instrucciones los inyecta como bloque en cada request.
+    # Skills loaded in the session: the `load_skill` tool registers them and the
+    # instructions function injects them as a block on every request.
     loaded_skills = LoadedSkills()
 
-    # Hub de logging de tools: el engine emite, la UI agrega su sink al montar.
+    # Tool logging hub: the engine emits, the UI adds its sink on mount.
     tool_logger = ToolLoggerHub()
 
-    # Contexto: el scope sigue los directorios que tocan las tools, y el bloque
-    # `workspace` resuelve AGENTS.md/CLAUDE.md sobre ese árbol.
+    # Context: the scope follows the directories the tools touch, and the
+    # `workspace` block resolves AGENTS.md/CLAUDE.md over that tree.
     workspace_root = Path.cwd()
     scope = ScopeTracker(workspace_root)
     workspace = WorkspaceInstructions(workspace_root)
@@ -75,25 +76,25 @@ def run() -> None:
     meter = ContextMeter(output_reserve=ConfigProvider.CONTEXT_OUTPUT_RESERVE)
     context_capability = ContextViewCapability(strategy=_build_strategy(), meter=meter)
 
-    # Sesión activa: el roadmap y el historial cuelgan de ella.
+    # Active session: the roadmap and the history hang off it.
     store = SessionStore()
     session = store.load_last()
     if session is None:
         session = store.create_session()
 
-    # Puente para preguntas interactivas y estado del roadmap: el engine
-    # actualiza, la UI los consume. El roadmap es por sesión: nace vacío con
-    # cada sesión y se recupera al cargarla.
+    # Bridge for interactive questions and roadmap state: the engine
+    # updates, the UI consumes them. The roadmap is per session: it is born empty with
+    # each session and is recovered when loading it.
     question_hub = QuestionHub()
     roadmap_store = RoadmapStore(session_id=session.id)
 
-    # Servidores MCP declarados en .sigil/config.json (y en ~/.sigil/config.json).
-    # Los errores de configuración no abortan el arranque: se muestran en el chat.
+    # MCP servers declared in .sigil/config.json (and in ~/.sigil/config.json).
+    # Config errors do not abort startup: they are shown in the chat.
     config = load_config()
     mcp_manager = MCPManager(config.servers, tool_logger=tool_logger)
 
-    # Reintentos ante fallos transitorios del modelo. La instancia se comparte
-    # con la UI para que avise en el chat cada vez que se reintenta.
+    # Retries on transient model failures. The instance is shared
+    # with the UI so it announces every retry in the chat.
     model_retry = RetryTransientModelErrors(max_attempts=ConfigProvider.MODEL_MAX_ATTEMPTS)
 
     agent = create_agent(
@@ -106,8 +107,8 @@ def run() -> None:
         extra_capabilities=[context_capability],
     )
 
-    tool_manager = ToolManager(skill_registry=skill_registry, tool_logger=tool_logger, loaded_skills=loaded_skills)
-    tool_manager.register_tools(agent)
+    register_shell_tools(agent, logger=tool_logger)
+    register_skill_tools(agent, skill_registry, logger=tool_logger, loaded=loaded_skills)
     register_mcp_tools(agent, mcp_manager, logger=tool_logger)
     register_web_tools(agent, logger=tool_logger)
     register_file_tools(agent, logger=tool_logger)

@@ -1,4 +1,4 @@
-"""Tests de las guardas de concurrencia entre tools hermanas."""
+"""Tests for the concurrency guards between sibling tools."""
 
 import asyncio
 
@@ -15,13 +15,13 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from src.engine.agents.tool_errors import ToolErrorRecovery
-from src.engine.tools.concurrency import (
+from src.engine.tooling.concurrency import (
     ConcurrencyContext,
     SiblingCall,
     ToolConflict,
     earlier_siblings,
 )
-from src.engine.tools.tool_registry import ToolRegistrar
+from src.engine.tooling.registrar import ToolRegistrar
 
 
 def _response(*calls: tuple[str, dict, str | None]) -> ModelResponse:
@@ -38,7 +38,7 @@ def _response(*calls: tuple[str, dict, str | None]) -> ModelResponse:
 
 def test_earlier_siblings_returns_only_the_previous_calls_in_order():
     messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('hola')]),
+        ModelRequest(parts=[UserPromptPart('hello')]),
         _response(('a', {'x': 1}, 'c1'), ('b', {'x': 2}, 'c2'), ('c', {'x': 3}, 'c3')),
     ]
 
@@ -59,7 +59,7 @@ def test_no_siblings_without_messages():
 
 
 def test_no_siblings_when_the_last_message_is_not_a_response():
-    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hola')])]
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hello')])]
 
     assert earlier_siblings(messages, tool_call_id='c1', tool_name='a', args={}) == ()
 
@@ -182,7 +182,7 @@ def test_direct_call_without_context_skips_the_guard():
     agent = _agent_with_guarded_tool([])
     tool = agent._function_toolset.tools['touch']
 
-    # Sin RunContext no hay hermanos: la llamada directa se ejecuta igual.
+    # Without a RunContext there are no siblings: the direct call runs anyway.
     assert tool.function('a') == 'a:default'
 
 
@@ -209,7 +209,7 @@ def test_conflict_is_logged_as_an_error():
 
     asyncio.run(agent.run('go'))
 
-    # Las dos llamadas son concurrentes: el orden entre ellas no está garantizado.
+    # The two calls are concurrent: the order between them is not guaranteed.
     phases = sorted(event.phase for event in events)
     assert phases == ['error', 'start', 'start', 'success']
     errors = [event.error or '' for event in events if event.phase == 'error']

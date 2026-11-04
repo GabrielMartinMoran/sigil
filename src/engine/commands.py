@@ -1,4 +1,4 @@
-"""Registro de comandos de la barra de entrada."""
+"""Registry of the input bar commands."""
 
 from __future__ import annotations
 
@@ -17,13 +17,14 @@ COMMANDS: tuple[Command, ...] = (
     Command('/sidebar', 'Show or hide the sidebar (on/off)'),
     Command('/mcp', 'Show MCP server status'),
     Command('/context', 'Show the context usage breakdown'),
+    Command('/debug', 'Toggle the agent debug view (alt+d); --text dumps the report'),
     Command('/help', 'Show command help'),
     Command('/quit', 'Quit Sigil'),
 )
 
 
 def match_commands(text: str) -> list[Command]:
-    """Comandos cuyo nombre empieza con lo tipeado (sólo si arranca con '/')."""
+    """Commands whose name starts with what was typed (only if it starts with '/')."""
     if not text.startswith('/'):
         return []
     token = text.split(' ', 1)[0].lower()

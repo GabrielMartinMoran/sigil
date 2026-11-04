@@ -1,60 +1,60 @@
 # Sigil
 
-Agente de terminal construido con [pydantic-ai](https://ai.pydantic.dev/) y
+Terminal agent built with [pydantic-ai](https://ai.pydantic.dev/) and
 [Textual](https://textual.textualize.io/).
 
 ## Agent Skills
 
-Sigil implementa el protocolo [Agent Skills](https://github.com/anthropics/skills):
-carpetas autocontenidas con un `SKILL.md` (frontmatter YAML + instrucciones
-Markdown) y recursos opcionales (`scripts/`, `references/`, `assets/`).
+Sigil implements the [Agent Skills](https://github.com/anthropics/skills) protocol:
+self-contained folders with a `SKILL.md` (YAML frontmatter + Markdown
+instructions) and optional resources (`scripts/`, `references/`, `assets/`).
 
-### Dónde se buscan
+### Where they are looked up
 
-En orden de precedencia:
+In order of precedence:
 
-1. `<cwd>/.agents/skills` — skills del proyecto.
-2. `~/.agents/skills` — skills globales del usuario.
+1. `<cwd>/.agents/skills` — project skills.
+2. `~/.agents/skills` — user global skills.
 
-Un skill del proyecto con el mismo nombre que uno global lo sombrea. También se
-puede fijar una lista explícita de raíces con `SIGIL_SKILLS_DIRS` (separadas por
-`:`).
+A project skill with the same name as a global one shadows it. You can also set
+an explicit list of roots with `SIGIL_SKILLS_DIRS` (separated by `:`).
 
 ### Progressive disclosure
 
-| Nivel | Qué se carga | Dónde viaja |
+| Level | What gets loaded | Where it travels |
 | --- | --- | --- |
-| 1 | `name` + `description` | Bloque de instrucciones `skills`, recalculado por request |
-| 2 | Cuerpo del `SKILL.md` | Bloque de instrucciones `loaded-skills`, al llamar `load_skill` |
-| 3 | Recursos y scripts | Resultado de `read_skill_resource` / `run_skill_script` |
+| 1 | `name` + `description` | `skills` instruction block, recomputed per request |
+| 2 | `SKILL.md` body | `loaded-skills` instruction block, when calling `load_skill` |
+| 3 | Resources and scripts | `read_skill_resource` / `run_skill_script` result |
 
-El nivel 2 va como **bloque de instrucciones**, no como resultado de tool. Así
-sobrevive a la compactación y no compite por el presupuesto del historial. Los
-recursos quedan afuera a propósito: se leen on demand, que es lo que mantiene
-barato el bloque.
+Level 2 goes as an **instruction block**, not as a tool result. That way it
+survives compaction and does not compete for the history budget. Resources are
+left out on purpose: they are read on demand, which is what keeps the block
+cheap.
 
-### Tools expuestas al modelo
+### Tools exposed to the model
 
-- `list_skills(query=None)` — lista metadatos de los skills instalados.
-- `load_skill(name)` — registra el skill y devuelve un acuse con el inventario de
-  recursos. El cuerpo del `SKILL.md` aparece en las instrucciones del request
-  siguiente, bajo "Loaded skills".
-- `read_skill_resource(name, path, max_bytes=...)` — lee un recurso relativo al
-  skill (texto UTF-8 o binario en base64). Bloquea `..` y rutas absolutas.
-- `run_skill_script(name, script, args=None, timeout_seconds=30)` — ejecuta un
-  script empaquetado con el directorio del skill como `cwd`.
+- `list_skills(query=None)` — lists metadata of the installed skills.
+- `load_skill(name)` — registers the skill and returns an acknowledgement with
+  the resource inventory. The `SKILL.md` body shows up in the next request's
+  instructions, under "Loaded skills".
+- `read_skill_resource(name, path, max_bytes=...)` — reads a resource relative
+  to the skill (UTF-8 text or base64 binary). It blocks `..` and absolute paths.
+- `run_skill_script(name, script, args=None, timeout_seconds=30)` — runs a
+  bundled script with the skill directory as `cwd`.
 
-### Logging automático de tools
+### Automatic tool logging
 
-Las tools se registran con `ToolRegistrar` en vez de `agent.tool_plain` / `agent.tool`.
-El wrapper loguea cada llamada (`start`, `success`, `error`, duración y args) y
-la UI lo refleja en el chat. Funciona igual para tools sync, async y con
-`RunContext`.
+Tools are registered with `ToolRegistrar` instead of `agent.tool_plain` /
+`agent.tool`. The wrapper logs every call (`start`, `success`, `error`, duration
+and args) and the UI reflects it in the chat. It works the same for sync, async
+and `RunContext` tools.
 
 ```python
-from src.engine.tools import ToolLoggerHub, ToolRegistrar
+from src.engine.tooling.logging import ToolLoggerHub
+from src.engine.tooling.registrar import ToolRegistrar
 
-hub = ToolLoggerHub()  # la app le agrega su sink al montar
+hub = ToolLoggerHub()  # the app adds its sink on mount
 registrar = ToolRegistrar(agent, hub)
 
 
@@ -66,28 +66,26 @@ def my_tool(query: str) -> str: ...
 def my_ctx_tool(ctx: RunContext[None], query: str) -> str: ...
 ```
 
-Para tools externas que ya existen como función:
+For external tools that already exist as a function:
 
 ```python
 registrar.register(existing_function, name='external-tool')
-# o, desde un ToolManager:
-tool_manager.register_tool(agent, existing_function)
 ```
 
-### Concurrencia entre tools
+### Concurrency between tools
 
-pydantic-ai ejecuta las llamadas hermanas de una misma respuesta del modelo como
-tareas concurrentes. Para casi todas las tools eso está bien. Para las que mutan
-un recurso compartido, dos llamadas simultáneas se pisan: cada una lee el estado
-original y la última en escribir borra el trabajo de la anterior.
+pydantic-ai runs the sibling calls of the same model response as concurrent
+tasks. For almost every tool that is fine. For the ones that mutate a shared
+resource, two simultaneous calls stomp on each other: each one reads the
+original state and the last one to write erases the work of the previous one.
 
-Una guarda declara, por tool, cuándo la llamada no puede convivir con las
-anteriores de la misma respuesta. Recibe un `ConcurrencyContext` con los
-argumentos efectivos y las llamadas anteriores, en orden de emisión, y devuelve
-el motivo del conflicto o `None`.
+A guard declares, per tool, when the call cannot coexist with the previous ones
+of the same response. It receives a `ConcurrencyContext` with the effective args
+and the previous calls, in emission order, and returns the reason for the
+conflict or `None`.
 
 ```python
-from src.engine.tools import ConcurrencyContext
+from src.engine.tooling.concurrency import ConcurrencyContext
 
 
 def no_same_key(ctx: ConcurrencyContext) -> str | None:
@@ -101,30 +99,30 @@ def no_same_key(ctx: ConcurrencyContext) -> str | None:
 def my_tool(key: str) -> str: ...
 ```
 
-La guarda se evalúa en orden de invocación: la primera llamada de un grupo en
-conflicto siempre pasa y las siguientes fallan con un `ToolConflict`. El modelo
-lo ve como resultado fallido de la tool y puede reemitir la llamada en un paso
-aparte. El resto de las llamadas sigue en paralelo, sin barreras globales.
+The guard is evaluated in invocation order: the first call of a conflicting group
+always goes through and the following ones fail with a `ToolConflict`. The model
+sees it as a failed tool result and can re-emit the call in a separate step. The
+rest of the calls keep running in parallel, with no global barriers.
 
-Una llamada directa desde código —sin `RunContext`— se ejecuta igual, sin
-guarda: no hay hermanos con los que comparar.
+A direct call from code —without a `RunContext`— runs anyway, without a guard:
+there are no siblings to compare against.
 
-Los scripts se ejecutan con el intérprete de Sigil para `.py`, `bash` para
-`.sh`/`.bash`, `node` para `.js`, y shebang/permisos para el resto. Heredan el
-guard `SIGIL_SELF_GUARD`, que impide lanzar otra instancia de Sigil.
+Scripts run with the Sigil interpreter for `.py`, `bash` for `.sh`/`.bash`,
+`node` for `.js`, and shebang/permissions for the rest. They inherit the
+`SIGIL_SELF_GUARD` guard, which prevents launching another Sigil instance.
 
-### Formato del `SKILL.md`
+### `SKILL.md` format
 
 ```markdown
 ---
 name: my-skill
 description: When to use this skill and what it does.
-license: MIT                 # opcional
-allowed-tools: read write    # opcional
-metadata:                    # opcional
+license: MIT                 # optional
+allowed-tools: read write    # optional
+metadata:                    # optional
   version: "1.0"
-compatibility: ...           # opcional
-disable-model-invocation: false  # opcional
+compatibility: ...           # optional
+disable-model-invocation: false  # optional
 ---
 
 # My Skill
@@ -132,27 +130,27 @@ disable-model-invocation: false  # opcional
 Instructions...
 ```
 
-`name` debe ser kebab-case (máx. 64 caracteres) y `description` es el mecanismo
-principal de activación (máx. recomendado 1024 caracteres).
+`name` must be kebab-case (max 64 characters) and `description` is the main
+activation mechanism (recommended max 1024 characters).
 
 ## MCP (Model Context Protocol)
 
-Sigil consume servidores [MCP](https://github.com/modelcontextprotocol): las tools
-que publican se suman a las del agente, y sus resources y prompts quedan
-disponibles como meta-tools. Soporta stdio y HTTP (Streamable HTTP y SSE).
+Sigil consumes [MCP](https://github.com/modelcontextprotocol) servers: the tools
+they publish are added to the agent's, and their resources and prompts stay
+available as meta-tools. It supports stdio and HTTP (Streamable HTTP and SSE).
 
-### Dónde se configura
+### Where it is configured
 
-Todo vive en `.sigil/config.json`, con claves en **snake_case**. Se leen dos
-archivos y el del proyecto gana:
+Everything lives in `.sigil/config.json`, with **snake_case** keys. Two files are
+read and the project one wins:
 
 1. `<cwd>/.sigil/config.json`
 2. `~/.sigil/config.json`
 
-`SIGIL_CONFIG=/ruta/config.json` reemplaza a ambos. El merge es por servidor: una
-entrada del proyecto con el mismo nombre reemplaza entera a la global.
+`SIGIL_CONFIG=/path/config.json` replaces both. The merge is per server: a
+project entry with the same name replaces the global one entirely.
 
-### Ejemplo mínimo
+### Minimal example
 
 ```json
 {
@@ -166,65 +164,66 @@ entrada del proyecto con el mismo nombre reemplaza entera a la global.
 }
 ```
 
-Las tools de ese server aparecen como `github_<tool>` (por ejemplo
-`github_create_issue`). Hay un archivo completo en `.sigil/config.example.json`.
+That server's tools appear as `github_<tool>` (for example
+`github_create_issue`). There is a complete file in
+`.sigil/config.example.json`.
 
-### Campos
+### Fields
 
-| Clave | Tipo | Aplica a | Default | Qué hace |
+| Key | Type | Applies to | Default | What it does |
 | --- | --- | --- | --- | --- |
-| `command` | string | stdio | — | Ejecutable del servidor |
-| `args` | string[] | stdio | `[]` | Argumentos del ejecutable |
-| `env` | object | stdio | `{}` | Variables de entorno del proceso |
-| `cwd` | string | stdio | hereda el cwd de Sigil | Directorio de trabajo del proceso |
-| `keep_alive` | bool | stdio | `true` | Mantiene el proceso vivo entre turnos |
-| `url` | string | HTTP | — | Endpoint del servidor |
-| `headers` | object | HTTP | `{}` | Headers de cada request |
-| `transport` | `"http"` \| `"sse"` | HTTP | inferido | Fuerza el transporte |
-| `enabled` | bool | ambos | `true` | Apaga el servidor sin borrarlo |
-| `prefix` | string | ambos | nombre del server | Prefijo de las tools; `""` lo desactiva |
-| `include_instructions` | bool | ambos | `true` | Inyecta las instrucciones del server en el prompt |
-| `init_timeout` | number | ambos | `30` | Segundos para conectar y hacer el handshake |
-| `read_timeout` | number | ambos | `300` | Segundos de espera por cada mensaje |
-| `include_tools` | string[] | ambos | `[]` | Allowlist de tools |
-| `exclude_tools` | string[] | ambos | `[]` | Denylist de tools |
+| `command` | string | stdio | — | Server executable |
+| `args` | string[] | stdio | `[]` | Executable arguments |
+| `env` | object | stdio | `{}` | Process environment variables |
+| `cwd` | string | stdio | inherits Sigil's cwd | Process working directory |
+| `keep_alive` | bool | stdio | `true` | Keeps the process alive between turns |
+| `url` | string | HTTP | — | Server endpoint |
+| `headers` | object | HTTP | `{}` | Headers for every request |
+| `transport` | `"http"` \| `"sse"` | HTTP | inferred | Forces the transport |
+| `enabled` | bool | both | `true` | Turns the server off without deleting it |
+| `prefix` | string | both | server name | Tool prefix; `""` disables it |
+| `include_instructions` | bool | both | `true` | Injects the server instructions into the prompt |
+| `init_timeout` | number | both | `30` | Seconds to connect and perform the handshake |
+| `read_timeout` | number | both | `300` | Seconds to wait for each message |
+| `include_tools` | string[] | both | `[]` | Tool allowlist |
+| `exclude_tools` | string[] | both | `[]` | Tool denylist |
 
-Cada servidor declara `command` (stdio) o `url` (HTTP), nunca ambos. Los campos
-de un transporte en el otro son error, no se ignoran. `include_tools` y
-`exclude_tools` también son mutuamente excluyentes.
+Each server declares `command` (stdio) or `url` (HTTP), never both. Fields of one
+transport on the other are an error, not ignored. `include_tools` and
+`exclude_tools` are also mutually exclusive.
 
-### Variables de entorno en el archivo
+### Environment variables in the file
 
-Usá `${VAR}` para leer una variable y `${VAR:-default}` para darle un fallback.
-Funciona en cualquier valor string, incluido `cwd`:
+Use `${VAR}` to read a variable and `${VAR:-default}` to give it a fallback. It
+works in any string value, including `cwd`:
 
 ```json
 {
   "mcp_servers": {
-    "remoto": {
-      "url": "https://ejemplo.com/mcp",
+    "remote": {
+      "url": "https://example.com/mcp",
       "headers": { "Authorization": "Bearer ${MCP_TOKEN:-}" }
     }
   }
 }
 ```
 
-Una variable sin default y sin valor es un error de configuración, no un string
-vacío silencioso.
+A variable without a default and without a value is a config error, not a silent
+empty string.
 
-### `cwd`: dónde trabaja el servidor
+### `cwd`: where the server works
 
-`cwd` sólo aplica a servidores stdio. Sin `cwd` el proceso hereda el cwd de
-Sigil, que es lo correcto para servidores que operan sobre el proyecto
+`cwd` only applies to stdio servers. Without `cwd` the process inherits Sigil's
+cwd, which is the right thing for servers that operate on the project
 (filesystem, git).
 
-Una ruta relativa se resuelve contra el **directorio del archivo de config**, no
-contra el cwd de Sigil: `"cwd": ".mcp/playwright"` en `.sigil/config.json` apunta
-a `.sigil/.mcp/playwright` sin importar desde dónde arranques. Si el directorio no
-existe, ese servidor queda marcado como fallido con el path en el mensaje; Sigil
-no crea directorios por vos.
+A relative path is resolved against the **config file's directory**, not against
+Sigil's cwd: `"cwd": ".mcp/playwright"` in `.sigil/config.json` points to
+`.sigil/.mcp/playwright` no matter where you start from. If the directory does
+not exist, that server is marked as failed with the path in the message; Sigil
+does not create directories for you.
 
-Para Playwright, `cwd` no es la perilla de las capturas: eso se controla con
+For Playwright, `cwd` is not the knob for screenshots: that is controlled with
 `--output-dir`.
 
 ```json
@@ -239,151 +238,165 @@ Para Playwright, `cwd` no es la perilla de las capturas: eso se controla con
 }
 ```
 
-### Resources y prompts
+### Resources and prompts
 
-No son tools, así que se exponen con cuatro meta-tools:
+They are not tools, so they are exposed through four meta-tools:
 
-| Tool | Qué devuelve |
+| Tool | What it returns |
 | --- | --- |
-| `list_mcp_resources(server=None)` | Recursos publicados, con URI y mime type |
-| `read_mcp_resource(server, uri)` | Contenido: UTF-8, o base64 si es binario |
-| `list_mcp_prompts(server=None)` | Prompts disponibles y sus argumentos |
-| `get_mcp_prompt(server, name, arguments=None)` | El prompt ya renderizado |
+| `list_mcp_resources(server=None)` | Published resources, with URI and mime type |
+| `read_mcp_resource(server, uri)` | Content: UTF-8, or base64 if binary |
+| `list_mcp_prompts(server=None)` | Available prompts and their arguments |
+| `get_mcp_prompt(server, name, arguments=None)` | The already rendered prompt |
 
-Más `list_mcp_servers(connect=False)`, que reporta qué está configurado, qué
-falló y, con `connect=true`, qué tools expone cada servidor.
+Plus `list_mcp_servers(connect=False)`, which reports what is configured, what
+failed and, with `connect=true`, which tools each server exposes.
 
-Si no hay servidores configurados, estas tools no se registran: no gastan
-contexto.
+With no configured servers, these tools are not registered: they do not spend
+context.
 
-### Comando `/mcp`
+### `/mcp` command
 
-`/mcp` en el chat conecta con cada servidor y muestra transporte, estado, tools y
-el último error. Los errores de configuración también aparecen como aviso al
-arrancar, sin bloquear la sesión.
+`/mcp` in the chat connects to every server and shows transport, state, tools and
+the last error. Config errors also show up as a notice on startup, without
+blocking the session.
 
-### Qué pasa si un servidor falla
+### What happens if a server fails
 
-Un servidor que no conecta no rompe el turno: aporta cero tools, el resto de la
-conversación sigue y el error queda visible en `/mcp`. Los errores de parseo se
-reportan por servidor, así que una entrada rota no invalida las demás.
+A server that cannot connect does not break the turn: it contributes zero tools,
+the rest of the conversation keeps going and the error stays visible in `/mcp`.
+Parsing errors are reported per server, so a broken entry does not invalidate the
+rest.
 
-### Limitaciones
+### Limitations
 
-Sampling, elicitation y roots no se anuncian al servidor. Requieren que el
-cliente preste el modelo o la UI a mitad de turno, y eso abre recursión y
-preguntas interactivas dentro de una tool. Un servidor que dependa de esas
-capacidades va a fallar al pedirlas.
+Sampling, elicitation and roots are not announced to the server. They require the
+client to lend the model or the UI mid-turn, and that opens recursion and
+interactive questions inside a tool. A server that depends on those capabilities
+will fail when asking for them.
 
-## Tools integradas
+## Built-in tools
 
-Además de las skills y de los servidores MCP, Sigil registra un conjunto de
-tools propias. Todas pasan por el mismo logger, así que cada llamada aparece en
-el chat con su duración y sus argumentos.
+Besides the skills and the MCP servers, Sigil registers a set of its own tools.
+They all go through the same logger, so every call shows up in the chat with its
+duration and its arguments.
 
-| Tool | Qué hace |
+| Tool | What it does |
 | --- | --- |
-| `run` | Ejecuta un comando de shell con timeout y guard anti-autoarranque |
-| `read_file` | Lee un archivo, o un rango de líneas, con límite de bytes |
-| `write_file` | Crea un archivo, o reemplaza o agrega su contenido |
-| `patch_file` | Edita un archivo por texto exacto o por rango de líneas |
-| `web_search` | Busca en la web y devuelve título, URL y snippet de cada resultado |
-| `read_url` | Extrae una página como Markdown, texto o HTML |
-| `ask_user` | Pregunta al usuario con opciones, dentro de la UI |
-| `update_roadmap` | Publica y actualiza el roadmap de la tarea actual |
+| `run` | Runs a shell command with a timeout and an anti-self-launch guard |
+| `read_file` | Reads a file, or a line range, with a byte limit |
+| `write_file` | Creates a file, or replaces or appends its content |
+| `patch_file` | Edits a file by exact text or by line range |
+| `web_search` | Searches the web and returns each result's title, URL and snippet |
+| `read_url` | Extracts a page as Markdown, text or HTML |
+| `ask_user` | Asks the user with options, inside the UI |
+| `update_roadmap` | Publishes and updates the roadmap of the current task |
 
-Un error de una tool no corta el turno: vuelve al modelo como resultado fallido
-(`outcome: failed`) y el agente decide cómo seguir. Si el `old_string` de un
-`patch_file` no aparece, el modelo lee el error y corrige la llamada en vez de
-devolverte el control a mitad de la tarea.
+A tool error does not cut the turn: it goes back to the model as a failed result
+(`outcome: failed`) and the agent decides how to proceed. If a `patch_file`
+`old_string` does not appear, the model reads the error and corrects the call
+instead of handing control back to you mid-task.
 
-### Archivos
+### Files
 
-`read_file`, `write_file` y `patch_file` trabajan dentro del workspace: una ruta
-fuera de él se rechaza con error, no se resuelve en silencio.
+`read_file`, `write_file` and `patch_file` work inside the workspace: a path
+outside it is rejected with an error, it is not resolved silently.
 
-`patch_file` tiene dos modos:
+`patch_file` has two modes:
 
-- **Texto exacto** (`old_string` + `new_string`): el modo recomendado. El texto
-  tiene que aparecer una sola vez, salvo `replace_all=true`. Si aparece varias
-  veces, el error lista las líneas donde está.
-- **Rango de líneas** (`start_line` + `end_line`): útil cuando ya conocés los
-  números de línea. Podés validar el contenido actual con `expected_text`, el
-  texto que esperás encontrar en ese rango; el salto de línea final se ignora.
+- **Exact text** (`old_string` + `new_string`): the recommended mode. The text
+  must appear exactly once, unless `replace_all=true`. If it appears several
+  times, the error lists the lines where it is.
+- **Line range** (`start_line` + `end_line`): useful when you already know the
+  line numbers. You can validate the current content with `expected_text`, the
+  text you expect to find in that range; the trailing newline is ignored.
 
-Ambos modos respetan los finales de línea del archivo: un archivo con CRLF sigue
-con CRLF después del parche.
+Both modes respect the file's line endings: a CRLF file stays CRLF after the
+patch.
 
-`write_file` y `patch_file` declaran una guarda de concurrencia: dos llamadas
-que escriben el mismo archivo en una misma respuesta chocan. La primera pasa y
-la segunda falla con un mensaje que le pide al modelo reemitirla en un paso
-aparte. Editar archivos distintos sigue en paralelo, y leer un archivo nunca
-choca con editarlo.
+`write_file` and `patch_file` declare a concurrency guard: two calls that write
+the same file in the same response clash. The first goes through and the second
+fails with a message asking the model to re-emit it in a separate step. Editing
+different files keeps running in parallel, and reading a file never clashes with
+editing it.
 
 ### Web
 
-`web_search` usa [ddgs](https://pypi.org/project/ddgs/) y no necesita API key;
-devuelve hasta 20 resultados por consulta. `read_url` convierte la página a
-Markdown por defecto (`text_markdown`) y corta el resultado en 40 000
-caracteres. Los binarios vuelven en base64.
+`web_search` uses [ddgs](https://pypi.org/project/ddgs/) and needs no API key; it
+returns up to 20 results per query. `read_url` converts the page to Markdown by
+default (`text_markdown`) and clips the result at 40,000 characters. Binaries
+come back in base64.
 
-### Preguntas interactivas
+### Interactive questions
 
-`ask_user` abre un modal con 2 o 3 opciones por pregunta —la recomendada aparece
-marcada— y un campo libre para escribir otra respuesta. El agente la usa cuando
-los requisitos son ambiguos o una acción necesita autorización explícita. Si
-cancelás, la tool devuelve `cancelled: true` y el turno sigue sin respuesta.
+`ask_user` opens a modal with 2 or 3 options per question —the recommended one
+appears marked— and a free field to type another answer. The agent uses it when
+the requirements are ambiguous or an action needs explicit authorization. If you
+cancel, the tool returns `cancelled: true` and the turn keeps going without an
+answer.
 
 ### Roadmap
 
-`update_roadmap` mantiene la lista de tareas del panel izquierdo. Cada ítem
-queda en `pending`, `in_progress`, `done` o `blocked`.
+`update_roadmap` maintains the task list of the left panel. Each item stays in
+`pending`, `in_progress`, `done` or `blocked`.
 
-El panel muestra una sola lista en orden de plan, sin agrupar por estado. El
-icono y el color alcanzan para leerla de un vistazo:
+The panel shows a single list in plan order, without grouping by status. The icon
+and the color are enough to read it at a glance:
 
-| Estado | Icono | Estilo |
+| Status | Icon | Style |
 | --- | --- | --- |
-| `done` | `✓` | verde, tachado |
-| `in_progress` | `▶` | azul |
-| `pending` | `○` | blanco |
-| `blocked` | `!` | amarillo |
+| `done` | `✓` | green, strike |
+| `in_progress` | `▶` | blue |
+| `pending` | `○` | white |
+| `blocked` | `!` | yellow |
 
-El roadmap es de la sesión, no del directorio: cada sesión arranca con la lista
-vacía, avanza con ella y la recupera al cargarla con `/load`. El estado se
-guarda en `~/.sigil/roadmaps/<hash-del-cwd>/<id-de-sesión>.json`. Si la
-escritura falla, la lista sigue funcionando en memoria y el error queda en
-`persistence_error`.
+The roadmap belongs to the session, not to the directory: each session starts
+with an empty list, advances with it and recovers it when loading it with
+`/load`. The state is saved in
+`~/.sigil/roadmaps/<cwd-hash>/<session-id>.json`. If the write fails, the list
+keeps working in memory and the error stays in `persistence_error`.
 
-## Comandos
+## Turn limits
 
-Los comandos se escriben en el prompt y empiezan con `/`. El menú los filtra
-mientras escribís.
+A turn is cut for a single reason: `SIGIL_MAX_STEPS` (default `256`). Every model
+response and every tool call counts as one step; exceeding the limit aborts the
+turn with a notice in the chat and what was completed stays in the session.
 
-| Comando | Qué hace |
+pydantic-ai brings its own cap of 50 requests per run. Sigil disables it
+(`request_limit=None`) so the only limit is the step one: otherwise a long turn
+died with a `UsageLimitExceeded` nobody configured, before reaching the real
+limit.
+
+## Commands
+
+Commands are typed in the prompt and start with `/`. The menu filters them as you
+type.
+
+| Command | What it does |
 | --- | --- |
-| `/new` | Inicia una sesión nueva, con su roadmap vacío |
-| `/load` | Carga una sesión guardada y su roadmap |
-| `/sidebar [on\|off]` | Muestra u oculta el sidebar; sin argumento, alterna |
-| `/mcp` | Consulta el estado de los servidores MCP |
-| `/context` | Muestra el desglose de contexto usado |
-| `/help` | Lista los comandos disponibles |
-| `/quit` | Sale de Sigil |
+| `/new` | Starts a new session, with its empty roadmap |
+| `/load` | Loads a saved session and its roadmap |
+| `/sidebar [on\|off]` | Shows or hides the sidebar; without an argument, toggles |
+| `/mcp` | Queries the state of the MCP servers |
+| `/context` | Shows the breakdown of the used context |
+| `/debug [on\|off\|--text]` | Shows or hides the agent debug view; without an argument, toggles |
+| `/help` | Lists the available commands |
+| `/quit` | Exits Sigil |
 
-El sidebar arranca visible. Ocultarlo no borra el roadmap: el agente lo sigue
-actualizando y vuelve a aparecer con `/sidebar on`.
+The sidebar starts visible. Hiding it does not erase the roadmap: the agent keeps
+updating it and it comes back with `/sidebar on`.
 
 ### Sidebar
 
-Arriba del roadmap, el panel de sesión muestra:
+Above the roadmap, the session panel shows:
 
-- **Loaded skills**: los skills que el agente cargó en esta sesión, en orden de
-  carga. Es el diagnóstico rápido de si está siguiendo el protocolo.
-- **MCP**: el conteo va inline con el título, entre paréntesis. Abajo se lista
-  cada servidor: `●` en verde para los que andan, `✗` en rojo para los que no.
-  Si no hay servidores configurados, la sección no aparece.
+- **Loaded skills**: the skills the agent loaded in this session, in load order.
+  It is the quick diagnostic of whether it is following the protocol.
+- **MCP**: the count goes inline with the title, in parentheses. Below, each
+  server is listed: `●` in green for the ones that work, `✗` in red for the ones
+  that do not. With no configured servers, the section does not appear.
 
-Toda la interfaz está en inglés; el código y la documentación, en español.
+The interface, the code and the documentation are all in English.
 
 ```
 MCP (3, 1 ✗)
@@ -393,66 +406,111 @@ MCP (3, 1 ✗)
  ✗ broken
 ```
 
-El conteo de MCP se refresca al arrancar (en un worker, sin bloquear la UI) y
-cada vez que corrés `/mcp`.
+The MCP count refreshes on startup (in a worker, without blocking the UI) and
+every time you run `/mcp`.
 
-## Gestión de contexto
+## Context management
 
-El historial completo de la sesión (el **log**) es append-only y se persiste tal
-cual. Lo que se le manda al modelo en cada request es una **vista** derivada: una
-proyección determinística que no muta el log. Así se puede recortar sin perder
-nada de lo que `/load` restaura.
+The full session history (the **log**) is append-only and is persisted as is.
+What gets sent to the model on each request is a derived **view**: a deterministic
+projection that does not mutate the log. That way it can be trimmed without
+losing anything `/load` restores.
 
-### Instrucciones por árbol de directorios
+### Instructions per directory tree
 
-`AGENTS.md` (o `CLAUDE.md` en su defecto) se resuelve sobre el árbol de
-directorios activo:
+`AGENTS.md` (or `CLAUDE.md` as a fallback) is resolved over the active directory
+tree:
 
-- El `AGENTS.md` de la raíz de la sesión aplica siempre.
-- El de un subdirectorio aplica sólo cuando el agente opera dentro de él.
-- El orden es padre → hijo: el hijo va último y tiene precedencia.
-- En un mismo directorio, `AGENTS.md` gana sobre `CLAUDE.md`.
+- The session root's `AGENTS.md` always applies.
+- A subdirectory's applies only when the agent operates inside it.
+- The order is parent → child: the child goes last and takes precedence.
+- In the same directory, `AGENTS.md` wins over `CLAUDE.md`.
 
-El bloque viaja por el canal de instrucciones (contenido de operador), nunca como
-mensaje de usuario, y usa `on_change='append'`: cuando el scope se amplía a mitad
-de turno se agrega el texto del hijo en vez de reescribir el prefijo, que es lo
-que rompería el prompt cache.
+The block travels through the instructions channel (operator content), never as a
+user message, and uses `on_change='append'`: when the scope widens mid-turn the
+child text is appended instead of rewriting the prefix, which is what would break
+the prompt cache.
 
-### Estrategias de vista
+### View strategies
 
-| Estrategia | Qué hace |
+| Strategy | What it does |
 | --- | --- |
-| `windowed` (default) | Dropea el razonamiento, trunca tool results viejos y descarta turnos viejos si no entra en la ventana. |
-| `compacting` | Además colapsa los turnos viejos en un resumen determinístico (`CompactionPart`), sin llamar al modelo. |
-| `passthrough` | Manda el historial tal cual. |
+| `windowed` (default) | Drops reasoning, truncates old tool results and discards old turns if they do not fit in the window. |
+| `compacting` | Also collapses old turns into a deterministic summary (`CompactionPart`), without calling the model. |
+| `passthrough` | Sends the history as is. |
 
-Los turnos recientes quedan intactos: el modelo suele necesitar los detalles
-exactos del último turno en el siguiente.
+Recent turns stay intact: the model usually needs the exact details of the last
+turn on the next one.
 
-### Medición
+### Measurement
 
-La barra de estado muestra el **proyectado**: el medido del último request más
-una estimación de lo agregado desde entonces. El medido describe el pasado; el
-proyectado es lo que importa para saber si el próximo request entra en la
-ventana. `/context` muestra los dos, el presupuesto y el desglose por turno.
+The status bar shows the **projected** number: the measured value of the last
+request plus an estimate of what was added since then. The measured one describes
+the past; the projected one is what matters to know whether the next request fits
+in the window. `/context` shows both, the budget and the breakdown per turn.
 
-### Configuración
+### Agent debug view (`alt+d`)
 
-| Variable | Default | Qué hace |
+`alt+d` replaces the chat with **the agent side** of the conversation: not what
+the user read, but what travels in the request. It answers two questions the chat
+cannot: what the agent has in context right now, and how much of that comes from
+cache.
+
+```
+ DEBUG   agent side of the conversation   alt+d to close
+  model ~anthropic/claude-sonnet-4  effort high  window 200,000
+  log 141,209 tok → agent view 38,412 tok  (−102,797 tok, 73%)
+  cache 92% hit  cached 24,800  uncached 1,200  writes 13,800  cost $0.4213
+```
+
+From top to bottom:
+
+- **Fixed header**: model, effort, window, and the pair that matters — tokens of
+  the persisted log against tokens the agent actually receives, with what was
+  left out. Below, the prompt cache summary.
+- **Fixed cost per request**: every instruction block (marked `static` or
+  `dynamic`) and every tool schema, with their tokens. The order of the blocks is
+  the order in which they travel: the `dynamic` ones that are recomputed per
+  request are the candidates to break the cacheable prefix.
+- **Prompt cache per request**: one row per request with `input`, `read`,
+  `written`, `uncached` and the hit ratio. `input` is inclusive —it includes what
+  was read from and written to cache—, so `uncached` is the expensive number:
+  input the provider processed from scratch and that could have been reused if
+  the prefix had been stable. An `uncached` that does not go down after the first
+  request is the sign that something invalidates the prefix.
+- **Applied context strategy**: which levers the view used (reasoning dropped,
+  tool results truncated, turns compacted or discarded).
+- **Agent view**: the messages the model receives on the next request, message by
+  message, part by part, with tokens and bounded previews.
+- **Session log**: the same messages as they are persisted and shown in the chat,
+  in grey. What is in one list and not in the other is exactly what the UI was not
+  telling you.
+
+The input stays active with the view open: the view refreshes on every step of
+the turn, so you can launch a prompt and watch the cost grow live. Refreshes are
+coalesced per 150 ms window so as not to re-project the history on every stream
+event.
+
+`/debug --text` dumps the same report as plain text into the chat, to read it
+there or copy it.
+
+### Configuration
+
+| Variable | Default | What it does |
 | --- | --- | --- |
-| `SIGIL_CONTEXT_STRATEGY` | `windowed` | `windowed`, `compacting` o `passthrough`. |
-| `SIGIL_CONTEXT_KEEP_THINKING` | vacío | Si se prende, la vista no dropea razonamiento. |
-| `SIGIL_CONTEXT_KEEP_RECENT_TURNS` | `3` | Turnos intactos antes de recortar. |
-| `SIGIL_CONTEXT_MAX_TOOL_RESULT_CHARS` | `4000` | Tope de un tool result viejo. |
-| `SIGIL_CONTEXT_OUTPUT_RESERVE` | `8000` | Tokens reservados para la respuesta. |
+| `SIGIL_CONTEXT_STRATEGY` | `windowed` | `windowed`, `compacting` or `passthrough`. |
+| `SIGIL_CONTEXT_KEEP_THINKING` | empty | If turned on, the view does not drop reasoning. |
+| `SIGIL_CONTEXT_KEEP_RECENT_TURNS` | `3` | Turns kept intact before trimming. |
+| `SIGIL_CONTEXT_MAX_TOOL_RESULT_CHARS` | `4000` | Cap of an old tool result. |
+| `SIGIL_CONTEXT_OUTPUT_RESERVE` | `8000` | Tokens reserved for the response. |
 
-El diseño completo y las verificaciones contra el provider están en
+The full design and the verifications against the provider are in
 [`proposals/context-management.md`](proposals/context-management.md).
 
-## Desarrollo
+## Development
 
 ```bash
-uv run ./main.py     # ejecutar Sigil
+uv run ./main.py     # run Sigil
 uv run pytest        # tests
 uv run ruff check .  # lint
 ```

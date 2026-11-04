@@ -1,4 +1,4 @@
-"""Menú desplegable de comandos con filtrado y scroll interno."""
+"""Dropdown command menu with filtering and internal scroll."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from src.engine.commands import Command
 
 
 class CommandMenu(OptionList):
-    """Lista de comandos que matchean lo tipeado; se muestra sobre el input."""
+    """List of commands matching what was typed; it shows above the input."""
 
     def update_matches(self, commands: list[Command]) -> None:
         self.clear_options()

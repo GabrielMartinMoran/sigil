@@ -95,6 +95,28 @@ SessionPicker {
     width: 1fr;
 }
 
+#debug {
+    width: 1fr;
+    height: 1fr;
+    border: round $warning;
+    padding: 0 1;
+    scrollbar-size-vertical: 1;
+}
+
+#debug-header {
+    height: auto;
+    padding: 0 0 1 0;
+}
+
+#debug-scroll {
+    height: 1fr;
+    scrollbar-size-vertical: 1;
+}
+
+#debug-body {
+    height: auto;
+}
+
 QuestionScreen {
     align: center middle;
 }

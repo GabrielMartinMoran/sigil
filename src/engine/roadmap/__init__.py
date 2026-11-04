@@ -1,5 +1,5 @@
-"""Estado del roadmap de la tarea actual."""
+"""Roadmap state of the current task.
 
-from src.engine.roadmap.store import RoadmapStore, TodoItem, TodoStatus
-
-__all__ = ['RoadmapStore', 'TodoItem', 'TodoStatus']
+The store lives in ``store``, the models in ``models`` and persistence in
+``persistence``. The package re-exports no symbols: import from the owning module.
+"""
