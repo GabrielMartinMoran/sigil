@@ -27,7 +27,7 @@ class SidebarMixin:
     _history: list[ModelMessage]
 
     def refresh_sidebar(self) -> None:
-        """Model, context, skills loaded in the session, above the roadmap."""
+        """Model, workspace, context, skills loaded in the session, above the roadmap."""
         try:
             panel = self.query_one(SidebarPanel)
         except NoMatches, ScreenStackError:
@@ -35,6 +35,7 @@ class SidebarMixin:
         names = self._loaded_skills.names() if self._loaded_skills is not None else ()
         state = getattr(self, 'model_state', None)
         panel.update_model(state() if callable(state) else None)
+        panel.update_workspace(self.workspace_state())
         panel.update_context(self.context_state())
         panel.update_skills(names)
 

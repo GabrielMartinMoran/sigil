@@ -1,10 +1,13 @@
-"""Slash commands: session, sidebar, MCP, context and help."""
+"""Slash commands: session, workspace, sidebar, MCP, context and help."""
 
 from __future__ import annotations
 
 from textual.widgets import Input
 
 from src.engine.context.meter.render import render_report
+from src.engine.sessions.catalog import catalog
+from src.engine.workspace.arguments import UsageError, parse_new_args
+from src.engine.workspace.models.workspace_error import WorkspaceError
 from src.ui.help_text import HELP_TEXT
 from src.ui.mcp_report import format_mcp_status
 from src.ui.messages import ChatNotice
@@ -18,7 +21,8 @@ class CommandsMixin:
 
     It expects the app to define ``_store``, ``_session``, ``_history``,
     ``_scope``, ``_loaded_skills``, ``_mcp_manager``, ``_meter``,
-    ``_context_capability``, ``_workspace`` and ``_roadmap_store``.
+    ``_context_capability``, ``_workspace``, ``_roadmap_store`` and
+    ``_workspace_manager``.
     """
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -47,7 +51,7 @@ class CommandsMixin:
         chat = self.query_one(ChatLog)
 
         handlers = {
-            '/new': lambda: self.new_session(chat),
+            '/new': lambda: self.new_session(chat, args),
             '/load': lambda: self.load_session(chat),
             '/provider': lambda: self.show_providers(chat),
             '/model': lambda: self.show_models(chat, args),
@@ -69,9 +73,27 @@ class CommandsMixin:
         """Closes the application, persisting the session."""
         self.exit()
 
-    async def new_session(self, chat: ChatLog) -> None:
-        """Starts an empty session and clears the UI state."""
-        self.persist()
+    async def new_session(self, chat: ChatLog, args: str = '') -> None:
+        """Starts an empty session, in the current workspace or in a new worktree."""
+        try:
+            request = parse_new_args(args)
+        except UsageError as exc:
+            await chat.add_notice(str(exc), style='yellow')
+            return
+
+        if request.worktree is not None:
+            # The previous session is saved *before* the switch: it belongs to the
+            # workspace that is about to stop being active.
+            self.persist()
+            try:
+                switch = self.create_worktree_workspace(request.worktree)
+            except WorkspaceError as exc:
+                await chat.add_notice(f'✖ {exc}', style='bold red')
+                return
+        else:
+            self.persist()
+            switch = None
+
         self.bind_session(self._store.create_session())
         if self._scope is not None:
             self._scope.reset()
@@ -79,21 +101,43 @@ class CommandsMixin:
             self._loaded_skills.reset()
         self.refresh_sidebar()
         await chat.clear()
+        if switch is not None:
+            await self.announce_switch(switch, chat)
         await chat.add_notice(f'New session {self._session.short_id}.', style='green')
 
     async def load_session(self, chat: ChatLog) -> None:
-        """Loads a session chosen by the user."""
-        sessions = self._store.list_sessions()
-        if not sessions:
+        """Loads a session chosen by the user, switching workspace when needed."""
+        entries = catalog(self._store.cwd, base_dir=self._store.base_dir)
+        if not entries:
             await chat.add_notice('No saved sessions.', style='yellow')
             return
-        chosen = await self.push_screen_wait(SessionPicker(sessions))
+
+        chosen = await self.push_screen_wait(SessionPicker(entries))
         if not chosen:
             return
-        self.persist()
-        loaded = self._store.load(chosen)
-        if loaded is None:
+
+        entry = next((candidate for candidate in entries if candidate.session.id == chosen), None)
+        if entry is None:
             return
+
+        self.persist()
+        if not entry.is_current:
+            # A session belongs to the workspace it was created in: loading it means
+            # going back there, not opening it against another tree.
+            try:
+                switch = self.switch_workspace(str(entry.workspace.root))
+            except WorkspaceError as exc:
+                await chat.add_notice(f'✖ {exc}', style='bold red')
+                return
+            loaded = self._store.load(entry.session.id)
+        else:
+            switch = None
+            loaded = self._store.load(entry.session.id)
+
+        if loaded is None:
+            await chat.add_notice(f'Could not read session {entry.session.short_id}.', style='red')
+            return
+
         self.bind_session(loaded)
         if self._scope is not None:
             self._scope.reset()
@@ -102,6 +146,8 @@ class CommandsMixin:
         self._restore_session_model(loaded)
         self.refresh_sidebar()
         await chat.clear()
+        if switch is not None:
+            await self.announce_switch(switch, chat)
         await chat.render_history(loaded.messages)
         chat.finalize()
         await chat.add_notice(f'Loaded session {loaded.short_id}.', style='green')
@@ -192,6 +238,16 @@ class CommandsMixin:
         view = self._context_capability.last_view if self._context_capability is not None else None
         report = self._meter.report(self._history, view=view)
         lines = [render_report(report)]
+
+        if self._workspace_manager is not None:
+            workspace = self._workspace_manager.current()
+            lines.append('')
+            lines.append('Workspace')
+            lines.append(f'  name             : {workspace.label}')
+            lines.append(f'  root             : {workspace.root}')
+            lines.append(f'  branch           : {workspace.branch or "(none)"}')
+            if workspace.worktree is not None:
+                lines.append(f'  worktree         : {"main" if workspace.worktree.is_main else "linked"}')
 
         if self._scope is not None:
             scopes = self._scope.relative_scopes()

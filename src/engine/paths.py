@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 
 ENV_HOME = 'SIGIL_HOME'
+ENV_WORKTREES_DIR = 'SIGIL_WORKTREES_DIR'
 
 DEFAULT_DIRNAME = '.sigil'
 
@@ -41,3 +42,17 @@ def roadmaps_dir(environ: dict[str, str] | None = None) -> Path:
 
 def providers_dir(environ: dict[str, str] | None = None) -> Path:
     return sigil_home(environ) / 'providers'
+
+
+def worktrees_dir(environ: dict[str, str] | None = None) -> Path:
+    """Where `/new --worktree` creates the worktrees.
+
+    ``SIGIL_WORKTREES_DIR`` overrides the location. The default sits under
+    ``SIGIL_HOME`` and therefore outside every repository: a worktree created
+    *inside* a work tree could be reached by the file tools of another workspace.
+    """
+    env = os.environ if environ is None else environ
+    override = env.get(ENV_WORKTREES_DIR, '').strip()
+    if override:
+        return Path(override).expanduser()
+    return sigil_home(env) / 'worktrees'

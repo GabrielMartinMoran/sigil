@@ -38,6 +38,7 @@ from src.engine.skills.registry import SkillRegistry
 from src.engine.skills.tools import register_skill_tools
 from src.engine.tooling.logging import ToolLoggerHub
 from src.engine.web.tools import register_web_tools
+from src.engine.workspace.manager import WorkspaceManager
 from src.ui.app import SigilApp
 
 
@@ -123,6 +124,16 @@ def run() -> None:
     question_hub = QuestionHub()
     roadmap_store = RoadmapStore(session_id=session.id)
 
+    # Workspace: the directory Sigil works in, which can be a linked git worktree.
+    # Switching re-points the components that cached the old root; the agent is
+    # built once and closes over these same instances.
+    workspace_manager = WorkspaceManager(
+        workspace_root,
+        session_store=store,
+        roadmap_store=roadmap_store,
+        rebindables=[scope, workspace, skill_registry],
+    )
+
     # MCP servers declared in .sigil/config.json (and in ~/.sigil/config.json).
     # Config errors do not abort startup: they are shown in the chat.
     config = load_config()
@@ -169,4 +180,5 @@ def run() -> None:
         scope=scope,
         workspace=workspace,
         loaded_skills=loaded_skills,
+        workspace_manager=workspace_manager,
     ).run()

@@ -12,6 +12,7 @@ project skill with the same name as a global one shadows it.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
 
 from src.engine.skills.models.skill_metadata import SkillMetadata
@@ -55,6 +56,26 @@ def default_roots() -> list[tuple[str, Path]]:
         ('project', Path.cwd() / SKILLS_DIRNAME),
         ('global', Path.home() / SKILLS_DIRNAME),
     ]
+
+
+def roots_are_workspace_scoped(
+    roots: Sequence[tuple[str, Path]] | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> bool:
+    """Whether the roots follow the workspace, so they can be re-pointed on a switch.
+
+    Only the default roots do: an explicit ``SIGIL_SKILLS_DIRS`` names directories
+    that belong to the user, not to the directory Sigil happens to be working in.
+
+    Args:
+        roots: Explicit roots, if the caller passed any.
+        environ: Environment to read ``SIGIL_SKILLS_DIRS`` from (``os.environ``
+            by default). Passing it explicitly keeps callers testable.
+    """
+    if roots is not None:
+        return False
+    env = os.environ if environ is None else environ
+    return not env.get(ENV_SKILLS_DIRS, '').strip()
 
 
 def resource_kind(relative: PurePosixPath) -> str:

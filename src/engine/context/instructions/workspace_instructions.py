@@ -48,6 +48,18 @@ class WorkspaceInstructions:
     def root(self) -> Path:
         return self._root
 
+    def rebind(self, root: str | Path) -> None:
+        """Moves the resolved tree to another workspace and forgets the cached files.
+
+        The cache is keyed by path, so entries of the previous workspace would
+        never be reused; keeping them only grows memory across switches.
+        """
+        target = Path(os.path.realpath(str(root)))
+        if target == self._root:
+            return
+        self._root = target
+        self._cache.clear()
+
     def _read(self, path: Path) -> CacheEntry | None:
         return read_cached(path, max_chars=self._max_file_chars, cache=self._cache)
 

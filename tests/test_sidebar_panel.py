@@ -14,7 +14,7 @@ from src.engine.mcp.manager.manager import MCPManager
 from src.engine.sessions.session_store import SessionStore
 from src.engine.skills.loaded import LoadedSkills
 from src.ui.app import SigilApp
-from src.ui.widgets.sidebar_panel import ContextState, MCPServerState, ModelState, SidebarPanel
+from src.ui.widgets.sidebar_panel import ContextState, MCPServerState, ModelState, SidebarPanel, WorkspaceState
 from src.ui.widgets.status_bar import StatusBar
 
 
@@ -94,6 +94,30 @@ def test_panel_orders_context_between_the_model_and_the_skills():
     panel._context_state = ContextState(percent=66.0, used=132_000, window=200_000)
     text = panel._build().plain
     assert text.index('Model') < text.index('Context') < text.index('Loaded skills')
+
+
+def test_panel_orders_the_workspace_between_the_model_and_the_context():
+    panel = _configured()
+    panel._workspace_state = WorkspaceState(label='main', branch='main')
+    panel._context_state = ContextState(percent=66.0, used=132_000, window=200_000)
+    text = panel._build().plain
+    assert text.index('Model') < text.index('Workspace') < text.index('Context')
+
+
+def test_panel_shows_the_workspace_label_and_branch():
+    panel = _panel()
+    panel._workspace_state = WorkspaceState(label='fix-login', branch='sigil/fix-login', is_worktree=True)
+    text = panel._build().plain
+    assert 'Workspace' in text
+    assert 'fix-login' in text
+    assert 'sigil/fix-login' in text
+
+
+def test_panel_hides_the_workspace_until_it_is_known():
+    assert 'Workspace' not in _panel()._build().plain
+    panel = _panel()
+    panel._workspace_state = WorkspaceState()
+    assert 'Workspace' not in panel._build().plain
 
 
 def test_status_bar_paints_nothing():

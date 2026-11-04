@@ -12,8 +12,8 @@ class Command:
 
 
 COMMANDS: tuple[Command, ...] = (
-    Command('/new', 'Start a new session'),
-    Command('/load', 'Load a saved session'),
+    Command('/new', 'Start a new session; --worktree <name> creates a git worktree'),
+    Command('/load', 'Load a saved session (of this or another worktree)'),
     Command('/provider', 'Manage provider accounts (add, remove, activate)'),
     Command('/model', 'Pick the model for the active account'),
     Command('/effort', 'Show or set the reasoning effort'),

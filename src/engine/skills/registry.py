@@ -7,14 +7,17 @@ know where they came from.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from src.engine.skills.discovery import (
     DEFAULT_MAX_READ_BYTES,
     MAX_READ_BYTES,
+    SKILLS_DIRNAME,
     default_roots,
     list_resources,
+    roots_are_workspace_scoped,
     safe_join,
 )
 from src.engine.skills.models.skill import Skill
@@ -30,9 +33,11 @@ class SkillRegistry:
     """Index of discovered skills and load/read operations."""
 
     def __init__(self, roots: Sequence[tuple[str, Path]] | None = None) -> None:
-        self._roots: list[tuple[str, Path]] = [
-            (source, Path(path).expanduser()) for source, path in (roots if roots is not None else default_roots())
-        ]
+        source_roots = roots if roots is not None else default_roots()
+        self._roots: list[tuple[str, Path]] = [(source, Path(path).expanduser()) for source, path in source_roots]
+        # Only the default roots follow the working directory; an explicit
+        # `SIGIL_SKILLS_DIRS` names directories the user owns.
+        self._project_root_is_derived = roots_are_workspace_scoped(roots)
         self._skills: dict[str, SkillMetadata] = {}
         self._aliases: dict[str, str] = {}
         self.errors: list[str] = []
@@ -78,6 +83,21 @@ class SkillRegistry:
         self.errors.clear()
         self._discover()
         return self
+
+    def rebind(self, root: str | Path) -> None:
+        """Moves the project root to another workspace and rescans.
+
+        A registry built on an explicit root list (``SIGIL_SKILLS_DIRS``) or on the
+        test-injected roots keeps it: only the project root moves, which is the one
+        derived from the working directory.
+        """
+        if not self._project_root_is_derived:
+            return
+        target = Path(os.path.realpath(str(root))) / SKILLS_DIRNAME
+        if target == self._roots[0][1]:
+            return
+        self._roots[0] = ('project', target)
+        self.refresh()
 
     # --- queries -----------------------------------------------------------
 

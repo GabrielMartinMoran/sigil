@@ -56,6 +56,20 @@ class ContextState:
     window: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class WorkspaceState:
+    """The directory the agent is working in.
+
+    It matters as soon as sessions can span worktrees: two sessions with the same
+    preview are told apart by the tree they belong to, and a switch that is not
+    announced is a turn run against the wrong files.
+    """
+
+    label: str = ''
+    branch: str | None = None
+    is_worktree: bool = False
+
+
 class SidebarPanel(Static):
     """Model, context usage, skills loaded in the session and MCP server state."""
 
@@ -66,9 +80,15 @@ class SidebarPanel(Static):
         self._mcp_known = False
         self._model: ModelState | None = None
         self._context_state: ContextState | None = None
+        self._workspace_state: WorkspaceState | None = None
 
     def update_model(self, state: ModelState | None) -> None:
         self._model = state
+        self.update(self._build())
+
+    def update_workspace(self, state: WorkspaceState | None) -> None:
+        """Active workspace. It is hidden until it is known."""
+        self._workspace_state = state
         self.update(self._build())
 
     def update_context(self, state: ContextState | None) -> None:
@@ -90,6 +110,7 @@ class SidebarPanel(Static):
     def _build(self) -> Text:
         text = Text()
         self._append_model(text)
+        self._append_workspace(text)
         self._append_context(text)
         self._append_skills(text)
         self._append_mcp(text)
@@ -114,6 +135,17 @@ class SidebarPanel(Static):
         text.append('\n')
         text.append(' effort: ', style='dim')
         text.append(f'{state.effort}\n', style='magenta')
+
+    def _append_workspace(self, text: Text) -> None:
+        state = self._workspace_state
+        if state is None or not state.label:
+            return
+        text.append('\nWorkspace\n', style='bold')
+        text.append(' ')
+        text.append(state.label, style='bold yellow' if state.is_worktree else 'bold cyan')
+        if state.branch:
+            text.append(f' · {state.branch}', style='dim')
+        text.append('\n')
 
     def _append_context(self, text: Text) -> None:
         state = self._context_state

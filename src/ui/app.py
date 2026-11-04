@@ -39,6 +39,7 @@ from src.engine.sessions.session_store import Session, SessionStore
 from src.engine.settings import SigilSettings, load_settings
 from src.engine.skills.loaded import LoadedSkills
 from src.engine.tooling.logging import ToolLoggerHub
+from src.engine.workspace.manager import WorkspaceManager
 from src.ui.commands_mixin import CommandsMixin
 from src.ui.debug_mixin import DebugMixin
 from src.ui.menu_mixin import MenuMixin
@@ -56,6 +57,7 @@ from src.ui.widgets.question_screen import QuestionScreen
 from src.ui.widgets.roadmap_panel import RoadmapPanel
 from src.ui.widgets.sidebar_panel import SidebarPanel
 from src.ui.widgets.status_bar import StatusBar
+from src.ui.workspace_mixin import WorkspaceMixin
 
 
 class SigilApp(
@@ -64,6 +66,7 @@ class SigilApp(
     MenuMixin,
     CommandsMixin,
     ProviderMixin,
+    WorkspaceMixin,
     DebugMixin,
     TurnMixin,
     App,
@@ -99,6 +102,7 @@ class SigilApp(
         scope: ScopeTracker | None = None,
         workspace: WorkspaceInstructions | None = None,
         loaded_skills: LoadedSkills | None = None,
+        workspace_manager: WorkspaceManager | None = None,
     ) -> None:
         super().__init__()
         self._settings = settings or load_settings({})
@@ -118,6 +122,7 @@ class SigilApp(
         self._scope = scope
         self._workspace = workspace
         self._loaded_skills = loaded_skills
+        self._workspace_manager = workspace_manager
         self._tool_log_sink: ChatToolLogSink | None = None
         self._history: list[Any] = list(session.messages)
         self.menu_visible = False

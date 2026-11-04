@@ -356,6 +356,66 @@ with an empty list, advances with it and recovers it when loading it with
 `~/.sigil/roadmaps/<cwd-hash>/<session-id>.json`. If the write fails, the list
 keeps working in memory and the error stays in `persistence_error`.
 
+## Workspaces and worktrees
+
+A **workspace** is the directory Sigil works in. When that directory belongs to a
+git repository it is one of its *worktrees*: the main one, or a linked worktree
+created with `git worktree add`.
+
+```
+~/.sigil/worktrees/<repo>/<name>     ← created by /new --worktree
+```
+
+`/new --worktree <name>` creates that worktree on a new branch `sigil/<name>`
+from `HEAD`, moves the process there and starts the session in it:
+
+```
+/new --worktree fix-login     # also -w, --worktree=fix-login and -w=fix-login
+```
+
+The worktree directory lives **outside** the repository (under
+`SIGIL_WORKTREES_DIR`, `<SIGIL_HOME>/worktrees` by default) so that the file tools
+of one workspace cannot reach another's tree: `read_file` and `write_file` are
+limited to the active workspace.
+
+What a new worktree does **not** get, because it is not in the commit:
+
+- uncommitted changes of the current workspace,
+- ignored files: `.env`, `.venv`, `.sigil/config.json`.
+
+Sigil says so in the chat when the worktree is created. The MCP configuration is
+read **once**, at startup, from the directory Sigil was launched in: a worktree
+usually has no `.sigil/config.json` of its own, and reloading it per workspace
+would leave the session without MCP servers.
+
+### Sessions and workspaces
+
+A session belongs to the workspace it was created in, and each workspace keeps its
+own session folder (`~/.sigil/sessions/<cwd-hash>/`). `/load` lists the sessions
+of **every** workspace of the repository, labelled:
+
+| Label | Workspace |
+| --- | --- |
+| `main` | the repository's main worktree |
+| `<name>` | a linked worktree (`fix-login`) |
+
+```
+● main          1a2b3c4d  fix the login form
+  fix-login     9f8e7d6c  try the new parser
+```
+
+`●` marks the workspace in use. Choosing a session of another worktree switches to
+it (the same rebind as `/new --worktree`) and then loads the session: a session is
+never opened against a tree it does not belong to.
+
+Starting Sigil in a subdirectory of a worktree is fine: the subdirectory is its own
+workspace for sessions, and it shows the label of the worktree that contains it.
+The side panel shows the active workspace above the context section, and
+`/context` prints its root and branch.
+
+A session whose worktree was `git worktree remove`d stops being listed: there is no
+workspace left to open it against. The file stays on disk.
+
 ## Turn limits
 
 A turn is cut for a single reason: `SIGIL_MAX_STEPS` (default `256`). Every model
@@ -475,8 +535,8 @@ type.
 
 | Command | What it does |
 | --- | --- |
-| `/new` | Starts a new session, with its empty roadmap |
-| `/load` | Loads a saved session and its roadmap |
+| `/new [--worktree <name>]` | Starts a new session, with its empty roadmap; `--worktree` creates a git worktree and works there |
+| `/load` | Loads a saved session and its roadmap, switching workspace if it belongs to another worktree |
 | `/provider` | Manage provider accounts: add, rename, remove, activate |
 | `/model` | Picks the model for the active account |
 | `/effort [level]` | Opens the effort picker; with a level, sets it directly |
@@ -497,6 +557,9 @@ Above the roadmap, the session panel shows:
 - **Model**: the active account alias, its provider family, the model and the
   reasoning level in effect. Before anything is configured it says `not
   configured — /provider`, which is the first thing to do on a fresh install.
+- **Workspace**: the tree the agent is working in: `main` for the repository's
+  main worktree, or the name of a linked one. It also shows the branch, and it is
+  the reason two sessions of the same repository are told apart.
 - **Context**: the percentage of the window the next request is going to take,
   with the pair it comes from in parentheses. It is hidden until a model is
   configured, and it colours green, yellow and red across 70% and 90%.
@@ -630,6 +693,7 @@ change behaviour behind your back.
 | `SIGIL_CONTEXT_KEEP_RECENT_TURNS` | `3` | Turns kept intact before trimming. |
 | `SIGIL_CONTEXT_MAX_TOOL_RESULT_CHARS` | `4000` | Cap of an old tool result. |
 | `SIGIL_CONTEXT_OUTPUT_RESERVE` | `8000` | Tokens reserved for the response. |
+| `SIGIL_WORKTREES_DIR` | `<SIGIL_HOME>/worktrees` | Where `/new --worktree` creates the worktrees. |
 
 A value that cannot be parsed fails loudly at startup instead of silently falling
 back to the default. `.env.example` lists all of them.

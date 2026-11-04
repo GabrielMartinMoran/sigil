@@ -8,7 +8,7 @@ from pathlib import Path
 
 from src.engine.roadmap.models.todo_item import TodoItem, now_iso
 from src.engine.roadmap.models.todo_status import TODO_STATUSES, TodoStatus
-from src.engine.roadmap.persistence import default_directory, load_items, path_for, save_items
+from src.engine.roadmap.persistence import default_directory, directory_for, load_items, path_for, save_items
 
 
 class RoadmapStore:
@@ -48,6 +48,27 @@ class RoadmapStore:
                 return
             self._session_id = session_id
             self._path = path_for(self._directory, session_id)
+            self._items = []
+            self.persistence_error = None
+            self._load()
+        self._notify()
+
+    def rebind_root(self, root: str | Path) -> None:
+        """Moves the store to the roadmap directory of another workspace.
+
+        Switching workspace changes the directory but not the session: the items
+        are reloaded from the new directory, which is empty until a session of
+        that workspace writes to it.
+        """
+        directory = directory_for(root)
+        with self._lock:
+            # The file is the identity of the roadmap: if the session resolves to the
+            # same one, there is nothing to reload and the items must survive.
+            new_path = path_for(directory, self._session_id)
+            if new_path == self._path:
+                return
+            self._directory = directory
+            self._path = new_path
             self._items = []
             self.persistence_error = None
             self._load()
