@@ -378,6 +378,7 @@ mientras escribís.
 | `/sidebar [on\|off]` | Muestra u oculta el sidebar; sin argumento, alterna |
 | `/mcp` | Consulta el estado de los servidores MCP |
 | `/context` | Muestra el desglose de contexto usado |
+| `/debug [on\|off\|--text]` | Muestra u oculta la vista de debug del agente; sin argumento, alterna |
 | `/help` | Lista los comandos disponibles |
 | `/quit` | Sale de Sigil |
 
@@ -446,6 +447,51 @@ La barra de estado muestra el **proyectado**: el medido del último request más
 una estimación de lo agregado desde entonces. El medido describe el pasado; el
 proyectado es lo que importa para saber si el próximo request entra en la
 ventana. `/context` muestra los dos, el presupuesto y el desglose por turno.
+
+### Vista de debug del agente (`alt+d`)
+
+`alt+d` reemplaza el chat por **el lado del agente** de la conversación: no lo
+que el usuario leyó, sino lo que viaja en el request. Responde dos preguntas
+que el chat no puede: qué tiene el agente en contexto ahora, y cuánto de eso
+sale de caché.
+
+```
+ DEBUG   agent side of the conversation   alt+d to close
+  model ~anthropic/claude-sonnet-4  effort high  window 200,000
+  log 141,209 tok → agent view 38,412 tok  (−102,797 tok, 73%)
+  cache 92% hit  cached 24,800  uncached 1,200  writes 13,800  cost $0.4213
+```
+
+De arriba abajo:
+
+- **Cabecera fija**: modelo, esfuerzo, ventana, y el par que importa — tokens
+  del log persistido contra tokens que el agente recibe de verdad, con lo que
+  se quedó afuera. Abajo, el resumen del prompt cache.
+- **Fixed cost per request**: cada bloque de instrucciones (marcado `static`
+  o `dynamic`) y cada schema de tool, con sus tokens. El orden de los bloques
+  es el orden en que viajan: los `dynamic` que se recalculan por request son
+  los candidatos a romper el prefijo cacheable.
+- **Prompt cache per request**: una fila por request con `input`, `read`,
+  `written`, `uncached` y el hit ratio. `input` es inclusivo —incluye lo leído
+  y lo escrito a caché—, así que `uncached` es el número caro: input que el
+  provider procesó de cero y que podría haber reusado si el prefijo hubiera
+  sido estable. Un `uncached` que no baja después del primer request es la
+  señal de que algo invalida el prefijo.
+- **Applied context strategy**: qué palancas tocó la vista (razonamiento
+  dropeado, tool results truncados, turnos compactados o descartados).
+- **Agent view**: los mensajes que el modelo recibe en el próximo request,
+  mensaje por mensaje, parte por parte, con tokens y previews acotados.
+- **Session log**: los mismos mensajes tal como se persisten y se muestran en
+  el chat, en gris. Lo que está en una lista y no en la otra es exactamente lo
+  que la UI no te estaba contando.
+
+El input sigue activo con la vista abierta: la vista se refresca con cada paso
+del turno, así que se puede lanzar un prompt y ver el costo crecer en vivo. Los
+refrescos se coalescen por ventana de 150 ms para no re-proyectar el historial
+en cada evento del stream.
+
+`/debug --text` vuelca el mismo reporte como texto plano al chat, para leerlo
+ahí o copiarlo.
 
 ### Configuración
 

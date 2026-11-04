@@ -75,6 +75,10 @@ class TurnMixin:
         self._store.save(self._session)
         # La barra se actualiza por paso, no sólo al cerrar el turno.
         self.update_status(messages)
+        # La vista de debug también (es un no-op si está cerrada).
+        refresh_debug = getattr(self, 'refresh_debug', None)
+        if callable(refresh_debug):
+            refresh_debug(messages)
 
     def turn_handler(self, limiter: StepLimiter, chat: ChatLog) -> Any:
         """Handler del stream que alimenta el chat y los checkpoints."""
@@ -164,3 +168,7 @@ class TurnMixin:
         self._session.messages = self._history
         self._store.save(self._session)
         self.update_status()
+        # La vista de debug muestra el costo del turno recién cerrado.
+        refresh_debug = getattr(self, 'refresh_debug', None)
+        if callable(refresh_debug):
+            refresh_debug()

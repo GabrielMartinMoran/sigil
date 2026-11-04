@@ -51,6 +51,7 @@ class CommandsMixin:
             '/sidebar': lambda: self.handle_sidebar(args, chat),
             '/mcp': lambda: self.show_mcp(chat),
             '/context': lambda: self.show_context(chat),
+            '/debug': lambda: self.handle_debug(args, chat),
             '/help': lambda: chat.add_notice(HELP_TEXT, style='cyan'),
             '/quit': lambda: self.action_quit(),
         }
@@ -134,6 +135,27 @@ class CommandsMixin:
             await chat.add_notice('Usage: /sidebar [on|off]', style='yellow')
             return
         await chat.add_notice(f'Sidebar {"shown" if panel.shown else "hidden"}.', style='cyan')
+
+    async def handle_debug(self, args: str, chat: ChatLog) -> None:
+        """`/debug` alterna la vista; `/debug on|off` fija el estado; `--text` vuelca el reporte.
+
+        La vista reemplaza el chat, así que `--text` es la única forma de leer
+        el reporte dentro del propio chat (y de copiarlo desde ahí).
+        """
+        value = args.strip().lower()
+        if value in {'text', '--text'}:
+            await chat.add_notice(await self.show_debug_text(), style='white')
+            return
+        if value in {'', 'toggle'}:
+            self.toggle_debug()
+        elif value in {'on', 'show'}:
+            self.set_debug_visible(True)
+        elif value in {'off', 'hide'}:
+            self.set_debug_visible(False)
+        else:
+            await chat.add_notice('Usage: /debug [on|off|--text]', style='yellow')
+            return
+        await chat.add_notice(f'Debug view {"shown" if self.debug_visible else "hidden"}.', style='cyan')
 
     async def show_context(self, chat: ChatLog) -> None:
         """Desglose de contexto: medido, proyectado, presupuesto y turnos."""

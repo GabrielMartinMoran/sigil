@@ -7,6 +7,7 @@ cada responsabilidad en un mixin con estado propio.
 - `SidebarMixin`   — panel lateral: skills cargadas y servidores MCP.
 - `MenuMixin`      — menú de comandos que aparece al escribir `/`.
 - `CommandsMixin`  — comandos de barra y cambio de sesión.
+- `DebugMixin`     — vista de debug del agente (`alt+d`), que reemplaza el chat.
 - `TurnMixin`      — ejecución de un turno y checkpoints en disco.
 """
 
@@ -14,11 +15,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic_ai import Agent
 from textual import work
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 
 from src.config_provider import ConfigProvider
@@ -37,6 +39,7 @@ from src.engine.sessions.session_store import Session, SessionStore
 from src.engine.skills.loaded import LoadedSkills
 from src.engine.tooling.logging import ToolLoggerHub
 from src.ui.commands_mixin import CommandsMixin
+from src.ui.debug_mixin import DebugMixin
 from src.ui.menu_mixin import MenuMixin
 from src.ui.messages import ModelRetryNotice, RoadmapChanged
 from src.ui.sidebar_mixin import SidebarMixin
@@ -45,6 +48,7 @@ from src.ui.tool_logging import ChatToolLogSink, ToolLogMessage
 from src.ui.turn_mixin import TurnMixin
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.command_menu import CommandMenu
+from src.ui.widgets.debug_view import AgentDebugView
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.question_screen import QuestionScreen
 from src.ui.widgets.roadmap_panel import RoadmapPanel
@@ -57,6 +61,7 @@ class SigilApp(
     SidebarMixin,
     MenuMixin,
     CommandsMixin,
+    DebugMixin,
     TurnMixin,
     App,
 ):
@@ -64,6 +69,13 @@ class SigilApp(
 
     CSS_PATH = 'theme.tcss'
     TITLE = 'Sigil'
+
+    # El foco vive en el input, que se come las teclas: el atajo necesita
+    # `priority` para llegar a la app. `escape` lo maneja `PromptInput`, que ya
+    # lo tiene tomado para el menú de comandos.
+    BINDINGS: ClassVar[list[Binding]] = [
+        Binding('alt+d', 'toggle_debug', 'Debug view', priority=True, show=False),
+    ]
 
     def __init__(
         self,
@@ -101,6 +113,10 @@ class SigilApp(
         self._history: list[Any] = list(session.messages)
         self._context_length: int | None = None
         self.menu_visible = False
+        # Vista de debug: reemplaza el chat, no convive con él.
+        self.debug_visible = False
+        self._debug_timer: Any = None
+        self._debug_pending: list[Any] | None = None
         # Run en curso: lo usa `checkpoint` para persistir el avance del turno.
         self._current_run: Any = None
         self._last_checkpoint_at = 0.0
@@ -116,6 +132,7 @@ class SigilApp(
                     id='sidebar',
                 ),
                 ChatLog(id='chat'),
+                AgentDebugView(id='debug'),
                 id='main',
             ),
             CommandMenu(id='menu'),
@@ -173,6 +190,14 @@ class SigilApp(
         elif event.phase == 'success' and event.tool_name == 'load_skill':
             # El skill recién cargado aparece en el sidebar sin esperar al turno.
             self.refresh_sidebar()
+        # La vista de debug sigue el turno, igual que el chat.
+        self.refresh_debug()
+
+    # --- vista de debug ---------------------------------------------------
+
+    def action_toggle_debug(self) -> None:
+        """`alt+d`: reemplaza el chat por la vista de debug del agente."""
+        self.toggle_debug()
 
     async def on_model_retry_notice(self, message: ModelRetryNotice) -> None:
         notice = message.notice
