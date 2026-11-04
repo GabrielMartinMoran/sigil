@@ -280,3 +280,128 @@ def test_markdown_output_is_rendered_in_app(monkeypatch):
                 assert '**negrita**' not in svg  # los '**' no se muestran literales
 
     asyncio.run(inner())
+
+
+def test_step_limit_abort_preserves_session_and_context(monkeypatch):
+    """Regresión: al agotar los pasos de un turno no se pierde la sesión.
+
+    El turno abortado debe conservar lo completado (incluido el mensaje del
+    usuario), persistirse en disco y servir de contexto para el turno siguiente.
+    """
+    from src.config_provider import ConfigProvider
+
+    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
+    monkeypatch.setattr(ConfigProvider, 'MAX_STEPS', 2)
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            tool_logger = ToolLoggerHub()
+            agent = Agent(TestModel(call_tools=['ping']), instructions='x')
+
+            @ToolRegistrar(agent, tool_logger).tool
+            def ping() -> str:
+                return 'pong'
+
+            store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
+            session = store.create_session()
+            app = SigilApp(agent=agent, store=store, session=session, tool_logger=tool_logger)
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press('h', 'i')
+                await pilot.press('enter')
+                await _wait_idle(app, pilot)
+
+                # El turno se cortó por el límite, pero no se perdió el contexto.
+                assert any('límite' in text for text in _chat_texts(app))
+                assert len(app._history) >= 2
+                assert len(app._session.messages) == len(app._history)
+
+                # La sesión quedó guardada y aparece en el listado con preview.
+                sessions = store.list_sessions()
+                saved = next((s for s in sessions if s.id == session.id), None)
+                assert saved is not None
+                assert saved.preview == 'hi'
+
+                reloaded = store.load(session.id)
+                assert reloaded is not None
+                assert len(reloaded.messages) == len(app._history)
+
+                # El turno siguiente arranca con todo el contexto anterior.
+                prior = len(app._history)
+                monkeypatch.setattr(ConfigProvider, 'MAX_STEPS', 20)
+                await pilot.press('a', 'g', 'a', 'i', 'n')
+                await pilot.press('enter')
+                await _wait_idle(app, pilot)
+                assert len(app._history) > prior
+
+    asyncio.run(inner())
+
+
+def test_checkpoint_persists_progress_during_turn(monkeypatch):
+    """Regresión: el avance se guarda durante el turno, no sólo al final.
+
+    Si el proceso muere a mitad de un turno largo, la sesión en disco debe
+    conservar lo completado hasta el último paso.
+    """
+    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
+    # Sin throttle para que el checkpoint de mitad de turno sea determinista.
+    monkeypatch.setattr(appmod, 'CHECKPOINT_INTERVAL', 0.0)
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            tool_logger = ToolLoggerHub()
+            agent = Agent(TestModel(call_tools=['ping']), instructions='x')
+            store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
+            session = store.create_session()
+            seen: list[int] = []
+
+            @ToolRegistrar(agent, tool_logger).tool
+            def ping() -> str:
+                # La tool corre a mitad del turno: el checkpoint ya tiene que
+                # haber persistido el prompt del usuario y la respuesta previa.
+                loaded = store.load(session.id)
+                seen.append(len(loaded.messages) if loaded is not None else 0)
+                return 'pong'
+
+            app = SigilApp(agent=agent, store=store, session=session, tool_logger=tool_logger)
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press('h', 'i')
+                await pilot.press('enter')
+                await _wait_idle(app, pilot)
+
+            assert seen, 'la tool no llegó a ejecutarse'
+            assert seen[0] >= 2  # prompt del usuario + respuesta del modelo
+
+    asyncio.run(inner())
+
+
+def test_checkpoint_throttles_writes_but_force_saves(monkeypatch):
+    """El checkpoint se limita a ~1/s; `force` (fin de turno) siempre guarda."""
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
+        session = store.create_session()
+        app = SigilApp(agent=Agent(TestModel(), instructions='x'), store=store, session=session)
+
+        class _FakeRun:
+            def __init__(self) -> None:
+                self.messages: list = []
+
+            def all_messages(self) -> list:
+                return self.messages
+
+        run = _FakeRun()
+        app._current_run = run
+
+        run.messages = [ModelRequest(parts=[UserPromptPart(content='uno')])]
+        app._checkpoint()
+        assert len(store.load(session.id).messages) == 1
+
+        run.messages = [*run.messages, ModelRequest(parts=[UserPromptPart(content='dos')])]
+        app._checkpoint()  # dentro de la ventana: no escribe
+        assert len(store.load(session.id).messages) == 1
+
+        app._checkpoint(force=True)  # fin de turno: obligatorio
+        assert len(store.load(session.id).messages) == 2

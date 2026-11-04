@@ -9,6 +9,7 @@ from pydantic_ai.models.openrouter import OpenRouterModel
 from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 from src.config_provider import ConfigProvider
+from src.engine.agents.retry import RetryTransientModelErrors
 
 if TYPE_CHECKING:
     from pydantic_ai.toolsets import AbstractToolset
@@ -27,10 +28,15 @@ def create_agent(
     skill_registry: SkillRegistry | None = None,
     *,
     toolsets: Sequence[AbstractToolset] | None = None,
+    model_retry: RetryTransientModelErrors | None = None,
 ) -> Agent:
     model = OpenRouterModel(
         model_name=ConfigProvider.LLM_MODEL, provider=OpenRouterProvider(api_key=ConfigProvider.OPENROUTER_API_KEY)
     )
+
+    # Los 502/429/timeouts del proveedor se reintentan antes de tumbar el turno.
+    if model_retry is None:
+        model_retry = RetryTransientModelErrors(max_attempts=ConfigProvider.MODEL_MAX_ATTEMPTS)
 
     agent = Agent(
         model,
@@ -38,6 +44,7 @@ def create_agent(
         description='A helpful coding assistant.',
         instructions=_load_prompt(),
         end_strategy='exhaustive',
+        capabilities=[model_retry],
         # Toolsets externos (p. ej. servidores MCP); las tools de funciones se
         # siguen registrando después con `ToolManager`.
         toolsets=list(toolsets or []),

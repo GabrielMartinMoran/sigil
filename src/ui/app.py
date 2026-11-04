@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from collections.abc import Sequence
 from typing import Any
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import ProcessEventStream
 from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelMessage,
@@ -20,26 +23,46 @@ from pydantic_ai.messages import (
 )
 from textual import work
 from textual.app import App, ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.widgets import Input
 
 from src.config_provider import ConfigProvider
 from src.engine.agents.model_info import context_usage_percent, fetch_model_info
+from src.engine.agents.retry import RetryNotice, RetryTransientModelErrors
 from src.engine.agents.step_limiter import StepLimiter, StepLimitExceeded
 from src.engine.commands import COMMANDS, match_commands
 from src.engine.mcp.manager import MCPManager
+from src.engine.roadmap.store import RoadmapStore
 from src.engine.sessions.session_store import Session, SessionStore
+from src.engine.tools.interaction import QuestionAnswer, QuestionHub, QuestionItem
 from src.engine.tools.tool_registry import ToolLoggerHub
 from src.ui.mcp_report import format_mcp_status
 from src.ui.tool_logging import ChatToolLogSink, ToolLogMessage
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.command_menu import CommandMenu
 from src.ui.widgets.prompt_input import PromptInput
+from src.ui.widgets.question_screen import QuestionScreen
+from src.ui.widgets.roadmap_panel import RoadmapPanel
 from src.ui.widgets.session_picker import SessionPicker
 from src.ui.widgets.status_bar import StatusBar
 
 _EFFORTS = {'minimal', 'low', 'medium', 'high', 'xhigh', 'max'}
+CHECKPOINT_INTERVAL = 1.0
+"""Segundos mínimos entre checkpoints durante un turno (el guardado final es obligatorio)."""
 _HELP = 'Comandos: ' + ', '.join(f'{command.name} — {command.description}' for command in COMMANDS)
+
+
+class RoadmapChanged(Message):
+    pass
+
+
+class ModelRetryNotice(Message):
+    """Aviso de que un fallo transitorio del modelo dispara un reintento."""
+
+    def __init__(self, notice: RetryNotice) -> None:
+        super().__init__()
+        self.notice = notice
 
 
 class SigilApp(App):
@@ -56,6 +79,9 @@ class SigilApp(App):
         tool_logger: ToolLoggerHub | None = None,
         mcp_manager: MCPManager | None = None,
         startup_notices: Sequence[str] = (),
+        question_hub: QuestionHub | None = None,
+        roadmap_store: RoadmapStore | None = None,
+        model_retry: RetryTransientModelErrors | None = None,
     ) -> None:
         super().__init__()
         self._agent = agent
@@ -64,16 +90,26 @@ class SigilApp(App):
         self._tool_logger = tool_logger
         self._mcp_manager = mcp_manager
         self._startup_notices = tuple(startup_notices)
+        self._question_hub = question_hub
+        self._roadmap_store = roadmap_store
+        self._model_retry = model_retry
         self._tool_log_sink: ChatToolLogSink | None = None
         self._history: list[ModelMessage] = list(session.messages)
         self._context_length: int | None = None
         self.menu_visible = False
+        # Run en curso: lo usa `_checkpoint` para persistir el avance del turno.
+        self._current_run: Any = None
+        self._last_checkpoint_at = 0.0
 
     # --- composición -----------------------------------------------------
 
     def compose(self) -> ComposeResult:
         yield Vertical(
-            ChatLog(id='chat'),
+            Horizontal(
+                RoadmapPanel(id='roadmap'),
+                ChatLog(id='chat'),
+                id='main',
+            ),
             CommandMenu(id='menu'),
             PromptInput(placeholder='Escribí tu mensaje…  (/ para comandos)', id='prompt'),
             StatusBar(id='status'),
@@ -84,6 +120,13 @@ class SigilApp(App):
         if self._tool_logger is not None:
             self._tool_log_sink = ChatToolLogSink(self)
             self._tool_logger.add_sink(self._tool_log_sink)
+        if self._question_hub is not None:
+            self._question_hub.set_asker(self._ask_question)
+        if self._model_retry is not None:
+            self._model_retry.on_retry = self._notify_model_retry
+        if self._roadmap_store is not None:
+            self._roadmap_store.add_listener(self._handle_roadmap_store_change)
+            self.query_one(RoadmapPanel).set_store(self._roadmap_store)
         self.query_one(CommandMenu).display = False
         self._update_status()
         for notice in self._startup_notices:
@@ -103,10 +146,48 @@ class SigilApp(App):
         elif event.phase == 'error':
             await chat.add_notice(f'✖ {event.tool_name}: {event.error}', style='bold red')
 
+    async def on_model_retry_notice(self, message: ModelRetryNotice) -> None:
+        notice = message.notice
+        await self.query_one(ChatLog).add_notice(
+            f'↻ Fallo transitorio del modelo ({notice.reason}); '
+            f'reintento {notice.next_attempt}/{notice.max_attempts} en {notice.delay:.1f}s',
+            style='yellow',
+        )
+
+    def _notify_model_retry(self, notice: RetryNotice) -> None:
+        """Callback de la capability de reintentos: el aviso lo pinta el handler."""
+        self.post_message(ModelRetryNotice(notice))
+
     async def on_unmount(self) -> None:
+        if self._model_retry is not None:
+            self._model_retry.on_retry = None
         if self._tool_logger is not None and self._tool_log_sink is not None:
             self._tool_logger.remove_sink(self._tool_log_sink)
             self._tool_log_sink = None
+        if self._question_hub is not None:
+            self._question_hub.set_asker(None)
+        if self._roadmap_store is not None:
+            self._roadmap_store.remove_listener(self._handle_roadmap_store_change)
+
+    def _handle_roadmap_store_change(self) -> None:
+        """Listener del store. No debe llamarse ``_on_*``: Textual trata ese
+        prefijo como handler privado del mensaje y re-postearía en loop."""
+        self.post_message(RoadmapChanged())
+
+    def on_roadmap_changed(self, message: RoadmapChanged) -> None:
+        self.query_one(RoadmapPanel).refresh_from_store()
+
+    async def _ask_question(self, questions: list[QuestionItem]) -> list[QuestionAnswer] | None:
+        if not questions:
+            return []
+        future: asyncio.Future[list[QuestionAnswer] | None] = asyncio.get_running_loop().create_future()
+
+        def _done(result: list[QuestionAnswer] | None) -> None:
+            if not future.done():
+                future.set_result(result)
+
+        self.push_screen(QuestionScreen(questions), _done)
+        return await future
 
     @work
     async def _load_model_info(self) -> None:
@@ -262,9 +343,37 @@ class SigilApp(App):
         async def handler(_ctx: Any, events: Any) -> None:
             async for event in events:
                 limiter.count(event)
+                # Checkpoint por evento: apenas el run agrega un mensaje al
+                # historial (p. ej. el prompt del usuario) queda en disco.
+                self._checkpoint()
                 await self._dispatch_event(event, chat)
 
         return handler
+
+    def _checkpoint(self, *, force: bool = False) -> None:
+        """Persiste el avance del turno en curso, como mucho una vez por segundo.
+
+        Se llama después de cada iteración del agente y de cada evento del
+        stream. Si el proceso muere a mitad de un turno largo, la sesión en
+        disco conserva lo completado hasta el último checkpoint. Sólo escribe
+        cuando el historial cambió y pasó la ventana de throttle; el guardado
+        final del turno es obligatorio y no pasa por acá.
+        """
+        run = self._current_run
+        if run is None:
+            return
+        messages = run.all_messages()
+        if not messages:
+            return
+        current = self._session.messages
+        if len(messages) == len(current) and current and messages[-1] is current[-1]:
+            return
+        now = time.monotonic()
+        if not force and now - self._last_checkpoint_at < CHECKPOINT_INTERVAL:
+            return
+        self._last_checkpoint_at = now
+        self._session.messages = list(messages)
+        self._store.save(self._session)
 
     async def _dispatch_event(self, event: Any, chat: ChatLog) -> None:
         if isinstance(event, PartStartEvent):
@@ -296,29 +405,46 @@ class SigilApp(App):
         chat = self.query_one(ChatLog)
         prompt = self.query_one(PromptInput)
         limiter = StepLimiter(ConfigProvider.MAX_STEPS)
+        handler = self._turn_handler(limiter, chat)
         prompt.disabled = True
+        # `agent.iter` (en vez de `agent.run`) conserva el run accesible: si el
+        # turno se aborta por el límite de pasos o por un error, `run.all_messages()`
+        # devuelve lo que se alcanzó a completar y la sesión no pierde el contexto.
+        run: Any = None
+        history = self._history
+        # El primer checkpoint del turno (el prompt del usuario) se guarda ya.
+        self._last_checkpoint_at = 0.0
         try:
-            result = await self._agent.run(
+            async with self._agent.iter(
                 text,
                 message_history=self._history,
-                event_stream_handler=self._turn_handler(limiter, chat),
+                capabilities=[ProcessEventStream(handler=handler)],
                 model_settings=self._model_settings(),
-            )
+            ) as run:
+                self._current_run = run
+                async for _node in run:
+                    # Checkpoint por iteración: cada nodo completado (respuesta
+                    # del modelo, tanda de tools) queda persistido.
+                    self._checkpoint()
+            history = run.all_messages()
         except StepLimitExceeded:
+            if run is not None:
+                history = run.all_messages()
             await chat.add_notice(
                 f'Se alcanzó el límite de {ConfigProvider.MAX_STEPS} pasos; turno abortado.',
                 style='bold red',
             )
-            return
         except Exception as exc:  # noqa: BLE001
+            if run is not None:
+                history = run.all_messages()
             await chat.add_notice(f'Error: {exc}', style='bold red')
-            return
         finally:
+            self._current_run = None
             prompt.disabled = False
             prompt.focus()
             chat.finalize()
 
-        self._history = result.all_messages()
+        self._history = history
         self._session.messages = self._history
         self._store.save(self._session)
         self._update_status()

@@ -53,7 +53,7 @@ async def fetch_model_info(model_id: str) -> ModelInfo | None:
             data = response.json().get('data', [])
         if isinstance(data, list):
             info = parse_model_info(data, model_id)
-    except (httpx.HTTPError, ValueError):
+    except httpx.HTTPError, ValueError:
         info = None
 
     _cache[model_id] = info

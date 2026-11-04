@@ -233,6 +233,59 @@ cliente preste el modelo o la UI a mitad de turno, y eso abre recursión y
 preguntas interactivas dentro de una tool. Un servidor que dependa de esas
 capacidades va a fallar al pedirlas.
 
+## Tools integradas
+
+Además de las skills y de los servidores MCP, Sigil registra un conjunto de
+tools propias. Todas pasan por el mismo logger, así que cada llamada aparece en
+el chat con su duración y sus argumentos.
+
+| Tool | Qué hace |
+| --- | --- |
+| `run` | Ejecuta un comando de shell con timeout y guard anti-autoarranque |
+| `read_file` | Lee un archivo, o un rango de líneas, con límite de bytes |
+| `write_file` | Crea un archivo, o reemplaza o agrega su contenido |
+| `patch_file` | Edita un archivo por texto exacto o por rango de líneas |
+| `web_search` | Busca en la web y devuelve título, URL y snippet de cada resultado |
+| `read_url` | Extrae una página como Markdown, texto o HTML |
+| `ask_user` | Pregunta al usuario con opciones, dentro de la UI |
+| `update_roadmap` | Publica y actualiza el roadmap de la tarea actual |
+
+### Archivos
+
+`read_file`, `write_file` y `patch_file` trabajan dentro del workspace: una ruta
+fuera de él se rechaza con error, no se resuelve en silencio.
+
+`patch_file` tiene dos modos:
+
+- **Texto exacto** (`old_string` + `new_string`): el modo recomendado. El texto
+  tiene que aparecer una sola vez, salvo `replace_all=true`. Si aparece varias
+  veces, el error lista las líneas donde está.
+- **Rango de líneas** (`start_line` + `end_line`): útil cuando ya conocés los
+  números de línea. Podés validar el contenido actual con `expected_text` o con
+  `expected_sha256`.
+
+### Web
+
+`web_search` usa [ddgs](https://pypi.org/project/ddgs/) y no necesita API key;
+devuelve hasta 20 resultados por consulta. `read_url` convierte la página a
+Markdown por defecto (`text_markdown`) y corta el resultado en 40 000
+caracteres. Los binarios vuelven en base64.
+
+### Preguntas interactivas
+
+`ask_user` abre un modal con 2 o 3 opciones por pregunta —la recomendada aparece
+marcada— y un campo libre para escribir otra respuesta. El agente la usa cuando
+los requisitos son ambiguos o una acción necesita autorización explícita. Si
+cancelás, la tool devuelve `cancelled: true` y el turno sigue sin respuesta.
+
+### Roadmap
+
+`update_roadmap` mantiene la lista de tareas del panel izquierdo. Cada ítem
+queda en `pending`, `in_progress`, `done` o `blocked`, y el estado se guarda en
+`~/.sigil/roadmaps/<hash-del-cwd>.json`, un archivo por directorio de trabajo.
+Si la escritura falla, la lista sigue funcionando en memoria y el error queda
+en `persistence_error`.
+
 ## Desarrollo
 
 ```bash
