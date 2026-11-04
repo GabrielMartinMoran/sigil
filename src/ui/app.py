@@ -12,7 +12,6 @@ from pydantic_ai.capabilities import ProcessEventStream
 from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelMessage,
-    ModelResponse,
     ModelSettingsDeltaPart,
     PartDeltaEvent,
     PartStartEvent,
@@ -22,19 +21,28 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
 )
 from textual import work
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, ScreenStackError
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Input
 
 from src.config_provider import ConfigProvider
-from src.engine.agents.model_info import context_usage_percent, fetch_model_info
+from src.engine.agents.model_info import fetch_model_info
 from src.engine.agents.retry import RetryNotice, RetryTransientModelErrors
 from src.engine.agents.step_limiter import StepLimiter, StepLimitExceeded
 from src.engine.commands import COMMANDS, match_commands
+from src.engine.context import (
+    ContextMeter,
+    ContextViewCapability,
+    ScopeTracker,
+    WorkspaceInstructions,
+    render_report,
+)
 from src.engine.mcp.manager import MCPManager
 from src.engine.roadmap.store import RoadmapStore
 from src.engine.sessions.session_store import Session, SessionStore
+from src.engine.skills.loaded import LoadedSkills
 from src.engine.tools.interaction import QuestionAnswer, QuestionHub, QuestionItem
 from src.engine.tools.tool_registry import ToolLoggerHub
 from src.ui.mcp_report import format_mcp_status
@@ -45,12 +53,13 @@ from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.question_screen import QuestionScreen
 from src.ui.widgets.roadmap_panel import RoadmapPanel
 from src.ui.widgets.session_picker import SessionPicker
+from src.ui.widgets.sidebar_panel import MCPServerState, SidebarPanel
 from src.ui.widgets.status_bar import StatusBar
 
 _EFFORTS = {'minimal', 'low', 'medium', 'high', 'xhigh', 'max'}
 CHECKPOINT_INTERVAL = 1.0
 """Segundos mínimos entre checkpoints durante un turno (el guardado final es obligatorio)."""
-_HELP = 'Comandos: ' + ', '.join(f'{command.name} — {command.description}' for command in COMMANDS)
+_HELP = 'Commands: ' + ', '.join(f'{command.name} — {command.description}' for command in COMMANDS)
 
 
 class RoadmapChanged(Message):
@@ -82,6 +91,11 @@ class SigilApp(App):
         question_hub: QuestionHub | None = None,
         roadmap_store: RoadmapStore | None = None,
         model_retry: RetryTransientModelErrors | None = None,
+        meter: ContextMeter | None = None,
+        context_capability: ContextViewCapability | None = None,
+        scope: ScopeTracker | None = None,
+        workspace: WorkspaceInstructions | None = None,
+        loaded_skills: LoadedSkills | None = None,
     ) -> None:
         super().__init__()
         self._agent = agent
@@ -93,6 +107,11 @@ class SigilApp(App):
         self._question_hub = question_hub
         self._roadmap_store = roadmap_store
         self._model_retry = model_retry
+        self._meter = meter or ContextMeter(output_reserve=ConfigProvider.CONTEXT_OUTPUT_RESERVE)
+        self._context_capability = context_capability
+        self._scope = scope
+        self._workspace = workspace
+        self._loaded_skills = loaded_skills
         self._tool_log_sink: ChatToolLogSink | None = None
         self._history: list[ModelMessage] = list(session.messages)
         self._context_length: int | None = None
@@ -106,12 +125,16 @@ class SigilApp(App):
     def compose(self) -> ComposeResult:
         yield Vertical(
             Horizontal(
-                RoadmapPanel(id='roadmap'),
+                Vertical(
+                    SidebarPanel(id='sidebar-panel'),
+                    RoadmapPanel(id='roadmap'),
+                    id='sidebar',
+                ),
                 ChatLog(id='chat'),
                 id='main',
             ),
             CommandMenu(id='menu'),
-            PromptInput(placeholder='Escribí tu mensaje…  (/ para comandos)', id='prompt'),
+            PromptInput(placeholder='Type your message…  (/ for commands)', id='prompt'),
             StatusBar(id='status'),
             id='root',
         )
@@ -129,6 +152,8 @@ class SigilApp(App):
             self.query_one(RoadmapPanel).set_store(self._roadmap_store)
         self.query_one(CommandMenu).display = False
         self._update_status()
+        self._refresh_sidebar()
+        self._refresh_mcp_status()
         for notice in self._startup_notices:
             await self.query_one(ChatLog).add_notice(notice, style='yellow')
         if self._history:
@@ -145,12 +170,15 @@ class SigilApp(App):
             await chat.add_tool_call(event.tool_name, event.args)
         elif event.phase == 'error':
             await chat.add_notice(f'✖ {event.tool_name}: {event.error}', style='bold red')
+        elif event.phase == 'success' and event.tool_name == 'load_skill':
+            # El skill recién cargado aparece en el sidebar sin esperar al turno.
+            self._refresh_sidebar()
 
     async def on_model_retry_notice(self, message: ModelRetryNotice) -> None:
         notice = message.notice
         await self.query_one(ChatLog).add_notice(
-            f'↻ Fallo transitorio del modelo ({notice.reason}); '
-            f'reintento {notice.next_attempt}/{notice.max_attempts} en {notice.delay:.1f}s',
+            f'↻ Transient model failure ({notice.reason}); '
+            f'retry {notice.next_attempt}/{notice.max_attempts} in {notice.delay:.1f}s',
             style='yellow',
         )
 
@@ -191,9 +219,15 @@ class SigilApp(App):
 
     @work
     async def _load_model_info(self) -> None:
-        info = await fetch_model_info(ConfigProvider.LLM_MODEL)
-        if info is not None and info.context_length:
-            self._context_length = info.context_length
+        # pydantic-ai resuelve la ventana desde genai-prices. El fetch a
+        # OpenRouter queda como fallback cuando el perfil no la trae.
+        window = getattr(self._agent.model, 'context_window', None)
+        if not window:
+            info = await fetch_model_info(ConfigProvider.LLM_MODEL)
+            window = info.context_length if info is not None else None
+        if window:
+            self._context_length = window
+            self._meter.set_window(window)
         self._update_status()
 
     # --- barra de estado --------------------------------------------------
@@ -208,22 +242,57 @@ class SigilApp(App):
         configured = ConfigProvider.REASONING_EFFORT
         return configured if configured in _EFFORTS else 'default'
 
-    def _used_tokens(self) -> int:
-        for message in reversed(self._history):
-            if isinstance(message, ModelResponse):
-                usage = message.usage
-                return (usage.input_tokens or 0) + (usage.output_tokens or 0)
-        return 0
+    def _update_status(self, messages: Sequence[ModelMessage] | None = None) -> None:
+        """La barra muestra el **proyectado**: lo que va a pesar el próximo request.
 
-    def _update_status(self) -> None:
-        percent = context_usage_percent(self._used_tokens(), self._context_length)
-        self.query_one(StatusBar).update_info(
+        El medido describe el request anterior; el proyectado suma lo agregado
+        desde la última respuesta (tool results, prompt nuevo). Durante un turno
+        se le pasa el historial del run, que va por delante de `self._history`.
+        """
+        snapshot = self._meter.snapshot(self._history if messages is None else messages)
+        try:
+            bar = self.query_one(StatusBar)
+        except NoMatches, ScreenStackError:
+            # La app puede no estar montada (tests, arranque). El cálculo no
+            # depende de la UI, así que se descarta sólo el pintado.
+            return
+        bar.update_info(
             provider='openrouter',
             model=ConfigProvider.LLM_MODEL,
             effort=self._effort_in_effect(),
-            percent=percent,
-            context_length=self._context_length,
+            percent=snapshot.projected_percent,
+            context_length=snapshot.window,
         )
+
+    # --- sidebar -----------------------------------------------------------
+
+    def _refresh_sidebar(self) -> None:
+        """Skills cargadas en la sesión, arriba del roadmap."""
+        try:
+            panel = self.query_one(SidebarPanel)
+        except NoMatches, ScreenStackError:
+            return
+        names = self._loaded_skills.names() if self._loaded_skills is not None else ()
+        panel.update_skills(names)
+
+    @work(exclusive=True)
+    async def _refresh_mcp_status(self) -> None:
+        """Conteo real de servidores MCP: conecta y actualiza el panel.
+
+        Corre en un worker para no bloquear el arranque: levantar los servidores
+        puede tardar. Si falla, el panel se queda con lo que ya sabía.
+        """
+        if self._mcp_manager is None or not self._mcp_manager:
+            return
+        try:
+            statuses = await self._mcp_manager.describe(connect=True)
+        except Exception:  # noqa: BLE001 - el diagnóstico nunca rompe la app
+            return
+        servers = [MCPServerState(name=status.name, ok=not status.error) for status in statuses if status.enabled]
+        try:
+            self.query_one(SidebarPanel).update_mcp(servers)
+        except NoMatches, ScreenStackError:
+            return
 
     # --- menú de comandos -------------------------------------------------
 
@@ -294,13 +363,18 @@ class SigilApp(App):
             self._session = self._store.create_session()
             self._history = self._session.messages
             self._bind_roadmap()
+            if self._scope is not None:
+                self._scope.reset()
+            if self._loaded_skills is not None:
+                self._loaded_skills.reset()
+            self._refresh_sidebar()
             await chat.clear()
-            await chat.add_notice(f'Nueva sesión {self._session.short_id}.', style='green')
+            await chat.add_notice(f'New session {self._session.short_id}.', style='green')
             self._update_status()
         elif name == '/load':
             sessions = self._store.list_sessions()
             if not sessions:
-                await chat.add_notice('No hay sesiones guardadas.', style='yellow')
+                await chat.add_notice('No saved sessions.', style='yellow')
                 return
             chosen = await self.push_screen_wait(SessionPicker(sessions))
             if chosen:
@@ -310,21 +384,28 @@ class SigilApp(App):
                     self._session = loaded
                     self._history = loaded.messages
                     self._bind_roadmap()
+                    if self._scope is not None:
+                        self._scope.reset()
+                    if self._loaded_skills is not None:
+                        self._loaded_skills.reset()
+                    self._refresh_sidebar()
                     await chat.clear()
                     await chat.render_history(loaded.messages)
                     chat.finalize()
-                    await chat.add_notice(f'Cargada sesión {loaded.short_id}.', style='green')
+                    await chat.add_notice(f'Loaded session {loaded.short_id}.', style='green')
                     self._update_status()
         elif name == '/sidebar':
             await self._handle_sidebar(args, chat)
         elif name == '/mcp':
             await self._show_mcp(chat)
+        elif name == '/context':
+            await self._show_context(chat)
         elif name == '/help':
             await chat.add_notice(_HELP, style='cyan')
         elif name == '/quit':
             self.exit()
         else:
-            await chat.add_notice(f'Comando desconocido: {name}', style='red')
+            await chat.add_notice(f'Unknown command: {name}', style='red')
 
     async def _handle_sidebar(self, args: str, chat: ChatLog) -> None:
         """`/sidebar` alterna; `/sidebar on|off` fija el estado."""
@@ -337,21 +418,41 @@ class SigilApp(App):
         elif value in {'off', 'hide'}:
             panel.set_shown(False)
         else:
-            await chat.add_notice('Uso: /sidebar [on|off]', style='yellow')
+            await chat.add_notice('Usage: /sidebar [on|off]', style='yellow')
             return
-        await chat.add_notice(f'Sidebar {"visible" if panel.shown else "oculto"}.', style='cyan')
+        await chat.add_notice(f'Sidebar {"shown" if panel.shown else "hidden"}.', style='cyan')
+
+    async def _show_context(self, chat: ChatLog) -> None:
+        """Desglose de contexto: medido, proyectado, presupuesto y turnos."""
+        view = self._context_capability.last_view if self._context_capability is not None else None
+        report = self._meter.report(self._history, view=view)
+        lines = [render_report(report)]
+
+        if self._scope is not None:
+            scopes = self._scope.relative_scopes()
+            lines.append('')
+            lines.append('Active scope')
+            lines.append(f'  directories      : {", ".join(scopes)}')
+            if self._workspace is not None:
+                files = self._workspace.describe(self._scope.scopes())
+                lines.append(f'  instructions     : {", ".join(files) if files else "(none)"}')
+
+        await chat.add_notice('\n'.join(lines), style='white')
 
     async def _show_mcp(self, chat: ChatLog) -> None:
         if self._mcp_manager is None or not self._mcp_manager:
             await chat.add_notice(
-                'No hay servidores MCP configurados. Creá .sigil/config.json con una sección `mcp_servers`.',
+                'No MCP servers configured. Create .sigil/config.json with an `mcp_servers` section.',
                 style='yellow',
             )
             return
 
-        await chat.add_notice('Consultando servidores MCP…', style='cyan')
+        await chat.add_notice('Querying MCP servers…', style='cyan')
         statuses = await self._mcp_manager.describe(connect=True)
         await chat.add_notice(format_mcp_status(statuses), style='white')
+        # `/mcp` es el diagnóstico: el panel se actualiza con lo que acaba de ver.
+        servers = [MCPServerState(name=status.name, ok=not status.error) for status in statuses if status.enabled]
+        self.query_one(SidebarPanel).update_mcp(servers)
 
     def _persist(self) -> None:
         if self._session.messages:
@@ -399,6 +500,8 @@ class SigilApp(App):
         self._last_checkpoint_at = now
         self._session.messages = list(messages)
         self._store.save(self._session)
+        # La barra se actualiza por paso, no sólo al cerrar el turno.
+        self._update_status(messages)
 
     async def _dispatch_event(self, event: Any, chat: ChatLog) -> None:
         if isinstance(event, PartStartEvent):
@@ -456,7 +559,7 @@ class SigilApp(App):
             if run is not None:
                 history = run.all_messages()
             await chat.add_notice(
-                f'Se alcanzó el límite de {ConfigProvider.MAX_STEPS} pasos; turno abortado.',
+                f'Step limit of {ConfigProvider.MAX_STEPS} reached; turn aborted.',
                 style='bold red',
             )
         except Exception as exc:  # noqa: BLE001

@@ -17,6 +17,7 @@ from pydantic_ai import Agent
 from src.engine.tools.tool_registry import ToolLogger, ToolRegistrar
 
 if TYPE_CHECKING:
+    from src.engine.skills.loaded import LoadedSkills
     from src.engine.skills.registry import SkillRegistry
 
 DEFAULT_TIMEOUT = 15
@@ -259,6 +260,7 @@ class ToolManager:
         self,
         skill_registry: SkillRegistry | None = None,
         tool_logger: ToolLogger | None = None,
+        loaded_skills: LoadedSkills | None = None,
     ) -> None:
         self.tools = {}
         if skill_registry is None:
@@ -267,6 +269,7 @@ class ToolManager:
             skill_registry = SkillRegistry()
         self.skill_registry = skill_registry
         self.tool_logger = tool_logger
+        self.loaded_skills = loaded_skills
 
     def registrar(self, agent: Agent) -> ToolRegistrar:
         """Registrador con logging para tools de este agente."""
@@ -312,4 +315,4 @@ class ToolManager:
 
         from src.engine.skills.tools import register_skill_tools
 
-        register_skill_tools(agent, self.skill_registry, logger=self.tool_logger)
+        register_skill_tools(agent, self.skill_registry, logger=self.tool_logger, loaded=self.loaded_skills)

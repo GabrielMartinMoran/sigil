@@ -239,6 +239,23 @@ class MCPManager:
             return [self._require(server)]
         return [item for item in self._servers.values() if item.toolset is not None]
 
+    def counts(self) -> tuple[int, int]:
+        """``(andando, con error)`` entre los servidores habilitados.
+
+        "Andando" es optimista: un servidor cuenta como sano si su toolset se
+        construyó y no falló todavía. `describe(connect=True)` es lo que confirma
+        que responde de verdad.
+        """
+        ok = failed = 0
+        for server in self._servers.values():
+            if not server.enabled:
+                continue
+            if server.error:
+                failed += 1
+            elif server.agent_toolset is not None:
+                ok += 1
+        return ok, failed
+
     async def describe(self, *, connect: bool = False) -> list[ServerStatus]:
         """Estado de cada servidor; con ``connect`` consulta las tools reales."""
         for server in self._servers.values():

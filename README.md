@@ -22,16 +22,23 @@ puede fijar una lista explícita de raíces con `SIGIL_SKILLS_DIRS` (separadas p
 
 ### Progressive disclosure
 
-| Nivel | Qué se carga | Cuándo |
+| Nivel | Qué se carga | Dónde viaja |
 | --- | --- | --- |
-| 1 | `name` + `description` | Siempre, inyectado en las instrucciones del agente |
-| 2 | Cuerpo del `SKILL.md` | Al llamar `load_skill` |
-| 3 | Recursos y scripts | Al llamar `read_skill_resource` / `run_skill_script` |
+| 1 | `name` + `description` | Bloque de instrucciones `skills`, recalculado por request |
+| 2 | Cuerpo del `SKILL.md` | Bloque de instrucciones `loaded-skills`, al llamar `load_skill` |
+| 3 | Recursos y scripts | Resultado de `read_skill_resource` / `run_skill_script` |
+
+El nivel 2 va como **bloque de instrucciones**, no como resultado de tool. Así
+sobrevive a la compactación y no compite por el presupuesto del historial. Los
+recursos quedan afuera a propósito: se leen on demand, que es lo que mantiene
+barato el bloque.
 
 ### Tools expuestas al modelo
 
 - `list_skills(query=None)` — lista metadatos de los skills instalados.
-- `load_skill(name)` — devuelve el cuerpo del `SKILL.md` y el inventario de recursos.
+- `load_skill(name)` — registra el skill y devuelve un acuse con el inventario de
+  recursos. El cuerpo del `SKILL.md` aparece en las instrucciones del request
+  siguiente, bajo "Loaded skills".
 - `read_skill_resource(name, path, max_bytes=...)` — lee un recurso relativo al
   skill (texto UTF-8 o binario en base64). Bloquea `..` y rutas absolutas.
 - `run_skill_script(name, script, args=None, timeout_seconds=30)` — ejecuta un
@@ -332,6 +339,16 @@ cancelás, la tool devuelve `cancelled: true` y el turno sigue sin respuesta.
 `update_roadmap` mantiene la lista de tareas del panel izquierdo. Cada ítem
 queda en `pending`, `in_progress`, `done` o `blocked`.
 
+El panel muestra una sola lista en orden de plan, sin agrupar por estado. El
+icono y el color alcanzan para leerla de un vistazo:
+
+| Estado | Icono | Estilo |
+| --- | --- | --- |
+| `done` | `✓` | verde, tachado |
+| `in_progress` | `▶` | azul |
+| `pending` | `○` | blanco |
+| `blocked` | `!` | amarillo |
+
 El roadmap es de la sesión, no del directorio: cada sesión arranca con la lista
 vacía, avanza con ella y la recupera al cargarla con `/load`. El estado se
 guarda en `~/.sigil/roadmaps/<hash-del-cwd>/<id-de-sesión>.json`. Si la
@@ -349,11 +366,88 @@ mientras escribís.
 | `/load` | Carga una sesión guardada y su roadmap |
 | `/sidebar [on\|off]` | Muestra u oculta el sidebar; sin argumento, alterna |
 | `/mcp` | Consulta el estado de los servidores MCP |
+| `/context` | Muestra el desglose de contexto usado |
 | `/help` | Lista los comandos disponibles |
 | `/quit` | Sale de Sigil |
 
 El sidebar arranca visible. Ocultarlo no borra el roadmap: el agente lo sigue
 actualizando y vuelve a aparecer con `/sidebar on`.
+
+### Sidebar
+
+Arriba del roadmap, el panel de sesión muestra:
+
+- **Loaded skills**: los skills que el agente cargó en esta sesión, en orden de
+  carga. Es el diagnóstico rápido de si está siguiendo el protocolo.
+- **MCP**: el conteo va inline con el título, entre paréntesis. Abajo se lista
+  cada servidor: `●` en verde para los que andan, `✗` en rojo para los que no.
+  Si no hay servidores configurados, la sección no aparece.
+
+Toda la interfaz está en inglés; el código y la documentación, en español.
+
+```
+MCP (3, 1 ✗)
+ ● github
+ ● playwright
+ ● filesystem
+ ✗ broken
+```
+
+El conteo de MCP se refresca al arrancar (en un worker, sin bloquear la UI) y
+cada vez que corrés `/mcp`.
+
+## Gestión de contexto
+
+El historial completo de la sesión (el **log**) es append-only y se persiste tal
+cual. Lo que se le manda al modelo en cada request es una **vista** derivada: una
+proyección determinística que no muta el log. Así se puede recortar sin perder
+nada de lo que `/load` restaura.
+
+### Instrucciones por árbol de directorios
+
+`AGENTS.md` (o `CLAUDE.md` en su defecto) se resuelve sobre el árbol de
+directorios activo:
+
+- El `AGENTS.md` de la raíz de la sesión aplica siempre.
+- El de un subdirectorio aplica sólo cuando el agente opera dentro de él.
+- El orden es padre → hijo: el hijo va último y tiene precedencia.
+- En un mismo directorio, `AGENTS.md` gana sobre `CLAUDE.md`.
+
+El bloque viaja por el canal de instrucciones (contenido de operador), nunca como
+mensaje de usuario, y usa `on_change='append'`: cuando el scope se amplía a mitad
+de turno se agrega el texto del hijo en vez de reescribir el prefijo, que es lo
+que rompería el prompt cache.
+
+### Estrategias de vista
+
+| Estrategia | Qué hace |
+| --- | --- |
+| `windowed` (default) | Dropea el razonamiento, trunca tool results viejos y descarta turnos viejos si no entra en la ventana. |
+| `compacting` | Además colapsa los turnos viejos en un resumen determinístico (`CompactionPart`), sin llamar al modelo. |
+| `passthrough` | Manda el historial tal cual. |
+
+Los turnos recientes quedan intactos: el modelo suele necesitar los detalles
+exactos del último turno en el siguiente.
+
+### Medición
+
+La barra de estado muestra el **proyectado**: el medido del último request más
+una estimación de lo agregado desde entonces. El medido describe el pasado; el
+proyectado es lo que importa para saber si el próximo request entra en la
+ventana. `/context` muestra los dos, el presupuesto y el desglose por turno.
+
+### Configuración
+
+| Variable | Default | Qué hace |
+| --- | --- | --- |
+| `SIGIL_CONTEXT_STRATEGY` | `windowed` | `windowed`, `compacting` o `passthrough`. |
+| `SIGIL_CONTEXT_KEEP_THINKING` | vacío | Si se prende, la vista no dropea razonamiento. |
+| `SIGIL_CONTEXT_KEEP_RECENT_TURNS` | `3` | Turnos intactos antes de recortar. |
+| `SIGIL_CONTEXT_MAX_TOOL_RESULT_CHARS` | `4000` | Tope de un tool result viejo. |
+| `SIGIL_CONTEXT_OUTPUT_RESERVE` | `8000` | Tokens reservados para la respuesta. |
+
+El diseño completo y las verificaciones contra el provider están en
+[`proposals/context-management.md`](proposals/context-management.md).
 
 ## Desarrollo
 

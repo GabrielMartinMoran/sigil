@@ -19,6 +19,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from src.engine.skills.loaded import LoadedSkills
 from src.engine.skills.models import SkillMetadata, SkillResourceError
 from src.engine.skills.registry import DEFAULT_MAX_READ_BYTES, SkillRegistry
 from src.engine.tools.tool_registry import ToolLogger, ToolRegistrar
@@ -47,14 +48,22 @@ class SkillResourceInfo(BaseModel):
 
 
 class LoadedSkill(BaseModel):
-    """Resultado de cargar un skill (nivel 2)."""
+    """Acuse de carga de un skill (nivel 2).
+
+    El cuerpo del `SKILL.md` **no** viaja acá: se inyecta como bloque de
+    instrucciones para que sobreviva a la compactación y no compita por el
+    presupuesto del historial. Este resultado sólo confirma la carga y lista los
+    recursos que se pueden leer on demand.
+    """
 
     name: str
     description: str
     source: str
     path: str
-    body: str
     resources: list[SkillResourceInfo]
+    note: str = Field(
+        description='Where the skill body went and what to do next.',
+    )
 
 
 class ResourceContent(BaseModel):
@@ -140,8 +149,17 @@ def _interpreter_for(path: Path) -> list[str]:
     )
 
 
-def register_skill_tools(agent, registry: SkillRegistry, logger: ToolLogger | None = None) -> None:
-    """Registra las tools de skills en un agente de pydantic-ai."""
+def register_skill_tools(
+    agent,
+    registry: SkillRegistry,
+    logger: ToolLogger | None = None,
+    loaded: LoadedSkills | None = None,
+) -> None:
+    """Registra las tools de skills en un agente de pydantic-ai.
+
+    Con ``loaded``, `load_skill` registra el skill para que su cuerpo se inyecte
+    como bloque de instrucciones en el request siguiente.
+    """
     tools = ToolRegistrar(agent, logger)
 
     @tools.tool
@@ -166,12 +184,14 @@ def register_skill_tools(agent, registry: SkillRegistry, logger: ToolLogger | No
 
     @tools.tool
     def load_skill(name: str) -> LoadedSkill:
-        """Load a skill's SKILL.md body and list its bundled resources.
+        """Load a skill and list its bundled resources.
 
         Call this when a task matches a skill description or the user names a
-        skill. The returned body contains the instructions to follow. Resources
-        are listed but not loaded; read only the ones you need with
-        `read_skill_resource`, and run bundled scripts with `run_skill_script`.
+        skill. The skill's instructions are injected into your system prompt
+        under "Loaded skills" on the next step — they are not repeated in this
+        result. Resources are listed but not loaded; read only the ones you need
+        with `read_skill_resource`, and run bundled scripts with
+        `run_skill_script`.
 
         Args:
             name: Skill name as returned by `list_skills`.
@@ -179,16 +199,22 @@ def register_skill_tools(agent, registry: SkillRegistry, logger: ToolLogger | No
         if registry.get(name) is None:
             registry.refresh()
         skill = registry.load(name)
+        if loaded is not None:
+            loaded.add(skill.metadata.name)
         return LoadedSkill(
             name=skill.metadata.name,
             description=skill.metadata.description,
             source=skill.metadata.source,
             path=str(skill.metadata.path),
-            body=skill.body,
             resources=[
                 SkillResourceInfo(path=resource.path, size=resource.size, kind=resource.kind)
                 for resource in skill.resources
             ],
+            note=(
+                f'The instructions of `{skill.metadata.name}` are now in your system prompt '
+                'under "Loaded skills". Do not call `load_skill` again for it. Read bundled '
+                'resources on demand with `read_skill_resource`.'
+            ),
         )
 
     @tools.tool

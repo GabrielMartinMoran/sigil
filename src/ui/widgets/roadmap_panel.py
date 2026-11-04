@@ -9,24 +9,18 @@ from textual.widgets import Static
 
 from src.engine.roadmap.store import RoadmapStore
 
-_STATUS_ORDER = ('in_progress', 'pending', 'blocked', 'done')
 _STATUS_ICON = {'in_progress': '▶', 'pending': '○', 'blocked': '!', 'done': '✓'}
 _STATUS_STYLE = {
-    'in_progress': 'bold cyan',
+    'in_progress': 'bold blue',
     'pending': '',
     'blocked': 'bold yellow',
-    'done': 'dim strike',
+    'done': 'green strike',
 }
-_STATUS_LABEL = {
-    'in_progress': 'En progreso',
-    'pending': 'Pendientes',
-    'blocked': 'Bloqueadas',
-    'done': 'Completadas',
-}
+_FALLBACK_ICON = '·'
 
 
 class RoadmapPanel(Static):
-    """Muestra las tareas pendientes y completadas."""
+    """Muestra el roadmap completo como una sola lista, en orden de plan."""
 
     def __init__(self, store: RoadmapStore | None = None, **kwargs: Any) -> None:
         super().__init__(Text(''), **kwargs)
@@ -67,21 +61,19 @@ class RoadmapPanel(Static):
         text = Text()
         text.append('Roadmap\n', style='bold')
         if self._store is None:
-            text.append('Sin roadmap.', style='dim')
+            text.append('No roadmap.', style='dim')
             return text
         items = self._store.snapshot()
         if not items:
-            text.append('Sin tareas todavía.', style='dim')
+            text.append('No tasks yet.', style='dim')
             return text
-        for status in _STATUS_ORDER:
-            group = [item for item in items if item.status == status]
-            if not group:
-                continue
-            text.append(f'\n{_STATUS_LABEL[status]}\n', style='bold dim')
-            for item in group:
-                text.append(f' {_STATUS_ICON[status]} ', style=_STATUS_STYLE[status])
-                text.append(item.title, style=_STATUS_STYLE[status])
-                text.append('\n')
-                if item.notes:
-                    text.append(f'   {item.notes}\n', style='dim')
+
+        for item in items:
+            style = _STATUS_STYLE.get(item.status, '')
+            icon = _STATUS_ICON.get(item.status, _FALLBACK_ICON)
+            text.append(f' {icon} ', style=style)
+            text.append(item.title, style=style)
+            text.append('\n')
+            if item.notes:
+                text.append(f'   {item.notes}\n', style='dim')
         return text

@@ -16,7 +16,7 @@ class StepLimitExceeded(Exception):
     """Se lanza cuando un turno supera la cantidad máxima de pasos permitidos."""
 
     def __init__(self, limit: int) -> None:
-        super().__init__(f'Se alcanzó el límite de {limit} pasos en el turno.')
+        super().__init__(f'Step limit of {limit} reached in this turn.')
         self.limit = limit
 
 

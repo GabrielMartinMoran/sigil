@@ -73,7 +73,7 @@ def test_command_menu_filters_and_selects(monkeypatch):
 
                 menu = app.query_one(CommandMenu)
                 assert menu.display is True
-                assert menu.option_count == 6
+                assert menu.option_count == 7
 
                 await pilot.press('n')
                 await pilot.pause()
@@ -312,7 +312,7 @@ def test_step_limit_abort_preserves_session_and_context(monkeypatch):
                 await _wait_idle(app, pilot)
 
                 # El turno se cortó por el límite, pero no se perdió el contexto.
-                assert any('límite' in text for text in _chat_texts(app))
+                assert any('Step limit' in text for text in _chat_texts(app))
                 assert len(app._history) >= 2
                 assert len(app._session.messages) == len(app._history)
 
@@ -405,3 +405,55 @@ def test_checkpoint_throttles_writes_but_force_saves(monkeypatch):
 
         app._checkpoint(force=True)  # fin de turno: obligatorio
         assert len(store.load(session.id).messages) == 2
+
+
+def test_context_command_shows_breakdown_and_scope(monkeypatch):
+    monkeypatch.setattr(appmod, 'fetch_model_info', _fake_fetch)
+
+    from src.engine.context import (
+        ContextMeter,
+        ContextViewCapability,
+        ScopeTracker,
+        WindowedStrategy,
+        WorkspaceInstructions,
+    )
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'AGENTS.md').write_text('# Reglas del proyecto')
+            (root / 'src').mkdir()
+            (root / 'src' / 'AGENTS.md').write_text('# Reglas de src')
+
+            agent = Agent(TestModel(custom_output_text='ok'), instructions='x')
+            store = SessionStore(cwd=tmp, base_dir=root / 'sessions')
+            session = store.create_session()
+            scope = ScopeTracker(root)
+            workspace = WorkspaceInstructions(root)
+            meter = ContextMeter(window=200_000)
+            capability = ContextViewCapability(strategy=WindowedStrategy(), meter=meter)
+
+            app = SigilApp(
+                agent=agent,
+                store=store,
+                session=session,
+                meter=meter,
+                context_capability=capability,
+                scope=scope,
+                workspace=workspace,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                scope.observe('read_file', {'path': 'src/x.py'})
+                await pilot.press('/')
+                await pilot.press('c', 'o', 'n', 't', 'e', 'x', 't')
+                await pilot.press('enter')
+                await pilot.pause()
+
+                text = '\n'.join(_chat_texts(app))
+                assert 'Context' in text
+                assert 'Budget' in text
+                assert 'Active scope' in text
+                assert 'src/AGENTS.md' in text
+
+    asyncio.run(inner())

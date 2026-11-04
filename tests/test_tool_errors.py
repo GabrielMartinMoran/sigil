@@ -67,4 +67,4 @@ def test_describe_tool_error_collapses_whitespace_and_caps_length() -> None:
 
 
 def test_describe_tool_error_handles_empty_message() -> None:
-    assert describe_tool_error(ValueError()) == 'ValueError: (sin detalle)'
+    assert describe_tool_error(ValueError()) == 'ValueError: (no detail)'

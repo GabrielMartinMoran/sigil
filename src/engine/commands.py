@@ -12,12 +12,13 @@ class Command:
 
 
 COMMANDS: tuple[Command, ...] = (
-    Command('/new', 'Iniciar una sesión nueva'),
-    Command('/load', 'Cargar una sesión guardada'),
-    Command('/sidebar', 'Mostrar u ocultar el sidebar (on/off)'),
-    Command('/mcp', 'Ver el estado de los servidores MCP'),
-    Command('/help', 'Mostrar la ayuda de comandos'),
-    Command('/quit', 'Salir de Sigil'),
+    Command('/new', 'Start a new session'),
+    Command('/load', 'Load a saved session'),
+    Command('/sidebar', 'Show or hide the sidebar (on/off)'),
+    Command('/mcp', 'Show MCP server status'),
+    Command('/context', 'Show the context usage breakdown'),
+    Command('/help', 'Show command help'),
+    Command('/quit', 'Quit Sigil'),
 )
 
 

@@ -18,6 +18,7 @@ from pathlib import Path, PurePosixPath
 
 from src.engine.skills.models import (
     Skill,
+    SkillError,
     SkillMetadata,
     SkillNotFound,
     SkillParseError,
@@ -279,6 +280,38 @@ class SkillRegistry:
             description = ' '.join(skill.description.split())
             lines.append(f'- `{skill.name}`: {description}')
         return '\n'.join(lines)
+
+    def render_loaded_skills(self, names: Sequence[str]) -> str:
+        """Bloque de instrucciones con el cuerpo de los skills cargados.
+
+        El cuerpo del `SKILL.md` va acá y no como resultado de tool: así sobrevive
+        a la compactación y no compite por el presupuesto del historial. Los
+        recursos empaquetados quedan afuera a propósito — se leen on demand con
+        `read_skill_resource`, que es lo que mantiene barato el bloque.
+        """
+        if not names:
+            return ''
+
+        sections: list[str] = []
+        for name in names:
+            try:
+                skill = self.load(name)
+            except SkillError:
+                continue
+            sections.append(f'### `{skill.metadata.name}`\n\n{skill.body.strip()}')
+        if not sections:
+            return ''
+
+        header = [
+            '## Loaded skills',
+            '',
+            'The following skills were loaded in this session. Their instructions are',
+            'authoritative for the tasks they cover. Bundled resources are NOT included:',
+            'read them on demand with `read_skill_resource` and run scripts with',
+            '`run_skill_script`. Do not call `load_skill` again for a skill listed here.',
+            '',
+        ]
+        return '\n'.join([*header, '\n\n'.join(sections)]).rstrip() + '\n'
 
     def iter_errors(self) -> Iterable[str]:
         return tuple(self.errors)

@@ -19,7 +19,7 @@ def server_state(status: ServerStatus) -> str:
 def format_mcp_status(statuses: Sequence[ServerStatus]) -> str:
     """Reporte legible del estado de todos los servidores configurados."""
     if not statuses:
-        return 'No hay servidores MCP configurados.'
+        return 'No MCP servers configured.'
 
     width = max(len(status.name) for status in statuses)
     pad = ' ' * width

@@ -355,7 +355,7 @@ def test_format_mcp_status_shows_tools_errors_and_state():
 
 
 def test_format_mcp_status_handles_no_servers():
-    assert 'No hay servidores MCP' in format_mcp_status([])
+    assert 'No MCP servers' in format_mcp_status([])
 
 
 def test_broken_server_does_not_block_the_others(tmp_path):

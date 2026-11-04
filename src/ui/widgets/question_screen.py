@@ -19,7 +19,7 @@ CUSTOM_ID = '__custom__'
 class QuestionScreen(ModalScreen[list[QuestionAnswer] | None]):
     """Devuelve las respuestas o ``None`` si se cancela."""
 
-    BINDINGS: ClassVar[list[Binding]] = [Binding('escape', 'cancel', 'Cancelar')]
+    BINDINGS: ClassVar[list[Binding]] = [Binding('escape', 'cancel', 'Cancel')]
 
     def __init__(self, questions: list[QuestionItem]) -> None:
         super().__init__()
@@ -33,8 +33,8 @@ class QuestionScreen(ModalScreen[list[QuestionAnswer] | None]):
             Static(id='question-progress'),
             Static(id='question-title'),
             OptionList(id='question-options'),
-            Input(placeholder='Escribí tu respuesta…', id='question-custom'),
-            Static('↑/↓ elegir · Enter confirmar · Esc cancelar', id='question-help'),
+            Input(placeholder='Type your answer…', id='question-custom'),
+            Static('↑/↓ select · Enter confirm · Esc cancel', id='question-help'),
             id='question-box',
         )
 
@@ -48,7 +48,7 @@ class QuestionScreen(ModalScreen[list[QuestionAnswer] | None]):
     def _render_question(self) -> None:
         item = self._questions[self._index]
         self.query_one('#question-progress', Static).update(
-            f'[dim]Pregunta {self._index + 1} de {len(self._questions)}[/dim]'
+            f'[dim]Question {self._index + 1} of {len(self._questions)}[/dim]'
         )
         self.query_one('#question-title', Static).update(item.question)
 
@@ -64,10 +64,10 @@ class QuestionScreen(ModalScreen[list[QuestionAnswer] | None]):
                 label = f'{label}  [dim]— {option.description}[/dim]'
             # La primera opción siempre se muestra como recomendada.
             if option.recommended or (index == 0 and not has_recommended):
-                label = f'{label}  [bold cyan][recomendada][/bold cyan]'
+                label = f'{label}  [bold cyan][recommended][/bold cyan]'
             options.add_option(Option(label, id=f'opt-{index}'))
         if item.allow_custom:
-            options.add_option(Option('[italic]Otro (escribir a mano)…[/italic]', id=CUSTOM_ID))
+            options.add_option(Option('[italic]Other (type your own)…[/italic]', id=CUSTOM_ID))
         options.highlighted = 0
         options.focus()
 

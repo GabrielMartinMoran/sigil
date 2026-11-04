@@ -28,7 +28,7 @@ MAX_ERROR_CHARS = 2000
 
 def describe_tool_error(error: BaseException) -> str:
     """Mensaje de una tool fallida, con el tipo de excepción adelante."""
-    detail = ' '.join(str(error).split()) or '(sin detalle)'
+    detail = ' '.join(str(error).split()) or '(no detail)'
     if len(detail) > MAX_ERROR_CHARS:
         detail = detail[: MAX_ERROR_CHARS - 1] + '…'
     return f'{type(error).__name__}: {detail}'

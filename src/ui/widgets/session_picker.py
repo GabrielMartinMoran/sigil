@@ -17,7 +17,7 @@ from src.engine.sessions.session_store import Session
 class SessionPicker(ModalScreen[str | None]):
     """Devuelve el id de la sesión elegida (o ``None`` si se cancela)."""
 
-    BINDINGS: ClassVar[list[Binding]] = [Binding('escape', 'cancel', 'Cancelar')]
+    BINDINGS: ClassVar[list[Binding]] = [Binding('escape', 'cancel', 'Cancel')]
 
     def __init__(self, sessions: list[Session]) -> None:
         super().__init__()
@@ -29,7 +29,7 @@ class SessionPicker(ModalScreen[str | None]):
             for session in self._sessions
         ]
         yield Vertical(
-            Static('Seleccioná una sesión (↑/↓, Enter; Esc para cancelar)'),
+            Static('Select a session (↑/↓, Enter; Esc to cancel)'),
             OptionList(*options, id='sessions'),
             id='picker',
         )

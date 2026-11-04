@@ -239,16 +239,46 @@ def test_tools_are_registered_and_list_filters(tmp_path):
     assert [skill.name for skill in agent.registered['list_skills']('beta')] == ['beta']
 
 
-def test_load_skill_tool_returns_body(tmp_path):
+def test_load_skill_tool_returns_ack_and_registers(tmp_path):
+    """El cuerpo no viaja en el resultado: se inyecta como bloque de instrucciones."""
+    from src.engine.skills.loaded import LoadedSkills
+
     write_skill(tmp_path, 'demo', body='# Demo body', files={'references/a.md': 'A'})
     registry = SkillRegistry([('project', tmp_path)])
+    loaded_skills = LoadedSkills()
     agent = DummyAgent()
-    register_skill_tools(agent, registry)
+    register_skill_tools(agent, registry, loaded=loaded_skills)
 
     loaded = agent.registered['load_skill']('demo')
     assert loaded.name == 'demo'
-    assert loaded.body == '# Demo body'
+    assert not hasattr(loaded, 'body')
+    assert 'Loaded skills' in loaded.note
     assert [resource.path for resource in loaded.resources] == ['references/a.md']
+    assert loaded_skills.names() == ('demo',)
+
+    # El cuerpo aparece en el bloque de instrucciones, no en el tool result.
+    block = registry.render_loaded_skills(loaded_skills.names())
+    assert '# Demo body' in block
+    assert 'references/a.md' not in block
+
+
+def test_load_skill_is_idempotent_in_the_registry(tmp_path):
+    from src.engine.skills.loaded import LoadedSkills
+
+    write_skill(tmp_path, 'demo', body='# Demo body')
+    registry = SkillRegistry([('project', tmp_path)])
+    loaded_skills = LoadedSkills()
+    agent = DummyAgent()
+    register_skill_tools(agent, registry, loaded=loaded_skills)
+
+    agent.registered['load_skill']('demo')
+    agent.registered['load_skill']('demo')
+    assert loaded_skills.names() == ('demo',)
+
+
+def test_render_loaded_skills_is_empty_without_names(tmp_path):
+    registry = SkillRegistry([('project', tmp_path)])
+    assert registry.render_loaded_skills(()) == ''
 
 
 def test_read_skill_resource_tool_decodes_binary(tmp_path):

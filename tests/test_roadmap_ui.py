@@ -240,7 +240,7 @@ def test_sidebar_command_rejects_unknown_arguments(monkeypatch):
                 await pilot.pause()
 
                 assert panel.display is True
-                assert 'Uso: /sidebar' in ' '.join(_chat_texts(app))
+                assert 'Usage: /sidebar' in ' '.join(_chat_texts(app))
 
     asyncio.run(inner())
 
