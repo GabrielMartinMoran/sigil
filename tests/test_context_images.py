@@ -79,7 +79,7 @@ def test_an_image_from_an_old_turn_leaves_the_request_and_is_noted():
     assert dropped == 1
     kept = messages[0].parts[0].content
     assert not any(isinstance(item, BinaryImage) for item in kept)
-    assert IMAGE_OMITTED.format(number=1, s='') in kept
+    assert IMAGE_OMITTED.format(image_id=_image().identifier) in kept
 
 
 def test_an_image_from_the_recent_turn_stays():
@@ -121,7 +121,7 @@ def test_the_window_drops_images_only_from_the_old_turns():
         turns.append(_prompt(f'turno {index}', _image()))
         turns.append(ModelRequest(parts=[TextPart(content='sigo')]))
 
-    strategy = WindowedStrategy(keep_recent_turns=1, reasoning='all')
+    strategy = WindowedStrategy(keep_recent_turns=1, image_turns=1, reasoning='all')
     result = strategy.view(turns, ContextBudget(window=200_000, output_reserve=0))
 
     # Four turns, the last one kept whole.
@@ -130,9 +130,82 @@ def test_the_window_drops_images_only_from_the_old_turns():
         item
         for message in result.messages
         for part in message.parts
-        for item in (part.content if isinstance(getattr(part, 'content', None), list) else [])
+        for item in (part.content if isinstance(part.content, list) else [])
         if isinstance(item, BinaryImage)
     ]
+    assert len(kept) == 1
+
+
+def test_images_have_their_own_window_of_turns():
+    """A picture outlives the turn it came in: three rounds by default, not one.
+
+    The text of a turn can be truncated long before the image stops being useful, so
+    the two windows are separate: `keep_recent_turns` decides what text survives and
+    `image_turns` what pixels travel.
+    """
+    from src.engine.context.budget import ContextBudget
+
+    turns = []
+    for index in range(5):
+        turns.append(_prompt(f'turno {index}', _image()))
+        turns.append(ModelRequest(parts=[TextPart(content='sigo')]))
+
+    result = WindowedStrategy(keep_recent_turns=1, reasoning='all').view(
+        turns, ContextBudget(window=200_000, output_reserve=0)
+    )
+
+    assert result.dropped_images == 2
+    kept = [
+        item
+        for message in result.messages
+        for part in message.parts
+        for item in (part.content if isinstance(part.content, list) else [])
+        if isinstance(item, BinaryImage)
+    ]
+    assert len(kept) == 3
+
+
+def test_the_note_names_the_id_that_brings_the_image_back():
+    """Dropping the pixels must cost a tool call, not the information."""
+    from src.engine.context.budget import ContextBudget
+
+    image = _image()
+    turns = [_prompt('vieja', image), _prompt('reciente')]
+
+    result = WindowedStrategy(keep_recent_turns=1, image_turns=1, reasoning='all').view(
+        turns, ContextBudget(window=200_000, output_reserve=0)
+    )
+
+    text = ' '.join(
+        item
+        for message in result.messages
+        for part in message.parts
+        for item in (part.content if isinstance(part.content, list) else [])
+        if isinstance(item, str)
+    )
+    assert image.identifier in text
+    assert 'view_image' in text
+
+
+def test_the_pixel_cap_bounds_what_stays():
+    """Three turns of 4K screenshots cost more than the conversation they belong to."""
+    from src.engine.context.budget import ContextBudget
+
+    turns = [_prompt(f'turno {index}', _image(2000, 2000)) for index in range(3)]
+
+    # 10% of 100k is 10k, and one of these costs 5,184: only one fits.
+    result = WindowedStrategy(keep_recent_turns=3, image_turns=3, image_max_percent=10, reasoning='all').view(
+        turns, ContextBudget(window=100_000, output_reserve=0)
+    )
+
+    kept = [
+        item
+        for message in result.messages
+        for part in message.parts
+        for item in (part.content if isinstance(part.content, list) else [])
+        if isinstance(item, BinaryImage)
+    ]
+    assert result.dropped_images == 2
     assert len(kept) == 1
 
 
@@ -173,3 +246,45 @@ def test_compaction_reports_the_images_it_drops_with_the_turn():
     result = CompactingStrategy(keep_recent_turns=1, reasoning='all').view(messages, ContextBudget(window=None))
 
     assert result.dropped_images == 2
+
+
+# --- an image a tool brought back -------------------------------------------
+
+
+def _tool_result(image: BinaryImage) -> ModelRequest:
+    from pydantic_ai.messages import ToolReturnPart
+
+    return ModelRequest(parts=[ToolReturnPart(tool_name='view_image', content=[image], tool_call_id='c1')])
+
+
+def test_an_image_inside_a_tool_result_is_priced():
+    """`view_image` hands a picture back as part of its answer, and it costs pixels."""
+    from pydantic_ai.messages import ToolReturnPart
+
+    from src.engine.context.tokens import part_tokens
+
+    part = ToolReturnPart(tool_name='view_image', content=[_image(1000, 1000)], tool_call_id='c1')
+
+    assert part_tokens(part) >= image_tokens(1000, 1000)
+
+
+def test_an_image_inside_a_tool_result_is_dropped_like_any_other():
+    """Otherwise the picture a tool returned is paid on every request, forever."""
+    from src.engine.context.budget import ContextBudget
+
+    image = _image(400, 400)
+    turns = [_tool_result(image), _prompt('reciente')]
+
+    result = WindowedStrategy(keep_recent_turns=1, image_turns=1, reasoning='all').view(
+        turns, ContextBudget(window=200_000, output_reserve=0)
+    )
+
+    assert result.dropped_images == 1
+    left = [
+        item
+        for message in result.messages
+        for part in message.parts
+        for item in (part.content if isinstance(getattr(part, 'content', None), list) else [])
+        if isinstance(item, BinaryImage)
+    ]
+    assert left == []

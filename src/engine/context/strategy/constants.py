@@ -35,13 +35,43 @@ over a few consecutive steps, so ten covers it with room to spare, and the token
 is what keeps the window from being stupid when the context is nearly full.
 """
 
-DEFAULT_REASONING_MAX_PERCENT = 10
+DEFAULT_REASONING_MAX_PERCENT = 5
 """Ceiling for the reasoning kept, as a percentage of the model's window.
 
 Reasoning is the cheapest thing to drop and the most voluminous to carry, so on a
-1M window this is 100k tokens: generous while the conversation is short, and never
+1M window this is 50k tokens: generous while the conversation is short, and never
 a reason to lose a turn when it is not.
 """
+
+DEFAULT_IMAGE_TURNS = 3
+"""Turns whose images keep travelling with the request.
+
+Past that, an image leaves its id behind and `view_image` brings it back. Images are
+heavier than reasoning per item —a screenshot is thousands of tokens— so the window
+is counted in turns and bounded by its own share of the window.
+"""
+
+DEFAULT_IMAGE_MAX_PERCENT = 10
+"""Ceiling for the pixels that stay, as a percentage of the model's window.
+
+Separate from the reasoning share on purpose: a picture costs what its pixels cost,
+which is an order of magnitude more per item than a block of reasoning, and the two
+budgets should not compete for the same number.
+"""
+
+
+def image_token_cap(window: int | None, available: int | None, percent: int) -> int | None:
+    """Ceiling for the images kept, in tokens. Same shape as the reasoning cap.
+
+    Args:
+        window: The model's context window, or ``None`` when it is unknown.
+        available: Tokens left for the history, or ``None`` when the window is unknown.
+        percent: Share of `window` that pixels may take.
+
+    Returns:
+        The cap in tokens, or ``None`` when it cannot be computed.
+    """
+    return reasoning_token_cap(window, available, percent)
 
 
 def window_for(policy: ReasoningPolicy, steps: int) -> int | None:

@@ -9,6 +9,8 @@ from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest, Mod
 
 from src.engine.context.budget import ContextBudget
 from src.engine.context.strategy.constants import (
+    DEFAULT_IMAGE_MAX_PERCENT,
+    DEFAULT_IMAGE_TURNS,
     DEFAULT_MAX_TOOL_RESULT_CHARS,
     DEFAULT_REASONING,
     DEFAULT_REASONING_MAX_PERCENT,
@@ -16,12 +18,14 @@ from src.engine.context.strategy.constants import (
     DEFAULT_TOOL_RESULT_HEAD_CHARS,
     PINNED_TOOLS,
     ReasoningPolicy,
+    image_token_cap,
     reasoning_token_cap,
     window_for,
 )
 from src.engine.context.strategy.rewriting import (
     accepts_replayed_reasoning,
     count_images,
+    drop_old_images,
     fit_to_budget,
     keep_fitting_steps,
     keep_recent_steps,
@@ -61,6 +65,10 @@ class CompactingStrategy:
     """Steps of the round in progress that keep their reasoning under ``recent``."""
     reasoning_max_percent: int = DEFAULT_REASONING_MAX_PERCENT
     """Ceiling for the reasoning kept, as a percentage of the model's window."""
+    image_turns: int = DEFAULT_IMAGE_TURNS
+    """Turns whose images keep travelling. Older ones leave their id behind."""
+    image_max_percent: int = DEFAULT_IMAGE_MAX_PERCENT
+    """Ceiling for the pixels that stay, as a percentage of the model's window."""
     max_summary_chars: int = 400
     provider: str | None = None
     """The provider the request is going to: signed reasoning is only replayed to
@@ -86,12 +94,21 @@ class CompactingStrategy:
             )
 
         turns = split_turns(working)
+        # Images have their own window: one may outlive the turn's text. Dropping
+        # them first means a compacted turn has no pixels left to count twice, and a
+        # recent turn still keeps the pictures its own window allows.
+        image_start = max(0, len(turns) - self.image_turns)
+        working, dropped_images = drop_old_images(
+            turns,
+            recent_start=image_start,
+            max_tokens=image_token_cap(budget.window, budget.available_for_history, self.image_max_percent),
+        )
+        turns = split_turns(working)
         recent_start = max(0, len(turns) - self.keep_recent_turns)
         old_turns = turns[:recent_start]
         recent_turns = turns[recent_start:]
 
         compacted = 0
-        dropped_images = 0
         result: list[ModelMessage] = []
         pending: list[str] = []
 

@@ -1320,7 +1320,9 @@ change behaviour behind your back.
 | `SIGIL_CONTEXT_STRATEGY` | `windowed` | `windowed`, `compacting` or `passthrough`. |
 | `SIGIL_CONTEXT_REASONING` | `recent` | What travels back of the model's reasoning: `recent`, `off` or `all`. |
 | `SIGIL_CONTEXT_REASONING_STEPS` | `10` | Steps of the round in progress kept under `recent`. |
-| `SIGIL_CONTEXT_REASONING_MAX_PERCENT` | `10` | Ceiling for that reasoning, as a percentage of the model window. |
+| `SIGIL_CONTEXT_REASONING_MAX_PERCENT` | `5` | Ceiling for that reasoning, as a percentage of the model window. |
+| `SIGIL_CONTEXT_IMAGE_TURNS` | `3` | Turns whose images keep travelling. Older ones leave their id behind. |
+| `SIGIL_CONTEXT_IMAGE_MAX_PERCENT` | `10` | Ceiling for the pixels that stay, as a percentage of the model window. |
 | `SIGIL_CONTEXT_KEEP_RECENT_TURNS` | `3` | Turns kept intact before trimming. |
 | `SIGIL_CONTEXT_MAX_TOOL_RESULT_CHARS` | `4000` | Cap of an old tool result. |
 | `SIGIL_CONTEXT_OUTPUT_RESERVE` | `8000` | Tokens reserved for the response. |

@@ -104,11 +104,15 @@ def part_tokens(part: Any) -> int:
     It is the single place that knows a part may not be text. Every caller that
     priced a message by summing `part_text` was undercounting every image in the
     history by four orders of magnitude.
+
+    A multimodal payload can arrive in a user prompt or in a tool result: `view_image`
+    hands a picture back as part of its answer, and that image costs what any other
+    image costs.
     """
     if is_image_part(part):
         return image_part_tokens(part)
-    if isinstance(part, UserPromptPart) and isinstance(part.content, list):
-        # A multimodal prompt is text plus files: each item is priced by its own
+    if isinstance(part, (UserPromptPart, ToolReturnPart)) and isinstance(part.content, list):
+        # A multimodal payload is text plus files: each item is priced by its own
         # kind, so a prompt with a picture is not charged as its caption.
         return estimate_tokens(part_text(part)) + sum(
             image_part_tokens(item) for item in part.content if is_image_part(item)

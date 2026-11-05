@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from src.engine.agents.agent import create_agent
 from src.engine.agents.profile.registry import AgentRegistry
 from src.engine.agents.retry import RetryTransientModelErrors
+from src.engine.attachments.tools import register_image_tools
 from src.engine.context.capability import ContextViewCapability
 from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
 from src.engine.context.meter.context_meter import ContextMeter
@@ -77,6 +78,8 @@ def _build_strategy(settings: SigilSettings):
             reasoning=settings.reasoning,
             reasoning_steps=settings.reasoning_steps,
             reasoning_max_percent=settings.reasoning_max_percent,
+            image_turns=settings.image_turns,
+            image_max_percent=settings.image_max_percent,
         )
     return WindowedStrategy(
         keep_recent_turns=settings.keep_recent_turns,
@@ -84,6 +87,8 @@ def _build_strategy(settings: SigilSettings):
         reasoning=settings.reasoning,
         reasoning_steps=settings.reasoning_steps,
         reasoning_max_percent=settings.reasoning_max_percent,
+        image_turns=settings.image_turns,
+        image_max_percent=settings.image_max_percent,
     )
 
 
@@ -220,6 +225,7 @@ def run() -> None:
     register_mcp_tools(agent, mcp, logger=tool_logger)
     register_web_tools(agent, logger=tool_logger)
     register_file_tools(agent, logger=tool_logger)
+    register_image_tools(agent, logger=tool_logger)
     register_interaction_tools(agent, question_hub, logger=tool_logger)
     register_roadmap_tools(agent, roadmap_store, logger=tool_logger)
 

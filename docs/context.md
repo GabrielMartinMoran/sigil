@@ -315,7 +315,7 @@ request.
 | **Round** | Everything until control goes back to the user: one `run_id`. A prompt typed while the agent works is enqueued into the same run, so steering does not open a new round. |
 | **Step** | One model request and its response, inside a round. |
 | **Window** | How many steps of the round in progress keep their reasoning. `SIGIL_CONTEXT_REASONING_STEPS`, default 10. |
-| **Cap** | The most reasoning that window may cost, in tokens: the smaller of a share of the model window (`SIGIL_CONTEXT_REASONING_MAX_PERCENT`, default 10%) and the room the history has left. |
+| **Cap** | The most reasoning that window may cost, in tokens: the smaller of a share of the model window (`SIGIL_CONTEXT_REASONING_MAX_PERCENT`, default 5%) and the room the history has left. |
 
 ```mermaid
 flowchart LR
@@ -429,7 +429,7 @@ So the window has a ceiling, and the ceiling is the **smaller** of two numbers:
 
 ```mermaid
 flowchart TD
-    W["Model window<br/>e.g. 1,000,000"] --> SHARE["share = window × 10%<br/>= 100,000"]
+    W["Model window<br/>e.g. 1,000,000"] --> SHARE["share = window × 5%<br/>= 50,000"]
     A["Room left for the history<br/>available_for_history"] --> CAP
     SHARE --> CAP{"cap = min(share, room)"}
     CAP --> RESULT["Ceiling for the reasoning<br/>in tokens"]
@@ -439,9 +439,9 @@ flowchart TD
 ```
 
 - **The share** stops reasoning from becoming a standing tax: on a 1M window it can
-  never exceed 100k, however long the round gets.
+  never exceed 50k, however long the round gets.
 - **The room** stops it from starving the turn it is meant to help: with 8k left,
-  the cap is 8k, not 100k.
+  the cap is 8k, not 50k.
 
 When the window is unknown there is no cap and the step count is the only limit:
 without a budget there is nothing to spend against.
@@ -451,12 +451,12 @@ work in progress. A block that does not fit ends the search, because the ones
 further back cost the same or more.
 
 In a measured session the cap never binds: ten steps of reasoning cost about 2.7k
-tokens against a 100k ceiling. It exists for the case that is not measured yet —a
+tokens against a 50k ceiling. It exists for the case that is not measured yet —a
 model that thinks in tens of thousands of tokens per step— and for a context that
 is nearly full, where it is the difference between keeping some reasoning and
 losing a turn.
 
-### Images: priced by pixels, dropped with their turn
+### Images: priced by pixels, recoverable by id
 
 An image is the most expensive item in the history per unit of usefulness, and the
 estimator used to be blind to it: the content of a multimodal prompt is a list, and
@@ -468,25 +468,61 @@ the request failed at the provider, mid-turn.
 patch arithmetic the attachment used before sending it— so no decode is needed. That
 matters because the meter walks the whole history on every step.
 
-Images are **not** kept forever:
+Images are **not** kept forever, and dropping one does not cost the information:
 
 | Where the image is | What happens |
 | --- | --- |
-| In a turn within `keep_recent_turns` | Sent as is |
-| In an older turn | Dropped, and the text is kept with a note saying it was there and how to get it back |
+| In a turn within `image_turns` (default 3) and inside the pixel cap | Sent as is |
+| In an older turn, or past the pixel cap | Replaced by its id: `[image img_a1b2c3d4 from an earlier turn: not attached here, use view_image to look at it]` |
 | In a compacted turn | Gone with the turn; the summary keeps the intent, not the pixels |
 
-```mermaid
-flowchart LR
-    subgraph recent["Last keep_recent_turns — full price"]
-        I1["prompt + image"]
-    end
-    subgraph old["Older turns — text only"]
-        I2["prompt +"] --> N["[1 image from an earlier turn<br/>omitted from the request: it is still<br/>in the session, and asking about it<br/>again re-attaches it]"]
-    end
+### Ids, and getting a picture back
 
-    style recent fill:#23863622,stroke:#238636
-    style old fill:#bf870022,stroke:#bf8700
+`[Image #n]` cannot name an image beyond its turn: it is assigned per turn by the
+composer, so two screenshots pasted in two different turns are both `[Image #1]`.
+Each image therefore carries a second identifier, `img_...`, minted once and stored
+in the part's `identifier` field — which pydantic-ai persists with the session.
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant C as Context
+    participant M as Model
+    participant T as view_image
+
+    U->>C: prompt + image (img_a1b2c3d4)
+    C->>M: pixels, first 3 turns
+    Note over C: turn ages out
+    C->>M: "[image img_a1b2c3d4 ... not attached here, use view_image]"
+    M->>T: view_image(image_id="img_a1b2c3d4")
+    T-->>M: the picture, as an image
+```
+
+`view_image` returns a `BinaryImage` **inside the tool result**, not a path to it.
+pydantic-ai maps multimodal tool results natively —Anthropic as an image block
+inside `tool_result`, OpenAI the same way— so the model really sees the picture.
+`ToolReturn` is what makes that possible: `return_value` is the short line the model
+reads as the answer, and `content` carries the pixels beside it.
+
+The library is the session log itself. Images were already persisted, so an id
+resolves by walking the history; nothing else needs storage, and a resumed session
+keeps working.
+
+### The pixel cap
+
+Three turns of 4K screenshots cost 32k tokens; the conversation around them may cost
+less. So the pixels have their own ceiling, **10% of the model window** by default,
+and it is a separate setting from the reasoning share on purpose: a picture costs an
+order of magnitude more per item than a block of reasoning, and the two budgets
+should not compete for one number.
+
+Images are dropped oldest first once the cap is reached, even inside a turn that is
+otherwise kept whole — the text stays, the id stays, the pixels wait for
+`view_image`.
+
+A legacy image whose identifier is still `[Image #1]` keeps working: the note names
+it, and `view_image` resolves the newest match for that identifier rather than
+failing.
 ```
 
 Two properties matter: the session log keeps every image (dropping is a projection,
@@ -525,7 +561,9 @@ not touched.
 | `SIGIL_CONTEXT_OUTPUT_RESERVE` | `8000` | Tokens reserved for the answer |
 | `SIGIL_CONTEXT_REASONING` | `recent` | What travels back of the model's reasoning: `recent`, `off` or `all` |
 | `SIGIL_CONTEXT_REASONING_STEPS` | `10` | Steps of the round in progress kept under `recent` |
-| `SIGIL_CONTEXT_REASONING_MAX_PERCENT` | `10` | Ceiling for that reasoning, as a percentage of the model window |
+| `SIGIL_CONTEXT_REASONING_MAX_PERCENT` | `5` | Ceiling for that reasoning, as a percentage of the model window |
+| `SIGIL_CONTEXT_IMAGE_TURNS` | `3` | Turns whose images keep travelling |
+| `SIGIL_CONTEXT_IMAGE_MAX_PERCENT` | `10` | Ceiling for the pixels that stay, as a percentage of the model window |
 | ~~`SIGIL_CONTEXT_KEEP_THINKING`~~ | — | Deprecated by `SIGIL_CONTEXT_REASONING`; truthy still means `all` |
 
 The policy is always a name, never a number: a count was a mode once, and reading
@@ -601,6 +639,8 @@ one of them is a regression, not a trade-off.
 | `src/engine/context/strategy/` | `windowed`, `compacting`, `passthrough` |
 | `src/engine/context/strategy/turns.py` | Turn grouping, pinned-result detection |
 | `src/engine/context/meter/` | The `/context` report and the debug view |
+| `src/engine/attachments/library.py` | Image ids, and resolving one against the log |
+| `src/engine/attachments/tools.py` | `view_image`: hands a picture back as an image |
 | `src/engine/context/instructions/` | `AGENTS.md` / `CLAUDE.md` resolution over the scope |
 | `src/engine/context/scope.py` | Which directories' instructions apply |
 

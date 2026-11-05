@@ -9,6 +9,8 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, ThinkingPart
 
 from src.engine.context.budget import ContextBudget
 from src.engine.context.strategy.constants import (
+    DEFAULT_IMAGE_MAX_PERCENT,
+    DEFAULT_IMAGE_TURNS,
     DEFAULT_KEEP_RECENT_TURNS,
     DEFAULT_MAX_TOOL_RESULT_CHARS,
     DEFAULT_REASONING,
@@ -17,6 +19,7 @@ from src.engine.context.strategy.constants import (
     DEFAULT_TOOL_RESULT_HEAD_CHARS,
     PINNED_TOOLS,
     ReasoningPolicy,
+    image_token_cap,
     reasoning_token_cap,
     window_for,
 )
@@ -69,6 +72,15 @@ class WindowedStrategy:
     provider: str | None = None
     """The provider the request is going to. Signed reasoning is only replayed to
     the provider that produced it; ``None`` trusts the adapter."""
+    image_turns: int = DEFAULT_IMAGE_TURNS
+    """Turns whose images keep travelling. Older ones leave their id behind."""
+    image_max_percent: int = DEFAULT_IMAGE_MAX_PERCENT
+    """Ceiling for the pixels that stay, as a percentage of the model's window.
+
+    Counting turns alone lets three screenshots of a dense table cost more than the
+    whole conversation. Images past the cap are dropped oldest first, even inside a
+    turn that is otherwise kept whole.
+    """
     pinned_tools: frozenset[str] = PINNED_TOOLS
     """Tools whose result is instruction and is never truncated."""
 
@@ -88,10 +100,15 @@ class WindowedStrategy:
             )
 
         turns = split_turns(working)
-        recent_start = max(0, len(turns) - self.keep_recent_turns)
+        image_start = max(0, len(turns) - self.image_turns)
 
-        working, dropped_images = drop_old_images(turns, recent_start=recent_start)
+        working, dropped_images = drop_old_images(
+            turns,
+            recent_start=image_start,
+            max_tokens=image_token_cap(budget.window, budget.available_for_history, self.image_max_percent),
+        )
         turns = split_turns(working)
+        recent_start = max(0, len(turns) - self.keep_recent_turns)
 
         working, truncated_results = truncate_old_tool_results(
             turns,

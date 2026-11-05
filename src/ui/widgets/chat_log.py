@@ -164,6 +164,7 @@ def _describe_parts(images: Sequence[BinaryContent]) -> tuple[ImageAttachment, .
                 media_type=str(part.media_type),
                 width=width,
                 height=height,
+                image_id=part.identifier,
             )
         )
     return tuple(described)

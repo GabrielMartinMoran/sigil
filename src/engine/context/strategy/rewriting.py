@@ -14,7 +14,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from src.engine.context.images import is_image_part
+from src.engine.context.images import image_part_tokens, is_image_part
 from src.engine.context.strategy.turns import has_pinned_result, split_turns
 from src.engine.context.tokens import estimate_messages_tokens, estimate_tokens, tool_return_text
 
@@ -190,28 +190,44 @@ def _truncate_text(text: str, head_chars: int) -> str:
     return f'{text[:head_chars]}\n\n[tool result truncated: {omitted:,} chars omitted, ~{tokens:,} tokens total]'
 
 
-IMAGE_OMITTED = (
-    '[{number} image{s} from an earlier turn omitted from the request: '
-    'it is still in the session, and asking about it again re-attaches it]'
-)
-"""What replaces an image the view drops. Says where it went and how to get it back."""
+IMAGE_OMITTED = '[image {image_id} from an earlier turn: not attached here, use view_image to look at it]'
+"""What replaces an image the view drops.
+
+The id is what makes the picture recoverable: `view_image` takes it and hands the
+bytes back, so dropping the pixels costs a tool call instead of the information.
+
+A session saved before ids existed still carries `[Image #n]` as the identifier,
+which repeats across turns; the note says so honestly rather than pretending it is
+a handle that will resolve.
+"""
 
 
-def drop_old_images(turns: list[list[ModelMessage]], *, recent_start: int) -> tuple[list[ModelMessage], int]:
-    """Drops the image parts of the old turns, keeping their text.
+def drop_old_images(
+    turns: list[list[ModelMessage]],
+    *,
+    recent_start: int,
+    max_tokens: int | None = None,
+) -> tuple[list[ModelMessage], int]:
+    """Drops the image parts of the old turns, keeping their text and their ids.
 
     An image is the most expensive item in the history per unit of usefulness: it
     matters while the conversation is about it and costs full price forever. The
-    text is kept and a note says the image was there, so the model still knows the
-    conversation happened while the pixels stop being paid for on every step.
+    text is kept and a note says the image was there and under what id, so the model
+    still knows the conversation happened while the pixels stop being paid for on
+    every step.
 
     Args:
         turns: The conversation, split into turns.
         recent_start: Index of the first turn kept whole.
+        max_tokens: Ceiling for the pixels that stay, in tokens. Images past it are
+            dropped too, oldest first, even inside the turns that were kept whole:
+            it is the same idea as the cap on reasoning, for the other item that is
+            expensive by nature. ``None`` keeps every image of the recent turns.
 
     Returns:
         The flattened messages and how many images were dropped.
     """
+    kept_tokens = 0
     result: list[ModelMessage] = []
     dropped = 0
     for index, turn in enumerate(turns):
@@ -219,28 +235,98 @@ def drop_old_images(turns: list[list[ModelMessage]], *, recent_start: int) -> tu
             if index < recent_start:
                 message, count = _drop_images_of(message)
                 dropped += count
+            elif max_tokens is not None:
+                message, count, kept_tokens = _drop_images_past_budget(message, max_tokens, kept_tokens)
+                dropped += count
             result.append(message)
     return result, dropped
 
 
+def _drop_images_past_budget(message: ModelMessage, max_tokens: int, kept_tokens: int) -> tuple[ModelMessage, int, int]:
+    """Keeps the images that still fit, dropping the ones past the ceiling."""
+    if not isinstance(message, ModelRequest):
+        return message, 0, kept_tokens
+    parts: list[object] = []
+    dropped = 0
+    for part in message.parts:
+        if not (isinstance(part, (UserPromptPart, ToolReturnPart)) and isinstance(part.content, list)):
+            parts.append(part)
+            continue
+        kept: list[object] = []
+        notes: list[str] = []
+        for item in part.content:
+            if not is_image_part(item):
+                kept.append(item)
+                continue
+            cost = image_part_tokens(item)
+            if kept_tokens + cost <= max_tokens:
+                kept.append(item)
+                kept_tokens += cost
+                continue
+            dropped += 1
+            notes.append(IMAGE_OMITTED.format(image_id=_identifier_of(item)))
+        if not notes:
+            parts.append(part)
+            continue
+        if isinstance(part, ToolReturnPart):
+            parts.append(dataclasses.replace(part, content=[*kept, *notes]))
+        else:
+            parts.append(dataclasses.replace(part, content=[*kept, '\n', *notes]))
+    if not dropped:
+        return message, 0, kept_tokens
+    return dataclasses.replace(message, parts=parts), dropped, kept_tokens
+
+
+def _identifier_of(item: object) -> str:
+    """The handle `view_image` will accept for this image part.
+
+    An image built by the composer carries an `img_...` id. One that came from
+    anywhere else —an MCP resource, a legacy session— carries whatever identifier
+    pydantic-ai derived from its bytes, which is still a stable handle: `view_image`
+    looks the history up by identifier, not by the shape of the string.
+    """
+    identifier = getattr(item, 'identifier', None)
+    if isinstance(identifier, str) and identifier:
+        return identifier
+    return '(no id)'
+
+
 def _drop_images_of(message: ModelMessage) -> tuple[ModelMessage, int]:
-    """Removes the image parts of one request, appending the note to its text."""
+    """Removes the image parts of one request, leaving a note per image.
+
+    Two carriers are covered: a user prompt (`look at [Image #1]`) and a tool
+    result (`view_image` hands a picture back). The second one matters as much as
+    the first: an image a tool returned sits in the history at full price forever
+    unless something drops it.
+
+    One note per image, not one per group: each carries the id that brings that
+    picture back, and a single combined line would lose all but one of them.
+    """
     if not isinstance(message, ModelRequest):
         return message, 0
     parts: list[object] = []
     dropped = 0
     for part in message.parts:
-        if not (isinstance(part, UserPromptPart) and isinstance(part.content, list)):
+        if not (isinstance(part, (UserPromptPart, ToolReturnPart)) and isinstance(part.content, list)):
             parts.append(part)
             continue
-        kept = [item for item in part.content if not is_image_part(item)]
-        count = len(part.content) - len(kept)
-        if not count:
+        kept: list[object] = []
+        notes: list[str] = []
+        for item in part.content:
+            if is_image_part(item):
+                notes.append(IMAGE_OMITTED.format(image_id=_identifier_of(item)))
+                dropped += 1
+            else:
+                kept.append(item)
+        if not notes:
             parts.append(part)
             continue
-        dropped += count
-        note = IMAGE_OMITTED.format(number=count, s='' if count == 1 else 's')
-        parts.append(dataclasses.replace(part, content=[*kept, '\n', note]))
+        if isinstance(part, ToolReturnPart):
+            # The result keeps its own text; the note goes beside it, not inside the
+            # list the provider reads as the tool's payload.
+            parts.append(dataclasses.replace(part, content=[*kept, *notes]))
+        else:
+            parts.append(dataclasses.replace(part, content=[*kept, '\n', *notes]))
     if not dropped:
         return message, 0
     return dataclasses.replace(message, parts=parts), dropped

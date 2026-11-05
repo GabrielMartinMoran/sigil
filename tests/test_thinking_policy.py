@@ -344,7 +344,8 @@ def test_thinking_window_never_breaks_the_budget():
     one_step = estimate_tokens('why r2/0 ' + 'y' * 2_000)
     allowance = one_step * 3
 
-    tight = WindowedStrategy(reasoning='recent', reasoning_steps=20).view(
+    # The percentage cap stays out of the way so the room itself is what shrinks it.
+    tight = WindowedStrategy(reasoning='recent', reasoning_steps=20, reasoning_max_percent=100).view(
         messages, ContextBudget(window=room + allowance + 8_000, output_reserve=8_000)
     )
 
