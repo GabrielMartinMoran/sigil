@@ -10,10 +10,13 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, ThinkingPart
 from src.engine.context.budget import ContextBudget
 from src.engine.context.strategy.constants import (
     DEFAULT_KEEP_RECENT_TURNS,
-    DEFAULT_KEEP_THINKING_STEPS,
     DEFAULT_MAX_TOOL_RESULT_CHARS,
+    DEFAULT_REASONING,
+    DEFAULT_REASONING_STEPS,
     DEFAULT_TOOL_RESULT_HEAD_CHARS,
     PINNED_TOOLS,
+    ReasoningPolicy,
+    window_for,
 )
 from src.engine.context.strategy.rewriting import (
     accepts_replayed_reasoning,
@@ -44,16 +47,15 @@ class WindowedStrategy:
     keep_recent_turns: int = DEFAULT_KEEP_RECENT_TURNS
     max_tool_result_chars: int = DEFAULT_MAX_TOOL_RESULT_CHARS
     tool_result_head_chars: int = DEFAULT_TOOL_RESULT_HEAD_CHARS
-    keep_thinking_steps: int | None = DEFAULT_KEEP_THINKING_STEPS
-    """Reasoning blocks to keep from the round in progress.
+    reasoning: ReasoningPolicy = DEFAULT_REASONING
+    """What travels back to the model of its own reasoning.
 
-    ``0`` drops all reasoning, which is what a route that cannot replay it needs.
-    ``None`` keeps every block. The window is on steps, not on the round: resending
-    a whole round is quadratic.
+    ``recent`` keeps the last `reasoning_steps` steps of the round in progress: that
+    is where the agent re-reads what it already decided. Past rounds are a record
+    and are resent on every request.
     """
-    keep_thinking: bool = False
-    """Per-provider escape hatch: if a route requires round-tripping the
-    reasoning, you turn it on here and nothing gets dropped."""
+    reasoning_steps: int = DEFAULT_REASONING_STEPS
+    """Steps of the round in progress that keep their reasoning under ``recent``."""
     provider: str | None = None
     """The provider the request is going to. Signed reasoning is only replayed to
     the provider that produced it; ``None`` trusts the adapter."""
@@ -64,7 +66,7 @@ class WindowedStrategy:
         working = list(messages)
         dropped_thinking = 0
 
-        steps = None if self.keep_thinking else self.keep_thinking_steps
+        steps = window_for(self.reasoning, self.reasoning_steps)
         if steps is None:
             working, dropped_thinking = self._drop_reasoning_that_cannot_be_replayed(working)
         else:

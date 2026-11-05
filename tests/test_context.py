@@ -244,7 +244,7 @@ def test_passthrough_returns_everything():
 def test_windowed_drops_thinking():
     """Past rounds' reasoning is a record, not working memory: it goes."""
     messages = [*_turn(1, thinking='long reasoning'), *_turn(2, thinking='more reasoning')]
-    result = WindowedStrategy(keep_thinking_steps=0).view(messages, ContextBudget(window=None))
+    result = WindowedStrategy(reasoning='off').view(messages, ContextBudget(window=None))
     assert result.dropped_thinking == 2
     assert not any(isinstance(part, ThinkingPart) for message in result.messages for part in message.parts)
 
@@ -253,7 +253,7 @@ def test_windowed_keeps_the_reasoning_of_the_round_in_progress():
     """Only the current round's reasoning is kept, and only its last steps."""
     messages = [*_turn(1, thinking='from a finished round'), *_turn(2, thinking='current round')]
 
-    result = WindowedStrategy(keep_thinking_steps=1).view(messages, ContextBudget(window=None))
+    result = WindowedStrategy(reasoning='recent', reasoning_steps=1).view(messages, ContextBudget(window=None))
 
     contents = [part.content for message in result.messages for part in message.parts if isinstance(part, ThinkingPart)]
     assert contents == ['current round']
@@ -262,7 +262,7 @@ def test_windowed_keeps_the_reasoning_of_the_round_in_progress():
 
 def test_windowed_keeps_thinking_when_asked():
     messages = [*_turn(1, thinking='reasoning')]
-    result = WindowedStrategy(keep_thinking=True).view(messages, ContextBudget(window=None))
+    result = WindowedStrategy(reasoning='all').view(messages, ContextBudget(window=None))
     assert result.dropped_thinking == 0
     assert any(isinstance(part, ThinkingPart) for message in result.messages for part in message.parts)
 
@@ -552,7 +552,7 @@ def test_capability_is_not_destructive():
 
     messages = [*_turn(1, thinking='reasoning'), *_turn(2, thinking='more')]
     meter = ContextMeter(window=100_000)
-    capability = ContextViewCapability(strategy=WindowedStrategy(keep_thinking_steps=1), meter=meter)
+    capability = ContextViewCapability(strategy=WindowedStrategy(reasoning='recent', reasoning_steps=1), meter=meter)
 
     model = TestModel()
     ctx = RunContext(deps=None, model=model, usage=RunUsage())

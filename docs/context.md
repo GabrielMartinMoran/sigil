@@ -314,7 +314,7 @@ request.
 | --- | --- |
 | **Round** | Everything until control goes back to the user: one `run_id`. A prompt typed while the agent works is enqueued into the same run, so steering does not open a new round. |
 | **Step** | One model request and its response, inside a round. |
-| **Window** | How many steps of the round in progress keep their reasoning. `SIGIL_CONTEXT_KEEP_THINKING`, default 4. |
+| **Window** | How many steps of the round in progress keep their reasoning. `SIGIL_CONTEXT_REASONING_STEPS`, default 4. |
 
 ```mermaid
 flowchart LR
@@ -335,10 +335,31 @@ flowchart LR
     style current fill:#23863622,stroke:#238636
 ```
 
-### Why steps and not the whole round
+### The handoff, and why the first request of a round is different
 
-Resending a whole round is quadratic: each request carries every reasoning block
-produced so far in that round.
+A new round has no response yet, so the most recent round *in the history* is the
+previous one. The window therefore lands on the last steps of the round that just
+ended — which is the handoff: what the agent concluded before it handed control
+back. As soon as the new round answers, its own steps take over and the previous
+round becomes a record again.
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant A as Agent
+    participant V as View
+
+    U->>A: prompt (round 2 starts)
+    Note over V: no response from round 2 yet<br/>→ keeps the tail of round 1
+    A->>V: response 1 of round 2
+    Note over V: round 2 is now the current one<br/>→ keeps round 2's steps, round 1 dropped
+    A->>V: response 2 of round 2
+    Note over V: window slides: the last N steps of round 2
+    A-->>U: control back (round 2 ends)
+```
+
+The window is on steps and not on the whole round because resending a round is
+quadratic: each request carries every reasoning block produced so far in it.
 
 | Round | Steps | Reasoning blocks | Extra billed if the whole round is resent |
 | --- | --- | --- | --- |
@@ -426,11 +447,16 @@ not touched.
 | `SIGIL_CONTEXT_KEEP_RECENT_TURNS` | `3` | Turns kept intact before trimming starts |
 | `SIGIL_CONTEXT_MAX_TOOL_RESULT_CHARS` | `4000` | Cap of an old tool result |
 | `SIGIL_CONTEXT_OUTPUT_RESERVE` | `8000` | Tokens reserved for the answer |
-| `SIGIL_CONTEXT_KEEP_THINKING` | `4` | Reasoning blocks kept from the round in progress: a number, `all` or `off`. `1`/`true`/`on` keep everything (legacy). |
+| `SIGIL_CONTEXT_REASONING` | `recent` | What travels back of the model's reasoning: `recent`, `off` or `all` |
+| `SIGIL_CONTEXT_REASONING_STEPS` | `4` | Steps of the round in progress kept under `recent` |
+| ~~`SIGIL_CONTEXT_KEEP_THINKING`~~ | — | Deprecated by `SIGIL_CONTEXT_REASONING`; truthy still means `all` |
 
-`SIGIL_CONTEXT_KEEP_THINKING` exists because some routes require round-tripping
-the reasoning. Turning it on disables lever 1 entirely, so nothing gets dropped
-for that reason.
+The policy is always a name, never a number: a count was a mode once, and reading
+`4` as "keep four steps" next to `1` as "keep everything" was a trap. The step
+count is its own setting, and it is a quantity, not a mode.
+
+`all` exists because some routes require round-tripping the reasoning before they
+will answer. It is the expensive option, not the recommended one.
 
 ## Inspecting a session
 

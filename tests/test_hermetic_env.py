@@ -17,9 +17,10 @@ import pytest
 
 from src.engine.settings import (
     DEFAULT_CONTEXT_STRATEGY,
-    DEFAULT_KEEP_THINKING_STEPS,
     DEFAULT_MAX_STEPS,
     DEFAULT_MODEL_MAX_ATTEMPTS,
+    DEFAULT_REASONING,
+    DEFAULT_REASONING_STEPS,
     SigilSettings,
     load_settings,
 )
@@ -66,36 +67,50 @@ def test_an_unknown_context_strategy_is_rejected():
         load_settings({'SIGIL_CONTEXT_STRATEGY': 'magic'})
 
 
-@pytest.mark.parametrize('raw', ['1', 'true', 'YES', 'on', 'all'])
-def test_the_legacy_truthy_values_keep_every_reasoning_block(raw):
-    """An existing `SIGIL_CONTEXT_KEEP_THINKING=1` keeps meaning "keep it all"."""
-    assert load_settings({'SIGIL_CONTEXT_KEEP_THINKING': raw}).keep_thinking is None
+@pytest.mark.parametrize('raw', ['off', 'recent', 'all', 'RECENT', '  All  '])
+def test_the_reasoning_policy_is_a_name(raw):
+    policy = load_settings({'SIGIL_CONTEXT_REASONING': raw}).reasoning
+    assert policy == raw.strip().lower()
 
 
-@pytest.mark.parametrize('raw', ['0', 'false', 'no', 'off', 'none'])
-def test_turning_it_off_drops_all_reasoning(raw):
-    assert load_settings({'SIGIL_CONTEXT_KEEP_THINKING': raw}).keep_thinking == 0
+def test_the_default_policy_keeps_the_recent_steps():
+    settings = load_settings({})
+    assert settings.reasoning == DEFAULT_REASONING
+    assert settings.reasoning_steps == DEFAULT_REASONING_STEPS
 
 
-def test_the_default_keeps_a_window_of_the_round_in_progress():
-    assert load_settings({}).keep_thinking == DEFAULT_KEEP_THINKING_STEPS
-
-
-@pytest.mark.parametrize('raw,expected', [('2', 2), ('8', 8), ('12', 12)])
-def test_a_number_keeps_that_many_steps(raw, expected):
-    assert load_settings({'SIGIL_CONTEXT_KEEP_THINKING': raw}).keep_thinking == expected
-
-
-def test_a_negative_step_count_fails_loudly():
+@pytest.mark.parametrize('raw', ['4', '0', 'on', 'yes'])
+def test_a_number_is_not_a_policy(raw):
+    """A count was a mode before; it is rejected instead of guessed."""
     with pytest.raises(ValueError) as error:
-        load_settings({'SIGIL_CONTEXT_KEEP_THINKING': '-3'})
-    assert 'SIGIL_CONTEXT_KEEP_THINKING' in str(error.value)
+        load_settings({'SIGIL_CONTEXT_REASONING': raw})
+    assert 'SIGIL_CONTEXT_REASONING' in str(error.value)
 
 
-def test_a_bad_reasoning_policy_fails_loudly_instead_of_falling_back():
+def test_the_step_count_is_its_own_number():
+    assert load_settings({'SIGIL_CONTEXT_REASONING_STEPS': '9'}).reasoning_steps == 9
+
+
+def test_a_step_count_below_one_is_rejected():
     with pytest.raises(ValueError) as error:
-        load_settings({'SIGIL_CONTEXT_KEEP_THINKING': 'sometimes'})
-    assert 'SIGIL_CONTEXT_KEEP_THINKING' in str(error.value)
+        load_settings({'SIGIL_CONTEXT_REASONING_STEPS': '0'})
+    assert 'reasoning_steps' in str(error.value)
+
+
+@pytest.mark.parametrize('raw', ['1', 'true', 'YES', 'on'])
+def test_the_deprecated_switch_still_means_keep_everything(raw):
+    """`SIGIL_CONTEXT_KEEP_THINKING` was a boolean; it keeps meaning what it did."""
+    assert load_settings({'SIGIL_CONTEXT_KEEP_THINKING': raw}).reasoning == 'all'
+
+
+@pytest.mark.parametrize('raw', ['0', 'false', 'no', '4'])
+def test_the_deprecated_switch_off_means_no_reasoning(raw):
+    assert load_settings({'SIGIL_CONTEXT_KEEP_THINKING': raw}).reasoning == 'off'
+
+
+def test_the_new_policy_wins_over_the_deprecated_switch():
+    settings = load_settings({'SIGIL_CONTEXT_REASONING': 'recent', 'SIGIL_CONTEXT_KEEP_THINKING': '1'})
+    assert settings.reasoning == 'recent'
 
 
 def test_settings_are_immutable():

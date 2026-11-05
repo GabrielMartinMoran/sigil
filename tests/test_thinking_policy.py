@@ -199,6 +199,28 @@ def test_labels_find_the_round_by_skipping_other_runs():
     assert labels == ['r1', 'r1', 'r2', 'r2', 'r2', 'r3']
 
 
+def test_the_first_request_of_a_round_keeps_the_handoff():
+    """A new round has no response yet, so the rule keeps the previous round's tail.
+
+    That is the moment the agent starts working with what it concluded before it
+    handed control back. As soon as the new round answers, its own steps take over.
+    """
+    handoff = [*_round('r1', 6), _request('a new prompt', run='r2')]
+
+    result, kept, _ = keep_recent_steps(handoff, steps=2)
+
+    assert kept == 2
+    assert _thinking_contents(result) == ['why r1/4', 'why r1/5']
+
+    # once the new round answers, the previous round is a record again.
+    answered = [*handoff, _response(0, 'r2', thinking=_thinking('why r2/0'))]
+
+    result, kept, _ = keep_recent_steps(answered, steps=2)
+
+    assert kept == 1
+    assert _thinking_contents(result) == ['why r2/0']
+
+
 # --- the strategies apply the policy ---------------------------------------
 
 
@@ -209,7 +231,7 @@ def _budget(tokens: int = 10_000_000) -> ContextBudget:
 def test_windowed_keeps_the_reasoning_of_the_round_in_progress():
     messages = [*_round('r1', 3), *_round('r2', 3)]
 
-    result = WindowedStrategy(keep_thinking_steps=2).view(messages, _budget())
+    result = WindowedStrategy(reasoning='recent', reasoning_steps=2).view(messages, _budget())
 
     kept = [content for content in _thinking_contents(result.messages) if content.startswith('why r2')]
     assert kept == ['why r2/1', 'why r2/2']
@@ -219,7 +241,7 @@ def test_windowed_keeps_the_reasoning_of_the_round_in_progress():
 def test_windowed_with_zero_steps_behaves_like_before():
     messages = [*_round('r1', 3), *_round('r2', 3)]
 
-    result = WindowedStrategy(keep_thinking_steps=0).view(messages, _budget())
+    result = WindowedStrategy(reasoning='off').view(messages, _budget())
 
     assert _thinking_contents(result.messages) == []
     assert result.dropped_thinking == 6
@@ -228,7 +250,7 @@ def test_windowed_with_zero_steps_behaves_like_before():
 def test_windowed_all_keeps_everything():
     messages = [*_round('r1', 2), *_round('r2', 2)]
 
-    result = WindowedStrategy(keep_thinking_steps=None).view(messages, _budget())
+    result = WindowedStrategy(reasoning='all').view(messages, _budget())
 
     assert len(_thinking_contents(result.messages)) == 4
     assert result.dropped_thinking == 0
@@ -251,12 +273,12 @@ def test_thinking_window_never_breaks_the_budget():
     messages = [*round_with_long_reasoning('r1', 2), *round_with_long_reasoning('r2', 20)]
 
     # Room for the conversation plus a few steps of reasoning, not for all of it.
-    without_reasoning = WindowedStrategy(keep_thinking_steps=0).view(messages, ContextBudget(window=None))
+    without_reasoning = WindowedStrategy(reasoning='off').view(messages, ContextBudget(window=None))
     room = estimate_messages_tokens(without_reasoning.messages)
     one_step = estimate_tokens('why r2/0 ' + 'y' * 2_000)
     allowance = one_step * 3
 
-    tight = WindowedStrategy(keep_thinking_steps=20).view(
+    tight = WindowedStrategy(reasoning='recent', reasoning_steps=20).view(
         messages, ContextBudget(window=room + allowance + 8_000, output_reserve=8_000)
     )
 
@@ -269,7 +291,7 @@ def test_thinking_window_never_breaks_the_budget():
 def test_compacting_applies_the_same_policy():
     messages = [*_round('r1', 3), *_round('r2', 3)]
 
-    result = CompactingStrategy(keep_thinking_steps=1).view(messages, _budget())
+    result = CompactingStrategy(reasoning='recent', reasoning_steps=1).view(messages, _budget())
 
     kept = _thinking_contents(result.messages)
     assert kept == ['why r2/2']
@@ -278,6 +300,6 @@ def test_compacting_applies_the_same_policy():
 def test_compacting_all_keeps_everything():
     messages = [*_round('r1', 2), *_round('r2', 2)]
 
-    result = CompactingStrategy(keep_thinking_steps=None).view(messages, _budget())
+    result = CompactingStrategy(reasoning='all').view(messages, _budget())
 
     assert len(_thinking_contents(result.messages)) == 4

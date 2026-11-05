@@ -73,12 +73,14 @@ def _build_strategy(settings: SigilSettings):
         return CompactingStrategy(
             keep_recent_turns=settings.keep_recent_turns,
             max_tool_result_chars=settings.max_tool_result_chars,
-            keep_thinking_steps=settings.keep_thinking,
+            reasoning=settings.reasoning,
+            reasoning_steps=settings.reasoning_steps,
         )
     return WindowedStrategy(
         keep_recent_turns=settings.keep_recent_turns,
         max_tool_result_chars=settings.max_tool_result_chars,
-        keep_thinking_steps=settings.keep_thinking,
+        reasoning=settings.reasoning,
+        reasoning_steps=settings.reasoning_steps,
     )
 
 

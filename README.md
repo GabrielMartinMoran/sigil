@@ -1221,7 +1221,8 @@ change behaviour behind your back.
 | `SIGIL_MODEL_MAX_ATTEMPTS` | `5` | Attempts per model request on transient failures. |
 | `SIGIL_HOME` | `~/.sigil` | Where sessions, roadmaps and provider credentials live. |
 | `SIGIL_CONTEXT_STRATEGY` | `windowed` | `windowed`, `compacting` or `passthrough`. |
-| `SIGIL_CONTEXT_KEEP_THINKING` | `4` | Reasoning blocks kept from the round in progress: a number, `all` or `off`. |
+| `SIGIL_CONTEXT_REASONING` | `recent` | What travels back of the model's reasoning: `recent`, `off` or `all`. |
+| `SIGIL_CONTEXT_REASONING_STEPS` | `4` | Steps of the round in progress kept under `recent`. |
 | `SIGIL_CONTEXT_KEEP_RECENT_TURNS` | `3` | Turns kept intact before trimming. |
 | `SIGIL_CONTEXT_MAX_TOOL_RESULT_CHARS` | `4000` | Cap of an old tool result. |
 | `SIGIL_CONTEXT_OUTPUT_RESERVE` | `8000` | Tokens reserved for the response. |
