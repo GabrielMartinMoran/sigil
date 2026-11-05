@@ -3,6 +3,45 @@
 Terminal agent built with [pydantic-ai](https://ai.pydantic.dev/) and
 [Textual](https://textual.textualize.io/).
 
+## Running it
+
+The workspace is the directory you start from, not the directory Sigil lives in:
+
+```bash
+cd ~/projects/thing
+/path/to/sigil/sigil          # talks about ~/projects/thing
+```
+
+Symlink it once and the path stops mattering:
+
+```bash
+ln -s /path/to/sigil/sigil ~/.local/bin/sigil
+```
+
+The launcher resolves its own location through symlinks and never moves the
+process, so `uv` runs the environment next to Sigil's code while the workspace,
+the project config and `.git` are the ones where you are standing. Nothing is
+written into the project you open.
+
+Three places decide what Sigil sees:
+
+| Where | What comes from there |
+| --- | --- |
+| **The directory you run it in** | The workspace the tools read and write, `.sigil/agents`, `.agents/skills`, `.sigil/config.json` (MCP), and which sessions you get (bucketed by directory) |
+| **Sigil's own directory** | The base prompt, the built-in agents (`wizard`, `scout`), the theme defaults, and the `.env` it loads |
+| **`~/.sigil`** (`SIGIL_HOME`) | Sessions, roadmaps, provider accounts and credentials, themes, worktrees |
+
+A project profile shadows a global one, and both shadow a built-in of the same
+name: opening Sigil in a project without `.sigil/agents` still gives you `wizard`
+and `scout`, and dropping a `wizard.md` there takes over the name.
+
+> **`.env`.** Sigil reads the one next to its own code, or in a parent directory of
+> it — never the one in the project you opened. A project's `.env` holds that
+> project's secrets; letting it reach `SIGIL_*` would make Sigil's configuration
+> depend on which repository it was started in. For settings that follow you between
+> projects, export them in your shell, or put them in a `.env` on the path upward
+> from the Sigil directory (`~/.env`, for example, when Sigil lives under your home).
+
 ## Working with agents
 
 Sigil's behaviour is set by an **agent profile**: a Markdown file whose
@@ -1588,7 +1627,10 @@ layer plan is in [`proposals/model-providers.md`](proposals/model-providers.md).
 ## Development
 
 ```bash
-uv run ./main.py     # run Sigil
+./sigil              # run Sigil from here, with this directory as the workspace
 uv run pytest        # tests
 uv run ruff check .  # lint
 ```
+
+`./sigil` and `uv run ./main.py` are the same program; the launcher is the one that
+works from another project's directory (see [Running it](#running-it)).

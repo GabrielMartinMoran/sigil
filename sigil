@@ -1,3 +1,35 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
+# Launch Sigil from wherever you are standing.
+#
+# The workspace is the directory you run this from — not the directory Sigil is
+# installed in — so `cd ~/projects/thing && /path/to/sigil/sigil` talks about
+# `thing`. That means the script must not use a relative path for `main.py` and
+# must not `cd` first: `uv run --project` gives uv the environment to run in
+# without moving the process.
+#
+# It resolves its own location through symlinks, so `ln -s ~/sigil/sigil
+# ~/.local/bin/sigil` works and still finds the project it belongs to.
+#
+# `--quiet` keeps uv from narrating every launch (creating the environment,
+# syncing it, warning about an unrelated VIRTUAL_ENV); errors still print.
 
-uv run ./main.py
+set -euo pipefail
+
+source_path="${BASH_SOURCE[0]}"
+while [ -L "$source_path" ]; do
+    source_dir="$(cd -P "$(dirname "$source_path")" > /dev/null 2>&1 && pwd)"
+    source_path="$(readlink "$source_path")"
+    case "$source_path" in
+        /*) ;;
+        *) source_path="$source_dir/$source_path" ;;
+    esac
+done
+project_dir="$(cd -P "$(dirname "$source_path")" > /dev/null 2>&1 && pwd)"
+
+if ! command -v uv > /dev/null 2>&1; then
+    echo "sigil: 'uv' is not on PATH. Install it from https://docs.astral.sh/uv/ and try again." >&2
+    exit 127
+fi
+
+exec uv run --quiet --project "$project_dir" "$project_dir/main.py" "$@"
