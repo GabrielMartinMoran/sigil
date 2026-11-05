@@ -201,6 +201,32 @@ which repeats across turns; the note says so honestly rather than pretending it 
 a handle that will resolve.
 """
 
+IMAGE_SUPERSEDED = '[image {image_id} also appears attached later in this conversation: not repeated here]'
+"""What replaces a copy of an image that is already travelling.
+
+`view_image` hands back a picture the prompt may still be carrying. Sending both
+copies charges the same pixels twice and tells the model it is looking at two
+different pictures.
+"""
+
+
+def _occurrences_per_id(turns: list[list[ModelMessage]]) -> dict[str, int]:
+    """How many times each image id appears in the whole conversation."""
+    counts: dict[str, int] = {}
+    for turn in turns:
+        for message in turn:
+            if not isinstance(message, ModelRequest):
+                continue
+            for part in message.parts:
+                if not isinstance(part, (UserPromptPart, ToolReturnPart)):
+                    continue
+                if not isinstance(part.content, list):
+                    continue
+                for item in part.content:
+                    if is_image_part(item):
+                        counts[_identifier_of(item)] = counts.get(_identifier_of(item), 0) + 1
+    return counts
+
 
 def drop_old_images(
     turns: list[list[ModelMessage]],
@@ -208,42 +234,61 @@ def drop_old_images(
     recent_start: int,
     max_tokens: int | None = None,
 ) -> tuple[list[ModelMessage], int]:
-    """Drops the image parts of the old turns, keeping their text and their ids.
+    """Drops the image parts that do not belong in the request, keeping their text.
 
-    An image is the most expensive item in the history per unit of usefulness: it
-    matters while the conversation is about it and costs full price forever. The
-    text is kept and a note says the image was there and under what id, so the model
-    still knows the conversation happened while the pixels stop being paid for on
-    every step.
+    Three reasons to drop one, in this order:
+
+    1. **A newer copy is attached.** `view_image` returns what the prompt may still
+       carry; both copies cost the same pixels. The newest wins, because it is the
+       one the conversation is about.
+    2. **The turn is older than the window.** An image matters while it is being
+       discussed and costs full price forever.
+    3. **The pixels are past the cap.** Three screenshots of a dense table can cost
+       more than the whole conversation around them.
+
+    Every dropped image leaves a note with its id, so the model knows it existed and
+    `view_image` can bring it back.
 
     Args:
         turns: The conversation, split into turns.
-        recent_start: Index of the first turn kept whole.
-        max_tokens: Ceiling for the pixels that stay, in tokens. Images past it are
-            dropped too, oldest first, even inside the turns that were kept whole:
-            it is the same idea as the cap on reasoning, for the other item that is
-            expensive by nature. ``None`` keeps every image of the recent turns.
+        recent_start: Index of the first turn that keeps its images.
+        max_tokens: Ceiling for the pixels that stay, in tokens. ``None`` keeps every
+            image the window allows.
 
     Returns:
         The flattened messages and how many images were dropped.
     """
+    remaining = _occurrences_per_id(turns)
     kept_tokens = 0
     result: list[ModelMessage] = []
     dropped = 0
     for index, turn in enumerate(turns):
         for message in turn:
-            if index < recent_start:
-                message, count = _drop_images_of(message)
-                dropped += count
-            elif max_tokens is not None:
-                message, count, kept_tokens = _drop_images_past_budget(message, max_tokens, kept_tokens)
-                dropped += count
+            message, count, kept_tokens = _drop_images(
+                message,
+                in_window=index >= recent_start,
+                max_tokens=max_tokens,
+                kept_tokens=kept_tokens,
+                remaining=remaining,
+            )
+            dropped += count
             result.append(message)
     return result, dropped
 
 
-def _drop_images_past_budget(message: ModelMessage, max_tokens: int, kept_tokens: int) -> tuple[ModelMessage, int, int]:
-    """Keeps the images that still fit, dropping the ones past the ceiling."""
+def _drop_images(
+    message: ModelMessage,
+    *,
+    in_window: bool,
+    max_tokens: int | None,
+    kept_tokens: int,
+    remaining: dict[str, int],
+) -> tuple[ModelMessage, int, int]:
+    """Decides, image by image, whether it travels or leaves a note behind.
+
+    `remaining` counts the occurrences still ahead, so walking oldest to newest the
+    last copy of an id is the one that survives.
+    """
     if not isinstance(message, ModelRequest):
         return message, 0, kept_tokens
     parts: list[object] = []
@@ -258,17 +303,30 @@ def _drop_images_past_budget(message: ModelMessage, max_tokens: int, kept_tokens
             if not is_image_part(item):
                 kept.append(item)
                 continue
-            cost = image_part_tokens(item)
-            if kept_tokens + cost <= max_tokens:
-                kept.append(item)
-                kept_tokens += cost
+            identifier = _identifier_of(item)
+            remaining[identifier] = remaining.get(identifier, 0) - 1
+            if remaining[identifier] > 0:
+                # A newer copy of the same picture is attached further on.
+                dropped += 1
+                notes.append(IMAGE_SUPERSEDED.format(image_id=identifier))
                 continue
-            dropped += 1
-            notes.append(IMAGE_OMITTED.format(image_id=_identifier_of(item)))
+            if not in_window:
+                dropped += 1
+                notes.append(IMAGE_OMITTED.format(image_id=identifier))
+                continue
+            cost = image_part_tokens(item)
+            if max_tokens is not None and kept_tokens + cost > max_tokens:
+                dropped += 1
+                notes.append(IMAGE_OMITTED.format(image_id=identifier))
+                continue
+            kept.append(item)
+            kept_tokens += cost
         if not notes:
             parts.append(part)
             continue
         if isinstance(part, ToolReturnPart):
+            # The result keeps its own text; the note goes beside it, not inside the
+            # list the provider reads as the tool's payload.
             parts.append(dataclasses.replace(part, content=[*kept, *notes]))
         else:
             parts.append(dataclasses.replace(part, content=[*kept, '\n', *notes]))
@@ -289,47 +347,6 @@ def _identifier_of(item: object) -> str:
     if isinstance(identifier, str) and identifier:
         return identifier
     return '(no id)'
-
-
-def _drop_images_of(message: ModelMessage) -> tuple[ModelMessage, int]:
-    """Removes the image parts of one request, leaving a note per image.
-
-    Two carriers are covered: a user prompt (`look at [Image #1]`) and a tool
-    result (`view_image` hands a picture back). The second one matters as much as
-    the first: an image a tool returned sits in the history at full price forever
-    unless something drops it.
-
-    One note per image, not one per group: each carries the id that brings that
-    picture back, and a single combined line would lose all but one of them.
-    """
-    if not isinstance(message, ModelRequest):
-        return message, 0
-    parts: list[object] = []
-    dropped = 0
-    for part in message.parts:
-        if not (isinstance(part, (UserPromptPart, ToolReturnPart)) and isinstance(part.content, list)):
-            parts.append(part)
-            continue
-        kept: list[object] = []
-        notes: list[str] = []
-        for item in part.content:
-            if is_image_part(item):
-                notes.append(IMAGE_OMITTED.format(image_id=_identifier_of(item)))
-                dropped += 1
-            else:
-                kept.append(item)
-        if not notes:
-            parts.append(part)
-            continue
-        if isinstance(part, ToolReturnPart):
-            # The result keeps its own text; the note goes beside it, not inside the
-            # list the provider reads as the tool's payload.
-            parts.append(dataclasses.replace(part, content=[*kept, *notes]))
-        else:
-            parts.append(dataclasses.replace(part, content=[*kept, '\n', *notes]))
-    if not dropped:
-        return message, 0
-    return dataclasses.replace(message, parts=parts), dropped
 
 
 def count_images(messages: Sequence[ModelMessage]) -> int:

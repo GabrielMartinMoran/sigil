@@ -508,6 +508,33 @@ The library is the session log itself. Images were already persisted, so an id
 resolves by walking the history; nothing else needs storage, and a resumed session
 keeps working.
 
+### Viewing a picture resets its window
+
+Asking for an image is evidence that it matters again: it may have been pasted nine
+turns ago. So the window is counted from the **newest copy**, not from where the
+picture first arrived.
+
+```mermaid
+flowchart TD
+    A["pasted 9 turns ago"] --> B{"a view_image call<br/>brought it back?"}
+    B -->|no| GONE["outside the window: the note<br/>and the id stay"]
+    B -->|yes| LIVE["the returned copy is the newest one:<br/>it travels again"]
+
+    LIVE --> DEDUP{"the old copy is<br/>still in the window?"}
+    DEDUP -->|"yes: emitting both charges<br/>the same pixels twice"| ONE["only the newest travels;<br/>the old one becomes a note<br/>saying it is attached later"]
+
+    style LIVE fill:#23863622,stroke:#238636
+    style ONE fill:#1f6feb22,stroke:#1f6feb
+```
+
+Deduplication is not an optimisation for its own sake: two copies of the same
+picture also tell the model it is looking at two different images. The surviving
+copy is always the newest, because that is the one the conversation is about.
+
+An image with no identifier of its own gets one derived from its bytes by
+pydantic-ai, so two genuinely identical pictures are deduplicated as the same one —
+which is what they are.
+
 ### The pixel cap
 
 Three turns of 4K screenshots cost 32k tokens; the conversation around them may cost

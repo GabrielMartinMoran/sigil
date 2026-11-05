@@ -14,7 +14,7 @@ from __future__ import annotations
 import io
 
 from PIL import Image
-from pydantic_ai.messages import BinaryImage, ModelRequest, TextPart, UserPromptPart
+from pydantic_ai.messages import BinaryImage, ModelRequest, TextPart, ToolReturnPart, UserPromptPart
 
 from src.engine.attachments.image_attachment import image_tokens
 from src.engine.context.images import image_part_tokens
@@ -29,12 +29,33 @@ def _png(width: int, height: int) -> bytes:
     return buffer.getvalue()
 
 
+_minted = 0
+
+
 def _image(width: int = 1000, height: int = 1000) -> BinaryImage:
-    return BinaryImage(data=_png(width, height), media_type='image/png')
+    """A distinct picture.
+
+    The identifier is minted here on purpose: pydantic-ai derives it from the bytes
+    when it is missing, so two fixtures with the same payload would look like the
+    same picture — and the dedup would rightly treat them as one.
+    """
+    global _minted
+    _minted += 1
+    return BinaryImage(data=_png(width, height), media_type='image/png', identifier=f'img_{_minted:08x}')
 
 
 def _prompt(*content: object) -> ModelRequest:
     return ModelRequest(parts=[UserPromptPart(content=list(content))])
+
+
+def _images_in(messages: list) -> list[BinaryImage]:
+    return [
+        item
+        for message in messages
+        for part in message.parts
+        for item in (part.content if isinstance(getattr(part, 'content', None), list) else [])
+        if isinstance(item, BinaryImage)
+    ]
 
 
 # --- the estimate -----------------------------------------------------------
@@ -72,14 +93,15 @@ def _turn(text: str, *images: BinaryImage) -> list[ModelRequest]:
 
 
 def test_an_image_from_an_old_turn_leaves_the_request_and_is_noted():
-    turns = [_turn('vieja', _image()), _turn('reciente', _image())]
+    old = _image()
+    turns = [_turn('vieja', old), _turn('reciente', _image())]
 
     messages, dropped = drop_old_images(turns, recent_start=1)
 
     assert dropped == 1
     kept = messages[0].parts[0].content
     assert not any(isinstance(item, BinaryImage) for item in kept)
-    assert IMAGE_OMITTED.format(image_id=_image().identifier) in kept
+    assert IMAGE_OMITTED.format(image_id=old.identifier) in kept
 
 
 def test_an_image_from_the_recent_turn_stays():
@@ -288,3 +310,116 @@ def test_an_image_inside_a_tool_result_is_dropped_like_any_other():
         if isinstance(item, BinaryImage)
     ]
     assert left == []
+
+
+# --- coming back with view_image --------------------------------------------
+
+
+def _viewed_image(identifier: str) -> list:
+    """A round where the model asked for the image again."""
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+
+    return [
+        _prompt('mira de nuevo'),
+        ModelResponse(parts=[ToolCallPart(tool_name='view_image', args={'image_id': identifier}, tool_call_id='c')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='view_image',
+                    content=[_image_of(identifier)],
+                    tool_call_id='c',
+                )
+            ]
+        ),
+    ]
+
+
+def _image_of(identifier: str) -> BinaryImage:
+    return BinaryImage(data=_png(100, 100), media_type='image/png', identifier=identifier)
+
+
+def test_the_same_picture_is_not_paid_twice():
+    """`view_image` re-attaches what the prompt already carried: send it once."""
+    from src.engine.context.budget import ContextBudget
+
+    image = _image_of('img_aaaaaaaa')
+    turns = [
+        [_prompt('aca esta', image)],
+        _viewed_image('img_aaaaaaaa'),
+    ]
+
+    flat = [message for turn in turns for message in turn]
+    result = WindowedStrategy(keep_recent_turns=2, image_turns=3, reasoning='all').view(
+        flat, ContextBudget(window=None)
+    )
+
+    carried = _images_in(result.messages)
+    assert len(carried) == 1
+    assert result.dropped_images == 1
+
+
+def test_the_copy_that_survives_is_the_newest_one():
+    """The one the model just looked at is the relevant one, not the old paste."""
+    from src.engine.context.budget import ContextBudget
+
+    image = _image_of('img_aaaaaaaa')
+    turns = [
+        [_prompt('aca esta', image)],
+        _viewed_image('img_aaaaaaaa'),
+    ]
+
+    flat = [message for turn in turns for message in turn]
+    result = WindowedStrategy(keep_recent_turns=2, image_turns=3, reasoning='all').view(
+        flat, ContextBudget(window=None)
+    )
+
+    # The surviving copy sits in the last round, next to the call that asked for it.
+    positions = [
+        index
+        for index, message in enumerate(result.messages)
+        for part in message.parts
+        for item in (part.content if isinstance(getattr(part, 'content', None), list) else [])
+        if isinstance(item, BinaryImage)
+    ]
+    assert positions == [len(result.messages) - 1]
+
+
+def test_viewing_an_image_resets_its_clock():
+    """A picture the model asked for is relevant again: it gets a fresh window."""
+    from src.engine.context.budget import ContextBudget
+
+    image = _image_of('img_aaaaaaaa')
+    # Pasted long ago, viewed now.
+    turns = [[_prompt('aca esta', image)], *[[_prompt(f'charla {n}')] for n in range(5)], _viewed_image('img_aaaaaaaa')]
+
+    flat = [message for turn in turns for message in turn]
+    result = WindowedStrategy(keep_recent_turns=6, image_turns=3, reasoning='all').view(
+        flat, ContextBudget(window=None)
+    )
+
+    carried = _images_in(result.messages)
+    assert len(carried) == 1
+    # Without the call it would be nine turns old and gone.
+    assert carried[0].identifier == 'img_aaaaaaaa'
+
+
+def test_a_superseded_copy_says_where_the_live_one_is():
+    """The note must not tell the model to fetch what is already attached."""
+    from src.engine.context.budget import ContextBudget
+
+    image = _image_of('img_aaaaaaaa')
+    turns = [[_prompt('aca esta', image)], _viewed_image('img_aaaaaaaa')]
+
+    flat = [message for turn in turns for message in turn]
+    result = WindowedStrategy(keep_recent_turns=2, image_turns=3, reasoning='all').view(
+        flat, ContextBudget(window=None)
+    )
+
+    text = ' '.join(
+        item
+        for message in result.messages
+        for part in message.parts
+        for item in (part.content if isinstance(getattr(part, 'content', None), list) else [])
+        if isinstance(item, str)
+    )
+    assert 'attached' in text
