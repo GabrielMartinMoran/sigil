@@ -676,6 +676,11 @@ The side panel no longer repeats the workspace — the status bar carries it —
 A session whose worktree was `git worktree remove`d stops being listed: there is no
 workspace left to open it against. The file stays on disk.
 
+A session is its id: the store reads `<id>.json` and lists nothing else. A file with
+any other name — a copy left by the file manager (`<id> (Copy).json`), a restored
+backup — carries the id of a session that is already listed, so it's skipped instead
+of showing up twice.
+
 ## Working while the agent runs
 
 The agent does not take the keyboard hostage. While a turn runs you can keep

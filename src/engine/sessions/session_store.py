@@ -181,10 +181,17 @@ class SessionStore:
             if path.name == INDEX_FILENAME:
                 continue
             try:
-                sessions.append(self._deserialize(json.loads(path.read_text(encoding='utf-8'))))
+                session = self._deserialize(json.loads(path.read_text(encoding='utf-8')))
             except OSError, ValueError, KeyError:
                 # Corrupt or incomplete files are ignored instead of breaking the app.
                 continue
+            if path.stem != session.id:
+                # A session is its id: `load(id)` reads `<id>.json`. A file named
+                # anything else is a copy the user left behind (`<id> (Copy).json`,
+                # a restored backup), and listing it would offer a session the
+                # store cannot open — under an id that is already in the list.
+                continue
+            sessions.append(session)
 
         sessions.sort(key=lambda session: session.updated_at, reverse=True)
         return sessions
