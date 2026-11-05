@@ -18,10 +18,7 @@ id is a constructor argument rather than a constant.
 
 from __future__ import annotations
 
-from openai import AsyncOpenAI
 from pydantic_ai.models import Model
-from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
-from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
 
 from src.engine.providers.domain.auth_method import AuthMethod
 from src.engine.providers.domain.model_capability import ModelCapability
@@ -94,6 +91,12 @@ class OpenCodeBuilder:
         capability: ModelCapability,
         api_key: str,
     ) -> Model:
+        # Imported here, not at module level: `openai` alone is 400 ms of the cold
+        # start, and nothing on the first paint builds a model — the selection
+        # already carries the one it needs.
+        from openai import AsyncOpenAI
+        from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
+
         # The client is built here rather than by the provider because OpenCode's
         # headers must be on the client: `AsyncOpenAI.default_headers` is exposed
         # as a read-only copy, so mutating it after construction has no effect.
@@ -108,6 +111,8 @@ class OpenCodeBuilder:
             profile=_openai_profile(capability),
             canonical_system=PROVIDER_NAME,
         )
+
+        from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 
         if capability.dialect == RESPONSES_DIALECT:
             return OpenAIResponsesModel(model_name=model, provider=provider)

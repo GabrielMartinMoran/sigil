@@ -36,7 +36,14 @@ from src.engine.roadmap.store import RoadmapStore
 from src.ui.palette import color
 from src.ui.token_format import compact_tokens
 
-OK_MARK = '●'
+LIST_MARK = '•'
+"""The mark of a list entry, shared by the skills and the MCP servers.
+
+Both sections are the same kind of list, three rows apart in a 34-column panel, so
+they hang off the same glyph. It was ``●`` on the servers, a circle that fills the
+column and reads as a heavier level of the hierarchy than the skills above it.
+"""
+
 FAIL_MARK = '✗'
 
 WARNING_PERCENT = 70.0
@@ -244,7 +251,7 @@ class SidebarPanel(Vertical):
             text.append(' none yet\n', style='dim')
             return
         for name in self._skills:
-            text.append(' • ', style='green')
+            text.append(f' {LIST_MARK} ', style='green')
             text.append(f'{name}\n')
 
     def _append_mcp(self, text: Text) -> None:
@@ -262,7 +269,7 @@ class SidebarPanel(Vertical):
         text.append(')\n', style='green')
         for server in self._servers:
             if server.ok:
-                text.append(f' {OK_MARK} ', style='green')
+                text.append(f' {LIST_MARK} ', style='green')
                 text.append(f'{server.name}\n')
             else:
                 text.append(f' {FAIL_MARK} ', style='bold red')

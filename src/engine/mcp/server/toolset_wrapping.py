@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.toolsets import AbstractToolset
 
 from src.engine.mcp.config_models.server_spec import MCPServerSpec
 from src.engine.mcp.resilient import ResilientToolset
 from src.engine.mcp.server.naming import includes
+
+if TYPE_CHECKING:
+    from pydantic_ai.mcp import MCPToolset
 
 
 def _filter(spec: MCPServerSpec) -> Callable[[Any, Any], bool]:

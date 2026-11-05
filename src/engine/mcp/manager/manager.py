@@ -7,6 +7,7 @@ are exposed to the model as meta-tools (see ``src.engine.mcp.tools``).
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping
 
 from pydantic_ai.toolsets import AbstractToolset
@@ -126,6 +127,32 @@ class MCPManager:
         server.tools = tuple(
             display_name(server.spec.tool_prefix, tool.name) for tool in tools if includes(server.spec, tool.name)
         )
+
+    # --- shutdown -----------------------------------------------------------
+
+    async def aclose(self) -> None:
+        """Closes every server's transport, so the process can exit.
+
+        The probe connects with ``keep_alive`` on, which leaves the session and the
+        subprocess open on purpose: a turn later reuses them. Nothing closes them
+        when the app quits, and the event loop then waits them out one by one — the
+        reason closing Sigil took seconds.
+
+        The closes run concurrently because they are independent waits, and the one
+        that matters (a server ignoring the EOF) is bounded by the SDK's grace
+        period, which `src.engine.mcp.shutdown` shortens.
+        """
+        closing = [self._close(server) for server in self._servers.values() if server.toolset is not None]
+        if not closing:
+            return
+        await asyncio.gather(*closing, return_exceptions=True)
+
+    async def _close(self, server: MCPServer) -> None:
+        assert server.toolset is not None
+        try:
+            await server.toolset.client.close()
+        except Exception as exc:  # noqa: BLE001 - a server that will not close must not block the quit
+            self._report(server.name, f'{type(exc).__name__}: {exc}')
 
     # --- resources and prompts ---------------------------------------------
 

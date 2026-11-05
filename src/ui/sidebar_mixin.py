@@ -82,6 +82,9 @@ class SidebarMixin:
         group: the second exclusive worker cancelled the first, so the MCP probe
         never ran and the section never appeared. A turn is also exclusive in
         that group, which would have cancelled it mid-connection.
+
+        The manager may still be loading (see ``boot_mcp``): ``describe`` waits for
+        it, so the panel ends up with the real state either way.
         """
         if self._mcp_manager is None or not self._mcp_manager:
             return
@@ -97,4 +100,24 @@ class SidebarMixin:
         try:
             self.query_one(SidebarPanel).update_mcp(servers)
         except NoMatches, ScreenStackError:
+            return
+
+    async def close_mcp_servers(self) -> None:
+        """Releases the MCP sessions the probe left open, concurrently.
+
+        The probe connects with ``keep_alive`` on, so every server keeps its
+        subprocess and its session after the panel is painted. Nothing closes them
+        on the way out, and the event loop then waits each one out — which is what
+        made quitting take seconds. Closing here is bounded by the grace period
+        ``src.engine.mcp.shutdown`` installs, and it runs once per quit.
+        """
+        manager = self._mcp_manager
+        if manager is None or not manager:
+            return
+        close = getattr(manager, 'aclose', None)
+        if close is None:
+            return
+        try:
+            await close()
+        except Exception:  # noqa: BLE001 - a quit never fails over a diagnostic
             return
