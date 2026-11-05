@@ -134,6 +134,20 @@ def test_corrupt_session_file_is_ignored(tmp_path):
     assert store.list_sessions() == []
 
 
+def test_a_copied_session_file_is_not_listed_as_another_session(tmp_path):
+    """A copy made from a file manager (`<id> (Copy).json`) carries the same id.
+
+    Listing it would offer a session the store cannot open —``load(id)`` reads
+    ``<id>.json``— and a duplicate id is an error the UI cannot survive.
+    """
+    store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
+    session = store.create_session()
+    original = store.directory / f'{session.id}.json'
+    (store.directory / f'{session.id} (Copy).json').write_text(original.read_text(encoding='utf-8'))
+
+    assert [listed.id for listed in store.list_sessions()] == [session.id]
+
+
 def test_preview_uses_first_user_message(tmp_path):
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     session = store.create_session()

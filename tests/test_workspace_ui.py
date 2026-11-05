@@ -293,6 +293,35 @@ def test_load_switches_to_the_workspace_of_the_session(monkeypatch, tmp_path, re
     asyncio.run(inner())
 
 
+def test_load_opens_the_picker_with_a_stray_copy_of_a_session_file(monkeypatch, tmp_path, repo):
+    """The crash this covers: a duplicate id made the picker explode on compose.
+
+    `OptionList` refuses two options with the same id, and the exception escaped
+    `compose`, where Textual can no longer recover: the app died instead of
+    listing. A copy left by a file manager is the everyday way to get there.
+    """
+    monkeypatch.chdir(repo)
+
+    async def inner():
+        app = _app(repo, tmp_path, sessions=['main task'])
+        async with app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause()
+            original = app._store.directory / f'{app._session.id}.json'
+            (app._store.directory / f'{app._session.id} (Copy).json').write_text(original.read_text(encoding='utf-8'))
+
+            app.run_worker(app.handle_command('/load'))
+            for _ in range(20):
+                await pilot.pause()
+                if len(app.screen_stack) > 1:
+                    break
+
+            options = app.screen.query_one(OptionList)
+            assert options.option_count == 1
+            assert str(options.get_option_at_index(0).id) == app._session.id
+
+    asyncio.run(inner())
+
+
 def test_switching_clears_the_scope_and_the_loaded_skills(monkeypatch, tmp_path, repo):
     monkeypatch.chdir(repo)
 

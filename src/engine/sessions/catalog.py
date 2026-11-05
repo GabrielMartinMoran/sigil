@@ -74,7 +74,15 @@ def catalog(root: str | os.PathLike[str], *, base_dir: str | Path | None = None)
     # Newest first across workspaces; the workspace name breaks ties so the order
     # stays stable between refreshes.
     entries.sort(key=lambda entry: (entry.session.updated_at, entry.label), reverse=True)
-    return entries
+
+    # One session id is one row. A copy of a session file that ended up in two
+    # workspaces' folders is the same conversation, and the listing is the input of
+    # an `OptionList`: it refuses two options with the same id by raising, and that
+    # exception inside `compose` is a crash, not a warning. The newest copy wins.
+    unique: dict[str, CatalogEntry] = {}
+    for entry in entries:
+        unique.setdefault(entry.session.id, entry)
+    return list(unique.values())
 
 
 def label_for(root: str | os.PathLike[str]) -> str:
