@@ -84,50 +84,25 @@ Screen {
     padding: 0 1;
 }
 
-/* --- side column --------------------------------------------------------- */
+/* --- side panel ---------------------------------------------------------- */
 
-/* The column holds two boxes and hands the height to them in a fixed proportion:
- * the diagnostics take what their content needs up to 60% of the column, and the
- * roadmap takes the rest. Both scroll inside themselves, so a session with twenty
- * skills and a plan of thirty items still leaves the composer where it belongs. */
+/* One box, one scrollbar. The whole panel scrolls instead of nesting a scrolling
+ * roadmap inside a scrolling panel: two scrollbars in 34 characters of width are
+ * one more than the width can explain. A plan of thirty items and twenty loaded
+ * skills still leave the composer where it belongs. */
 #sidebar {
     width: 34;
     height: 1fr;
-}#sidebar-panel {
-    height: auto;
-    max-height: 60%;
     border: round $primary;
     padding: 0 1;
-    overflow-y: auto;
+}
+
+#sidebar-scroll {
+    height: 1fr;
     scrollbar-size-vertical: 1;
 }
 
 #sidebar-body {
-    height: auto;
-}
-
-/* The roadmap is the last thing in the column and takes the leftover height. The
- * heading is fixed and the list under it scrolls, so a plan of twenty items stays
- * inside the box instead of pushing the composer off the screen. */
-#roadmap {
-    width: 1fr;
-    height: 1fr;
-    min-height: 5;
-    margin-top: 1;
-    border: round $primary;
-    padding: 0 1;
-}
-
-#roadmap-title {
-    height: 1;
-}
-
-#roadmap-scroll {
-    height: 1fr;
-    scrollbar-size-vertical: 1;
-}
-
-#roadmap-body {
     height: auto;
 }
 

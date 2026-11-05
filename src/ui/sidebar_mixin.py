@@ -27,7 +27,7 @@ class SidebarMixin:
     _history: list[ModelMessage]
 
     def refresh_sidebar(self) -> None:
-        """Model, context budget, skills and MCP: the diagnostics above the roadmap."""
+        """Model, context budget, skills and MCP: every section above the roadmap."""
         try:
             panel = self.query_one(SidebarPanel)
         except NoMatches, ScreenStackError:

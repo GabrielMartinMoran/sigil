@@ -375,8 +375,8 @@ gets to react to the cancellation and never decides what to do next on its own.
 
 ### Roadmap
 
-`update_roadmap` maintains the task list in the bottom box of the sidebar. Each
-item stays in `pending`, `in_progress`, `done` or `blocked`.
+`update_roadmap` maintains the task list at the end of the sidebar. Each item
+stays in `pending`, `in_progress`, `done` or `blocked`.
 
 The panel shows a single list in plan order, without grouping by status. The icon
 and the color are enough to read it at a glance:
@@ -394,7 +394,7 @@ with an empty list, advances with it and recovers it when loading it with
 `~/.sigil/roadmaps/<cwd-hash>/<session-id>.json`. If the write fails, the list
 keeps working in memory and the error stays in `persistence_error`.
 
-The list scrolls inside its box, so a long plan never grows the sidebar past the
+The list scrolls with the panel, so a long plan never grows the sidebar past the
 screen. It does not scroll to follow the agent: the plan is read as a whole, and
 a list that jumped every time an item changed state would be unreadable at
 exactly the moment it is worth reading.
@@ -743,12 +743,13 @@ not appear at all.
 
 ### Sidebar
 
-The column has two boxes. On top, the diagnostics; at the bottom, the roadmap of
-the session. They are read together — "what is it doing, with what, and how far
-has it got?" — and the split is what lets the plan have the height it needs
-without the diagnostics squeezing it.
+The sidebar is one panel with the sections the session needs, in the order they
+are read. The diagnostics —what the agent is working with— come first, and the
+roadmap of the task closes the list: they are read together, so a second box
+under the first only cost a border, a margin and the height of a column that sat
+mostly empty.
 
-**Diagnostics**, from top to bottom:
+The sections, from top to bottom:
 
 - **Model**: the active account alias, its provider family, the model, the
   reasoning level in effect, and the context budget of that model's window.
@@ -759,6 +760,8 @@ without the diagnostics squeezing it.
 - **MCP**: the count goes inline with the title, in parentheses. Below, each
   server is listed: `●` in green for the ones that work, `✗` in red for the ones
   that do not. With no configured servers, the section does not appear.
+- **Roadmap**: the plan of the task, one line per item, with its notes. It is the
+  last section, and the one read after every message.
 
 The context budget is the last line of the model section and not a section of
 its own: it is a property of that window, it is read with the model, and a
@@ -781,6 +784,11 @@ MCP (3, 1 ✗)
  ● playwright
  ● filesystem
  ✗ broken
+
+Roadmap
+ ▶ Rewrite the tool renderer
+ ✓ Read the current one
+ ○ Update the tests
 ```
 
 The percentage colours green, yellow and red across 70% and 90%, and the pair it
@@ -789,17 +797,13 @@ column: `K` for thousands and `M` for millions, no decimals once the number is
 `>= 100K` and never for millions. Below 100K a single decimal survives when it
 says something —`12.4K`, `5.5K`— and disappears when it would read `.0`.
 
-**Roadmap**, under the diagnostics: the plan of the task, one line per item,
-with its notes. It is the box that grows, so it gets the leftover height of the
-column and scrolls inside itself — a plan of thirty items stays in its box
-instead of pushing the composer off the screen. The heading does not scroll with
-the items: a label that scrolls away leaves a column of checkmarks with nothing
-saying what they are.
+The whole panel scrolls, not just the roadmap. With one box there is one
+scrollbar: nesting a scrolling list inside a scrolling panel would put a
+scrollbar inside a scrollbar in a column that is 34 characters wide. A plan of
+thirty items and twenty loaded skills stay inside the panel instead of pushing
+the composer off the screen.
 
-The diagnostics are capped at 60% of the column and scroll on their own for the
-same reason: a session with twenty loaded skills must not eat the roadmap.
-
-`/sidebar off` hides both boxes, and `/sidebar on` brings them back. Hiding does
+`/sidebar off` hides the panel, and `/sidebar on` brings it back. Hiding does
 not erase anything: the agent keeps updating the roadmap while it is out of
 view.
 

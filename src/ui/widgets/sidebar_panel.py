@@ -1,23 +1,24 @@
-"""Side panel diagnostics: the model in use, the context budget and the MCP servers.
+"""Side panel: the model, the skills, the MCP servers and the roadmap, in one column.
 
-The column has two boxes. This one is the top: what the agent is doing with, and
-how much room it has left. Under it, ``RoadmapPanel`` carries the plan. The split
-is not cosmetic — this box is as tall as its content up to a share of the column,
-and the plan takes whatever is left and scrolls inside it, so neither one can push
-the composer off the screen.
+The panel used to be two boxes: a diagnostics box on top and the roadmap under it
+in a box of its own. They are read together —"what is it doing, with what, and how
+far has it got?"— so the split bought nothing and cost a border, a margin and the
+top half of a column that was mostly empty. It is one box now, and the roadmap is
+the last section of the same list.
 
-Both boxes scroll on their own, which is why both are containers with a body inside
-and not a bare `Static`: a `Static` reports its own size as its virtual size, so
-overflow is clipped silently instead of becoming a scrollbar, and a clipped list of
-MCP servers looks exactly like a short one.
+The sections are ordered by how often they are read: the model with the budget of
+its window, the skills loaded in the session, the MCP servers and, at the end, the
+plan of the task. A section with nothing to say does not appear at all, so the
+panel stays short on a cold start and grows as the session does.
 
 The context budget is a line of the model section and not a section of its own: it
 is a property of that model's window, it is read with the model, and a heading for
 one number cost two rows in a 34-column panel. It reads as ``context: 66% (132K /
 200K)``, the same shape as ``effort: high`` above it.
 
-A section with nothing to say does not appear at all, so the panel stays short on a
-cold start and grows as the session does.
+The whole panel scrolls and not just the roadmap: with one box there is one
+scrollbar, and giving the plan a nested one would put a scrollbar inside a
+scrollbar in a column that is 34 characters wide.
 """
 
 from __future__ import annotations
@@ -28,9 +29,10 @@ from typing import Any
 
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Static
 
+from src.engine.roadmap.store import RoadmapStore
 from src.ui.palette import color
 from src.ui.token_format import compact_tokens
 
@@ -39,6 +41,15 @@ FAIL_MARK = '✗'
 
 WARNING_PERCENT = 70.0
 CRITICAL_PERCENT = 90.0
+
+ROADMAP_ICON = {'in_progress': '▶', 'pending': '○', 'blocked': '!', 'done': '✓'}
+ROADMAP_STYLE = {
+    'in_progress': 'bold blue',
+    'pending': '',
+    'blocked': 'bold yellow',
+    'done': 'green strike',
+}
+ROADMAP_FALLBACK_ICON = '·'
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,10 +86,12 @@ class ContextState:
 
 
 class SidebarPanel(Vertical):
-    """Model (with its context budget), loaded skills and MCP state, in one scrolling box."""
+    """Model, skills, MCP state and roadmap, in one scrolling column."""
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, store: RoadmapStore | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._store = store
+        self._shown = True
         self._skills: tuple[str, ...] = ()
         self._servers: tuple[MCPServerState, ...] = ()
         self._mcp_known = False
@@ -86,7 +99,48 @@ class SidebarPanel(Vertical):
         self._context_state: ContextState | None = None
 
     def compose(self) -> ComposeResult:
-        yield Static(Text(''), id='sidebar-body')
+        # The body is inside a scroll and not the widget itself: a bare `Static`
+        # reports its own size as its virtual size, so overflow would be clipped
+        # silently instead of becoming a scrollbar, and a clipped list of MCP
+        # servers looks exactly like a short one.
+        with VerticalScroll(id='sidebar-scroll'):
+            yield Static(Text(''), id='sidebar-body')
+
+    def on_mount(self) -> None:
+        self.refresh_from_store()
+
+    # --- visibility ---------------------------------------------------------
+
+    @property
+    def shown(self) -> bool:
+        """Whether the user asked to see the panel, regardless of its content.
+
+        It is not called ``visible`` because Textual already uses that name for the
+        CSS ``visibility`` rule, which reserves space instead of releasing it.
+        """
+        return self._shown
+
+    def set_shown(self, shown: bool) -> None:
+        """Shows or hides the panel and redraws it."""
+        self._shown = shown
+        self.refresh_from_store()
+
+    # --- roadmap ------------------------------------------------------------
+
+    def set_store(self, store: RoadmapStore | None) -> None:
+        """Points the roadmap section at the session's plan."""
+        self._store = store
+        self.refresh_from_store()
+
+    def refresh_from_store(self) -> None:
+        """Repaints after the roadmap changed, or after a theme change.
+
+        The user toggle wins: a changing roadmap does not bring back a panel the
+        user hid.
+        """
+        self.display = self._shown
+        if self._shown:
+            self._repaint()
 
     # --- state --------------------------------------------------------------
 
@@ -114,8 +168,8 @@ class SidebarPanel(Vertical):
         """Rebuilds the text after a theme change.
 
         The panel's content is a Rich `Text` built once per state change, and the
-        widget caches it. Without this the section headings keep the colors of the
-        theme the app started with.
+        widget caches it. Without this the section headings and the roadmap icons
+        keep the colors of the theme the app started with.
         """
         self._repaint()
 
@@ -137,6 +191,7 @@ class SidebarPanel(Vertical):
         self._append_model(text)
         self._append_skills(text)
         self._append_mcp(text)
+        self._append_roadmap(text)
         return text
 
     @property
@@ -212,6 +267,30 @@ class SidebarPanel(Vertical):
             else:
                 text.append(f' {FAIL_MARK} ', style='bold red')
                 text.append(f'{server.name}\n', style='red')
+
+    def _append_roadmap(self, text: Text) -> None:
+        """The plan of the task, last in the panel.
+
+        It goes at the end on purpose: the model, the skills and the servers are
+        what the agent is working with, and the plan is what it has done so far.
+        With no store there is no plan to show, and the section stays away instead
+        of announcing a feature this app was started without.
+        """
+        if self._store is None:
+            return
+        self._section(text, 'Roadmap')
+        items = self._store.snapshot()
+        if not items:
+            text.append(' No tasks yet.\n', style='dim')
+            return
+        for item in items:
+            style = ROADMAP_STYLE.get(item.status, '')
+            icon = ROADMAP_ICON.get(item.status, ROADMAP_FALLBACK_ICON)
+            text.append(f' {icon} ', style=style)
+            text.append(item.title, style=style)
+            text.append('\n')
+            if item.notes:
+                text.append(f'   {item.notes}\n', style='dim')
 
 
 def _percent_text(percent: float | None) -> str:

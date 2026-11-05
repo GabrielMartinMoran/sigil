@@ -1,4 +1,4 @@
-"""Tests for the top sidebar panel: loaded skills and MCP counts."""
+"""Tests for the side panel: model, skills, MCP counts and the roadmap."""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ from pydantic_ai.models.test import TestModel
 
 from src.engine.mcp.config.loader import load_config
 from src.engine.mcp.manager.manager import MCPManager
+from src.engine.roadmap.models.todo_item import TodoItem
+from src.engine.roadmap.store import RoadmapStore
 from src.engine.sessions.session_store import SessionStore
 from src.engine.skills.loaded import LoadedSkills
 from src.ui.app import SigilApp
@@ -96,11 +98,22 @@ def test_the_context_is_the_last_line_of_the_model_section():
     assert text.index('effort: high') < text.index('context: 66%') < text.index('Loaded skills')
 
 
-def test_the_roadmap_is_not_a_section_of_the_panel():
-    """It is its own box under the panel, with its own scroll; a copy here would be two."""
-    panel = _configured()
-    assert 'Roadmap' not in panel._build().plain
-    assert 'No tasks yet' not in panel._build().plain
+def test_the_roadmap_is_the_last_section_of_the_panel(tmp_path):
+    """One panel: the plan closes the same list the model, skills and MCP are in."""
+    store = RoadmapStore(directory=tmp_path, session_id=None)
+    store.set_items([TodoItem(title='Ship it', status='in_progress')])
+    panel = SidebarPanel(store)
+    panel._skills = ('clean-code',)
+    panel._mcp_known = True
+    panel._servers = (MCPServerState(name='github', ok=True),)
+    text = panel._build().plain
+    assert text.index('Model') < text.index('Loaded skills') < text.index('MCP') < text.index('Roadmap')
+    assert text.index('Roadmap') < text.index('Ship it')
+
+
+def test_the_panel_without_a_store_does_not_announce_a_roadmap():
+    """No store, no plan: the section stays away instead of reading `No roadmap.`"""
+    assert 'Roadmap' not in _panel()._build().plain
 
 
 def test_the_workspace_is_not_repeated_in_the_panel():

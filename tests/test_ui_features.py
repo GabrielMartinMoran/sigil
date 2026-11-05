@@ -23,8 +23,6 @@ from src.engine.themes import ThemeRegistry
 from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
-from src.ui.widgets.roadmap_panel import RoadmapPanel
-from src.ui.widgets.sidebar_column import SidebarColumn
 from src.ui.widgets.sidebar_panel import SidebarPanel
 from src.ui.widgets.status_bar import StatusBar
 from src.ui.widgets.theme_picker_screen import ThemePickerScreen
@@ -265,8 +263,13 @@ def test_the_diff_summary_paints_additions_green_and_deletions_red():
 # --- 4. One sidebar ---------------------------------------------------------
 
 
-def test_the_roadmap_sits_under_the_diagnostics_in_the_column():
-    """The column is diagnostics on top, roadmap at the bottom, in that order."""
+def test_the_sidebar_is_one_panel_with_the_roadmap_as_its_last_section():
+    """One box, one scroll, and the plan at the end of the same list.
+
+    The plan used to live in a box of its own under the diagnostics. Both are read
+    together, so the split only cost a border, a margin and the height of the
+    column, which sat mostly empty.
+    """
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -275,28 +278,28 @@ def test_the_roadmap_sits_under_the_diagnostics_in_the_column():
             app = _app(tmp, roadmap_store=roadmap)
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
-                column = app.query_one('#sidebar')
-                children = [child for child in column.children if child.display]
-                assert [type(child).__name__ for child in children] == ['SidebarPanel', 'RoadmapPanel']
-                panel, roadmap_panel = children
-                # The roadmap is below the diagnostics, and it is the box that grows.
-                assert panel.region.bottom <= roadmap_panel.region.y + 1
-                assert roadmap_panel.region.height > panel.region.height
+                sidebar = app.query_one('#sidebar')
+                assert type(sidebar).__name__ == 'SidebarPanel'
+                # One box: the scroll and the body inside it, and nothing else.
+                assert [type(child).__name__ for child in sidebar.children] == ['VerticalScroll']
 
-                assert 'Model' in panel.text
-                assert 'Loaded skills' in panel.text
-                # The plan is not a section of the diagnostics: one place, one copy.
-                assert 'Roadmap' not in panel.text
-                assert 'Ship it' in roadmap_panel.text
+                panel = app.query_one(SidebarPanel)
+                text = panel.text
+                assert 'Model' in text
+                assert 'Loaded skills' in text
+                # The plan is the last section of the same text, not a second widget.
+                assert 'Roadmap' in text
+                assert text.index('Loaded skills') < text.index('Roadmap')
+                assert text.index('Roadmap') < text.index('Ship it')
 
     asyncio.run(inner())
 
 
-def test_the_roadmap_scrolls_on_its_own_when_the_plan_does_not_fit():
-    """Twenty items in a short terminal: the box keeps its height and scrolls.
+def test_the_panel_scrolls_when_a_long_plan_does_not_fit():
+    """Twenty items in a short terminal: the panel keeps its height and scrolls.
 
-    Without its own scroll the panel grew until the composer was pushed off the
-    screen, which is the whole reason the roadmap is a separate box.
+    One scrollbar for the whole column, not a scrolling roadmap inside a scrolling
+    panel: there are 34 columns of room and two of them would already be borders.
     """
 
     async def inner():
@@ -306,28 +309,26 @@ def test_the_roadmap_scrolls_on_its_own_when_the_plan_does_not_fit():
             app = _app(tmp, roadmap_store=roadmap)
             async with app.run_test(size=(100, 24)) as pilot:
                 await pilot.pause()
-                panel = app.query_one(RoadmapPanel)
-                scroller = app.query_one('#roadmap-scroll')
+                panel = app.query_one(SidebarPanel)
+                scroller = app.query_one('#sidebar-scroll')
                 prompt = app.query_one(PromptInput)
 
-                # The list is taller than the box, and the box is still on screen.
+                # The content is taller than the box, and the box is still on screen.
                 assert scroller.virtual_size.height > scroller.size.height
                 assert scroller.max_scroll_y > 0
                 assert panel.region.bottom <= prompt.region.y
 
-                # Scrolling moves the items and leaves the heading where it was.
-                title = app.query_one('#roadmap-title')
-                assert title.render().plain == 'Roadmap'
+                # Scrolling reaches the end of the plan, which is the point.
                 scroller.scroll_to(y=scroller.max_scroll_y, animate=False)
                 await pilot.pause()
                 assert scroller.scroll_y > 0
-                assert title.render().plain == 'Roadmap'
+                assert 'Task 19' in panel.text
 
     asyncio.run(inner())
 
 
-def test_the_diagnostics_scroll_when_there_are_more_skills_than_rows():
-    """The top box is capped too: a long skills list must not eat the roadmap."""
+def test_the_panel_scrolls_when_there_are_more_skills_than_rows():
+    """Twenty loaded skills must not hide the plan: the panel scrolls, it does not grow."""
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -340,10 +341,13 @@ def test_the_diagnostics_scroll_when_there_are_more_skills_than_rows():
                 panel.update_skills([f'skill-{index}' for index in range(20)])
                 await pilot.pause()
 
-                assert panel.max_scroll_y > 0
-                # The roadmap is still visible, with its item in it.
-                assert app.query_one(RoadmapPanel).region.height >= 5
-                assert 'The only task' in app.query_one(RoadmapPanel).text
+                scroller = app.query_one('#sidebar-scroll')
+                assert scroller.max_scroll_y > 0
+                # The plan is below the fold, and it is still there when scrolled to.
+                assert 'The only task' in panel.text
+                scroller.scroll_to(y=scroller.max_scroll_y, animate=False)
+                await pilot.pause()
+                assert scroller.scroll_y > 0
 
     asyncio.run(inner())
 
@@ -355,12 +359,29 @@ def test_the_roadmap_still_updates_live():
             app = _app(tmp, roadmap_store=roadmap)
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
-                panel = app.query_one(RoadmapPanel)
+                panel = app.query_one(SidebarPanel)
                 assert 'No tasks yet' in panel.text
+                assert 'Roadmap' in panel.text
 
                 roadmap.set_items([TodoItem(title='First task', status='pending')])
                 await pilot.pause()
                 assert 'First task' in panel.text
+
+    asyncio.run(inner())
+
+
+def test_the_panel_without_a_roadmap_store_has_no_roadmap_section():
+    """No store, no plan: the section stays away instead of announcing a missing feature."""
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _app(tmp)
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                text = app.query_one(SidebarPanel).text
+                assert 'Model' in text
+                assert 'Roadmap' not in text
+                assert 'No tasks yet' not in text
 
     asyncio.run(inner())
 
@@ -371,14 +392,14 @@ def test_hiding_the_sidebar_hides_the_roadmap_with_it():
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
-                column = app.query_one(SidebarColumn)
+                panel = app.query_one(SidebarPanel)
                 await app.handle_command('/sidebar', 'off')
                 await pilot.pause()
-                assert column.display is False
+                assert panel.display is False
 
                 await app.handle_command('/sidebar', 'on')
                 await pilot.pause()
-                assert column.display is True
+                assert panel.display is True
 
     asyncio.run(inner())
 

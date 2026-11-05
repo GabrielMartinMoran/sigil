@@ -312,24 +312,24 @@ class CommandsMixin:
     async def handle_sidebar(self, args: str, chat: ChatLog) -> None:
         """`/sidebar` toggles; `/sidebar on|off` sets the state.
 
-        It toggles the whole column and not one box: the diagnostics and the
-        roadmap are two halves of the same answer, and hiding one of them would
-        leave the other half explaining itself alone.
+        It is one panel and one flag: the diagnostics and the roadmap are read as
+        a single answer —"what is it doing, with what, and how far has it got?"— so
+        there is no state where one is visible and the other is not.
         """
-        from src.ui.widgets.sidebar_column import SidebarColumn
+        from src.ui.widgets.sidebar_panel import SidebarPanel
 
         value = args.strip().lower()
-        column = self.query_one(SidebarColumn)
+        panel = self.query_one(SidebarPanel)
         if value in {'', 'toggle'}:
-            column.set_shown(not column.shown)
+            panel.set_shown(not panel.shown)
         elif value in {'on', 'show'}:
-            column.set_shown(True)
+            panel.set_shown(True)
         elif value in {'off', 'hide'}:
-            column.set_shown(False)
+            panel.set_shown(False)
         else:
             await chat.add_notice('Usage: /sidebar [on|off]', style='yellow')
             return
-        await chat.add_notice(f'Sidebar {"shown" if column.shown else "hidden"}.', style='cyan')
+        await chat.add_notice(f'Sidebar {"shown" if panel.shown else "hidden"}.', style='cyan')
 
     async def handle_debug(self, args: str, chat: ChatLog) -> None:
         """`/debug` toggles the view; `/debug on|off` sets the state; `--text` dumps the report.
