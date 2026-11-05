@@ -170,6 +170,34 @@ class SubagentSummoner:
         """The tree in effect: read by the tools and by the prompt blocks."""
         return self._trees.active
 
+    def resolve(self, ref: str) -> AgentNode:
+        """The node a reference names, accepting a unique prefix of its id.
+
+        Agents never see the full 32-character id in the places where they read one
+        — the row of `list_agents`, the block of the agents around them, the note in
+        a status line — and copying eight characters is what a person does too. The
+        prefix is only accepted when it is unambiguous, because guessing between two
+        executions of the same subagent is how a message reaches the wrong one.
+
+        Raises:
+            SummonError: Nothing matches, or more than one node does.
+        """
+        text = ref.strip().lstrip('#')
+        tree = self._trees.active
+        exact = tree.node(text)
+        if exact is not None:
+            return exact
+        matches = [node for node in tree.nodes() if text and node.id.startswith(text)]
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
+            listed = ', '.join(f'#{node.short_id} ({node.name})' for node in matches[:5])
+            raise SummonError(f'{ref!r} matches more than one agent: {listed}. Use a longer id.')
+        raise SummonError(
+            f'No agent with id {ref!r} in this session. The id is the one `summon` returned '
+            '— or its first characters — not the name of the profile.'
+        )
+
     def is_live(self, node: AgentNode) -> bool:
         """Whether a node has a run right now, which is what makes it reachable.
 
@@ -257,12 +285,7 @@ class SubagentSummoner:
     async def _resume(self, caller: AgentNode, agent_id: str, task: str, mode: SummonMode) -> str:
         """Continues a node with a new prompt, on top of its own transcript."""
         tree = self._trees.active
-        node = tree.node(agent_id)
-        if node is None:
-            raise SummonError(
-                f'No agent with id {agent_id!r} in this session. The id is the one `summon` returned, '
-                'not the name of the profile.'
-            )
+        node = self.resolve(agent_id)
         if node.is_root:
             raise SummonError('That id is the agent of the session, not a subagent: send it a message instead.')
         if not tree.can_reach(caller.id, node.id):
@@ -396,10 +419,7 @@ class SubagentSummoner:
         it. Flipping the mode is what changes where the answer goes; waking the
         waiter is what frees the caller.
         """
-        tree = self._trees.active
-        node = tree.node(node_id)
-        if node is None:
-            raise SummonError(f'No agent with id {node_id!r} in this session.')
+        node = self.resolve(node_id)
         if node.status.finished:
             raise SummonError(f'#{node.short_id} already finished: there is nothing to move to the background.')
         if node.mode == 'async':
@@ -418,9 +438,7 @@ class SubagentSummoner:
         that started it, so without this the only way to stop one is to quit.
         """
         tree = self._trees.active
-        node = tree.node(node_id)
-        if node is None:
-            raise SummonError(f'No agent with id {node_id!r} in this session.')
+        node = self.resolve(node_id)
         if node.is_root:
             raise SummonError('That is the agent of the session, not a subagent: stop the turn instead.')
         actor = tree.node(actor_id) or tree.root
@@ -494,11 +512,9 @@ class SubagentSummoner:
             raise SummonError('`message` is empty: say what you want to tell it.')
         tree = self._trees.active
         sender = tree.node(sender_id) or tree.root
-        target = tree.node(target_id)
         if sender is None:
             raise SummonError('There is no agent tree for this session.')
-        if target is None:
-            raise SummonError(f'No agent with id {target_id!r} in this session. The id is the one `summon` returned.')
+        target = self.resolve(target_id)
         if target.id == sender.id:
             raise SummonError('You are that agent: there is nothing to send.')
 

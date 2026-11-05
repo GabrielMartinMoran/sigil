@@ -746,3 +746,69 @@ def test_a_node_that_ends_stops_what_it_had_running_under_it(tmp_path):
     parent, child = asyncio.run(inner())
     assert parent.status is NodeStatus.DONE
     assert child.status is NodeStatus.CANCELLED
+
+
+# --- ids as agents actually see them -----------------------------------------
+
+
+def test_a_short_id_is_enough_to_message_or_resume(tmp_path):
+    """The ids agents read are eight characters: the tools must accept them."""
+    env = make_env(
+        tmp_path,
+        root=_root_calling('list_agents', {}),
+        profiles={'worker': {}},
+        scripts={'worker': lambda m, i: ModelResponse(parts=[TextPart('done')])},
+    )
+
+    async def inner():
+        await env.summoner.summon(parent_id=None, name='worker', task='first')
+        node = env.tree().nodes()[1]
+        # What `list_agents` and the peers block show, and what a human copies.
+        await env.summoner.summon(parent_id=None, task='second', agent_id=node.short_id)
+        return node
+
+    node = asyncio.run(inner())
+    assert node.runs == 2
+
+
+def test_a_short_id_reaches_a_live_sibling(tmp_path):
+    siblings = 'channel:\n  mode: bidirectional\n  siblings: [worker]\n'
+    env = make_env(
+        tmp_path,
+        root=_root_calling('list_agents', {}),
+        profiles={'reader': {'extra': f'role: subagent\n{siblings}'}, 'worker': {}},
+    )
+    tree = env.tree()
+    root = tree.ensure_root('wizard')
+    reader = tree.add(parent_id=root.id, name='reader', role=node_role(), task='a')
+    worker = tree.add(parent_id=root.id, name='worker', role=node_role(), task='b')
+    reader.channel = env.registry.require('reader').channel
+    worker.run = _LiveRun()
+
+    message = env.summoner.send_message(sender_id=reader.id, target_id=f'#{worker.short_id}', text='look')
+
+    assert 'delivered' in message
+    assert 'look' in worker.run.enqueued[0]
+
+
+def test_an_ambiguous_prefix_is_refused_instead_of_guessing(tmp_path):
+    """Two executions of the same subagent must not be confusable."""
+    env = make_env(tmp_path, root=_root_calling('list_agents', {}), profiles={'worker': {}})
+    tree = env.tree()
+    root = tree.ensure_root('wizard')
+    first = tree.add(parent_id=root.id, name='worker', role=node_role(), task='a')
+    second = tree.add(parent_id=root.id, name='worker', role=node_role(), task='b')
+    # Force the collision a prefix would create.
+    shared = first.id[:4]
+    second.id = shared + second.id[4:]
+    first.id = shared + first.id[4:]
+
+    with pytest.raises(SummonError, match='more than one agent'):
+        env.summoner.kill(None, shared)
+
+
+def test_an_unknown_id_says_what_an_id_is(tmp_path):
+    env = make_env(tmp_path, root=_root_calling('list_agents', {}), profiles={'worker': {}})
+
+    with pytest.raises(SummonError, match='not the name of the profile'):
+        env.summoner.kill(None, 'nope')
