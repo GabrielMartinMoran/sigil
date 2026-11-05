@@ -15,6 +15,7 @@ resumable; projecting it is what keeps the request inside the window.
 - [Reasoning: a window of steps](#reasoning-a-window-of-steps)
 - [Tokens: measured versus projected](#tokens-measured-versus-projected)
 - [What travels and what does not](#what-travels-and-what-does-not)
+- [What the model is told about its tools](#what-the-model-is-told-about-its-tools)
 - [Strategies](#strategies)
 - [Configuration](#configuration)
 - [Inspecting a session](#inspecting-a-session)
@@ -472,7 +473,7 @@ Images are **not** kept forever, and dropping one does not cost the information:
 
 | Where the image is | What happens |
 | --- | --- |
-| In a turn within `image_turns` (default 3) and inside the pixel cap | Sent as is |
+| In a round within `image_rounds` (default 3) and inside the pixel cap | Sent as is |
 | In an older turn, or past the pixel cap | Replaced by its id: `[image img_a1b2c3d4 from an earlier turn: not attached here, use view_image to look at it]` |
 | In a compacted turn | Gone with the turn; the summary keeps the intent, not the pixels |
 
@@ -508,32 +509,58 @@ The library is the session log itself. Images were already persisted, so an id
 resolves by walking the history; nothing else needs storage, and a resumed session
 keeps working.
 
-### Viewing a picture resets its window
+### The cache: rounds, and nothing forever
 
-Asking for an image is evidence that it matters again: it may have been pasted nine
-turns ago. So the window is counted from the **newest copy**, not from where the
-picture first arrived.
+An image is **loaded in the round it arrived in, and stays loaded for a few rounds
+after that**. The round is `run_id`, the same unit the reasoning window uses, so an
+image is stamped by the message that carries it — by a paste, by `view_image`, by
+anything — and there is no second store to keep in sync.
 
 ```mermaid
 flowchart TD
-    A["pasted 9 turns ago"] --> B{"a view_image call<br/>brought it back?"}
-    B -->|no| GONE["outside the window: the note<br/>and the id stay"]
-    B -->|yes| LIVE["the returned copy is the newest one:<br/>it travels again"]
+    A["image loaded in round N<br/>stamped by its message"] --> B{"age = last round − N"}
+    B -->|"age < image_rounds"| KEEP["travels"]
+    B -->|"age ≥ image_rounds"| DROP["note with its id"]
+    KEEP --> C{"pixels over the cap?"}
+    C -->|yes| DROP2["note: left out to stay<br/>inside the image budget"]
+    C -->|no| OK["travels"]
 
-    LIVE --> DEDUP{"the old copy is<br/>still in the window?"}
-    DEDUP -->|"yes: emitting both charges<br/>the same pixels twice"| ONE["only the newest travels;<br/>the old one becomes a note<br/>saying it is attached later"]
+    DROP --> BACK["view_image brings it back<br/>and its clock restarts"]
+    DROP2 --> BACK
 
-    style LIVE fill:#23863622,stroke:#238636
-    style ONE fill:#1f6feb22,stroke:#1f6feb
+    style KEEP fill:#23863622,stroke:#238636
+    style OK fill:#23863622,stroke:#238636
 ```
 
-Deduplication is not an optimisation for its own sake: two copies of the same
-picture also tell the model it is looking at two different images. The surviving
-copy is always the newest, because that is the one the conversation is about.
+Loading a picture again **restarts its window**: that is why a `view_image` call is
+not a way to keep the context growing forever, but also not a one-shot. The same
+source cannot be loaded twice in one round — the answer says it is already attached —
+which is what stops a model from fetching the same screenshot on every step.
 
-An image with no identifier of its own gets one derived from its bytes by
-pydantic-ai, so two genuinely identical pictures are deduplicated as the same one —
-which is what they are.
+Old copies are not kept either: when a picture appears twice, only the newest travels
+and the older copy becomes a note pointing at it. Two copies cost the same pixels
+twice and read as two different pictures.
+
+An image with no identifier of its own gets one derived from its bytes, so two
+genuinely identical pictures are deduplicated as the same one — which is what they
+are.
+
+### Sources: one field, three kinds
+
+`view_image` takes a single `source` and works out what it is:
+
+| Source | Example | Where the bytes come from |
+| --- | --- | --- |
+| An id from the conversation | `img_a1b2c3d4` | The session log, already persisted |
+| A URL | `https://…/shot.png` | Fetched, with the SSRF policy pydantic-ai uses for its own web tools |
+| A path | `docs/diagram.png` | Read inside the workspace, with the same bounds as a paste |
+
+The id is derived from the source (`sha256(source)[:8]`), so the same URL is the same
+picture and asking twice does not mint a second id the cache would charge for
+separately.
+
+A download is capped and re-encoded like a pasted image: a 4K screenshot from the web
+is bounded to the edge length the providers accept before it ever reaches the model.
 
 ### The pixel cap
 
@@ -556,6 +583,58 @@ Two properties matter: the session log keeps every image (dropping is a projecti
 like everything else here), and the model is told an image existed — so it knows the
 conversation happened and can ask for the picture again instead of pretending the
 text was all there was.
+
+## What the model is told about its tools
+
+The prompt is not a fixed text. Two sections of it describe tools, and describing a
+tool the model cannot see is worse than saying nothing: the model plans around a
+capability it does not have, and the plan fails at the first call.
+
+Two things decide what is available, and both are read per request:
+
+| Filter | Source | Example |
+| --- | --- | --- |
+| The model | `ModelSnapshot.images` | A text-only route does not get `view_image`, nor the images section |
+| The agent profile | `permissions.advertises(name, groups)` | A profile that denies `read` is not told about `read_file` |
+
+```mermaid
+flowchart TD
+    T["prompt template<br/>sigil.md with markers"] --> R["render(available)"]
+    C["tool catalogue<br/>name → permission, requires"] --> A{"available features"}
+    M["active model<br/>supports images?"] --> A
+    P["active profile<br/>permits the tool?"] --> A
+    A --> R
+    A --> G["ModelFeatureGate<br/>hides the definitions"]
+    R --> REQ["the request"]
+    G --> REQ
+
+    style REQ fill:#1f6feb22,stroke:#1f6feb
+```
+
+The template keeps its markers as HTML comments, which are invisible in every
+markdown renderer, so the file stays readable as prose:
+
+```markdown
+<!-- if: image_input -->
+## Images in the prompt
+…
+<!-- endif -->
+
+- **`read_file`** — inspect files. <!-- if: read_file -->
+```
+
+No template engine: a dependency that turns the prompt into something that is no
+longer markdown, to express "include this or not", costs more than it explains.
+
+The tool half is a declaration, not a list. A tool says what it needs where it is
+registered —`requires='image_input'`— and that declaration does double duty: the
+capability hides the definition, and the prompt hides the bullet. There is no second
+place to update when a tool starts needing something.
+
+Hiding is not refusing. A refused tool still appears in the schema and the model
+learns to work around it; a hidden one never existed as far as the request is
+concerned. A call that somehow survived —queued from another step— is refused by
+`before_tool_execute`, so the gate is closed on both sides.
 
 ## Strategies
 
@@ -589,7 +668,7 @@ not touched.
 | `SIGIL_CONTEXT_REASONING` | `recent` | What travels back of the model's reasoning: `recent`, `off` or `all` |
 | `SIGIL_CONTEXT_REASONING_STEPS` | `10` | Steps of the round in progress kept under `recent` |
 | `SIGIL_CONTEXT_REASONING_MAX_PERCENT` | `5` | Ceiling for that reasoning, as a percentage of the model window |
-| `SIGIL_CONTEXT_IMAGE_TURNS` | `3` | Turns whose images keep travelling |
+| `SIGIL_CONTEXT_IMAGE_ROUNDS` | `3` | Rounds an image stays loaded, counting its own |
 | `SIGIL_CONTEXT_IMAGE_MAX_PERCENT` | `10` | Ceiling for the pixels that stay, as a percentage of the model window |
 | ~~`SIGIL_CONTEXT_KEEP_THINKING`~~ | — | Deprecated by `SIGIL_CONTEXT_REASONING`; truthy still means `all` |
 
@@ -654,6 +733,8 @@ one of them is a regression, not a trade-off.
 7. **With an unknown window, nothing is dropped.** `fits()` returns `None` and
    no lever runs.
 8. **Diagnostics never break a turn.** `on_view` failures are suppressed.
+9. **A tool the model cannot use is absent, not refused.** It has no definition and
+   no bullet in the prompt, and a stray call is refused as a second line of defence.
 
 ## Where the code lives
 

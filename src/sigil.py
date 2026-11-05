@@ -8,6 +8,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from src.engine.agents.agent import create_agent
+from src.engine.agents.model_features import IMAGE_INPUT, ModelFeatureGate
 from src.engine.agents.profile.registry import AgentRegistry
 from src.engine.agents.retry import RetryTransientModelErrors
 from src.engine.attachments.tools import register_image_tools
@@ -42,6 +43,7 @@ from src.engine.skills.loaded import LoadedSkills
 from src.engine.skills.registry import SkillRegistry
 from src.engine.skills.tools import register_skill_tools
 from src.engine.themes import ThemeRegistry
+from src.engine.tooling.catalog import ToolCatalog
 from src.engine.tooling.logging import ToolLoggerHub
 from src.engine.web.tools import register_web_tools
 from src.engine.workspace.manager import WorkspaceManager
@@ -78,7 +80,7 @@ def _build_strategy(settings: SigilSettings):
             reasoning=settings.reasoning,
             reasoning_steps=settings.reasoning_steps,
             reasoning_max_percent=settings.reasoning_max_percent,
-            image_turns=settings.image_turns,
+            image_rounds=settings.image_rounds,
             image_max_percent=settings.image_max_percent,
         )
     return WindowedStrategy(
@@ -87,7 +89,7 @@ def _build_strategy(settings: SigilSettings):
         reasoning=settings.reasoning,
         reasoning_steps=settings.reasoning_steps,
         reasoning_max_percent=settings.reasoning_max_percent,
-        image_turns=settings.image_turns,
+        image_rounds=settings.image_rounds,
         image_max_percent=settings.image_max_percent,
     )
 
@@ -206,6 +208,35 @@ def run() -> None:
     # with the UI so it announces every retry in the chat.
     model_retry = RetryTransientModelErrors(max_attempts=settings.model_max_attempts)
 
+    # Every tool declares itself here as it is registered: the name, the permission it
+    # serves and the model feature it needs. Two things read it — the capability that
+    # hides tools the model cannot use, and the prompt, which must not describe a tool
+    # the model will not see.
+    tool_catalog = ToolCatalog()
+
+    def supports(feature: str) -> bool:
+        """Whether the active model has a feature, read per request."""
+        if feature == IMAGE_INPUT:
+            return model_service.snapshot().images
+        return True
+
+    def available_features() -> frozenset[str]:
+        """What the model will see on the next request: tools and features."""
+        profile = agent_registry.active
+        features: set[str] = set()
+        if supports(IMAGE_INPUT):
+            features.add(IMAGE_INPUT)
+        for declaration in tool_catalog.declarations():
+            if not all(supports(feature) for feature in declaration.requires):
+                continue
+            groups = () if declaration.permission is None else declaration.permission.groups
+            if profile is not None and not profile.permissions.advertises(declaration.name, groups):
+                continue
+            features.add(declaration.name)
+        return frozenset(features)
+
+    feature_gate = ModelFeatureGate(supports=supports)
+
     agent = create_agent(
         skill_registry,
         model=model_service.current_model(),
@@ -217,17 +248,18 @@ def run() -> None:
         scope=scope,
         loaded_skills=loaded_skills,
         agent_registry=agent_registry,
-        extra_capabilities=[context_capability],
+        extra_capabilities=[context_capability, feature_gate],
+        available_features=available_features,
     )
 
-    register_shell_tools(agent, logger=tool_logger)
-    register_skill_tools(agent, skill_registry, logger=tool_logger, loaded=loaded_skills)
-    register_mcp_tools(agent, mcp, logger=tool_logger)
-    register_web_tools(agent, logger=tool_logger)
-    register_file_tools(agent, logger=tool_logger)
-    register_image_tools(agent, logger=tool_logger)
-    register_interaction_tools(agent, question_hub, logger=tool_logger)
-    register_roadmap_tools(agent, roadmap_store, logger=tool_logger)
+    register_shell_tools(agent, logger=tool_logger, catalog=tool_catalog)
+    register_skill_tools(agent, skill_registry, logger=tool_logger, loaded=loaded_skills, catalog=tool_catalog)
+    register_mcp_tools(agent, mcp, logger=tool_logger, catalog=tool_catalog)
+    register_web_tools(agent, logger=tool_logger, catalog=tool_catalog)
+    register_file_tools(agent, logger=tool_logger, catalog=tool_catalog)
+    register_image_tools(agent, logger=tool_logger, catalog=tool_catalog)
+    register_interaction_tools(agent, question_hub, logger=tool_logger, catalog=tool_catalog)
+    register_roadmap_tools(agent, roadmap_store, logger=tool_logger, catalog=tool_catalog)
 
     SigilApp(
         agent=agent,

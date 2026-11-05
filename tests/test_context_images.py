@@ -18,7 +18,7 @@ from pydantic_ai.messages import BinaryImage, ModelRequest, TextPart, ToolReturn
 
 from src.engine.attachments.image_attachment import image_tokens
 from src.engine.context.images import image_part_tokens
-from src.engine.context.strategy.rewriting import IMAGE_OMITTED, drop_old_images
+from src.engine.context.strategy.rewriting import IMAGE_OMITTED, drop_stale_images
 from src.engine.context.strategy.windowed import WindowedStrategy
 from src.engine.context.tokens import estimate_message_tokens, part_tokens
 
@@ -46,6 +46,10 @@ def _image(width: int = 1000, height: int = 1000) -> BinaryImage:
 
 def _prompt(*content: object) -> ModelRequest:
     return ModelRequest(parts=[UserPromptPart(content=list(content))])
+
+
+def _flat(turns: list) -> list:
+    return [message for turn in turns for message in turn]
 
 
 def _images_in(messages: list) -> list[BinaryImage]:
@@ -96,7 +100,7 @@ def test_an_image_from_an_old_turn_leaves_the_request_and_is_noted():
     old = _image()
     turns = [_turn('vieja', old), _turn('reciente', _image())]
 
-    messages, dropped = drop_old_images(turns, recent_start=1)
+    messages, dropped = drop_stale_images(_flat(turns), rounds=1)
 
     assert dropped == 1
     kept = messages[0].parts[0].content
@@ -108,7 +112,7 @@ def test_an_image_from_the_recent_turn_stays():
     """What the conversation is about right now cannot be dropped."""
     turns = [_turn('reciente', _image())]
 
-    messages, dropped = drop_old_images(turns, recent_start=0)
+    messages, dropped = drop_stale_images(_flat(turns), rounds=5)
 
     assert dropped == 0
     assert any(isinstance(item, BinaryImage) for item in messages[0].parts[0].content)
@@ -117,7 +121,7 @@ def test_an_image_from_the_recent_turn_stays():
 def test_dropping_the_images_keeps_the_text_of_the_message():
     turns = [_turn('mirá [Image #1] esto', _image()), _turn('otra')]
 
-    messages, _ = drop_old_images(turns, recent_start=1)
+    messages, _ = drop_stale_images(_flat(turns), rounds=1)
 
     assert messages[0].parts[0].content[0] == 'mirá [Image #1] esto'
 
@@ -125,7 +129,7 @@ def test_dropping_the_images_keeps_the_text_of_the_message():
 def test_a_text_only_history_is_untouched():
     turns = [[_prompt('sin imágenes')]]
 
-    messages, dropped = drop_old_images(turns, recent_start=0)
+    messages, dropped = drop_stale_images(_flat(turns), rounds=5)
 
     assert dropped == 0
     assert messages[0] is turns[0][0]
@@ -143,7 +147,7 @@ def test_the_window_drops_images_only_from_the_old_turns():
         turns.append(_prompt(f'turno {index}', _image()))
         turns.append(ModelRequest(parts=[TextPart(content='sigo')]))
 
-    strategy = WindowedStrategy(keep_recent_turns=1, image_turns=1, reasoning='all')
+    strategy = WindowedStrategy(keep_recent_turns=1, image_rounds=1, reasoning='all')
     result = strategy.view(turns, ContextBudget(window=200_000, output_reserve=0))
 
     # Four turns, the last one kept whole.
@@ -194,7 +198,7 @@ def test_the_note_names_the_id_that_brings_the_image_back():
     image = _image()
     turns = [_prompt('vieja', image), _prompt('reciente')]
 
-    result = WindowedStrategy(keep_recent_turns=1, image_turns=1, reasoning='all').view(
+    result = WindowedStrategy(keep_recent_turns=1, image_rounds=1, reasoning='all').view(
         turns, ContextBudget(window=200_000, output_reserve=0)
     )
 
@@ -216,7 +220,7 @@ def test_the_pixel_cap_bounds_what_stays():
     turns = [_prompt(f'turno {index}', _image(2000, 2000)) for index in range(3)]
 
     # 10% of 100k is 10k, and one of these costs 5,184: only one fits.
-    result = WindowedStrategy(keep_recent_turns=3, image_turns=3, image_max_percent=10, reasoning='all').view(
+    result = WindowedStrategy(keep_recent_turns=3, image_rounds=3, image_max_percent=10, reasoning='all').view(
         turns, ContextBudget(window=100_000, output_reserve=0)
     )
 
@@ -297,7 +301,7 @@ def test_an_image_inside_a_tool_result_is_dropped_like_any_other():
     image = _image(400, 400)
     turns = [_tool_result(image), _prompt('reciente')]
 
-    result = WindowedStrategy(keep_recent_turns=1, image_turns=1, reasoning='all').view(
+    result = WindowedStrategy(keep_recent_turns=1, image_rounds=1, reasoning='all').view(
         turns, ContextBudget(window=200_000, output_reserve=0)
     )
 
@@ -349,7 +353,7 @@ def test_the_same_picture_is_not_paid_twice():
     ]
 
     flat = [message for turn in turns for message in turn]
-    result = WindowedStrategy(keep_recent_turns=2, image_turns=3, reasoning='all').view(
+    result = WindowedStrategy(keep_recent_turns=2, image_rounds=3, reasoning='all').view(
         flat, ContextBudget(window=None)
     )
 
@@ -369,7 +373,7 @@ def test_the_copy_that_survives_is_the_newest_one():
     ]
 
     flat = [message for turn in turns for message in turn]
-    result = WindowedStrategy(keep_recent_turns=2, image_turns=3, reasoning='all').view(
+    result = WindowedStrategy(keep_recent_turns=2, image_rounds=3, reasoning='all').view(
         flat, ContextBudget(window=None)
     )
 
@@ -393,7 +397,7 @@ def test_viewing_an_image_resets_its_clock():
     turns = [[_prompt('aca esta', image)], *[[_prompt(f'charla {n}')] for n in range(5)], _viewed_image('img_aaaaaaaa')]
 
     flat = [message for turn in turns for message in turn]
-    result = WindowedStrategy(keep_recent_turns=6, image_turns=3, reasoning='all').view(
+    result = WindowedStrategy(keep_recent_turns=6, image_rounds=3, reasoning='all').view(
         flat, ContextBudget(window=None)
     )
 
@@ -411,7 +415,7 @@ def test_a_superseded_copy_says_where_the_live_one_is():
     turns = [[_prompt('aca esta', image)], _viewed_image('img_aaaaaaaa')]
 
     flat = [message for turn in turns for message in turn]
-    result = WindowedStrategy(keep_recent_turns=2, image_turns=3, reasoning='all').view(
+    result = WindowedStrategy(keep_recent_turns=2, image_rounds=3, reasoning='all').view(
         flat, ContextBudget(window=None)
     )
 

@@ -23,6 +23,7 @@ from src.engine.files.text import (
     preview,
     split_lines,
 )
+from src.engine.tooling.catalog import ToolCatalog
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.permission import ResourceKind, ToolGroup, ToolPermission
 from src.engine.tooling.registrar import ToolRegistrar
@@ -127,9 +128,9 @@ def _patched_text(
     return updated, 'lines', 1
 
 
-def register_file_tools(agent: Any, logger: ToolLogger | None = None) -> None:
+def register_file_tools(agent: Any, logger: ToolLogger | None = None, catalog: ToolCatalog | None = None) -> None:
     """Registers the file tools on a pydantic-ai agent."""
-    tools = ToolRegistrar(agent, logger)
+    tools = ToolRegistrar(agent, logger, catalog)
 
     @tools.tool(permission=_READ)
     def read_file(

@@ -43,12 +43,12 @@ Reasoning is the cheapest thing to drop and the most voluminous to carry, so on 
 a reason to lose a turn when it is not.
 """
 
-DEFAULT_IMAGE_TURNS = 3
-"""Turns whose images keep travelling with the request.
+DEFAULT_IMAGE_ROUNDS = 3
+"""Rounds an image stays loaded, counting the one it arrived in.
 
-Past that, an image leaves its id behind and `view_image` brings it back. Images are
-heavier than reasoning per item —a screenshot is thousands of tokens— so the window
-is counted in turns and bounded by its own share of the window.
+The round is `run_id`, the same unit the reasoning window uses, so an image loaded
+by a prompt or by `view_image` is stamped by the message that carries it. Past the
+window an image leaves its id behind and `view_image` brings it back.
 """
 
 DEFAULT_IMAGE_MAX_PERCENT = 10

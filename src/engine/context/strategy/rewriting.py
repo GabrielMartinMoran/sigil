@@ -14,7 +14,8 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from src.engine.context.images import image_part_tokens, is_image_part
+from src.engine.context.images import is_image_part
+from src.engine.context.images_cache import ImageVerdict, decide
 from src.engine.context.strategy.turns import has_pinned_result, split_turns
 from src.engine.context.tokens import estimate_messages_tokens, estimate_tokens, tool_return_text
 
@@ -201,6 +202,9 @@ which repeats across turns; the note says so honestly rather than pretending it 
 a handle that will resolve.
 """
 
+IMAGE_OVER_BUDGET = '[image {image_id} left out to stay inside the image budget: use view_image to look at it]'
+"""What replaces a picture the pixel cap could not afford."""
+
 IMAGE_SUPERSEDED = '[image {image_id} also appears attached later in this conversation: not repeated here]'
 """What replaces a copy of an image that is already travelling.
 
@@ -210,129 +214,73 @@ different pictures.
 """
 
 
-def _occurrences_per_id(turns: list[list[ModelMessage]]) -> dict[str, int]:
-    """How many times each image id appears in the whole conversation."""
-    counts: dict[str, int] = {}
-    for turn in turns:
-        for message in turn:
-            if not isinstance(message, ModelRequest):
-                continue
-            for part in message.parts:
-                if not isinstance(part, (UserPromptPart, ToolReturnPart)):
-                    continue
-                if not isinstance(part.content, list):
-                    continue
-                for item in part.content:
-                    if is_image_part(item):
-                        counts[_identifier_of(item)] = counts.get(_identifier_of(item), 0) + 1
-    return counts
-
-
-def drop_old_images(
-    turns: list[list[ModelMessage]],
+def drop_stale_images(
+    messages: list[ModelMessage],
     *,
-    recent_start: int,
+    rounds: int,
     max_tokens: int | None = None,
 ) -> tuple[list[ModelMessage], int]:
-    """Drops the image parts that do not belong in the request, keeping their text.
+    """Leaves a note in place of every image that must not travel.
 
-    Three reasons to drop one, in this order:
-
-    1. **A newer copy is attached.** `view_image` returns what the prompt may still
-       carry; both copies cost the same pixels. The newest wins, because it is the
-       one the conversation is about.
-    2. **The turn is older than the window.** An image matters while it is being
-       discussed and costs full price forever.
-    3. **The pixels are past the cap.** Three screenshots of a dense table can cost
-       more than the whole conversation around them.
-
-    Every dropped image leaves a note with its id, so the model knows it existed and
-    `view_image` can bring it back.
+    The decision is `images_cache.decide`: an image is loaded in the round it arrived
+    in and stays for a few rounds, the newest copy of a picture is the one that
+    counts, and the pixels have a ceiling. This function only applies the verdicts and
+    writes the note, so the model knows the picture existed and what id brings it back.
 
     Args:
-        turns: The conversation, split into turns.
-        recent_start: Index of the first turn that keeps its images.
-        max_tokens: Ceiling for the pixels that stay, in tokens. ``None`` keeps every
-            image the window allows.
+        messages: The history, flat.
+        rounds: Rounds an image stays loaded, counting its own.
+        max_tokens: Ceiling for the pixels that travel, in tokens.
 
     Returns:
-        The flattened messages and how many images were dropped.
+        The rewritten messages and how many images were dropped.
     """
-    remaining = _occurrences_per_id(turns)
-    kept_tokens = 0
+    verdicts = decide(messages, rounds=rounds, max_tokens=max_tokens)
+    if not verdicts:
+        return messages, 0
+
     result: list[ModelMessage] = []
     dropped = 0
-    for index, turn in enumerate(turns):
-        for message in turn:
-            message, count, kept_tokens = _drop_images(
-                message,
-                in_window=index >= recent_start,
-                max_tokens=max_tokens,
-                kept_tokens=kept_tokens,
-                remaining=remaining,
-            )
-            dropped += count
+    for message_index, message in enumerate(messages):
+        if not isinstance(message, ModelRequest):
             result.append(message)
+            continue
+        parts: list[object] = []
+        count = 0
+        for part in message.parts:
+            if not (isinstance(part, (UserPromptPart, ToolReturnPart)) and isinstance(part.content, list)):
+                parts.append(part)
+                continue
+            kept: list[object] = []
+            notes: list[str] = []
+            for item_index, item in enumerate(part.content):
+                verdict = verdicts.get((message_index, item_index)) if is_image_part(item) else None
+                if verdict is None or verdict.travels:
+                    kept.append(item)
+                    continue
+                count += 1
+                notes.append(_note_for(verdict, _identifier_of(item)))
+            if not notes:
+                parts.append(part)
+                continue
+            if isinstance(part, ToolReturnPart):
+                # The result keeps its own text; the note goes beside it, not inside
+                # the list the provider reads as the tool's payload.
+                parts.append(dataclasses.replace(part, content=[*kept, *notes]))
+            else:
+                parts.append(dataclasses.replace(part, content=[*kept, '\n', *notes]))
+        dropped += count
+        result.append(dataclasses.replace(message, parts=parts) if count else message)
     return result, dropped
 
 
-def _drop_images(
-    message: ModelMessage,
-    *,
-    in_window: bool,
-    max_tokens: int | None,
-    kept_tokens: int,
-    remaining: dict[str, int],
-) -> tuple[ModelMessage, int, int]:
-    """Decides, image by image, whether it travels or leaves a note behind.
-
-    `remaining` counts the occurrences still ahead, so walking oldest to newest the
-    last copy of an id is the one that survives.
-    """
-    if not isinstance(message, ModelRequest):
-        return message, 0, kept_tokens
-    parts: list[object] = []
-    dropped = 0
-    for part in message.parts:
-        if not (isinstance(part, (UserPromptPart, ToolReturnPart)) and isinstance(part.content, list)):
-            parts.append(part)
-            continue
-        kept: list[object] = []
-        notes: list[str] = []
-        for item in part.content:
-            if not is_image_part(item):
-                kept.append(item)
-                continue
-            identifier = _identifier_of(item)
-            remaining[identifier] = remaining.get(identifier, 0) - 1
-            if remaining[identifier] > 0:
-                # A newer copy of the same picture is attached further on.
-                dropped += 1
-                notes.append(IMAGE_SUPERSEDED.format(image_id=identifier))
-                continue
-            if not in_window:
-                dropped += 1
-                notes.append(IMAGE_OMITTED.format(image_id=identifier))
-                continue
-            cost = image_part_tokens(item)
-            if max_tokens is not None and kept_tokens + cost > max_tokens:
-                dropped += 1
-                notes.append(IMAGE_OMITTED.format(image_id=identifier))
-                continue
-            kept.append(item)
-            kept_tokens += cost
-        if not notes:
-            parts.append(part)
-            continue
-        if isinstance(part, ToolReturnPart):
-            # The result keeps its own text; the note goes beside it, not inside the
-            # list the provider reads as the tool's payload.
-            parts.append(dataclasses.replace(part, content=[*kept, *notes]))
-        else:
-            parts.append(dataclasses.replace(part, content=[*kept, '\n', *notes]))
-    if not dropped:
-        return message, 0, kept_tokens
-    return dataclasses.replace(message, parts=parts), dropped, kept_tokens
+def _note_for(verdict: ImageVerdict, identifier: str) -> str:
+    """What the model reads in place of the pixels."""
+    if verdict is ImageVerdict.SUPERSEDED:
+        return IMAGE_SUPERSEDED.format(image_id=identifier)
+    if verdict is ImageVerdict.OVER_BUDGET:
+        return IMAGE_OVER_BUDGET.format(image_id=identifier)
+    return IMAGE_OMITTED.format(image_id=identifier)
 
 
 def _identifier_of(item: object) -> str:

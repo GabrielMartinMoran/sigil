@@ -9,6 +9,7 @@ from pydantic_ai import RunContext
 from src.engine.interaction.hub import QuestionHub
 from src.engine.interaction.models.question_item import QuestionItem
 from src.engine.interaction.models.question_result import QuestionResult
+from src.engine.tooling.catalog import ToolCatalog
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.permission import ToolGroup, ToolPermission
 from src.engine.tooling.registrar import ToolRegistrar
@@ -16,9 +17,14 @@ from src.engine.tooling.registrar import ToolRegistrar
 _ASK = ToolPermission(groups=(ToolGroup.ASK,))
 
 
-def register_interaction_tools(agent: Any, hub: QuestionHub, logger: ToolLogger | None = None) -> None:
+def register_interaction_tools(
+    agent: Any,
+    hub: QuestionHub,
+    logger: ToolLogger | None = None,
+    catalog: ToolCatalog | None = None,
+) -> None:
     """Registers the question tool on a pydantic-ai agent."""
-    tools = ToolRegistrar(agent, logger)
+    tools = ToolRegistrar(agent, logger, catalog)
 
     # `ctx` defaults to None so the tool stays callable from code (tests) where
     # there is no run: pydantic-ai always passes the real context inside a run.

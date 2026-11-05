@@ -15,6 +15,7 @@ from src.engine.mcp.tool_models.prompt_result_info import PromptResultInfo
 from src.engine.mcp.tool_models.resource_content import ResourceContent
 from src.engine.mcp.tool_models.resource_info import ResourceInfo
 from src.engine.mcp.tool_models.server_status import ServerStatus
+from src.engine.tooling.catalog import ToolCatalog
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.permission import ToolGroup, ToolPermission
 from src.engine.tooling.registrar import ToolRegistrar
@@ -23,7 +24,12 @@ _MCP = ToolPermission(groups=(ToolGroup.MCP,))
 _MCP_SERVER = ToolPermission(groups=(ToolGroup.MCP,), resource='server')
 
 
-def register_mcp_tools(agent: Any, manager: MCPManager, logger: ToolLogger | None = None) -> None:
+def register_mcp_tools(
+    agent: Any,
+    manager: MCPManager,
+    logger: ToolLogger | None = None,
+    catalog: ToolCatalog | None = None,
+) -> None:
     """Registers the MCP meta-tools on a pydantic-ai agent.
 
     With no configured servers it registers nothing: five empty tools would only
@@ -32,7 +38,7 @@ def register_mcp_tools(agent: Any, manager: MCPManager, logger: ToolLogger | Non
     if not manager:
         return
 
-    tools = ToolRegistrar(agent, logger)
+    tools = ToolRegistrar(agent, logger, catalog)
 
     @tools.tool(permission=_MCP)
     async def list_mcp_servers(connect: bool = False) -> list[ServerStatus]:

@@ -10,7 +10,7 @@ from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest, Mod
 from src.engine.context.budget import ContextBudget
 from src.engine.context.strategy.constants import (
     DEFAULT_IMAGE_MAX_PERCENT,
-    DEFAULT_IMAGE_TURNS,
+    DEFAULT_IMAGE_ROUNDS,
     DEFAULT_MAX_TOOL_RESULT_CHARS,
     DEFAULT_REASONING,
     DEFAULT_REASONING_MAX_PERCENT,
@@ -25,7 +25,7 @@ from src.engine.context.strategy.constants import (
 from src.engine.context.strategy.rewriting import (
     accepts_replayed_reasoning,
     count_images,
-    drop_old_images,
+    drop_stale_images,
     fit_to_budget,
     keep_fitting_steps,
     keep_recent_steps,
@@ -65,8 +65,8 @@ class CompactingStrategy:
     """Steps of the round in progress that keep their reasoning under ``recent``."""
     reasoning_max_percent: int = DEFAULT_REASONING_MAX_PERCENT
     """Ceiling for the reasoning kept, as a percentage of the model's window."""
-    image_turns: int = DEFAULT_IMAGE_TURNS
-    """Turns whose images keep travelling. Older ones leave their id behind."""
+    image_rounds: int = DEFAULT_IMAGE_ROUNDS
+    """Rounds an image stays loaded, counting its own. Older ones leave their id behind."""
     image_max_percent: int = DEFAULT_IMAGE_MAX_PERCENT
     """Ceiling for the pixels that stay, as a percentage of the model's window."""
     max_summary_chars: int = 400
@@ -97,10 +97,9 @@ class CompactingStrategy:
         # Images have their own window: one may outlive the turn's text. Dropping
         # them first means a compacted turn has no pixels left to count twice, and a
         # recent turn still keeps the pictures its own window allows.
-        image_start = max(0, len(turns) - self.image_turns)
-        working, dropped_images = drop_old_images(
-            turns,
-            recent_start=image_start,
+        working, dropped_images = drop_stale_images(
+            working,
+            rounds=self.image_rounds,
             max_tokens=image_token_cap(budget.window, budget.available_for_history, self.image_max_percent),
         )
         turns = split_turns(working)
