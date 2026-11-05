@@ -192,6 +192,7 @@ class PromptInput(TextArea):
             media_type=attachment.media_type,
             width=attachment.width,
             height=attachment.height,
+            image_id=attachment.image_id,
         )
 
     def attach_path(self, path: str | Path) -> ImageAttachment:
@@ -257,6 +258,7 @@ class PromptInput(TextArea):
                 media_type=self._attachments[old].media_type,
                 width=self._attachments[old].width,
                 height=self._attachments[old].height,
+                image_id=self._attachments[old].image_id,
             )
             for new, old in enumerate(alive, start=1)
         }

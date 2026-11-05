@@ -10,10 +10,24 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from src.engine.tooling.catalog import ToolCatalog
 from src.engine.tooling.concurrency import ConcurrencyGuard
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.permission import ToolPermission
 from src.engine.tooling.wrapper import wrap_tool
+
+REQUIRES_METADATA_KEY = 'sigil_requires'
+"""Key of the model features a tool needs, inside ``ToolDefinition.metadata``."""
+
+
+def _as_requirements(requires: str | tuple[str, ...] | None) -> frozenset[str]:
+    """Normalizes the declaration to a set of feature names."""
+    if requires is None:
+        return frozenset()
+    if isinstance(requires, str):
+        return frozenset({requires})
+    return frozenset(requires)
+
 
 if TYPE_CHECKING:
     from pydantic_ai import Agent
@@ -22,9 +36,17 @@ if TYPE_CHECKING:
 class ToolRegistrar:
     """Registers tools on an agent applying the logging wrapper."""
 
-    def __init__(self, agent: Agent, logger: ToolLogger | None = None) -> None:
+    def __init__(
+        self,
+        agent: Agent,
+        logger: ToolLogger | None = None,
+        catalog: ToolCatalog | None = None,
+    ) -> None:
         self.agent = agent
         self.logger = logger
+        # Shared across registrars on purpose: every tool of the agent ends up in the
+        # same catalogue, and the prompt reads it.
+        self.catalog = catalog if catalog is not None else ToolCatalog()
 
     def tool(
         self,
@@ -34,6 +56,7 @@ class ToolRegistrar:
         description: str | None = None,
         concurrency: ConcurrencyGuard | None = None,
         permission: ToolPermission | None = None,
+        requires: str | tuple[str, ...] | None = None,
         **tool_kwargs: Any,
     ) -> Any:
         """Decorator equivalent to ``agent.tool_plain`` with logging.
@@ -50,6 +73,7 @@ class ToolRegistrar:
             description=description,
             concurrency=concurrency,
             permission=permission,
+            requires=requires,
             **tool_kwargs,
         )
 
@@ -61,6 +85,7 @@ class ToolRegistrar:
         description: str | None = None,
         concurrency: ConcurrencyGuard | None = None,
         permission: ToolPermission | None = None,
+        requires: str | tuple[str, ...] | None = None,
         **tool_kwargs: Any,
     ) -> Any:
         """Decorator equivalent to ``agent.tool`` (it receives a ``RunContext``)."""
@@ -71,6 +96,7 @@ class ToolRegistrar:
             description=description,
             concurrency=concurrency,
             permission=permission,
+            requires=requires,
             **tool_kwargs,
         )
 
@@ -83,6 +109,7 @@ class ToolRegistrar:
         description: str | None = None,
         concurrency: ConcurrencyGuard | None = None,
         permission: ToolPermission | None = None,
+        requires: str | tuple[str, ...] | None = None,
         **tool_kwargs: Any,
     ) -> Callable[..., Any]:
         """Registers an already defined function and returns the wrapper."""
@@ -93,6 +120,7 @@ class ToolRegistrar:
             description=description,
             concurrency=concurrency,
             permission=permission,
+            requires=requires,
             **tool_kwargs,
         )
 
@@ -105,6 +133,7 @@ class ToolRegistrar:
         description: str | None,
         concurrency: ConcurrencyGuard | None = None,
         permission: ToolPermission | None = None,
+        requires: str | tuple[str, ...] | None = None,
         **tool_kwargs: Any,
     ) -> Any:
         def decorator(target: Callable[..., Any]) -> Callable[..., Any]:
@@ -116,14 +145,19 @@ class ToolRegistrar:
                 takes_ctx=use_context,
                 concurrency=concurrency,
             )
+            needed = _as_requirements(requires)
+            self.catalog.declare(tool_name, permission=permission, requires=needed)
+            metadata = dict(permission.metadata()) if permission is not None else {}
+            if needed:
+                metadata[REQUIRES_METADATA_KEY] = sorted(needed)
             # A guarded tool needs the context, so it is registered as a
             # context tool even if its function does not ask for it.
             self._register(
                 wrapped,
                 use_context=use_context or concurrency is not None,
-                name=name,
+                name=name or tool_name,
                 description=description,
-                metadata=permission.metadata() if permission is not None else None,
+                metadata=metadata or None,
                 **tool_kwargs,
             )
             return wrapped

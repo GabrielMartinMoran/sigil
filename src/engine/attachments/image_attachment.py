@@ -17,7 +17,8 @@ object what an image costs.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import secrets
+from dataclasses import dataclass, field
 
 from pydantic_ai.messages import BinaryContent, BinaryImage
 
@@ -26,6 +27,18 @@ PATCH = 28
 
 BASE_IMAGE_TOKENS = 1
 """The floor: one patch is the cheapest an image can be."""
+
+IMAGE_ID_BYTES = 4
+"""Entropy of an image id: eight hex characters, enough to never collide in a session."""
+
+
+def new_image_id() -> str:
+    """A short id for one image, unique within a session with overwhelming odds.
+
+    It is what the model is told instead of being handed the pixels again, and what
+    `view_image` takes to bring the picture back.
+    """
+    return f'img_{secrets.token_hex(IMAGE_ID_BYTES)}'
 
 
 def image_tokens(width: int, height: int) -> int:
@@ -56,6 +69,14 @@ class ImageAttachment:
     width: int
     height: int
 
+    image_id: str = field(default_factory=new_image_id)
+    """A short id, unique in the session, that survives the session file.
+
+    It is not `[Image #n]`: that marker is per turn and repeats, so two pictures
+    pasted in two turns share `[Image #1]`. This id is what the model is given when
+    the pixels stop travelling, and what `view_image` takes to bring them back.
+    """
+
     @property
     def token(self) -> str:
         """The marker that stands for the image in the message text."""
@@ -67,11 +88,15 @@ class ImageAttachment:
         return image_tokens(self.width, self.height)
 
     def to_content(self) -> BinaryContent:
-        """The pydantic-ai content part the model receives."""
+        """The pydantic-ai content part the model receives.
+
+        The `identifier` travels with the part and is persisted with the session,
+        so the same image can be named in a later turn without the bytes.
+        """
         return BinaryImage(
             data=self.data,
             media_type=self.media_type,  # type: ignore[arg-type]
-            identifier=self.token,
+            identifier=self.image_id,
         )
 
     def describe(self) -> str:

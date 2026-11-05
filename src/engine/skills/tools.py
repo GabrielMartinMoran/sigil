@@ -28,6 +28,7 @@ from src.engine.skills.tool_models.resource_content import ResourceContent
 from src.engine.skills.tool_models.script_run_result import ScriptRunResult
 from src.engine.skills.tool_models.skill_resource_info import SkillResourceInfo
 from src.engine.skills.tool_models.skill_summary import SkillSummary
+from src.engine.tooling.catalog import ToolCatalog
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.permission import ToolGroup, ToolPermission
 from src.engine.tooling.registrar import ToolRegistrar
@@ -81,13 +82,14 @@ def register_skill_tools(
     registry: SkillRegistry,
     logger: ToolLogger | None = None,
     loaded: LoadedSkills | None = None,
+    catalog: ToolCatalog | None = None,
 ) -> None:
     """Registers the skills tools on a pydantic-ai agent.
 
     With ``loaded``, ``load_skill`` registers the skill so its body is
     injected as an instruction block on the next request.
     """
-    tools = ToolRegistrar(agent, logger)
+    tools = ToolRegistrar(agent, logger, catalog)
 
     @tools.tool(permission=_SKILLS)
     def list_skills(query: str | None = None) -> list[SkillSummary]:

@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from ddgs import DDGS
 
+from src.engine.tooling.catalog import ToolCatalog
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.permission import ToolGroup, ToolPermission
 from src.engine.tooling.registrar import ToolRegistrar
@@ -64,9 +65,9 @@ def _as_page(raw: dict[str, Any], url: str, fmt: str, max_chars: int) -> PageCon
     return PageContent(url=resolved_url, format=fmt, content=text[:max_chars], truncated=len(text) > max_chars)
 
 
-def register_web_tools(agent: Any, logger: ToolLogger | None = None) -> None:
+def register_web_tools(agent: Any, logger: ToolLogger | None = None, catalog: ToolCatalog | None = None) -> None:
     """Registers the web tools on a pydantic-ai agent."""
-    tools = ToolRegistrar(agent, logger)
+    tools = ToolRegistrar(agent, logger, catalog)
 
     @tools.tool(permission=_SEARCH)
     async def web_search(

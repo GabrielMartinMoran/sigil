@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
 from pydantic_ai import Agent
 
 from src.engine.agents.profile.capability import ToolPermissionsCapability
 from src.engine.agents.profile.rendering import render_agent_profile
+from src.engine.agents.prompts.render import render
 from src.engine.agents.retry import RetryTransientModelErrors
 from src.engine.agents.tool_errors import ToolErrorRecovery
 from src.engine.providers.factory.unconfigured import UnconfiguredModel
@@ -29,6 +30,7 @@ _SIGIL_PROMPT = os.path.join(os.path.dirname(__file__), 'prompts', 'sigil.md')
 
 
 def _load_prompt() -> str:
+    """The base prompt template, markers and all."""
     with open(_SIGIL_PROMPT, 'r', encoding='utf-8') as f:
         return f.read()
 
@@ -44,6 +46,7 @@ def create_agent(
     loaded_skills: LoadedSkills | None = None,
     agent_registry: AgentRegistry | None = None,
     extra_capabilities: Sequence[AbstractCapability] | None = None,
+    available_features: Callable[[], frozenset[str]] | None = None,
 ) -> Agent:
     """Builds the agent.
 
@@ -67,12 +70,19 @@ def create_agent(
         # that describes the session.
         capabilities.append(ToolPermissionsCapability(registry=agent_registry))
 
+    prompt_template = _load_prompt()
+
+    def render_prompt() -> str:
+        """The prompt for the request about to be made."""
+        return render(prompt_template, None if available_features is None else available_features())
+
     agent = Agent(
         model if model is not None else UnconfiguredModel(),
         name='Sigil',
         description='A helpful coding assistant.',
-        # Static block: it goes first so the prefix stays cacheable.
-        instructions=_load_prompt(),
+        # Rendered once per request against what the model can see. It still goes
+        # first, so the prefix stays cacheable while nothing changes.
+        instructions=render_prompt,
         end_strategy='exhaustive',
         # A tool error goes back to the model as a failed result instead of
         # aborting the turn; transient provider failures are retried.

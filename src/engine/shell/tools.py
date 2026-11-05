@@ -7,6 +7,7 @@ from typing import Any
 from src.engine.shell.limits import DEFAULT_TIMEOUT
 from src.engine.shell.models.run_tool_output import RunToolOutput
 from src.engine.shell.runner import execute_commands
+from src.engine.tooling.catalog import ToolCatalog
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.permission import ResourceKind, ToolGroup, ToolPermission
 from src.engine.tooling.registrar import ToolRegistrar
@@ -14,9 +15,9 @@ from src.engine.tooling.registrar import ToolRegistrar
 _SHELL = ToolPermission(groups=(ToolGroup.RUN,), resource='cmds', kind=ResourceKind.COMMAND)
 
 
-def register_shell_tools(agent: Any, logger: ToolLogger | None = None) -> None:
+def register_shell_tools(agent: Any, logger: ToolLogger | None = None, catalog: ToolCatalog | None = None) -> None:
     """Registers the shell tool on a pydantic-ai agent."""
-    tools = ToolRegistrar(agent, logger)
+    tools = ToolRegistrar(agent, logger, catalog)
 
     @tools.tool(permission=_SHELL)
     async def run(

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from src.engine.roadmap.models.todo_item import TodoItem
 from src.engine.roadmap.models.todo_status import TodoStatus
 from src.engine.roadmap.store import RoadmapStore
+from src.engine.tooling.catalog import ToolCatalog
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.permission import ToolGroup, ToolPermission
 from src.engine.tooling.registrar import ToolRegistrar
@@ -82,9 +83,14 @@ def _apply_remove(store: RoadmapStore, item_id: str | None) -> None:
         raise ValueError(f'No roadmap item with id {item_id!r}.')
 
 
-def register_roadmap_tools(agent: Any, store: RoadmapStore, logger: ToolLogger | None = None) -> None:
+def register_roadmap_tools(
+    agent: Any,
+    store: RoadmapStore,
+    logger: ToolLogger | None = None,
+    catalog: ToolCatalog | None = None,
+) -> None:
     """Registers the roadmap tool on a pydantic-ai agent."""
-    tools = ToolRegistrar(agent, logger)
+    tools = ToolRegistrar(agent, logger, catalog)
 
     @tools.tool(permission=_ROADMAP)
     def update_roadmap(

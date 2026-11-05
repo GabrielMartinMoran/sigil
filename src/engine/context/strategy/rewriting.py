@@ -15,6 +15,7 @@ from pydantic_ai.messages import (
 )
 
 from src.engine.context.images import is_image_part
+from src.engine.context.images_cache import ImageVerdict, decide
 from src.engine.context.strategy.turns import has_pinned_result, split_turns
 from src.engine.context.tokens import estimate_messages_tokens, estimate_tokens, tool_return_text
 
@@ -33,66 +34,280 @@ def drop_thinking(messages: list[ModelMessage]) -> tuple[list[ModelMessage], int
     return result, dropped
 
 
+def accepts_replayed_reasoning(part: ThinkingPart, provider: str | None) -> bool:
+    """Whether the receiving provider can be sent this reasoning back.
+
+    "Signatures are only sent back to the same provider" (`ThinkingPart.signature`):
+    Anthropic, Bedrock, Google and OpenAI sign the reasoning and accept their own
+    signature back, not another's. Keeping a signed block the receiver is going to
+    reject spends history on something the adapter renders as plain text anyway.
+
+    Unsigned reasoning has no owner, so it travels to any provider. A part that
+    names no provider, or an unknown receiver, is trusted: the adapter decides, and
+    a wrong guess costs a retry, not a rejected request.
+    """
+    if not part.signature:
+        return True
+    if part.provider_name is None or provider is None:
+        return True
+    return part.provider_name == provider
+
+
+def thinking_labels(messages: Sequence[ModelMessage]) -> list[str | None]:
+    """The round each step with reasoning belonged to, in order.
+
+    `run_id` is the round: pydantic-ai stamps the same id on every message of one
+    run, and a prompt typed while the agent works is enqueued into the same run, so
+    steering does not open a new round. Sessions saved before `run_id` existed group
+    per message instead of merging unrelated rounds into one.
+    """
+    return [
+        message.run_id
+        for message in messages
+        if isinstance(message, ModelResponse) and any(isinstance(part, ThinkingPart) for part in message.parts)
+    ]
+
+
+def steps_with_reasoning(messages: Sequence[ModelMessage], *, provider: str | None = None) -> int:
+    """How many reasoning blocks of the round in progress can be kept.
+
+    It is the ceiling of the window: asking for more than this would keep the
+    previous rounds' reasoning too, which is a record, not working memory.
+    """
+    rounds = thinking_labels(messages)
+    current_round = rounds[-1] if rounds else None
+    return sum(
+        1
+        for message in messages
+        if isinstance(message, ModelResponse)
+        and message.run_id == current_round
+        and any(isinstance(part, ThinkingPart) for part in message.parts)
+        and all(accepts_replayed_reasoning(part, provider) for part in message.parts if isinstance(part, ThinkingPart))
+    )
+
+
+def keep_fitting_steps(
+    messages: list[ModelMessage],
+    available: int,
+    *,
+    provider: str | None = None,
+) -> list[ModelMessage] | None:
+    """Rewrites the history keeping as many reasoning steps as fit in `available`.
+
+    It starts from the most the current round can keep and shrinks one step at a
+    time, so the result is the largest window that fits. Returns ``None`` when not
+    even dropping all the reasoning makes it fit: the caller then has to truncate
+    tool results or discard turns, which costs more than reasoning does.
+    """
+    if estimate_messages_tokens(messages) <= available:
+        return messages
+    for steps in range(steps_with_reasoning(messages, provider=provider) - 1, -1, -1):
+        shrunk, _, _ = keep_recent_steps(messages, steps=steps, provider=provider)
+        if estimate_messages_tokens(shrunk) <= available:
+            return shrunk
+    return None
+
+
+def keep_recent_steps(
+    messages: list[ModelMessage],
+    *,
+    steps: int,
+    provider: str | None = None,
+    max_tokens: int | None = None,
+) -> tuple[list[ModelMessage], int, int]:
+    """Keeps the reasoning of the last `steps` steps of the round in progress.
+
+    The round in progress is the one the latest step belongs to. Its steps are
+    walked backwards until either `steps` reasoning blocks are kept or the round
+    ends, so a short round does not borrow the previous one's reasoning. Every other
+    reasoning block is dropped: it is not working memory, it is a record, and it
+    costs what it costs on every request.
+
+    The window is on steps, not on the round, because resending a whole round is
+    quadratic: a measured 317-step round would bill 44M extra tokens, while the loop
+    this fixes is local to a few steps.
+
+    Args:
+        messages: The history.
+        steps: How many steps keep their reasoning.
+        provider: The provider the request goes to, to filter signed blocks.
+        max_tokens: Ceiling for the reasoning kept, in tokens. ``None`` means the
+            step count is the only limit, which is wrong when the context is nearly
+            full: a wide window would starve the turn it is meant to help.
+    """
+    if steps <= 0 or max_tokens == 0:
+        result, dropped = drop_thinking(messages)
+        return result, 0, dropped
+
+    rounds = thinking_labels(messages)
+    current_round = rounds[-1] if rounds else None
+
+    # Walk the round in progress backwards: the steps closest to the work in
+    # progress are the ones that stop the agent from re-deciding what it already
+    # decided. A round shorter than the window keeps only its own reasoning.
+    keep: set[int] = set()
+    kept = 0
+    spent = 0
+    for order in range(len(messages) - 1, -1, -1):
+        if kept >= steps:
+            break
+        message = messages[order]
+        if not isinstance(message, ModelResponse) or message.run_id != current_round:
+            continue
+        parts = [part for part in message.parts if isinstance(part, ThinkingPart)]
+        if not parts:
+            continue
+        if not all(accepts_replayed_reasoning(part, provider) for part in parts):
+            continue
+        cost = sum(estimate_tokens(part.content or '') for part in parts)
+        if max_tokens is not None and spent + cost > max_tokens:
+            # A block that does not fit is not kept, and the ones further back cost
+            # the same or more: the budget is spent.
+            break
+        keep.add(order)
+        kept += 1
+        spent += cost
+
+    result: list[ModelMessage] = []
+    dropped = 0
+    for order, message in enumerate(messages):
+        if not isinstance(message, ModelResponse):
+            result.append(message)
+            continue
+        if order in keep:
+            result.append(message)
+            continue
+        kept_parts = [part for part in message.parts if not isinstance(part, ThinkingPart)]
+        dropped += len(message.parts) - len(kept_parts)
+        result.append(
+            message if len(kept_parts) == len(message.parts) else dataclasses.replace(message, parts=kept_parts)
+        )
+    return result, kept, dropped
+
+
 def _truncate_text(text: str, head_chars: int) -> str:
     omitted = len(text) - head_chars
     tokens = estimate_tokens(text)
     return f'{text[:head_chars]}\n\n[tool result truncated: {omitted:,} chars omitted, ~{tokens:,} tokens total]'
 
 
-IMAGE_OMITTED = (
-    '[{number} image{s} from an earlier turn omitted from the request: '
-    'it is still in the session, and asking about it again re-attaches it]'
-)
-"""What replaces an image the view drops. Says where it went and how to get it back."""
+IMAGE_OMITTED = '[image {image_id} from an earlier turn: not attached here, use view_image to look at it]'
+"""What replaces an image the view drops.
+
+The id is what makes the picture recoverable: `view_image` takes it and hands the
+bytes back, so dropping the pixels costs a tool call instead of the information.
+
+A session saved before ids existed still carries `[Image #n]` as the identifier,
+which repeats across turns; the note says so honestly rather than pretending it is
+a handle that will resolve.
+"""
+
+IMAGE_OVER_BUDGET = '[image {image_id} left out to stay inside the image budget: use view_image to look at it]'
+"""What replaces a picture the pixel cap could not afford."""
+
+IMAGE_SUPERSEDED = '[image {image_id} also appears attached later in this conversation: not repeated here]'
+"""What replaces a copy of an image that is already travelling.
+
+`view_image` hands back a picture the prompt may still be carrying. Sending both
+copies charges the same pixels twice and tells the model it is looking at two
+different pictures.
+"""
 
 
-def drop_old_images(turns: list[list[ModelMessage]], *, recent_start: int) -> tuple[list[ModelMessage], int]:
-    """Drops the image parts of the old turns, keeping their text.
+def drop_stale_images(
+    messages: list[ModelMessage],
+    *,
+    rounds: int,
+    max_tokens: int | None = None,
+) -> tuple[list[ModelMessage], int]:
+    """Leaves a note in place of every image that must not travel.
 
-    An image is the most expensive item in the history per unit of usefulness: it
-    matters while the conversation is about it and costs full price forever. The
-    text is kept and a note says the image was there, so the model still knows the
-    conversation happened while the pixels stop being paid for on every step.
+    The decision is `images_cache.decide`: an image is loaded in the round it arrived
+    in and stays for a few rounds, the newest copy of a picture is the one that
+    counts, and the pixels have a ceiling. This function only applies the verdicts and
+    writes the note, so the model knows the picture existed and what id brings it back.
 
     Args:
-        turns: The conversation, split into turns.
-        recent_start: Index of the first turn kept whole.
+        messages: The history, flat.
+        rounds: Rounds an image stays loaded, counting its own.
+        max_tokens: Ceiling for the pixels that travel, in tokens.
 
     Returns:
-        The flattened messages and how many images were dropped.
+        The rewritten messages and how many images were dropped.
     """
+    verdicts = decide(messages, rounds=rounds, max_tokens=max_tokens)
+    if not verdicts:
+        return messages, 0
+
     result: list[ModelMessage] = []
     dropped = 0
-    for index, turn in enumerate(turns):
-        for message in turn:
-            if index < recent_start:
-                message, count = _drop_images_of(message)
-                dropped += count
+    for message_index, message in enumerate(messages):
+        if not isinstance(message, ModelRequest):
             result.append(message)
+            continue
+        parts: list[object] = []
+        count = 0
+        for part in message.parts:
+            if not (isinstance(part, (UserPromptPart, ToolReturnPart)) and isinstance(part.content, list)):
+                parts.append(part)
+                continue
+            kept: list[object] = []
+            notes: list[str] = []
+            for item_index, item in enumerate(part.content):
+                verdict = verdicts.get((message_index, item_index)) if is_image_part(item) else None
+                if verdict is None or verdict.travels:
+                    kept.append(item)
+                    continue
+                count += 1
+                notes.append(_note_for(verdict, _identifier_of(item)))
+            if not notes:
+                parts.append(part)
+                continue
+            if isinstance(part, ToolReturnPart):
+                # The result keeps its own text; the note goes beside it, not inside
+                # the list the provider reads as the tool's payload.
+                parts.append(dataclasses.replace(part, content=[*kept, *notes]))
+            else:
+                parts.append(dataclasses.replace(part, content=[*kept, '\n', *notes]))
+        dropped += count
+        result.append(dataclasses.replace(message, parts=parts) if count else message)
     return result, dropped
 
 
-def _drop_images_of(message: ModelMessage) -> tuple[ModelMessage, int]:
-    """Removes the image parts of one request, appending the note to its text."""
-    if not isinstance(message, ModelRequest):
-        return message, 0
-    parts: list[object] = []
-    dropped = 0
-    for part in message.parts:
-        if not (isinstance(part, UserPromptPart) and isinstance(part.content, list)):
-            parts.append(part)
-            continue
-        kept = [item for item in part.content if not is_image_part(item)]
-        count = len(part.content) - len(kept)
-        if not count:
-            parts.append(part)
-            continue
-        dropped += count
-        note = IMAGE_OMITTED.format(number=count, s='' if count == 1 else 's')
-        parts.append(dataclasses.replace(part, content=[*kept, '\n', note]))
-    if not dropped:
-        return message, 0
-    return dataclasses.replace(message, parts=parts), dropped
+def _note_for(verdict: ImageVerdict, identifier: str) -> str:
+    """What the model reads in place of the pixels."""
+    if verdict is ImageVerdict.SUPERSEDED:
+        return IMAGE_SUPERSEDED.format(image_id=identifier)
+    if verdict is ImageVerdict.OVER_BUDGET:
+        return IMAGE_OVER_BUDGET.format(image_id=identifier)
+    return IMAGE_OMITTED.format(image_id=identifier)
+
+
+def _identifier_of(item: object) -> str:
+    """The handle `view_image` will accept for this image part.
+
+    An image built by the composer carries an `img_...` id. One that came from
+    anywhere else —an MCP resource, a legacy session— carries whatever identifier
+    pydantic-ai derived from its bytes, which is still a stable handle: `view_image`
+    looks the history up by identifier, not by the shape of the string.
+    """
+    identifier = getattr(item, 'identifier', None)
+    if isinstance(identifier, str) and identifier:
+        return identifier
+    return '(no id)'
+
+
+def count_images(messages: Sequence[ModelMessage]) -> int:
+    """How many image parts a group of messages carries."""
+    return sum(
+        1
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and isinstance(part.content, list)
+        for item in part.content
+        if is_image_part(item)
+    )
 
 
 def truncate_old_tool_results(

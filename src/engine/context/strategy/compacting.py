@@ -3,17 +3,34 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest
+from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest, ModelResponse, ThinkingPart
 
 from src.engine.context.budget import ContextBudget
 from src.engine.context.strategy.constants import (
+    DEFAULT_IMAGE_MAX_PERCENT,
+    DEFAULT_IMAGE_ROUNDS,
     DEFAULT_MAX_TOOL_RESULT_CHARS,
+    DEFAULT_REASONING,
+    DEFAULT_REASONING_MAX_PERCENT,
+    DEFAULT_REASONING_STEPS,
     DEFAULT_TOOL_RESULT_HEAD_CHARS,
     PINNED_TOOLS,
+    ReasoningPolicy,
+    image_token_cap,
+    reasoning_token_cap,
+    window_for,
 )
-from src.engine.context.strategy.rewriting import drop_thinking, fit_to_budget, truncate_old_tool_results
+from src.engine.context.strategy.rewriting import (
+    accepts_replayed_reasoning,
+    count_images,
+    drop_stale_images,
+    fit_to_budget,
+    keep_fitting_steps,
+    keep_recent_steps,
+    truncate_old_tool_results,
+)
 from src.engine.context.strategy.turn_summary import summarize_turn
 from src.engine.context.strategy.turns import has_pinned_result, split_turns
 from src.engine.context.strategy.view_result import ViewResult
@@ -42,9 +59,20 @@ class CompactingStrategy:
     keep_recent_turns: int = 2
     max_tool_result_chars: int = DEFAULT_MAX_TOOL_RESULT_CHARS
     tool_result_head_chars: int = DEFAULT_TOOL_RESULT_HEAD_CHARS
-    drop_thinking: bool = True
-    keep_thinking: bool = False
+    reasoning: ReasoningPolicy = DEFAULT_REASONING
+    """Same policy as `WindowedStrategy`: ``off``, ``recent`` or ``all``."""
+    reasoning_steps: int = DEFAULT_REASONING_STEPS
+    """Steps of the round in progress that keep their reasoning under ``recent``."""
+    reasoning_max_percent: int = DEFAULT_REASONING_MAX_PERCENT
+    """Ceiling for the reasoning kept, as a percentage of the model's window."""
+    image_rounds: int = DEFAULT_IMAGE_ROUNDS
+    """Rounds an image stays loaded, counting its own. Older ones leave their id behind."""
+    image_max_percent: int = DEFAULT_IMAGE_MAX_PERCENT
+    """Ceiling for the pixels that stay, as a percentage of the model's window."""
     max_summary_chars: int = 400
+    provider: str | None = None
+    """The provider the request is going to: signed reasoning is only replayed to
+    the provider that produced it."""
     pinned_tools: frozenset[str] = PINNED_TOOLS
     include_working_set: bool = True
     """Whether the summary closes with the touched files."""
@@ -54,9 +82,26 @@ class CompactingStrategy:
     def view(self, messages: Sequence[ModelMessage], budget: ContextBudget) -> ViewResult:
         working = list(messages)
         dropped_thinking = 0
-        if self.drop_thinking and not self.keep_thinking:
-            working, dropped_thinking = drop_thinking(working)
+        steps = window_for(self.reasoning, self.reasoning_steps)
+        if steps is None:
+            working, dropped_thinking = self._drop_reasoning_that_cannot_be_replayed(working)
+        else:
+            working, _, dropped_thinking = keep_recent_steps(
+                working,
+                steps=steps,
+                provider=self.provider,
+                max_tokens=reasoning_token_cap(budget.window, budget.available_for_history, self.reasoning_max_percent),
+            )
 
+        turns = split_turns(working)
+        # Images have their own window: one may outlive the turn's text. Dropping
+        # them first means a compacted turn has no pixels left to count twice, and a
+        # recent turn still keeps the pictures its own window allows.
+        working, dropped_images = drop_stale_images(
+            working,
+            rounds=self.image_rounds,
+            max_tokens=image_token_cap(budget.window, budget.available_for_history, self.image_max_percent),
+        )
         turns = split_turns(working)
         recent_start = max(0, len(turns) - self.keep_recent_turns)
         old_turns = turns[:recent_start]
@@ -81,6 +126,9 @@ class CompactingStrategy:
             if text:
                 pending.append(text)
                 compacted += 1
+                # The summary keeps the intent, not the pixels: an image of a
+                # compacted turn is gone, and saying so is part of the report.
+                dropped_images += count_images(turn)
 
         if compacted and self.include_working_set:
             # The working set comes from the full log, not from the old turns: what
@@ -109,7 +157,7 @@ class CompactingStrategy:
         dropped = 0
         available = budget.available_for_history
         if available is not None:
-            result, dropped = fit_keeping_summary(result, available, pinned_tools=self.pinned_tools)
+            result, dropped = self._fit_dropping_reasoning_first(result, available)
 
         return ViewResult(
             messages=result,
@@ -118,7 +166,36 @@ class CompactingStrategy:
             dropped_thinking=dropped_thinking,
             truncated_results=truncated,
             compacted_turns=compacted,
+            dropped_images=dropped_images,
         )
+
+    def _drop_reasoning_that_cannot_be_replayed(self, messages: list[ModelMessage]) -> tuple[list[ModelMessage], int]:
+        """When everything is kept, a block the receiver rejects is still useless."""
+        if self.provider is None:
+            return messages, 0
+        kept: list[ModelMessage] = []
+        dropped = 0
+        for message in messages:
+            if not isinstance(message, ModelResponse):
+                kept.append(message)
+                continue
+            parts = [
+                part
+                for part in message.parts
+                if not isinstance(part, ThinkingPart) or accepts_replayed_reasoning(part, self.provider)
+            ]
+            dropped += len(message.parts) - len(parts)
+            kept.append(message if len(parts) == len(message.parts) else replace(message, parts=parts))
+        return kept, dropped
+
+    def _fit_dropping_reasoning_first(
+        self, messages: list[ModelMessage], available: int
+    ) -> tuple[list[ModelMessage], int]:
+        """Reasoning goes before a turn does, and the summary is never discarded."""
+        kept = keep_fitting_steps(messages, available, provider=self.provider)
+        if kept is not None:
+            return kept, 0
+        return fit_keeping_summary(messages, available, pinned_tools=self.pinned_tools)
 
 
 def fit_keeping_summary(
