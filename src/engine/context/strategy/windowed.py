@@ -12,10 +12,12 @@ from src.engine.context.strategy.constants import (
     DEFAULT_KEEP_RECENT_TURNS,
     DEFAULT_MAX_TOOL_RESULT_CHARS,
     DEFAULT_REASONING,
+    DEFAULT_REASONING_MAX_PERCENT,
     DEFAULT_REASONING_STEPS,
     DEFAULT_TOOL_RESULT_HEAD_CHARS,
     PINNED_TOOLS,
     ReasoningPolicy,
+    reasoning_token_cap,
     window_for,
 )
 from src.engine.context.strategy.rewriting import (
@@ -57,6 +59,13 @@ class WindowedStrategy:
     """
     reasoning_steps: int = DEFAULT_REASONING_STEPS
     """Steps of the round in progress that keep their reasoning under ``recent``."""
+    reasoning_max_percent: int = DEFAULT_REASONING_MAX_PERCENT
+    """Ceiling for the reasoning kept, as a percentage of the model's window.
+
+    ``0`` means the step count is the only limit. Otherwise the window is capped by
+    the smaller of this share and the room the history has left, so a wide step count
+    cannot become a standing tax on every request.
+    """
     provider: str | None = None
     """The provider the request is going to. Signed reasoning is only replayed to
     the provider that produced it; ``None`` trusts the adapter."""
@@ -71,7 +80,12 @@ class WindowedStrategy:
         if steps is None:
             working, dropped_thinking = self._drop_reasoning_that_cannot_be_replayed(working)
         else:
-            working, _, dropped_thinking = keep_recent_steps(working, steps=steps, provider=self.provider)
+            working, _, dropped_thinking = keep_recent_steps(
+                working,
+                steps=steps,
+                provider=self.provider,
+                max_tokens=reasoning_token_cap(budget.window, budget.available_for_history, self.reasoning_max_percent),
+            )
 
         turns = split_turns(working)
         recent_start = max(0, len(turns) - self.keep_recent_turns)

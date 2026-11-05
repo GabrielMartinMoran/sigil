@@ -199,6 +199,72 @@ def test_labels_find_the_round_by_skipping_other_runs():
     assert labels == ['r1', 'r1', 'r2', 'r2', 'r2', 'r3']
 
 
+# --- the token cap on the window -------------------------------------------
+
+
+def test_the_token_cap_bounds_the_window():
+    """A wide window is useless if the reasoning alone eats the context.
+
+    The cap comes first: the step count says how many blocks are worth keeping, the
+    token cap says how many fit. A window of 10 steps of 5k tokens cannot spend 50k
+    when only room for 12k is left.
+    """
+    messages = [*_round_with_sized_reasoning('r1', 10, 2_000)]
+
+    result, kept, _ = keep_recent_steps(messages, steps=10, max_tokens=2_500)
+
+    assert 0 < kept < 10
+    assert _reasoning_tokens(result) <= 2_500
+    # The closest steps to the work in progress are the ones that survive.
+    assert _thinking_contents(result)[-1] == _thinking_of(9, 2_000)
+
+
+def test_without_a_cap_the_step_count_is_the_only_limit():
+    messages = [*_round_with_sized_reasoning('r1', 10, 2_000)]
+
+    _, kept, _ = keep_recent_steps(messages, steps=10, max_tokens=None)
+
+    assert kept == 10
+
+
+def test_a_cap_of_zero_drops_everything():
+    messages = [*_round_with_sized_reasoning('r1', 5, 1_000)]
+
+    result, kept, dropped = keep_recent_steps(messages, steps=5, max_tokens=0)
+
+    assert kept == 0
+    assert dropped == 5
+    assert _thinking_contents(result) == []
+
+
+def test_the_cap_counts_blocks_one_by_one():
+    """A block that does not fit is not kept; the search does not stop there."""
+    messages = [*_round_with_sized_reasoning('r1', 4, 1_000)]
+
+    # Room for three blocks of ~250 tokens each.
+    result, kept, _ = keep_recent_steps(messages, steps=4, max_tokens=800)
+
+    assert kept == 3
+    assert _reasoning_tokens(result) <= 800
+
+
+def _thinking_of(step: int, chars: int) -> str:
+    return f'why r1/{step} ' + 'y' * chars
+
+
+def _round_with_sized_reasoning(run: str, steps: int, chars: int) -> list:
+    messages: list = [_request(f'round {run}', run=run)]
+    for step in range(steps):
+        messages.append(_response(step, run, thinking=_thinking(_thinking_of(step, chars))))
+    return messages
+
+
+def _reasoning_tokens(messages: list) -> int:
+    from src.engine.context.tokens import estimate_tokens
+
+    return sum(estimate_tokens(content) for content in _thinking_contents(messages))
+
+
 def test_the_first_request_of_a_round_keeps_the_handoff():
     """A new round has no response yet, so the rule keeps the previous round's tail.
 
@@ -303,3 +369,50 @@ def test_compacting_all_keeps_everything():
     result = CompactingStrategy(reasoning='all').view(messages, _budget())
 
     assert len(_thinking_contents(result.messages)) == 4
+
+
+# --- the cap in the strategies ---------------------------------------------
+
+
+def test_the_strategies_cap_the_window_by_tokens():
+    """10 steps is the intent; the cap is what makes it safe.
+
+    With a 1M window and 10% allowed, the cap is 100k tokens of reasoning. A
+    conversation with a nearly full context has a smaller `available_for_history`,
+    and the cap follows it down instead of starving the turn.
+    """
+    messages = [*_round_with_sized_reasoning('r1', 10, 2_000)]
+
+    result = WindowedStrategy(reasoning='recent', reasoning_steps=10, reasoning_max_percent=10).view(
+        messages, _budget()
+    )
+
+    assert len(_thinking_contents(result.messages)) == 10
+
+
+def test_a_tight_context_shrinks_the_window():
+    messages = [*_round_with_sized_reasoning('r1', 10, 20_000)]
+
+    roomy = WindowedStrategy(reasoning='recent', reasoning_steps=10).view(messages, _budget())
+    tight = WindowedStrategy(reasoning='recent', reasoning_steps=10).view(messages, _budget(tokens=40_000))
+
+    assert len(_thinking_contents(tight.messages)) < len(_thinking_contents(roomy.messages))
+
+
+def test_an_unknown_window_has_no_cap():
+    """No window means no opinion: the step count is the only limit."""
+    messages = [*_round_with_sized_reasoning('r1', 10, 2_000)]
+
+    result = WindowedStrategy(reasoning='recent', reasoning_steps=10).view(messages, ContextBudget(window=None))
+
+    assert len(_thinking_contents(result.messages)) == 10
+
+
+def test_a_smaller_share_keeps_less():
+    messages = [*_round_with_sized_reasoning('r1', 10, 2_000)]
+    budget = _budget(tokens=300_000)
+
+    generous = WindowedStrategy(reasoning='recent', reasoning_steps=10, reasoning_max_percent=50).view(messages, budget)
+    stingy = WindowedStrategy(reasoning='recent', reasoning_steps=10, reasoning_max_percent=1).view(messages, budget)
+
+    assert len(_thinking_contents(stingy.messages)) < len(_thinking_contents(generous.messages))

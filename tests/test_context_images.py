@@ -137,8 +137,9 @@ def test_the_window_drops_images_only_from_the_old_turns():
 
 
 def test_a_message_without_images_reports_nothing_dropped():
-    strategy = WindowedStrategy(keep_recent_turns=1, reasoning='all')
     from src.engine.context.budget import ContextBudget
+
+    strategy = WindowedStrategy(keep_recent_turns=1, reasoning='all')
 
     result = strategy.view(
         [_prompt('hola'), ModelRequest(parts=[TextPart(content='chau')])],
@@ -146,3 +147,29 @@ def test_a_message_without_images_reports_nothing_dropped():
     )
 
     assert result.dropped_images == 0
+
+
+# --- compaction reports what it drops ---------------------------------------
+
+
+def test_compaction_reports_the_images_it_drops_with_the_turn():
+    """A compacted turn loses its pixels, and the report says so.
+
+    The summary keeps the intent and the tool trail, not the screenshots. Without
+    counting them here, `/context` would show fewer drops than actually happened and
+    an image-heavy session would look cheaper than it is.
+    """
+    from src.engine.context.budget import ContextBudget
+    from src.engine.context.strategy.compacting import CompactingStrategy
+
+    messages = [
+        _prompt('look at [Image #1]', _image()),
+        _prompt('thanks'),
+        _prompt('look at [Image #1]', _image()),
+        _prompt('thanks'),
+        _prompt('last one [Image #1]', _image()),
+    ]
+
+    result = CompactingStrategy(keep_recent_turns=1, reasoning='all').view(messages, ContextBudget(window=None))
+
+    assert result.dropped_images == 2

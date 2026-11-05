@@ -11,14 +11,17 @@ from src.engine.context.budget import ContextBudget
 from src.engine.context.strategy.constants import (
     DEFAULT_MAX_TOOL_RESULT_CHARS,
     DEFAULT_REASONING,
+    DEFAULT_REASONING_MAX_PERCENT,
     DEFAULT_REASONING_STEPS,
     DEFAULT_TOOL_RESULT_HEAD_CHARS,
     PINNED_TOOLS,
     ReasoningPolicy,
+    reasoning_token_cap,
     window_for,
 )
 from src.engine.context.strategy.rewriting import (
     accepts_replayed_reasoning,
+    count_images,
     fit_to_budget,
     keep_fitting_steps,
     keep_recent_steps,
@@ -56,6 +59,8 @@ class CompactingStrategy:
     """Same policy as `WindowedStrategy`: ``off``, ``recent`` or ``all``."""
     reasoning_steps: int = DEFAULT_REASONING_STEPS
     """Steps of the round in progress that keep their reasoning under ``recent``."""
+    reasoning_max_percent: int = DEFAULT_REASONING_MAX_PERCENT
+    """Ceiling for the reasoning kept, as a percentage of the model's window."""
     max_summary_chars: int = 400
     provider: str | None = None
     """The provider the request is going to: signed reasoning is only replayed to
@@ -73,7 +78,12 @@ class CompactingStrategy:
         if steps is None:
             working, dropped_thinking = self._drop_reasoning_that_cannot_be_replayed(working)
         else:
-            working, _, dropped_thinking = keep_recent_steps(working, steps=steps, provider=self.provider)
+            working, _, dropped_thinking = keep_recent_steps(
+                working,
+                steps=steps,
+                provider=self.provider,
+                max_tokens=reasoning_token_cap(budget.window, budget.available_for_history, self.reasoning_max_percent),
+            )
 
         turns = split_turns(working)
         recent_start = max(0, len(turns) - self.keep_recent_turns)
@@ -81,6 +91,7 @@ class CompactingStrategy:
         recent_turns = turns[recent_start:]
 
         compacted = 0
+        dropped_images = 0
         result: list[ModelMessage] = []
         pending: list[str] = []
 
@@ -99,6 +110,9 @@ class CompactingStrategy:
             if text:
                 pending.append(text)
                 compacted += 1
+                # The summary keeps the intent, not the pixels: an image of a
+                # compacted turn is gone, and saying so is part of the report.
+                dropped_images += count_images(turn)
 
         if compacted and self.include_working_set:
             # The working set comes from the full log, not from the old turns: what
@@ -136,6 +150,7 @@ class CompactingStrategy:
             dropped_thinking=dropped_thinking,
             truncated_results=truncated,
             compacted_turns=compacted,
+            dropped_images=dropped_images,
         )
 
     def _drop_reasoning_that_cannot_be_replayed(self, messages: list[ModelMessage]) -> tuple[list[ModelMessage], int]:

@@ -76,12 +76,14 @@ def _build_strategy(settings: SigilSettings):
             max_tool_result_chars=settings.max_tool_result_chars,
             reasoning=settings.reasoning,
             reasoning_steps=settings.reasoning_steps,
+            reasoning_max_percent=settings.reasoning_max_percent,
         )
     return WindowedStrategy(
         keep_recent_turns=settings.keep_recent_turns,
         max_tool_result_chars=settings.max_tool_result_chars,
         reasoning=settings.reasoning,
         reasoning_steps=settings.reasoning_steps,
+        reasoning_max_percent=settings.reasoning_max_percent,
     )
 
 

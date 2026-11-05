@@ -26,12 +26,21 @@ REASONING_POLICIES: tuple[ReasoningPolicy, ...] = ('off', 'recent', 'all')
 DEFAULT_REASONING: ReasoningPolicy = 'recent'
 """The round in progress is where the agent re-reads its own reasoning."""
 
-DEFAULT_REASONING_STEPS = 4
+DEFAULT_REASONING_STEPS = 10
 """Steps of the round in progress whose reasoning travels when the policy is ``recent``.
 
 Resending the whole round is quadratic: a measured 317-step round would bill 44M
-extra tokens, against 1,905 for four steps. The loop this prevents —re-deciding a
-decision already taken— shows up over a few consecutive steps.
+extra tokens. The loop this prevents —re-deciding a decision already taken— shows up
+over a few consecutive steps, so ten covers it with room to spare, and the token cap
+is what keeps the window from being stupid when the context is nearly full.
+"""
+
+DEFAULT_REASONING_MAX_PERCENT = 10
+"""Ceiling for the reasoning kept, as a percentage of the model's window.
+
+Reasoning is the cheapest thing to drop and the most voluminous to carry, so on a
+1M window this is 100k tokens: generous while the conversation is short, and never
+a reason to lose a turn when it is not.
 """
 
 
@@ -46,6 +55,38 @@ def window_for(policy: ReasoningPolicy, steps: int) -> int | None:
     if policy == 'all':
         return None
     return steps
+
+
+def reasoning_token_cap(window: int | None, available: int | None, percent: int) -> int | None:
+    """Ceiling for the reasoning kept, in tokens, from the room the context has left.
+
+    Two bounds, whichever is smaller:
+
+    - a share of the model's whole window, so a wide step count cannot become a
+      standing tax on every request;
+    - the room left for the history, so a nearly full context keeps some reasoning
+      instead of spending what the turn itself needs.
+
+    Args:
+        window: The model's context window, or ``None`` when it is unknown.
+        available: Tokens left for the history, or ``None`` when the window is
+            unknown.
+        percent: Share of `window` that reasoning may take. ``0`` means none.
+
+    Returns:
+        The cap in tokens, or ``None`` when it cannot be computed (no window and no
+        known room), which leaves the step count as the only limit.
+    """
+    if percent <= 0:
+        return 0
+    if window is None and available is None:
+        return None
+    by_window = None if window is None else max(0, window * percent // 100)
+    if available is None:
+        return by_window
+    if by_window is None:
+        return max(0, available)
+    return min(by_window, max(0, available))
 
 
 PINNED_TOOLS: frozenset[str] = frozenset({'load_skill', 'read_skill_resource'})

@@ -112,6 +112,7 @@ def keep_recent_steps(
     *,
     steps: int,
     provider: str | None = None,
+    max_tokens: int | None = None,
 ) -> tuple[list[ModelMessage], int, int]:
     """Keeps the reasoning of the last `steps` steps of the round in progress.
 
@@ -124,8 +125,16 @@ def keep_recent_steps(
     The window is on steps, not on the round, because resending a whole round is
     quadratic: a measured 317-step round would bill 44M extra tokens, while the loop
     this fixes is local to a few steps.
+
+    Args:
+        messages: The history.
+        steps: How many steps keep their reasoning.
+        provider: The provider the request goes to, to filter signed blocks.
+        max_tokens: Ceiling for the reasoning kept, in tokens. ``None`` means the
+            step count is the only limit, which is wrong when the context is nearly
+            full: a wide window would starve the turn it is meant to help.
     """
-    if steps <= 0:
+    if steps <= 0 or max_tokens == 0:
         result, dropped = drop_thinking(messages)
         return result, 0, dropped
 
@@ -137,6 +146,7 @@ def keep_recent_steps(
     # decided. A round shorter than the window keeps only its own reasoning.
     keep: set[int] = set()
     kept = 0
+    spent = 0
     for order in range(len(messages) - 1, -1, -1):
         if kept >= steps:
             break
@@ -148,8 +158,14 @@ def keep_recent_steps(
             continue
         if not all(accepts_replayed_reasoning(part, provider) for part in parts):
             continue
+        cost = sum(estimate_tokens(part.content or '') for part in parts)
+        if max_tokens is not None and spent + cost > max_tokens:
+            # A block that does not fit is not kept, and the ones further back cost
+            # the same or more: the budget is spent.
+            break
         keep.add(order)
         kept += 1
+        spent += cost
 
     result: list[ModelMessage] = []
     dropped = 0
@@ -228,6 +244,19 @@ def _drop_images_of(message: ModelMessage) -> tuple[ModelMessage, int]:
     if not dropped:
         return message, 0
     return dataclasses.replace(message, parts=parts), dropped
+
+
+def count_images(messages: Sequence[ModelMessage]) -> int:
+    """How many image parts a group of messages carries."""
+    return sum(
+        1
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and isinstance(part.content, list)
+        for item in part.content
+        if is_image_part(item)
+    )
 
 
 def truncate_old_tool_results(

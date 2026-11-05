@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 from src.engine.context.strategy.constants import (
     DEFAULT_REASONING,
+    DEFAULT_REASONING_MAX_PERCENT,
     DEFAULT_REASONING_STEPS,
     REASONING_POLICIES,
     ReasoningPolicy,
@@ -32,6 +33,7 @@ ENV_MODEL_MAX_ATTEMPTS = 'SIGIL_MODEL_MAX_ATTEMPTS'
 ENV_CONTEXT_STRATEGY = 'SIGIL_CONTEXT_STRATEGY'
 ENV_CONTEXT_REASONING = 'SIGIL_CONTEXT_REASONING'
 ENV_CONTEXT_REASONING_STEPS = 'SIGIL_CONTEXT_REASONING_STEPS'
+ENV_CONTEXT_REASONING_MAX_PERCENT = 'SIGIL_CONTEXT_REASONING_MAX_PERCENT'
 ENV_CONTEXT_KEEP_THINKING = 'SIGIL_CONTEXT_KEEP_THINKING'
 """Deprecated alias of `SIGIL_CONTEXT_REASONING`; only ``off`` and ``all``."""
 ENV_CONTEXT_KEEP_RECENT_TURNS = 'SIGIL_CONTEXT_KEEP_RECENT_TURNS'
@@ -65,6 +67,8 @@ class SigilSettings:
     """What travels back to the model of its own reasoning: ``off``, ``recent`` or ``all``."""
     reasoning_steps: int = DEFAULT_REASONING_STEPS
     """Steps of the round in progress that keep their reasoning under ``recent``."""
+    reasoning_max_percent: int = DEFAULT_REASONING_MAX_PERCENT
+    """Ceiling for the reasoning kept, as a percentage of the model window."""
     keep_recent_turns: int = DEFAULT_KEEP_RECENT_TURNS
     max_tool_result_chars: int = DEFAULT_MAX_TOOL_RESULT_CHARS
     output_reserve: int = DEFAULT_OUTPUT_RESERVE
@@ -82,6 +86,8 @@ class SigilSettings:
             raise ValueError(f'reasoning must be one of {supported}; got {self.reasoning!r}')
         if self.reasoning_steps < 1:
             raise ValueError('reasoning_steps must be at least 1; use reasoning=off to keep none')
+        if self.reasoning_max_percent < 0:
+            raise ValueError('reasoning_max_percent cannot be negative')
         if self.keep_recent_turns < 1:
             raise ValueError('keep_recent_turns must be at least 1')
         if self.max_tool_result_chars < 200:
@@ -142,6 +148,7 @@ def load_settings(environ: Mapping[str, str] | None = None) -> SigilSettings:
         context_strategy=env.get(ENV_CONTEXT_STRATEGY, '').strip().lower() or DEFAULT_CONTEXT_STRATEGY,
         reasoning=_read_reasoning(env),
         reasoning_steps=_read_int(env, ENV_CONTEXT_REASONING_STEPS, DEFAULT_REASONING_STEPS),
+        reasoning_max_percent=_read_int(env, ENV_CONTEXT_REASONING_MAX_PERCENT, DEFAULT_REASONING_MAX_PERCENT),
         keep_recent_turns=_read_int(env, ENV_CONTEXT_KEEP_RECENT_TURNS, DEFAULT_KEEP_RECENT_TURNS),
         max_tool_result_chars=_read_int(env, ENV_CONTEXT_MAX_TOOL_RESULT_CHARS, DEFAULT_MAX_TOOL_RESULT_CHARS),
         output_reserve=_read_int(env, ENV_CONTEXT_OUTPUT_RESERVE, DEFAULT_OUTPUT_RESERVE),

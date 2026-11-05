@@ -314,7 +314,8 @@ request.
 | --- | --- |
 | **Round** | Everything until control goes back to the user: one `run_id`. A prompt typed while the agent works is enqueued into the same run, so steering does not open a new round. |
 | **Step** | One model request and its response, inside a round. |
-| **Window** | How many steps of the round in progress keep their reasoning. `SIGIL_CONTEXT_REASONING_STEPS`, default 4. |
+| **Window** | How many steps of the round in progress keep their reasoning. `SIGIL_CONTEXT_REASONING_STEPS`, default 10. |
+| **Cap** | The most reasoning that window may cost, in tokens: the smaller of a share of the model window (`SIGIL_CONTEXT_REASONING_MAX_PERCENT`, default 10%) and the room the history has left. |
 
 ```mermaid
 flowchart LR
@@ -418,6 +419,81 @@ flowchart TD
     style E fill:#bf870022,stroke:#bf8700
 ```
 
+### The cap: a wide window must not be a stupid one
+
+A step count alone is either too small to help or too large to be safe. Ten steps
+of a model that thinks in 5k tokens is 50k, every request; the same ten steps in a
+context with 8k left is the whole turn.
+
+So the window has a ceiling, and the ceiling is the **smaller** of two numbers:
+
+```mermaid
+flowchart TD
+    W["Model window<br/>e.g. 1,000,000"] --> SHARE["share = window × 10%<br/>= 100,000"]
+    A["Room left for the history<br/>available_for_history"] --> CAP
+    SHARE --> CAP{"cap = min(share, room)"}
+    CAP --> RESULT["Ceiling for the reasoning<br/>in tokens"]
+    RESULT --> KEEP["Keep reasoning backwards<br/>until the cap is spent"]
+
+    style RESULT fill:#1f6feb22,stroke:#1f6feb
+```
+
+- **The share** stops reasoning from becoming a standing tax: on a 1M window it can
+  never exceed 100k, however long the round gets.
+- **The room** stops it from starving the turn it is meant to help: with 8k left,
+  the cap is 8k, not 100k.
+
+When the window is unknown there is no cap and the step count is the only limit:
+without a budget there is nothing to spend against.
+
+The blocks are taken newest first, so the ones that survive are the closest to the
+work in progress. A block that does not fit ends the search, because the ones
+further back cost the same or more.
+
+In a measured session the cap never binds: ten steps of reasoning cost about 2.7k
+tokens against a 100k ceiling. It exists for the case that is not measured yet —a
+model that thinks in tens of thousands of tokens per step— and for a context that
+is nearly full, where it is the difference between keeping some reasoning and
+losing a turn.
+
+### Images: priced by pixels, dropped with their turn
+
+An image is the most expensive item in the history per unit of usefulness, and the
+estimator used to be blind to it: the content of a multimodal prompt is a list, and
+`str(BinaryContent)` is a forty-character repr, so a 4K screenshot was counted as ten
+tokens. A conversation with six screenshots looked like it fit when it did not, and
+the request failed at the provider, mid-turn.
+
+`part_tokens` prices an image from its encoded header —dimensions, then the same
+patch arithmetic the attachment used before sending it— so no decode is needed. That
+matters because the meter walks the whole history on every step.
+
+Images are **not** kept forever:
+
+| Where the image is | What happens |
+| --- | --- |
+| In a turn within `keep_recent_turns` | Sent as is |
+| In an older turn | Dropped, and the text is kept with a note saying it was there and how to get it back |
+| In a compacted turn | Gone with the turn; the summary keeps the intent, not the pixels |
+
+```mermaid
+flowchart LR
+    subgraph recent["Last keep_recent_turns — full price"]
+        I1["prompt + image"]
+    end
+    subgraph old["Older turns — text only"]
+        I2["prompt +"] --> N["[1 image from an earlier turn<br/>omitted from the request: it is still<br/>in the session, and asking about it<br/>again re-attaches it]"]
+    end
+
+    style recent fill:#23863622,stroke:#238636
+    style old fill:#bf870022,stroke:#bf8700
+```
+
+Two properties matter: the session log keeps every image (dropping is a projection,
+like everything else here), and the model is told an image existed — so it knows the
+conversation happened and can ask for the picture again instead of pretending the
+text was all there was.
+
 ## Strategies
 
 Selected with `SIGIL_CONTEXT_STRATEGY`. All three share the same contract:
@@ -448,7 +524,8 @@ not touched.
 | `SIGIL_CONTEXT_MAX_TOOL_RESULT_CHARS` | `4000` | Cap of an old tool result |
 | `SIGIL_CONTEXT_OUTPUT_RESERVE` | `8000` | Tokens reserved for the answer |
 | `SIGIL_CONTEXT_REASONING` | `recent` | What travels back of the model's reasoning: `recent`, `off` or `all` |
-| `SIGIL_CONTEXT_REASONING_STEPS` | `4` | Steps of the round in progress kept under `recent` |
+| `SIGIL_CONTEXT_REASONING_STEPS` | `10` | Steps of the round in progress kept under `recent` |
+| `SIGIL_CONTEXT_REASONING_MAX_PERCENT` | `10` | Ceiling for that reasoning, as a percentage of the model window |
 | ~~`SIGIL_CONTEXT_KEEP_THINKING`~~ | — | Deprecated by `SIGIL_CONTEXT_REASONING`; truthy still means `all` |
 
 The policy is always a name, never a number: a count was a mode once, and reading
