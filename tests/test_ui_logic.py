@@ -7,6 +7,7 @@ from src.engine.providers.domain.provider_kind import ProviderKind
 from src.engine.providers.domain.selection import Selection
 from src.engine.providers.snapshot import ModelSnapshot
 from src.ui.model_view_mixin import effort_label
+from tests.ui_helpers import render_text
 
 
 def test_match_commands_requires_slash():
@@ -21,6 +22,8 @@ def test_match_commands_filters_by_prefix():
         '/provider',
         '/model',
         '/effort',
+        '/reasoning-visibility',
+        '/theme',
         '/sidebar',
         '/mcp',
         '/context',
@@ -56,14 +59,55 @@ def test_effort_label_falls_back_to_the_selection():
     assert effort_label(ModelSnapshot(), 'bogus') == 'default'
 
 
-def test_assistant_renderable_uses_markdown_for_text():
-    from rich.console import Group
+def test_assistant_block_renders_markdown_and_collapses_reasoning():
+    from src.ui.widgets.chat_log import AssistantBlock
+
+    collapsed = AssistantBlock(reasoning_visible=False)
+    collapsed.add_thinking('thinking hard')
+    collapsed.add_text('# Hello')
+    collapsed.finalize()
+    text = render_text(collapsed._build())
+    # Collapsed: the reasoning is a marker line with the command that opens it,
+    # and the answer is still there.
+    assert 'Reasoning' in text
+    assert 'thinking hard' not in text
+    assert 'Hello' in text
+
+    expanded = AssistantBlock(reasoning_visible=True)
+    expanded.add_thinking('thinking hard')
+    expanded.add_text('# Hello')
+    expanded.finalize()
+    assert 'thinking hard' in render_text(expanded._build())
+
+
+def test_assistant_block_without_reasoning_is_just_markdown():
     from rich.markdown import Markdown
+
+    from src.ui.widgets.chat_log import AssistantBlock
+
+    block = AssistantBlock(reasoning_visible=False)
+    block.add_text('# Hello')
+    block.finalize()
+    assert isinstance(block._build(), Markdown)
+
+
+def test_assistant_block_without_content_is_empty_text():
     from rich.text import Text
 
-    from src.ui.widgets.chat_log import build_assistant_renderable
+    from src.ui.widgets.chat_log import AssistantBlock
 
-    assert isinstance(build_assistant_renderable('thinking', ''), Text)
-    assert isinstance(build_assistant_renderable('', '# Hello'), Markdown)
-    assert isinstance(build_assistant_renderable('thinking', 'text'), Group)
-    assert isinstance(build_assistant_renderable('', ''), Text)
+    block = AssistantBlock()
+    block.finalize()
+    assert isinstance(block._build(), Text)
+    assert block._build().plain == ''
+
+
+def test_collapsed_reasoning_reports_how_much_it_hides():
+    from src.ui.widgets.chat_log import AssistantBlock
+
+    block = AssistantBlock(reasoning_visible=False)
+    block.add_thinking('one\ntwo\nthree')
+    block.finalize()
+    text = render_text(block._build())
+    assert '3 lines' in text
+    assert '/reasoning-visibility on' in text

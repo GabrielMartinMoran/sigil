@@ -337,7 +337,7 @@ answer.
 
 ### Roadmap
 
-`update_roadmap` maintains the task list of the left panel. Each item stays in
+`update_roadmap` maintains the task list of the side panel. Each item stays in
 `pending`, `in_progress`, `done` or `blocked`.
 
 The panel shows a single list in plan order, without grouping by status. The icon
@@ -540,19 +540,65 @@ type.
 | `/provider` | Manage provider accounts: add, rename, remove, activate |
 | `/model` | Picks the model for the active account |
 | `/effort [level]` | Opens the effort picker; with a level, sets it directly |
+| `/reasoning-visibility [on\|off]` | Shows or collapses the reasoning in the chat; without an argument, toggles |
+| `/theme [name\|--list]` | Opens the theme picker with a live preview; with a name, applies it; `--list` lists the installed ones |
 | `/sidebar [on\|off]` | Shows or hides the sidebar; without an argument, toggles |
 | `/mcp` | Queries the state of the MCP servers |
 | `/context` | Shows the breakdown of the used context |
 | `/debug [on\|off\|--text]` | Shows or hides the agent debug view; without an argument, toggles |
-| `/help` | Lists the available commands |
+| `/help` | Lists the available commands and the keys |
 | `/quit` | Exits Sigil |
 
 The sidebar starts visible. Hiding it does not erase the roadmap: the agent keeps
 updating it and it comes back with `/sidebar on`.
 
+### The composer
+
+`Enter` sends the message and `Shift+Enter` adds a line. The composer grows with
+the message up to ten rows and then scrolls, so a pasted stack trace does not
+push the conversation off the screen.
+
+`Shift+Enter` needs a terminal that reports modifiers (the Kitty keyboard
+protocol, which Textual enables on capable terminals). On one that does not, the
+terminal sends a bare carriage return and the key reads as `Enter`, so the
+message is sent instead of split. That is the same behaviour every other
+line-oriented chat has, and it fails towards the familiar thing rather than
+towards a lost keystroke.
+
+### Status bar
+
+The line under the composer answers three questions, left to right.
+
+**Is it working?** A spinner and the verb of the moment — `Thinking`, `Writing`,
+`Running read_file` — with the elapsed time once a turn passes a second. Between
+turns it rests on `● Ready`. Without it, an app waiting on the model looks
+exactly like an app waiting on you.
+
+**Where?** The worktree and the branch the agent is working on: `main main` for
+the main worktree, `fix-login sigil/fix-login` for a linked one. With worktrees in
+the picture, two sessions look the same and write to different trees.
+
+**How much?** `+18 −4  1 new`: the added and removed lines of the working tree in
+the green and red `git diff` uses, plus a count of the files git does not track
+yet. It comes from `git diff --numstat HEAD`, so staged and unstaged changes are
+counted together. Untracked files are a count and not a line count, because
+`git diff` has no diff for a file outside the index and any number there would be
+an invention.
+
+```
+⠋ Thinking 12s                                main sigil/refactor-ui  +18 −4  1 new
+```
+
+The summary is read off the event loop after every tool call and on a 1.5-second
+poll; a tool can change the tree through a shell command the file tools never see,
+so there is no event to subscribe to. Outside a git repository the section does
+not appear at all.
+
 ### Sidebar
 
-Above the roadmap, the session panel shows:
+The panel is one column, from the model down to the MCP servers. It used to be two
+boxes — diagnostics on top, roadmap underneath — but they are read together and the
+split only cost a border and half a column.
 
 - **Model**: the active account alias, its provider family, the model and the
   reasoning level in effect. Before anything is configured it says `not
@@ -563,6 +609,9 @@ Above the roadmap, the session panel shows:
 - **Context**: the percentage of the window the next request is going to take,
   with the pair it comes from in parentheses. It is hidden until a model is
   configured, and it colours green, yellow and red across 70% and 90%.
+- **Roadmap**: the plan of the task, one line per item, with its notes. It is the
+  last section of the diagnostics on purpose: the model and the budget are context
+  for the plan, and the plan is what you check after every message.
 - **Loaded skills**: the skills the agent loaded in this session, in load order.
   It is the quick diagnostic of whether it is following the protocol.
 - **MCP**: the count goes inline with the title, in parentheses. Below, each
@@ -591,6 +640,113 @@ MCP (3, 1 ✗)
 
 The MCP count refreshes on startup (in a worker, without blocking the UI) and
 every time you run `/mcp`.
+
+## Reading the chat
+
+### Reasoning
+
+The model's reasoning is **collapsed by default**. It is the part of the transcript
+nobody reads twice, and expanded it buries the answer. The collapsed turn still
+says it thought, how much, and how to see it:
+
+```
+✳ Reasoning · 42 lines  /reasoning-visibility on
+```
+
+`/reasoning-visibility on` expands every block in place — the conversation on
+screen is not rebuilt, so a turn in flight keeps its pending deltas — and
+`/reasoning-visibility off` collapses them again. The choice is stored in
+`~/.sigil/ui.json` and applies to the next session too.
+
+### Tool calls
+
+A tool call and its result are one block, with the output indented under a gutter
+on the left:
+
+```
+  │ read_file src/parser.py  ✓
+  │ def parse(x):
+  │     return x.split(",")
+  │ … +34 more
+```
+
+The gutter is what groups them: a run of calls reads as one column hanging under
+the answer that caused it, instead of a list of unrelated lines that all start at
+the left margin. Consecutive calls share no gap, so the column is continuous.
+
+- The header carries the name, the arguments and a state mark: `…` while it runs,
+  `✓` or `✗` after. One column, so nothing shifts when the call ends.
+- A dict of arguments is rendered as `key=value` pairs; a single argument is shown
+  on its own, which is what makes `run(command='ls')` read as `run ls`.
+- The output keeps its leading whitespace, because a diff, a stack trace or a
+  snippet of code is unreadable without it. Trailing whitespace is dropped.
+- Past six lines the block truncates with `… +N more`, and past 160 characters a
+  long line truncates with an ellipsis. Enough to recognize the result, never
+  enough to take over the screen.
+
+## Themes
+
+A theme is a JSON file with a name and a set of colors. Sigil ships two and reads
+the ones installed in `~/.sigil/themes`, one file each:
+
+```
+~/.sigil/themes/
+  my-theme.json
+```
+
+```json
+{
+  "name": "my-theme",
+  "dark": true,
+  "colors": {
+    "primary": "#ff2a6d",
+    "accent": "#05d9e8",
+    "background": "#0d0221",
+    "foreground": "#f8f8f2",
+    "tool-border": "#4b2a6b",
+    "reasoning": "#9d8ec7",
+    "diff-added": "#01ffc3",
+    "diff-removed": "#ff3864"
+  }
+}
+```
+
+Two kinds of key live under `colors`:
+
+- The roles Textual knows — `primary`, `secondary`, `accent`, `warning`, `error`,
+  `success`, `foreground`, `background`, `surface`, `panel`, `boost` — become the
+  theme's palette. `primary` is required; the rest are inherited when omitted.
+- Anything else becomes a CSS variable of that name. That is how a theme reaches
+  the parts of Sigil the palette does not cover: `tool-border`, `tool-title`,
+  `tool-output`, `reasoning`, `diff-added`, `diff-removed`, `sidebar-section` and
+  `muted`.
+
+A color that does not parse rejects the whole file instead of half-applying it: a
+theme with two valid colors and one typo would paint an interface nobody designed.
+A file that fails is reported in the chat at startup and skipped; the rest still
+load. A user file with the same name as a builtin replaces it, which is the way to
+keep the `dark` layout with your own colors.
+
+`SIGIL_THEMES_DIR` moves the directory, so a theme can live in a dotfiles
+repository instead of being copied around.
+
+### Builtin themes
+
+| Theme | What it is |
+| --- | --- |
+| `dark` | The default: a neutral dark surface with a cool accent, quiet enough not to compete with the content |
+| `synthwave` | Neon on deep purple: hot pink, electric cyan and a violet sky. It exists to prove the system moves every surface and not just the accent |
+
+### `/theme`
+
+`/theme` opens the picker and applies each theme as the highlight moves, over the
+real app: what you see while moving is what you get on Enter. `Esc` puts back the
+theme that was active when the picker opened, and `Enter` applies the highlighted
+one and stores it. `/theme --list` lists the installed themes with their origin and
+reports the files that could not be read; `/theme <name>` applies one directly.
+
+The picker re-reads the directory before opening, so a theme dropped in while
+Sigil is running shows up without a restart.
 
 ## Context management
 

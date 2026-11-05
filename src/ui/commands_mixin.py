@@ -1,14 +1,12 @@
-"""Slash commands: session, workspace, sidebar, MCP, context and help."""
+"""Slash commands: session, workspace, sidebar, MCP, context, theme and help."""
 
 from __future__ import annotations
-
-from textual.widgets import Input
 
 from src.engine.context.meter.render import render_report
 from src.engine.sessions.catalog import catalog
 from src.engine.workspace.arguments import UsageError, parse_new_args
 from src.engine.workspace.models.workspace_error import WorkspaceError
-from src.ui.help_text import HELP_TEXT
+from src.ui.help_text import HELP_TEXT, KEYS_TEXT
 from src.ui.mcp_report import format_mcp_status
 from src.ui.messages import ChatNotice
 from src.ui.widgets.chat_log import ChatLog
@@ -25,17 +23,16 @@ class CommandsMixin:
     ``_workspace_manager``.
     """
 
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Enter on the prompt: slash command or agent turn."""
-        if event.input is not self.query_one(PromptInput):
-            return
+    async def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
+        """Enter on the composer: slash command or agent turn.
 
+        The composer clears itself before posting, so a slow turn cannot leave the
+        typed text sitting in the box for a second send.
+        """
         text = event.value.strip()
         if not text:
             return
 
-        prompt = self.query_one(PromptInput)
-        prompt.value = ''
         self.menu_hide()
 
         if text.startswith('/'):
@@ -56,11 +53,13 @@ class CommandsMixin:
             '/provider': lambda: self.show_providers(chat),
             '/model': lambda: self.show_models(chat, args),
             '/effort': lambda: self.show_effort(chat, args),
+            '/reasoning-visibility': lambda: self.handle_reasoning_visibility(args, chat),
+            '/theme': lambda: self.handle_theme_command(args, chat),
             '/sidebar': lambda: self.handle_sidebar(args, chat),
             '/mcp': lambda: self.show_mcp(chat),
             '/context': lambda: self.show_context(chat),
             '/debug': lambda: self.handle_debug(args, chat),
-            '/help': lambda: chat.add_notice(HELP_TEXT, style='cyan'),
+            '/help': lambda: self.show_help(chat),
             '/quit': lambda: self.action_quit(),
         }
         handler = handlers.get(name)
@@ -68,6 +67,28 @@ class CommandsMixin:
             await chat.add_notice(f'Unknown command: {name}', style='red')
             return
         await handler()
+
+    async def show_help(self, chat: ChatLog) -> None:
+        """Commands plus the keys that are not discoverable from the menu."""
+        await chat.add_notice(HELP_TEXT, style='cyan')
+        await chat.add_notice(KEYS_TEXT, style='dim')
+
+    async def handle_theme_command(self, args: str, chat: ChatLog) -> None:
+        """`/theme --list` lists; anything else goes to the theme flow.
+
+        Listing is separate from opening the picker because the errors of a broken
+        theme file belong somewhere readable, and the picker only shows what loaded.
+        """
+        if args.strip().lower() in {'--list', 'list'}:
+            errors = self.reload_themes()
+            await chat.add_notice(self.describe_themes(), style='white')
+            for error in errors:
+                await chat.add_notice(f'✖ {error}', style='yellow')
+            return
+        # Re-read first: a theme dropped in the folder while the app was open is
+        # exactly the case this command exists for.
+        self.reload_themes()
+        await self.handle_theme(args, chat)
 
     def action_quit(self) -> None:
         """Closes the application, persisting the session."""
@@ -197,10 +218,10 @@ class CommandsMixin:
 
     async def handle_sidebar(self, args: str, chat: ChatLog) -> None:
         """`/sidebar` toggles; `/sidebar on|off` sets the state."""
-        from src.ui.widgets.roadmap_panel import RoadmapPanel
+        from src.ui.widgets.sidebar_panel import SidebarPanel
 
         value = args.strip().lower()
-        panel = self.query_one(RoadmapPanel)
+        panel = self.query_one(SidebarPanel)
         if value in {'', 'toggle'}:
             panel.set_shown(not panel.shown)
         elif value in {'on', 'show'}:

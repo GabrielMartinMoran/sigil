@@ -104,6 +104,7 @@ class TurnMixin:
         if isinstance(event, PartStartEvent):
             if event.index == 0:
                 await chat.begin_response()
+                self.set_activity_label('Thinking')
             part = event.part
             if isinstance(part, ThinkingPart) and part.content:
                 await chat.add_thinking(part.content)
@@ -113,11 +114,14 @@ class TurnMixin:
             delta = event.delta
             if isinstance(delta, TextPartDelta) and delta.content_delta:
                 await chat.add_text(delta.content_delta)
+                self.set_activity_label('Writing')
             elif isinstance(delta, ThinkingPartDelta) and delta.content_delta:
                 await chat.add_thinking(delta.content_delta)
+                self.set_activity_label('Thinking')
         elif isinstance(event, FunctionToolResultEvent):
             ok = getattr(event.part, 'outcome', 'success') == 'success'
             await chat.add_tool_result(event.part.tool_name, event.part.content, ok=ok)
+            self.set_activity_label('Thinking')
 
     @work(exclusive=True)
     async def run_turn(self, text: str) -> None:
@@ -127,6 +131,10 @@ class TurnMixin:
         limiter = StepLimiter(self._settings.max_steps)
         handler = self.turn_handler(limiter, chat)
         prompt.disabled = True
+        # The bar says what is happening from the first second: a turn that looks
+        # like an idle app is a turn the user interrupts or repeats.
+        self.set_activity(running=True, label='Thinking')
+        clock = self.set_interval(1.0, self.activity_tick)
         # `agent.iter` (instead of `agent.run`) keeps the run accessible: if the
         # turn is aborted by the step limit or by an error, `run.all_messages()`
         # returns what was completed and the session does not lose the context.
@@ -165,7 +173,9 @@ class TurnMixin:
                 history = run.all_messages()
             await chat.add_notice(f'Error: {exc}', style='bold red')
         finally:
+            clock.stop()
             self._current_run = None
+            self.set_activity(running=False)
             prompt.disabled = False
             prompt.focus()
             chat.finalize()
@@ -174,6 +184,9 @@ class TurnMixin:
         self._session.messages = self._history
         self._store.save(self._session)
         self.refresh_sidebar()
+        # The turn just wrote files: the bar shows the tree as it is now, not as it
+        # was when the last poll ran.
+        self.refresh_diff()
         # The debug view shows the cost of the turn just closed.
         refresh_debug = getattr(self, 'refresh_debug', None)
         if callable(refresh_debug):

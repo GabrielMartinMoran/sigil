@@ -14,6 +14,7 @@ from pathlib import Path
 
 ENV_HOME = 'SIGIL_HOME'
 ENV_WORKTREES_DIR = 'SIGIL_WORKTREES_DIR'
+ENV_THEMES_DIR = 'SIGIL_THEMES_DIR'
 
 DEFAULT_DIRNAME = '.sigil'
 
@@ -42,6 +43,19 @@ def roadmaps_dir(environ: dict[str, str] | None = None) -> Path:
 
 def providers_dir(environ: dict[str, str] | None = None) -> Path:
     return sigil_home(environ) / 'providers'
+
+
+def themes_dir(environ: dict[str, str] | None = None) -> Path:
+    """Where the installed themes live, one JSON file each.
+
+    ``SIGIL_THEMES_DIR`` overrides the location, so a theme can be shared between
+    machines (or kept in a dotfiles repository) without copying files around.
+    """
+    env = os.environ if environ is None else environ
+    override = env.get(ENV_THEMES_DIR, '').strip()
+    if override:
+        return Path(override).expanduser()
+    return sigil_home(env) / 'themes'
 
 
 def worktrees_dir(environ: dict[str, str] | None = None) -> Path:

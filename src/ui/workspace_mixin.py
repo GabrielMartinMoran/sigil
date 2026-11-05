@@ -10,7 +10,6 @@ from __future__ import annotations
 from src.engine.workspace.manager import WorkspaceManager, WorkspaceSwitch
 from src.engine.workspace.models.workspace_error import WorkspaceError
 from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.sidebar_panel import WorkspaceState
 
 
 class WorkspaceMixin:
@@ -29,22 +28,6 @@ class WorkspaceMixin:
         if self._workspace_manager is None:
             return '-'
         return self._workspace_manager.label or self._workspace_manager.root.name
-
-    def workspace_state(self) -> WorkspaceState | None:
-        """What the side panel shows: the tree the agent is working in.
-
-        It is derived on demand instead of cached: the panel is repainted from
-        several paths, and a stale label after a switch would be worse than the
-        cost of reading the (already small) worktree list.
-        """
-        if self._workspace_manager is None:
-            return None
-        workspace = self._workspace_manager.current()
-        return WorkspaceState(
-            label=workspace.label,
-            branch=workspace.branch,
-            is_worktree=workspace.is_worktree,
-        )
 
     def switch_workspace(self, root: str) -> WorkspaceSwitch:
         """Moves to ``root``. Raises ``WorkspaceError`` if it cannot."""
