@@ -45,7 +45,12 @@ ENV_CONTEXT_MAX_TOOL_RESULT_CHARS = 'SIGIL_CONTEXT_MAX_TOOL_RESULT_CHARS'
 ENV_CONTEXT_OUTPUT_RESERVE = 'SIGIL_CONTEXT_OUTPUT_RESERVE'
 
 DEFAULT_MAX_STEPS = 256
-"""Hard step limit per turn: every model response and every tool call count."""
+"""Model calls per run before the agent is asked for a last, tool-less answer.
+
+It is not an abort: the steps are taken away and the model gets one more call to
+report what it established, so a long turn ends with a summary instead of dying.
+A profile can declare its own budget with `max_steps` in its frontmatter.
+"""
 
 DEFAULT_MODEL_MAX_ATTEMPTS = 5
 """Total attempts per model request, the first one included."""

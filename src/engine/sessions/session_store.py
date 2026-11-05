@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
 )
 
+from src.engine.agents.tree.tree import AgentTree
 from src.engine.providers.domain.selection import Selection
 from src.engine.sessions.titling import first_user_message, shorten
 
@@ -72,6 +73,15 @@ class Session:
     It travels with the session for the same reason as the model: the
     instructions a conversation was built under are part of it. An empty string
     means "no choice recorded", and the registry falls back to its default.
+    """
+
+    tree: AgentTree | None = None
+    """The agents of the session: the root the user talks to, and its subagents.
+
+    It is not derived from `agent`: the tree keeps the runs that happened, and a
+    subagent that finished an hour ago is part of the conversation's history even
+    though nothing is running now. `None` means a session saved before trees
+    existed, and the store mints a root the first time it is asked for one.
     """
 
     def touch(self) -> None:
@@ -217,6 +227,7 @@ class SessionStore:
             'title': session.title,
             'selection': session.selection.to_dict() if session.selection is not None else None,
             'agent': session.agent,
+            'tree': session.tree.to_dict() if session.tree is not None else None,
             'messages': ModelMessagesTypeAdapter.dump_python(session.messages, mode='json'),
         }
 
@@ -230,6 +241,7 @@ class SessionStore:
             title=data.get('title'),
             selection=_selection_from(data.get('selection')),
             agent=str(data.get('agent') or ''),
+            tree=AgentTree.from_dict(data.get('tree')),
         )
 
     # --- Index and atomic write ----------------------------------------------

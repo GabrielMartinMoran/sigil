@@ -265,13 +265,15 @@ def test_tab_without_the_menu_does_not_steal_the_focus():
 
 
 def test_the_app_binds_what_can_actually_reach_it():
-    """Only `alt+d` is an app binding, and only because it has to be.
+    """Only the two view toggles are app bindings, and only because they have to be.
 
     The pickers read `ctrl+m` / `ctrl+t` in `PromptInput.on_key`: a global binding
     for `ctrl+m` would claim Enter on a terminal without the kitty protocol.
+    `alt+t` joined `alt+d` when the tree of agents arrived: it is the same kind of
+    key — a view toggle, read before the focused widget — and the user asked for it.
     """
     bindings = {binding.key for binding in SigilApp.BINDINGS}
-    assert bindings == {'alt+d'}
+    assert bindings == {'alt+d', 'alt+t'}
 
 
 def test_the_pickers_are_reached_through_the_prompt_input():

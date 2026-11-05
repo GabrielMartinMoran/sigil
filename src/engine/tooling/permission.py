@@ -59,6 +59,9 @@ class ToolGroup(StrEnum):
     ROADMAP = 'roadmap'
     """Publishes the task roadmap the UI shows."""
 
+    SUMMON = 'summon'
+    """Starts, resumes, steers and stops subagents: the tree, as one capability."""
+
 
 BUILTIN_TOOLS: Mapping[str, ToolGroup] = {
     'run': ToolGroup.RUN,
@@ -78,6 +81,10 @@ BUILTIN_TOOLS: Mapping[str, ToolGroup] = {
     'get_mcp_prompt': ToolGroup.MCP,
     'ask_user': ToolGroup.ASK,
     'update_roadmap': ToolGroup.ROADMAP,
+    'summon': ToolGroup.SUMMON,
+    'send_message': ToolGroup.SUMMON,
+    'kill_subagent': ToolGroup.SUMMON,
+    'list_agents': ToolGroup.SUMMON,
 }
 """Every built-in tool and the group it belongs to.
 

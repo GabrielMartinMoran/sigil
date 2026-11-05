@@ -186,6 +186,9 @@ class CommandsMixin:
         the key stuck in a turn.
         """
         running_commands.kill_all()
+        # `abort_turn` also stops the asynchronous subagents, before the save below:
+        # they outlive a turn on purpose, but not the process, and a tree on disk
+        # with a node saying it is still working would be a lie.
         self.abort_turn()
         self.persist()
         self.exit()
@@ -275,10 +278,13 @@ class CommandsMixin:
         await chat.add_notice(f'Loaded session {loaded.short_id}.', style='green')
 
     def bind_session(self, session: object) -> None:
-        """Points the app at ``session``: history, agent, roadmap and persistence."""
+        """Points the app at ``session``: history, agent, tree, roadmap and persistence."""
         self._session = session
         self._history = session.messages
         self.bind_agent(getattr(session, 'agent', ''))
+        # The tree travels with the conversation: loading a session brings back the
+        # subagents it summoned, and the view of a node of the old one has to close.
+        self.remember_tree(session)
         self.bind_roadmap()
         # Another conversation is another window title: the repository is the same
         # and the title is not.

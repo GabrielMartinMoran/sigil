@@ -25,6 +25,7 @@ from src.engine.agents.profile.models.agent_parse_error import AgentParseError
 from src.engine.agents.profile.parser import build_profile, parse_profile
 from src.engine.agents.profile.registry import AgentRegistry
 from src.engine.agents.profile.rendering import render_agent_profile
+from src.engine.agents.profile.source import ProfileSource
 
 FRONTMATTER = '---\nname: {name}\ndescription: {description}\n{extra}---\n'
 
@@ -226,13 +227,13 @@ def test_switching_agent_replaces_the_previous_block(tmp_path):
 def test_a_profile_with_no_installed_set_contributes_nothing(tmp_path):
     registry = AgentRegistry([('project', tmp_path)], active=None)
     assert registry.active is None
-    assert render_agent_profile(registry) == ''
+    assert render_agent_profile(ProfileSource.from_registry(registry)) == ''
 
 
 def test_an_empty_body_is_not_a_block(tmp_path):
     write_profile(tmp_path, 'empty', body='')
     registry = AgentRegistry([('project', tmp_path), ('builtin', tmp_path / 'none')], active='empty')
-    assert render_agent_profile(registry) == ''
+    assert render_agent_profile(ProfileSource.from_registry(registry)) == ''
 
 
 # --- the built-in set --------------------------------------------------------
@@ -243,6 +244,26 @@ def test_the_shipped_wizard_parses():
     profile = registry.require('wizard')
     assert profile.source == 'builtin'
     assert 'Wizard' in registry.active_body()
+
+
+def test_the_shipped_set_has_an_agent_and_a_subagent():
+    """One example of each role: the agent you pick, and one only `summon` starts."""
+    registry = AgentRegistry([('builtin', _builtin_root())], active='wizard')
+    assert [profile.name for profile in registry.agents()] == ['wizard']
+    assert [profile.name for profile in registry.subagents()] == ['scout']
+    assert 'Reads one thing end to end' in registry.require('scout').description
+
+
+def test_the_shipped_subagent_is_read_only():
+    """It reads and reports: the point of summoning it is to not touch the tree."""
+    from src.engine.tooling.permission import ResourceKind, ToolGroup
+
+    permissions = AgentRegistry([('builtin', _builtin_root())], active='scout').require('scout').permissions
+    assert not permissions.advertises('write_file', (ToolGroup.WRITE,))
+    assert not permissions.advertises('patch_file', (ToolGroup.WRITE,))
+    assert permissions.advertises('read_file', (ToolGroup.READ,))
+    assert permissions.permits('run', (ToolGroup.RUN,), ('git status',), ResourceKind.COMMAND)
+    assert not permissions.permits('run', (ToolGroup.RUN,), ('rm -rf build',), ResourceKind.COMMAND)
 
 
 def _builtin_root() -> Path:

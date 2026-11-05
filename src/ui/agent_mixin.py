@@ -26,7 +26,8 @@ from src.ui.widgets.status_bar import StatusBar
 
 NO_PROFILES_NOTICE = (
     'No agent profiles found. Add one at .sigil/agents/<name>.md '
-    'in the project, or ~/.sigil/agents/<name>.md for every project.'
+    'in the project, or ~/.sigil/agents/<name>.md for every project. '
+    'A profile with `role: subagent` is summoned by an agent, not selected here.'
 )
 """What `/agent` says when there is nothing to switch to, and where to put one."""
 
@@ -54,7 +55,7 @@ class AgentMixin:
         registry.refresh()
         for error in self.agent_notices():
             await chat.add_notice(f'✖ {error}', style='yellow')
-        if not len(registry):
+        if not registry.agents():
             await chat.add_notice(NO_PROFILES_NOTICE, style='yellow')
             return
 
@@ -66,13 +67,15 @@ class AgentMixin:
     async def open_agent(self) -> None:
         """The picker, from any context (`/agent` and `ctrl+a`)."""
         registry = getattr(self, '_agent_registry', None)
-        if registry is None or not len(registry):
+        if registry is None or not registry.agents():
             return
         if self.is_refused_while_busy('/agent'):
             await self.refuse_while_busy('/agent', self.query_one(ChatLog))
             return
 
-        choice = await self.push_screen_wait(AgentPickerScreen(registry.list(), current=registry.active_name))
+        # `agents()` and not `list()`: the picker offers what the user may *be*, and
+        # a subagent is only ever started by another agent.
+        choice = await self.push_screen_wait(AgentPickerScreen(registry.agents(), current=registry.active_name))
         if choice is None:
             return
         self.apply_agent(choice.name, self.query_one(ChatLog))
@@ -112,9 +115,17 @@ class AgentMixin:
         Every session carries its agent, the way it carries its model: a new
         session inherits the one in effect, and a saved conversation comes back
         with the one it was built under.
+
+        The root of the tree follows the same name. A tree that kept saying
+        ``Wizard`` over a session run by another profile would be lying about the
+        branch everything else hangs from, and the root's name is the only thing in
+        it that is not a record of something that happened.
         """
         if self._session is not None:
             self._session.agent = profile.name if profile is not None else ''
+        rename = getattr(self, 'rename_tree_root', None)
+        if callable(rename) and profile is not None:
+            rename(profile.name)
         self.refresh_agent()
 
     def refresh_agent(self) -> None:

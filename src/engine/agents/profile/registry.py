@@ -3,6 +3,13 @@
 The registry is the only piece that knows the roots. The UI asks it for the
 metadata list, the agent asks it for the body of the active profile, and the
 permission capability asks it what the active profile allows.
+
+It also keeps the two roles apart. ``list()`` is every installed profile, and
+that is what the summon list is drawn from; ``agents()`` is the ones the user can
+select and ``subagents()`` the ones only a ``summon`` can start. Selecting a
+subagent as the session's agent is refused: the agent at the root of a session is
+the one a person talks to, and a profile written to answer a single task is a bad
+conversation partner.
 """
 
 from __future__ import annotations
@@ -40,12 +47,15 @@ class AgentRegistry:
         # without a prompt: it falls back to the default, then to whatever is
         # installed, and only then to "no profile".
         for candidate in (active, DEFAULT_PROFILE_NAME):
-            if candidate and self.get(candidate) is not None:
-                self._active = str(candidate)
+            if candidate and (profile := self.get(candidate)) is not None and profile.role.selectable:
+                self._active = profile.name
                 break
         else:
-            first = self.list()
-            self._active = first[0].name if first else ''
+            # Only an agent can be the session's: a directory with nothing but
+            # subagents leaves the session without a profile, which is the same
+            # state as an empty one and is painted the same way.
+            selectable = self.agents()
+            self._active = selectable[0].name if selectable else ''
 
     # --- discovery ---------------------------------------------------------
 
@@ -76,7 +86,12 @@ class AgentRegistry:
         self._profiles.clear()
         self.errors.clear()
         self._discover()
-        self._active = active if self.get(active) is not None else (self.list()[0].name if self.list() else '')
+        current = self.get(active) if active else None
+        if current is not None and current.role.selectable:
+            self._active = current.name
+        else:
+            selectable = self.agents()
+            self._active = selectable[0].name if selectable else ''
         return self
 
     # --- queries -----------------------------------------------------------
@@ -96,6 +111,14 @@ class AgentRegistry:
         order = {source: index for index, (source, _) in enumerate(reversed(self._roots))}
         return sorted(self._profiles.values(), key=lambda profile: (order.get(profile.source, 99), profile.name))
 
+    def agents(self) -> list[AgentProfile]:
+        """The profiles the user can select: the ones with the ``agent`` role."""
+        return [profile for profile in self.list() if profile.role.selectable]
+
+    def subagents(self) -> list[AgentProfile]:
+        """The profiles a ``summon`` can start, whatever the permissions allow."""
+        return [profile for profile in self.list() if not profile.role.selectable]
+
     def get(self, name: str) -> AgentProfile | None:
         if not isinstance(name, str):
             return None
@@ -107,6 +130,24 @@ class AgentRegistry:
         if profile is None:
             available = ', '.join(profile.name for profile in self.list()) or 'none'
             raise AgentNotFound(f"Unknown agent '{name}'. Available agents: {available}.")
+        return profile
+
+    def require_subagent(self, name: str) -> AgentProfile:
+        """The profile a ``summon`` names, which has to exist and be a subagent.
+
+        Raises:
+            AgentNotFound: When nothing is installed under that name, or when the
+                profile exists but is an agent: an agent cannot be started as a
+                subagent of a session whose root it could be itself.
+        """
+        profile = self.get(name)
+        if profile is None:
+            available = ', '.join(candidate.name for candidate in self.subagents()) or 'none'
+            raise AgentNotFound(f"Unknown subagent '{name}'. Available subagents: {available}.")
+        if profile.role.selectable:
+            raise AgentNotFound(
+                f"'{profile.name}' is an agent, not a subagent: add `role: subagent` to its profile to summon it."
+            )
         return profile
 
     # --- the active profile ------------------------------------------------
@@ -127,6 +168,11 @@ class AgentRegistry:
             AgentNotFound: When nothing is installed under that name.
         """
         profile = self.require(name)
+        if not profile.role.selectable:
+            raise AgentNotFound(
+                f"'{profile.name}' is a subagent: only an agent can be the agent of a session. "
+                'An agent summons it with the `summon` tool.'
+            )
         self._active = profile.name
         return profile
 

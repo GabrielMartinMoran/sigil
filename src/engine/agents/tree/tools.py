@@ -1,0 +1,204 @@
+"""The tools that make a tree of agents a place you can work in.
+
+Four of them, and they are one vocabulary — the subagents an agent can start and
+manage:
+
+| Tool | What it does |
+| --- | --- |
+| `summon` | Starts a subagent, or resumes one by its id |
+| `send_message` | Steers a child, or answers a notice |
+| `kill_subagent` | Stops a subagent and everything under it |
+| `list_agents` | Shows the ids, names and states of the branch |
+
+`list_agents` is not a convenience: the ids are minted at run time, so the only
+honest way for an agent to learn them (again, after a compaction, or after a
+resume) is to ask. It is also what makes the tools usable without trusting the
+prompt's table to still be accurate.
+
+Every rule about *who* may do *what* lives in the summoner, not here, and the
+permission is the tool's group: a profile that closes `summon` closes all four,
+because managing subagents is one capability and not four.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from pydantic_ai import RunContext
+
+from src.engine.agents.tree.rendering import SUMMON_GROUP, SUMMON_TOOL
+from src.engine.agents.tree.summoner import SigilDeps, SubagentSummoner, SummonMode
+from src.engine.tooling.logging import ToolLogger
+from src.engine.tooling.permission import ToolPermission
+from src.engine.tooling.registrar import ToolRegistrar
+
+if TYPE_CHECKING:
+    from pydantic_ai import Agent
+
+    from src.engine.agents.tree.tree import AgentTree
+
+SUMMON_DESCRIPTION = (
+    'Start a subagent: a separate agent with its own profile, model and context that does one '
+    'task and reports back. It does not see this conversation, so write the task as a complete '
+    'brief. `mode="sync"` blocks until it answers and returns that message; `mode="async"` '
+    'returns immediately and delivers the message later as a new user message. Pass `agent_id` '
+    'to continue a subagent that already ran: it keeps its transcript, so the task is a new '
+    'instruction on top of what it did.'
+)
+
+SEND_DESCRIPTION = (
+    'Send a message to another agent of this session: to a child (an instruction it will act on) '
+    'or back to your parent (a notice). Siblings can be messaged only if your channel names them '
+    'and they are running. Use it to steer a subagent mid-run instead of waiting for it to finish.'
+)
+
+KILL_DESCRIPTION = (
+    'Stop a subagent and everything it summoned. Use it when a background subagent is no longer '
+    'useful, or when one is clearly going the wrong way: its work is kept in the tree, so it can '
+    'be resumed later with `summon(agent_id=…)`.'
+)
+
+LIST_DESCRIPTION = (
+    'List the agents of this session with their ids, names, states and who summoned them. The ids '
+    'are what `summon(agent_id=…)`, `send_message` and `kill_subagent` take.'
+)
+
+_SUMMON = ToolPermission(groups=SUMMON_GROUP)
+"""No resource: the permission is the tool, not the name inside the call.
+
+`summon` narrows by subagent *name* because that is what a profile declares. The
+other three act on an execution id, which no profile can know in advance, so they
+are ruled on whole-tool: `summon: deny` closes the four, and a narrowed allow list
+narrows only what may be summoned.
+"""
+
+
+def register_tree_tools(
+    agent: Agent[Any, Any],
+    summoner: SubagentSummoner,
+    *,
+    logger: ToolLogger | None = None,
+) -> None:
+    """Registers the four tools of the tree on ``agent``."""
+    registrar = ToolRegistrar(agent, logger)
+
+    async def summon(
+        ctx: RunContext[SigilDeps],
+        task: str,
+        agent: str = '',
+        mode: SummonMode = 'sync',
+        agent_id: str = '',
+    ) -> str:
+        """Summon a subagent, or continue one that already ran.
+
+        Args:
+            task: What it has to do, or the new instruction for a resumed subagent.
+                It cannot see this conversation: include every path, name and detail
+                it needs, and say what to report back.
+            agent: Name of the subagent profile, exactly as listed in your
+                instructions. Ignored when `agent_id` is given.
+            mode: `sync` to wait for the answer, `async` to keep working and receive
+                it later as a new user message.
+            agent_id: Id of a subagent that already ran (or that ran out of steps),
+                to continue it on top of its own transcript instead of starting over.
+        """
+        # `getattr` and not `ctx.deps.node_id`: a run started without deps (a test,
+        # an embedding) must summon from the root instead of failing.
+        return await summoner.summon(
+            parent_id=getattr(ctx.deps, 'node_id', None),
+            name=agent,
+            task=task,
+            mode=mode,
+            agent_id=agent_id or None,
+        )
+
+    def send_message(ctx: RunContext[SigilDeps], agent_id: str, message: str) -> str:
+        """Send a message to another agent of this session.
+
+        Args:
+            agent_id: Id of the agent to message, as returned by `summon` or listed
+                by `list_agents`.
+            message: What to tell it. To a child this is an instruction; to your
+                parent or a sibling it is a notice, which they may or may not act on.
+        """
+        return summoner.send_message(
+            sender_id=getattr(ctx.deps, 'node_id', None),
+            target_id=agent_id,
+            text=message,
+        )
+
+    def kill_subagent(ctx: RunContext[SigilDeps], agent_id: str) -> str:
+        """Stop a subagent, and everything it summoned.
+
+        Args:
+            agent_id: Id of the agent to stop, as returned by `summon` or listed by
+                `list_agents`.
+        """
+        return summoner.kill(getattr(ctx.deps, 'node_id', None), agent_id)
+
+    def list_agents(ctx: RunContext[SigilDeps]) -> str:
+        """List the agents of this session: ids, names, states and who summoned them."""
+        node_id = getattr(ctx.deps, 'node_id', None)
+        return render_tree_table(summoner.tree(), node_id)
+
+    registrar.register(
+        summon,
+        use_context=True,
+        name=SUMMON_TOOL,
+        description=SUMMON_DESCRIPTION,
+        permission=ToolPermission(groups=SUMMON_GROUP, resource='agent'),
+    )
+    registrar.register(
+        send_message,
+        use_context=True,
+        name='send_message',
+        description=SEND_DESCRIPTION,
+        permission=_SUMMON,
+    )
+    registrar.register(
+        kill_subagent,
+        use_context=True,
+        name='kill_subagent',
+        description=KILL_DESCRIPTION,
+        permission=_SUMMON,
+    )
+    registrar.register(
+        list_agents,
+        use_context=True,
+        name='list_agents',
+        description=LIST_DESCRIPTION,
+        permission=_SUMMON,
+    )
+
+
+def render_tree_table(tree: AgentTree | None, viewer_id: str | None) -> str:
+    """The tree as a compact table, marking who is asking.
+
+    It is what the model reads when it calls `list_agents`: one line per node, the
+    id first because that is what every other tool takes.
+    """
+    if tree is None:
+        return 'There is no agent tree in this session.'
+    nodes = tree.nodes()
+    if len(nodes) <= 1:
+        return 'This session has no subagents yet.'
+    lines = ['id | agent | state | mode | who summoned it | task']
+    for node in nodes:
+        parent = tree.parent(node.id)
+        marker = ' (you)' if node.id == viewer_id else ''
+        task = ' '.join(node.task.split())[:70]
+        lines.append(
+            f'{node.short_id} | {node.name}{marker} | {node.status} | {node.mode} | '
+            f'{parent.short_id if parent is not None else "-"} | {task}'
+        )
+    return '\n'.join(lines)
+
+
+__all__ = [
+    'KILL_DESCRIPTION',
+    'LIST_DESCRIPTION',
+    'SEND_DESCRIPTION',
+    'SUMMON_DESCRIPTION',
+    'register_tree_tools',
+    'render_tree_table',
+]

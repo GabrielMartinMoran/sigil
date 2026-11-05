@@ -7,10 +7,14 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from src.engine.agents.agent import create_agent
+from src.engine.agents.factory import AgentFactory, AgentSpec
 from src.engine.agents.model_features import IMAGE_INPUT, ModelFeatureGate
 from src.engine.agents.profile.registry import AgentRegistry
 from src.engine.agents.retry import RetryTransientModelErrors
+from src.engine.agents.tree.rendering import SUMMON_TOOL, render_peers, summonable
+from src.engine.agents.tree.store import AgentTreeStore
+from src.engine.agents.tree.summoner import SubagentSummoner
+from src.engine.agents.tree.tools import register_tree_tools
 from src.engine.attachments.tools import register_image_tools
 from src.engine.context.capability import ContextViewCapability
 from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
@@ -29,6 +33,7 @@ from src.engine.mcp.tools import register_mcp_tools
 from src.engine.paths import providers_dir
 from src.engine.preferences import PreferencesStore
 from src.engine.providers.bootstrap import ProviderPaths, build_service
+from src.engine.providers.domain.thinking import settings_value as thinking_settings
 from src.engine.providers.factory.unconfigured import UnconfiguredModel
 from src.engine.providers.login.chatgpt_flow import ChatGPTLoginFlow
 from src.engine.providers.login.credential_source import chatgpt_provider_factory
@@ -62,6 +67,17 @@ def _active_provider(model_service: Any) -> str | None:
     except Exception:  # noqa: BLE001 - the router can be unconfigured
         return None
     return getattr(model, 'system', None)
+
+
+def _model_settings(model_service: Any) -> dict[str, Any] | None:
+    """The reasoning level in effect, in the shape a run takes.
+
+    Subagents run on the same level as the parent: it is the same account and the
+    same model, and a subagent quietly reasoning less than the agent that summoned
+    it would be a difference nobody asked for.
+    """
+    value = thinking_settings(model_service.snapshot().thinking)
+    return None if value is None else {'thinking': value}
 
 
 def _build_strategy(settings: SigilSettings):
@@ -147,6 +163,12 @@ def run() -> None:
     # it was using, so a resumed conversation comes back with its own agent.
     agent_registry = AgentRegistry(active=session.agent)
 
+    # The tree of the session: the agent the user talks to at the root, and every
+    # subagent summoned under it. It is resumed with the conversation, which is why
+    # it lives on the session and this store only decides which one is in effect.
+    agent_trees = AgentTreeStore()
+    agent_trees.bind(session, root_name=agent_registry.active_name)
+
     # Providers: accounts, credentials and the model the agent talks to. The
     # router starts on a model that refuses to run until something is configured,
     # so the app opens and `/provider` is reachable from a cold start.
@@ -220,9 +242,14 @@ def run() -> None:
             return model_service.snapshot().images
         return True
 
-    def available_features() -> frozenset[str]:
-        """What the model will see on the next request: tools and features."""
-        profile = agent_registry.active
+    def available_features(agent_name: str | None = None) -> frozenset[str]:
+        """What the model will see on the next request: tools and features.
+
+        ``agent_name`` is the profile the request is for: ``None`` means the agent
+        in effect (the root of the session). A subagent renders its own prompt with
+        its own profile, and the tools it is told about are the ones it has.
+        """
+        profile = agent_registry.active if agent_name is None else agent_registry.get(agent_name)
         features: set[str] = set()
         if supports(IMAGE_INPUT):
             features.add(IMAGE_INPUT)
@@ -232,34 +259,78 @@ def run() -> None:
             groups = () if declaration.permission is None else declaration.permission.groups
             if profile is not None and not profile.permissions.advertises(declaration.name, groups):
                 continue
+            # `summon` is only offered when there is someone to summon: a profile
+            # that may not start any subagent does not need a tool that would fail.
+            if declaration.name == SUMMON_TOOL and profile is not None and not summonable(agent_registry, profile):
+                continue
             features.add(declaration.name)
         return frozenset(features)
 
     feature_gate = ModelFeatureGate(supports=supports)
 
-    agent = create_agent(
-        skill_registry,
-        model=model_service.current_model(),
-        # The placeholder, not the real toolsets: the agent is built before the
-        # MCP layer exists, and `MCPGateway.install` fills it in.
-        toolsets=[mcp.pending],
-        model_retry=model_retry,
-        workspace=workspace,
-        scope=scope,
-        loaded_skills=loaded_skills,
-        agent_registry=agent_registry,
-        extra_capabilities=[context_capability, feature_gate],
-        available_features=available_features,
+    # Agents of the tree are built from the same parts as the root. The factory
+    # holds them; the summoner is what creates nodes and runs them.
+    summoner = SubagentSummoner(
+        trees=agent_trees,
+        registry=agent_registry,
+        # Resolved per summon: the factory needs the summoner to install the tool,
+        # and the summoner needs the factory to build a node, so one of the two has
+        # to be late.
+        builder=lambda: factory.for_profile,
+        max_steps=settings.max_steps,
+        model=lambda: model_service.snapshot().label,
+        model_settings=lambda: _model_settings(model_service),
     )
 
-    register_shell_tools(agent, logger=tool_logger, catalog=tool_catalog)
-    register_skill_tools(agent, skill_registry, logger=tool_logger, loaded=loaded_skills, catalog=tool_catalog)
-    register_mcp_tools(agent, mcp, logger=tool_logger, catalog=tool_catalog)
-    register_web_tools(agent, logger=tool_logger, catalog=tool_catalog)
-    register_file_tools(agent, logger=tool_logger, catalog=tool_catalog)
-    register_image_tools(agent, logger=tool_logger, catalog=tool_catalog)
-    register_interaction_tools(agent, question_hub, logger=tool_logger, catalog=tool_catalog)
-    register_roadmap_tools(agent, roadmap_store, logger=tool_logger, catalog=tool_catalog)
+    # The listeners are the UI's: it is what paints the tree and what holds the run a
+    # late message has to reach. They are attached on mount, so an app built without
+    # them keeps the messages pending instead of losing them.
+
+    def node_blocks(node_id: str | None) -> str:
+        """The instructions of one execution: the agents around it.
+
+        Rendered per request from the node id of the run, because the tree moves
+        under it: a sibling that was running when the subagent was summoned may have
+        finished since, and a table of ids painted once would be stale facts.
+        """
+        tree = agent_trees.active
+        node = tree.node(node_id)
+        profile = agent_registry.get(node.name) if node is not None else agent_registry.active
+        return render_peers(tree, node_id, profile=profile, is_live=summoner.is_live)
+
+    def install_tools(target: Any) -> None:
+        """Every tool every agent of the session gets. The root included."""
+        register_shell_tools(target, logger=tool_logger, catalog=tool_catalog)
+        register_skill_tools(target, skill_registry, logger=tool_logger, loaded=loaded_skills, catalog=tool_catalog)
+        register_mcp_tools(target, mcp, logger=tool_logger, catalog=tool_catalog)
+        register_web_tools(target, logger=tool_logger, catalog=tool_catalog)
+        register_file_tools(target, logger=tool_logger, catalog=tool_catalog)
+        register_image_tools(target, logger=tool_logger, catalog=tool_catalog)
+        register_interaction_tools(target, question_hub, logger=tool_logger, catalog=tool_catalog)
+        register_roadmap_tools(target, roadmap_store, logger=tool_logger, catalog=tool_catalog)
+        register_tree_tools(target, summoner, logger=tool_logger)
+
+    factory = AgentFactory(
+        AgentSpec(
+            model=model_service.current_model(),
+            skill_registry=skill_registry,
+            # The placeholder, not the real toolsets: the agent is built before the
+            # MCP layer exists, and `MCPGateway.install` fills it in. The same
+            # placeholder reaches every subagent, so it comes up for them too.
+            toolsets=[mcp.pending],
+            model_retry=model_retry,
+            workspace=workspace,
+            scope=scope,
+            loaded_skills=loaded_skills,
+            agent_registry=agent_registry,
+            extra_capabilities=[context_capability, feature_gate],
+            tool_registrars=[install_tools],
+            node_blocks=node_blocks,
+            available_features=available_features,
+        )
+    )
+
+    agent = factory.root()
 
     SigilApp(
         agent=agent,
@@ -286,4 +357,6 @@ def run() -> None:
         preferences_store=PreferencesStore(),
         themes=ThemeRegistry.load(),
         agent_registry=agent_registry,
+        agent_tree=agent_trees,
+        summoner=summoner,
     ).run()

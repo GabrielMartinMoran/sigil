@@ -44,7 +44,7 @@ from textual import work
 from textual.css.query import NoMatches
 from textual.widgets import Static
 
-from src.engine.agents.step_limiter import StepLimiter, StepLimitExceeded
+from src.engine.agents.step_budget import StepBudget
 from src.engine.attachments.content import user_content
 from src.engine.attachments.image_attachment import ImageAttachment
 from src.engine.providers.domain.thinking import settings_value as thinking_settings
@@ -164,12 +164,11 @@ class TurnMixin:
         if callable(refresh_debug):
             refresh_debug(messages)
 
-    def turn_handler(self, limiter: StepLimiter, chat: ChatLog) -> Any:
+    def turn_handler(self, chat: ChatLog) -> Any:
         """Stream handler that feeds the chat and the checkpoints."""
 
         async def handler(_ctx: Any, events: Any) -> None:
             async for event in events:
-                limiter.count(event)
                 # Checkpoint per event: as soon as the run adds a message to
                 # the history (e.g. the user prompt) it lands on disk.
                 self.checkpoint()
@@ -333,6 +332,9 @@ class TurnMixin:
         self._stop_abort_timer()
         self._paint_status(STOPPING_HINT, style='yellow')
         running_commands.kill_all()
+        # A subagent started by this turn has no reason to outlive it: `Esc` twice
+        # means stop, and a background node still spending tokens is not stopped.
+        self.stop_subagents()
         run = self._current_run
         if run is None:
             return
@@ -373,8 +375,26 @@ class TurnMixin:
         # conversation the user just loaded.
         session = self._session
         chat = self.query_one(ChatLog)
-        limiter = StepLimiter(self._settings.max_steps)
-        handler = self.turn_handler(limiter, chat)
+        # What a subagent sent while nothing was running: it travels with this
+        # turn's prompt, before what the user typed, because it is the answer to
+        # something the agent did earlier.
+        pending = self._take_subagent_messages()
+        if pending:
+            text = '\n\n'.join([*pending, text])
+            await chat.add_notice(
+                f'{len(pending)} message(s) from subagents arrived while the session was idle; they go with this turn.',
+                style='dim',
+            )
+        # The turn's budget, in the same shape a subagent gets one: when the steps
+        # run out, the tools are taken away and the model is asked for a last answer
+        # instead of the turn dying with nothing to show. The user keeps a complete
+        # report of where the agent got, and the next message continues from there.
+        #
+        # The profile decides first and the environment is the fallback: a profile
+        # that declares `max_steps` is saying how long *it* wants to work, and it is
+        # the same key a subagent uses — one rule for both kinds of agent.
+        budget = StepBudget(max_steps=self._turn_budget(), role='turn')
+        handler = self.turn_handler(chat)
         # The bar says what is happening from the first second: a turn that looks
         # like an idle app is a turn the user interrupts or repeats. The prompt
         # stays usable (see `steer`), so nothing is disabled here.
@@ -415,7 +435,7 @@ class TurnMixin:
             async with self._agent.iter(
                 user_content(text, attachments),
                 message_history=history,
-                capabilities=[ProcessEventStream(handler=handler)],
+                capabilities=[ProcessEventStream(handler=handler), budget],
                 model_settings=self.model_settings(),
                 usage_limits=UsageLimits(request_limit=None),
             ) as run:
@@ -427,13 +447,6 @@ class TurnMixin:
                     # response, tool batch) gets persisted.
                     self.checkpoint()
             history = run.all_messages()
-        except StepLimitExceeded:
-            if run is not None:
-                history = run.all_messages()
-            await chat.add_notice(
-                f'Step limit of {self._settings.max_steps} reached; turn aborted.',
-                style='bold red',
-            )
         except RunCancelled:
             # The user stopped the turn: cancelling an `ask_user` panel, or `Esc`
             # twice. It is not an error, so there is no error to report. What the
@@ -486,6 +499,12 @@ class TurnMixin:
                 'The turn ended before that message was read; it is back in the prompt.',
                 style='yellow',
             )
+        if budget.exhausted:
+            await chat.add_notice(
+                f'Step limit of {budget.max_steps} reached: the turn got one last call without tools '
+                'to report what it had.',
+                style='yellow',
+            )
         prompt.focus()
         self.refresh_sidebar()
         # The turn just wrote files: the bar shows the tree as it is now, not as it
@@ -495,6 +514,21 @@ class TurnMixin:
         refresh_debug = getattr(self, 'refresh_debug', None)
         if callable(refresh_debug):
             refresh_debug()
+
+    def _turn_budget(self) -> int:
+        """The steps this turn gets: the profile's own, or the configured default.
+
+        `/agent` can switch the profile mid-session, and the budget follows it: a
+        profile written to answer briefly is allowed to be brief.
+        """
+        profile = self.active_agent()
+        declared = getattr(profile, 'max_steps', None)
+        return declared if declared else self._settings.max_steps
+
+    def _take_subagent_messages(self) -> list[str]:
+        """Messages waiting in the summoner, if the app has one."""
+        take = getattr(self, 'take_subagent_messages', None)
+        return take() if callable(take) else []
 
     # --- status bar --------------------------------------------------------
 

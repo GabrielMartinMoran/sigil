@@ -279,15 +279,19 @@ def test_markdown_output_is_rendered_in_app(monkeypatch):
     asyncio.run(inner())
 
 
-def test_step_limit_abort_preserves_session_and_context(monkeypatch):
+def test_step_limit_gives_the_turn_one_last_answer(monkeypatch):
     """Regression: exhausting the steps of a turn does not lose the session.
 
-    The aborted turn must keep what was completed (including the user
-    message), be persisted to disk and serve as context for the next turn.
+    The turn used to be aborted when the limit was reached, which threw away what
+    the agent had established. Now it gets one extra call with the tools taken away
+    and a message saying why, so the user reads a report instead of a cut-off turn —
+    and the context is still there for the next message.
     """
     from src.engine.settings import SigilSettings
 
-    monkeypatch.setattr(appmod, 'load_settings', lambda *a, **k: SigilSettings(max_steps=2))
+    # One step: the tool call of the first request uses it up, so the second
+    # request is the extra one, with no tools.
+    monkeypatch.setattr(appmod, 'load_settings', lambda *a, **k: SigilSettings(max_steps=1))
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -307,10 +311,14 @@ def test_step_limit_abort_preserves_session_and_context(monkeypatch):
                 await pilot.press('enter')
                 await _wait_idle(app, pilot)
 
-                # The turn was cut by the limit, but the context was not lost.
+                # The turn hit the limit; it says so and it kept its context.
                 assert any('Step limit' in text for text in _chat_texts(app))
                 assert len(app._history) >= 2
                 assert len(app._session.messages) == len(app._history)
+                # The last word was asked for, with no tools left to call.
+                assert any('StepBudget' in text for text in _chat_texts(app)) or any(
+                    'StepBudget' in str(message) for message in app._history
+                )
 
                 # The session was saved and shows up in the listing with a preview.
                 sessions = store.list_sessions()
@@ -319,8 +327,7 @@ def test_step_limit_abort_preserves_session_and_context(monkeypatch):
                 await pilot.press('a', 'g', 'a', 'i', 'n')
 
                 reloaded = store.load(session.id)
-                # The next turn starts with all the previous context.
-                assert len(reloaded.messages) == len(app._history)
+                assert reloaded is not None and len(reloaded.messages) == len(app._history)
 
                 # The next turn starts with all the previous context.
                 prior = len(app._history)

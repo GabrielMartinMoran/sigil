@@ -94,6 +94,34 @@ def test_a_narrowed_rule_keeps_the_tool_visible():
     assert permissions.advertises('run', (ToolGroup.RUN,))
 
 
+def test_summon_is_a_scope_and_the_subagent_name_is_its_resource():
+    """`summon` is ruled on like the rest, with the profile name as the resource."""
+    permissions = parse_permissions(
+        {'all': 'deny', 'summon': {'allow': ['scout', 'review-*'], 'deny': ['review-secret']}}
+    )
+    assert permissions.advertises('summon', (ToolGroup.SUMMON,))
+    assert permissions.permits('summon', (ToolGroup.SUMMON,), ('scout',))
+    assert permissions.permits('summon', (ToolGroup.SUMMON,), ('review-api',))
+    assert not permissions.permits('summon', (ToolGroup.SUMMON,), ('review-secret',))
+    assert not permissions.permits('summon', (ToolGroup.SUMMON,), ('wizard',))
+
+
+def test_summoning_everything_is_a_wildcard():
+    permissions = parse_permissions({'summon': {'allow': ['*']}})
+    assert permissions.permits('summon', (ToolGroup.SUMMON,), ('anything',))
+
+
+def test_denying_summon_hides_the_tool_entirely():
+    permissions = parse_permissions({'summon': 'deny'})
+    assert not permissions.advertises('summon', (ToolGroup.SUMMON,))
+
+
+def test_no_summon_rule_leaves_every_subagent_available():
+    permissions = parse_permissions(None)
+    assert permissions.advertises('summon', (ToolGroup.SUMMON,))
+    assert permissions.permits('summon', (ToolGroup.SUMMON,), ('scout',))
+
+
 def test_an_unknown_scope_is_an_error_not_an_open_agent():
     with pytest.raises(AgentParseError, match='Unknown permission scope'):
         parse_permissions({'reed': 'deny'})

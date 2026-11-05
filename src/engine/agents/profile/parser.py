@@ -1,11 +1,14 @@
 """Parsing and validation of an agent profile (Markdown + frontmatter).
 
-An agent profile is a Markdown file with three known keys in its frontmatter:
+An agent profile is a Markdown file with six known keys in its frontmatter:
 
 ```markdown
 ---
 name: wizard
 description: What this agent is for, in one line.
+role: agent
+max_steps: 40
+channel: bidirectional
 permissions:
   allow: ['read_*', 'write_file', 'patch_file']
   deny: [run]
@@ -25,6 +28,8 @@ from typing import Any
 
 from src.engine.agents.profile.models.agent_parse_error import AgentParseError
 from src.engine.agents.profile.models.agent_profile import AgentProfile
+from src.engine.agents.profile.models.agent_role import AgentRole
+from src.engine.agents.profile.models.channel import parse_channel
 from src.engine.agents.profile.permissions import parse_permissions
 from src.engine.markdown.frontmatter import FrontmatterError
 from src.engine.markdown.frontmatter import split_frontmatter as _split
@@ -33,13 +38,46 @@ _NAME_RE = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
 _MAX_NAME_LENGTH = 64
 _MAX_DESCRIPTION_LENGTH = 1024
 
-_KNOWN_KEYS = {'name', 'description', 'permissions'}
+_KNOWN_KEYS = {'name', 'description', 'role', 'max_steps', 'channel', 'permissions'}
 
 
 def _clean_string(value: Any, field_name: str) -> str:
     if not isinstance(value, str):
         raise AgentParseError(f'`{field_name}` must be a string, got {type(value).__name__}.')
     return value.strip()
+
+
+def _max_steps(data: dict[str, Any]) -> int | None:
+    """The per-run budget this profile declares, or ``None`` when it says nothing.
+
+    A budget of zero is not "no budget": it is a profile that can never answer, so
+    it is rejected along with the negatives.
+    """
+    raw = data.get('max_steps')
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise AgentParseError(f'`max_steps` must be a positive integer, got {type(raw).__name__}.')
+    if raw < 1:
+        raise AgentParseError(f'`max_steps` must be at least 1; got {raw}.')
+    return raw
+
+
+def _role(data: dict[str, Any]) -> AgentRole:
+    """The declared role, ``agent`` when the file says nothing.
+
+    A typo here would leave a subagent listed in the picker, or hide the profile
+    the user meant to select, so an unknown value is an error and not a fallback.
+    """
+    raw = data.get('role')
+    if raw is None:
+        return AgentRole.AGENT
+    text = _clean_string(raw, 'role').lower()
+    try:
+        return AgentRole(text)
+    except ValueError:
+        known = ', '.join(f'`{role}`' for role in AgentRole)
+        raise AgentParseError(f'`role` must be one of {known}; got {text!r}.') from None
 
 
 def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -78,7 +116,10 @@ def build_profile(data: dict[str, Any], *, profile_file: Path, source: str) -> A
     unknown = set(data) - _KNOWN_KEYS
     if unknown:
         names = ', '.join(sorted(str(key) for key in unknown))
-        raise AgentParseError(f'Unknown frontmatter keys: {names}. Use `name`, `description` and `permissions`.')
+        raise AgentParseError(
+            f'Unknown frontmatter keys: {names}. '
+            'Use `name`, `description`, `role`, `max_steps`, `channel` and `permissions`.'
+        )
 
     return AgentProfile(
         name=name,
@@ -87,6 +128,9 @@ def build_profile(data: dict[str, Any], *, profile_file: Path, source: str) -> A
         profile_file=profile_file.resolve(),
         source=source,
         permissions=parse_permissions(data.get('permissions')),
+        role=_role(data),
+        max_steps=_max_steps(data),
+        channel=parse_channel(data.get('channel')),
     )
 
 
@@ -99,3 +143,17 @@ def parse_profile(profile_file: Path, *, source: str) -> tuple[AgentProfile, str
         raise AgentParseError(f'Cannot read {profile_file}: {exc}') from exc
     data, body = split_frontmatter(text)
     return build_profile(data, profile_file=profile_file, source=source), body.strip()
+
+
+def read_body(profile: AgentProfile) -> str:
+    """The body of an already-parsed profile, re-read from disk.
+
+    A profile can be momentarily broken while the user edits it. An agent that
+    cannot read its own prompt runs with the base one instead of failing the
+    request, which is what the registry already does for the active profile.
+    """
+    try:
+        _, body = parse_profile(profile.profile_file, source=profile.source)
+    except AgentParseError:
+        return ''
+    return body

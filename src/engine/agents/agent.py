@@ -4,13 +4,16 @@ import os
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 
 from src.engine.agents.profile.capability import ToolPermissionsCapability
 from src.engine.agents.profile.rendering import render_agent_profile
+from src.engine.agents.profile.source import ProfileSource
 from src.engine.agents.prompts.render import render
 from src.engine.agents.retry import RetryTransientModelErrors
 from src.engine.agents.tool_errors import ToolErrorRecovery
+from src.engine.agents.tree.rendering import render_subagents
+from src.engine.agents.tree.summoner import SigilDeps
 from src.engine.providers.factory.unconfigured import UnconfiguredModel
 from src.engine.settings import DEFAULT_MODEL_MAX_ATTEMPTS
 from src.engine.skills.rendering import render_available_skills, render_loaded_skills
@@ -45,8 +48,10 @@ def create_agent(
     scope: ScopeTracker | None = None,
     loaded_skills: LoadedSkills | None = None,
     agent_registry: AgentRegistry | None = None,
+    profile: ProfileSource | None = None,
     extra_capabilities: Sequence[AbstractCapability] | None = None,
     available_features: Callable[[], frozenset[str]] | None = None,
+    node_blocks: Callable[[str | None], str] | None = None,
 ) -> Agent:
     """Builds the agent.
 
@@ -56,19 +61,34 @@ def create_agent(
             configured yet it is an ``UnconfiguredModel`` that refuses to run with
             an actionable message instead of failing at import time.
         agent_registry: The agent profiles. The active one contributes an
-            instruction block and decides which tools exist.
+            instruction block and decides which tools exist. It is also what the
+            subagent block is listed from.
+        profile: The profile of *this* agent, when it is not the active one of the
+            registry. A subagent pins the profile that summoned it for its whole
+            run; the root leaves it out and follows `/agent`. When given, the
+            registry is only used to know which subagents exist.
+        node_blocks: The part of the instructions that belongs to one *execution*
+            and not to a profile: the agents around it, the messages waiting for
+            it. It receives the node id of the run — ``None`` for the root — and
+            is rendered per request, because the tree changes under it.
     """
     # Provider 502/429/timeouts are retried before bringing the turn down.
     if model_retry is None:
         model_retry = RetryTransientModelErrors(max_attempts=DEFAULT_MODEL_MAX_ATTEMPTS)
 
+    source = (
+        profile
+        if profile is not None
+        else (None if agent_registry is None else ProfileSource.from_registry(agent_registry))
+    )
+
     capabilities: list[AbstractCapability] = [model_retry, ToolErrorRecovery()]
-    if agent_registry is not None:
+    if source is not None:
         # Not an `append` block: switching agent replaces the block, and the
         # previous profile's instructions have to stop travelling with the
         # conversation. It goes right after the base prompt, before everything
         # that describes the session.
-        capabilities.append(ToolPermissionsCapability(registry=agent_registry))
+        capabilities.append(ToolPermissionsCapability(source=source))
 
     prompt_template = _load_prompt()
 
@@ -79,6 +99,10 @@ def create_agent(
     agent = Agent(
         model if model is not None else UnconfiguredModel(),
         name='Sigil',
+        # Every run knows the node it belongs to. The root's run carries `None` and
+        # resolves the session's root node from the tree, which is what lets `/load`
+        # swap a session under a long-lived agent.
+        deps_type=SigilDeps,
         description='A helpful coding assistant.',
         # Rendered once per request against what the model can see. It still goes
         # first, so the prefix stays cacheable while nothing changes.
@@ -92,12 +116,27 @@ def create_agent(
         toolsets=list(toolsets or []),
     )
 
-    if agent_registry is not None:
+    if source is not None:
         # The profile has to be able to set the behaviour, so its block goes
         # before the ones that only describe the workspace.
         @agent.instructions(name='agent-profile')
         def _agent_profile() -> str:
-            return render_agent_profile(agent_registry)
+            return render_agent_profile(source)
+
+    if node_blocks is not None:
+        # Per run, not per profile: one agent object serves every execution of its
+        # profile, and the block it contributes depends on which node is running.
+        @agent.instructions(name='node-context')
+        def _node_context(ctx: RunContext[SigilDeps]) -> str:
+            return node_blocks(ctx.deps.node_id if ctx.deps is not None else None)
+
+    if agent_registry is not None and source is not None:
+        # Right after the profile: which subagents it may start is part of what the
+        # profile is, and it changes when the folder does, so it is rebuilt per
+        # request like the body above.
+        @agent.instructions(name='subagents')
+        def _subagents() -> str:
+            return render_subagents(agent_registry, source.profile())
 
     if workspace is not None and scope is not None:
         # `on_change='append'`: the scope widens mid-turn when a

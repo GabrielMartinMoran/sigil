@@ -3,6 +3,45 @@
 Terminal agent built with [pydantic-ai](https://ai.pydantic.dev/) and
 [Textual](https://textual.textualize.io/).
 
+## Running it
+
+The workspace is the directory you start from, not the directory Sigil lives in:
+
+```bash
+cd ~/projects/thing
+/path/to/sigil/sigil          # talks about ~/projects/thing
+```
+
+Symlink it once and the path stops mattering:
+
+```bash
+ln -s /path/to/sigil/sigil ~/.local/bin/sigil
+```
+
+The launcher resolves its own location through symlinks and never moves the
+process, so `uv` runs the environment next to Sigil's code while the workspace,
+the project config and `.git` are the ones where you are standing. Nothing is
+written into the project you open.
+
+Three places decide what Sigil sees:
+
+| Where | What comes from there |
+| --- | --- |
+| **The directory you run it in** | The workspace the tools read and write, `.sigil/agents`, `.agents/skills`, `.sigil/config.json` (MCP), and which sessions you get (bucketed by directory) |
+| **Sigil's own directory** | The base prompt, the built-in agents (`wizard`, `scout`), the theme defaults, and the `.env` it loads |
+| **`~/.sigil`** (`SIGIL_HOME`) | Sessions, roadmaps, provider accounts and credentials, themes, worktrees |
+
+A project profile shadows a global one, and both shadow a built-in of the same
+name: opening Sigil in a project without `.sigil/agents` still gives you `wizard`
+and `scout`, and dropping a `wizard.md` there takes over the name.
+
+> **`.env`.** Sigil reads the one next to its own code, or in a parent directory of
+> it — never the one in the project you opened. A project's `.env` holds that
+> project's secrets; letting it reach `SIGIL_*` would make Sigil's configuration
+> depend on which repository it was started in. For settings that follow you between
+> projects, export them in your shell, or put them in a `.env` on the path upward
+> from the Sigil directory (`~/.env`, for example, when Sigil lives under your home).
+
 ## Working with agents
 
 Sigil's behaviour is set by an **agent profile**: a Markdown file whose
@@ -335,9 +374,10 @@ A project profile with the same name as a global one shadows it, and either of
 them shadows a built-in. Profiles are flat `*.md` files; a name starting with
 `_` or `.` is skipped, so a notes file next to them is not parsed as one.
 
-Sigil ships with a single profile, `wizard`, which is also the agent in effect
-when nothing else is chosen or remembered. It is the smallest complete example:
-copy it, rename it, rewrite the body.
+Sigil ships with two profiles: `wizard`, the general-purpose agent in effect when
+nothing else is chosen or remembered, and `scout`, a read-only subagent built to
+be summoned. `wizard` is the smallest complete example: copy it, rename it,
+rewrite the body.
 
 Create the directories yourself; Sigil reads them and does not create them. A
 profile added while the session is open shows up on the next `/agent`, without a
@@ -363,8 +403,11 @@ production, not by how clever the fix is.
 
 | Key | Required | What it does |
 | --- | --- | --- |
-| `name` | yes | Identifier for `/agent`. Kebab-case, up to 64 characters |
+| `name` | yes | Identifier for `/agent` and `summon`. Kebab-case, up to 64 characters |
 | `description` | yes | One line the picker shows so the choice is informed |
+| `role` | no | `agent` (the default) or `subagent`. See [Subagents](#subagents) |
+| `max_steps` | no | Model calls in one run of this profile. See [Running out of steps](#running-out-of-steps) |
+| `channel` | no | Which way it may send messages. See [Talking between agents](#talking-between-agents) |
 | `permissions` | no | What the profile may use. Without it, every tool is available |
 
 Any other key is an error rather than a silent no-op: a typo in `permissions`
@@ -380,7 +423,7 @@ with the two.
 | Scope | What it covers |
 | --- | --- |
 | `all` (or `'*'`) | Every tool |
-| `read`, `write`, `run`, `web`, `skills`, `mcp`, `ask`, `roadmap` | A group of tools |
+| `read`, `write`, `run`, `web`, `skills`, `mcp`, `ask`, `roadmap`, `summon` | A group of tools |
 | `read_file`, `patch_file`, … | One built-in tool |
 | `mcp_github_*` | A glob over names — how a whole MCP server is targeted |
 
@@ -424,6 +467,7 @@ against what the tool receives:
 | `run` | Each command | Whitespace is collapsed, and a pattern ending in ` *` also matches the command with no arguments: `git status *` covers `git status` and `git status --short` |
 | `web` | The query or the URL | As given |
 | `skills`, `mcp` | The skill or server name | As given |
+| `summon` | The subagent name | As given |
 
 `run` executes several commands in one call: **one** denied command refuses the
 whole call, and the model reads the refusal as a failed result it can adapt to.
@@ -470,6 +514,194 @@ and before the rest, and it is rewritten rather than appended — so the previou
 profile's instructions stop travelling with the conversation the moment you
 switch.
 
+## Subagents
+
+A session is not one agent: it is a **tree**. The agent at the root is the one you
+talk to — the one `/agent` and `ctrl+a` offer — and under it hang the
+**subagents** it summoned. They are not selectable, they are not listed anywhere
+except the tree, and they answer to the agent that started them.
+
+A subagent is an agent: same tools, same model, same permission rules, its own
+profile and its own context. What makes it a *sub*agent is who starts it and where
+its answer goes.
+
+### The role
+
+```yaml
+---
+name: scout
+description: Reads one thing end to end and reports what it found.
+role: subagent
+---
+```
+
+`role: agent` is the default, so every profile written before this existed keeps
+being selectable. A profile with `role: subagent` is refused by `/agent` — the
+agent at the root of a session is the one a person talks to — and refused by
+`summon` if it says `role: agent`: an agent is not something another agent starts.
+
+### The `summon` permission
+
+Starting a subagent is the `summon` tool, and it is ruled on like every other
+tool: the **name of the subagent is the resource**.
+
+```yaml
+permissions:
+  summon:
+    allow: ['scout', 'review-*']   # these two profiles...
+    deny: ['review-security']      # ...except this one
+```
+
+- **No `summon` rule**: every subagent is available.
+- **`summon: deny`**: the tool is not advertised at all; the model does not know
+  it exists.
+- **An allow list**: exhaustive. A name it does not cover is refused as a failed
+  call the model can read, and the block in the prompt lists only the names that
+  are left — an agent that may summon two subagents is told about two.
+
+A subagent cannot summon itself, and the chain has a cap (`max_depth`, 3 by
+default): an agent may summon ten subagents in a row, but a summon inside a summon
+inside a summon inside a summon is a runaway.
+
+When a node ends, whatever it had summoned and was still running is stopped with it:
+a branch cannot hang from a parent that stopped, and its answer would have nobody
+to reach. That is also why a killed node takes its descendants with it.
+
+### Sync and async
+
+The tool takes a `mode`:
+
+| Mode | What the caller sees |
+| --- | --- |
+| `sync` (default) | Nothing until the subagent finishes. Then the tool result **is** the subagent's final message |
+| `async` | An acknowledgement at once. The message arrives later, as a new user message from `[subagent Scout (scout #1a2b3c, async) finished]` |
+
+`sync` is what you want when the next step depends on the answer. `async` is what
+you want when the work is independent: the parent keeps going, and the answer
+lands mid-turn if the turn is still open, or rides along with the next message if
+it is not. It never starts a turn of its own — spending a model request nobody
+asked for is worse than a message waiting a minute.
+
+Stopping the turn (`Esc` twice) stops the async subagents it started: a background
+node still spending tokens is not stopped.
+
+### The id, and going back for more
+
+`summon` returns the id of the execution it started, and that id is the handle for
+everything else:
+
+| Call | What it does |
+| --- | --- |
+| `summon(agent="scout", task="…")` | A new node. Two calls without an id are two nodes |
+| `summon(agent_id="1a2b3c", task="…")` | Continues **that** node on top of its transcript |
+| `send_message(agent_id="1a2b3c", message="…")` | Steers it mid-run, or answers a notice |
+| `kill_subagent(agent_id="1a2b3c")` | Stops it, and everything it summoned |
+| `list_agents()` | The ids, names, states and parents of the branch |
+
+The id is execution and the name is kind of agent: resuming `#1a2b3c` keeps the
+profile it was started with, and summoning `scout` again starts from nothing.
+A resume appends to the history instead of replacing it, so a subagent that read
+half a tree keeps what it read.
+
+### Running out of steps
+
+A profile can declare its own budget:
+
+```yaml
+max_steps: 40
+```
+
+Running out is not an abort. The run loses its tools and gets **one more model
+call**, with a message explaining that the budget is gone and what to write
+instead: what it established, what it did not get to, and anything the caller needs
+to continue. That last message is the subagent's report.
+
+The parent can then pick it up with `summon(agent_id=…)` — the report is in the
+node's transcript — instead of starting the investigation again. The tool result
+says `out of steps` next to the node's id, which is the cue to do exactly that.
+
+The turn of the session works the same way, and it is the same key: a profile's
+`max_steps` is the budget of *that* agent, whether it is the one at the root or a
+subagent under it. `SIGIL_MAX_STEPS` (default `256`) is the fallback for every
+profile that declares nothing, which is all of them until one asks. Reaching it
+ends the turn with a summary rather than a cut-off, so a long turn is still worth
+reading and the next message continues from there.
+
+### Talking between agents
+
+A subagent can be given a voice in its frontmatter:
+
+```yaml
+channel: bidirectional          # it may send notices to its parent
+
+channel:                        # ...and to the siblings it names
+  mode: bidirectional
+  parent: true
+  siblings: ['reviewer', 'scout']
+```
+
+| Direction | What it is |
+| --- | --- |
+| Parent → child | An **instruction**: injected into the run like a message typed in the chat |
+| Child → parent | A **notice**: the parent reads it and decides whether to act |
+| Sibling → sibling | A **notice**, only in the direction the sender's channel names |
+
+A notice is information, not an order, and it says so in the message the receiver
+reads. Nothing travels the other way by default: no `channel` means unidirectional,
+the parent talks and the subagent answers once at the end.
+
+**A message needs a live receiver, whoever sends it.** Nothing is queued for an
+agent that is not running: a stopped subagent reads nothing, and a queue nobody
+promised to drain is a queue that grows in the dark. The `send_message` call fails
+with an error that says what to do instead, and the advice depends on who is
+asking because the fix does:
+
+| You | Target | What the refusal tells you |
+| --- | --- | --- |
+| Parent | Your child, finished | `summon(agent_id="…", task=<your message>)` — it keeps its transcript |
+| Child | Your parent, not in a turn | You cannot start it: put it in your final report |
+| Sibling | A sibling, finished | A sibling cannot resume it: ask your parent |
+
+So answering a notice is a `summon` with the reply as the task, which is exactly
+what the parent's own error says. One gesture, and the subagent reads the answer on
+top of everything it already knew.
+
+**A child never outlives its parent.** When a node ends, whatever was still running
+under it is stopped, and a killed node takes its descendants with it. There is no
+state where a branch hangs from an agent that is gone.
+
+The ids a child needs to write to its neighbours are not something it is asked to
+remember: a block of the prompt — **The agents around you** — lists its parent, its
+children and the siblings its channel names, with the id and whether each one is
+working right now. It is rebuilt on every request, so a sibling that finished stops
+being reachable the moment it does.
+
+### The tree, on screen
+
+| Key | What it does |
+| --- | --- |
+| `alt+t` | The agents of the session: every node, its state, how long it has been running |
+| `Enter` | Open the highlighted node |
+| `b` | Send it to the background: stop waiting, keep the work going |
+| `k` | Stop it, and everything it summoned |
+| `Esc` (inside a subagent) | Back to its parent |
+
+`b` is the intuitive version of the tool's `mode="async"` on a call that is already
+blocking the turn: the caller stops waiting, the node keeps working, and its answer
+arrives as a message. `k` is what makes a background subagent safe to start: without
+it, the only way to stop one would be to quit.
+
+Choosing a row opens that subagent in place of the chat: its task, its state, and
+the transcript it had — the same blocks, gutters and collapsed reasoning as the
+main conversation. The composer is locked there, because a subagent answers its
+parent and a message typed into its transcript would be read by nobody. `Enter` on
+the root row takes you back to the conversation.
+
+The tree is **persisted with the session**, like the history: `/load` brings back
+the subagents that conversation summoned, with their transcripts and how each one
+ended. A resumed session that forgot what ran under it would be a worse record
+than the chat itself.
+
 ## Built-in tools
 
 Besides the skills and the MCP servers, Sigil registers a set of its own tools.
@@ -488,6 +720,10 @@ duration and its arguments.
 | `list_mcp_servers`, `list_mcp_resources`, `read_mcp_resource`, `list_mcp_prompts`, `get_mcp_prompt` | `mcp` | The meta-tools over MCP servers, resources and prompts |
 | `ask_user` | `ask` | Asks the user with options, inside the UI |
 | `update_roadmap` | `roadmap` | Publishes and updates the roadmap of the current task |
+| `summon` | `summon` | Starts a subagent, or resumes one by id. See [Subagents](#subagents) |
+| `send_message` | `summon` | An instruction to a child, or a notice to a parent or a sibling |
+| `kill_subagent` | `summon` | Stops a subagent and everything it summoned |
+| `list_agents` | `summon` | The ids, names, states and parents of the agents of the session |
 
 The group is what a profile's `permissions` rules on, together with the tool
 name: `permissions: {write: deny}` closes `write_file` and `patch_file` in one
@@ -771,9 +1007,12 @@ confirmation on top would be a second question to answer.
 
 A turn ends early for two reasons.
 
-`SIGIL_MAX_STEPS` (default `256`) is the hard limit. Every model response and
-every tool call counts as one step; exceeding it aborts the turn with a notice
-in the chat and what was completed stays in the session.
+`SIGIL_MAX_STEPS` (default `256`) is the budget. One *model call* counts as one
+step. When it runs out the turn is not aborted: the tools are taken away and the
+model gets one last call, with a message explaining that the budget is gone, to
+write what it established and what is left. The chat says so, and what was
+completed stays in the session — so a long turn ends with a report instead of
+stopping mid-sentence.
 
 The other reason is you, with `Esc` twice (see
 [Stopping a turn](#stopping-a-turn)) or with a single `Esc` inside an `ask_user`
@@ -853,6 +1092,7 @@ and a work OpenAI org — and switch between them with `/provider`.
 | `ctrl+m` | the model picker |
 | `ctrl+v` | paste an image from the clipboard (or text) |
 | `alt+d` | the agent debug view |
+| `alt+t` | the agents of the session, and the way into any subagent |
 
 `ctrl+m`, `ctrl+t` and `ctrl+a` are read by the prompt itself rather than bound
 globally, so Enter keeps working: on a terminal without the Kitty keyboard
@@ -1401,7 +1641,7 @@ change behaviour behind your back.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `SIGIL_MAX_STEPS` | `256` | Hard step limit per turn. |
+| `SIGIL_MAX_STEPS` | `256` | Model calls per turn when the profile declares no `max_steps`; running out ends it with a last tool-less answer. |
 | `SIGIL_MODEL_MAX_ATTEMPTS` | `5` | Attempts per model request on transient failures. |
 | `SIGIL_HOME` | `~/.sigil` | Where sessions, roadmaps and provider credentials live. |
 | `SIGIL_CONTEXT_STRATEGY` | `windowed` | `windowed`, `compacting` or `passthrough`. |
@@ -1426,7 +1666,10 @@ layer plan is in [`proposals/model-providers.md`](proposals/model-providers.md).
 ## Development
 
 ```bash
-uv run ./main.py     # run Sigil
+./sigil              # run Sigil from here, with this directory as the workspace
 uv run pytest        # tests
 uv run ruff check .  # lint
 ```
+
+`./sigil` and `uv run ./main.py` are the same program; the launcher is the one that
+works from another project's directory (see [Running it](#running-it)).

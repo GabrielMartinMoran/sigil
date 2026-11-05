@@ -174,10 +174,16 @@ def test_ctrl_m_does_not_swallow_the_typed_text():
 
 
 def test_the_app_no_longer_binds_the_broken_alt_shortcuts():
+    """The pickers that used to live on `alt+p` / `alt+m` stayed on `ctrl+…`.
+
+    `alt+t` came back with the tree of agents, as a view toggle next to `alt+d`:
+    the two open a panel over the chat instead of a picker the user has to work
+    through, and the shortcut is what was asked for.
+    """
     bindings = {binding.key for binding in SigilApp.BINDINGS}
     assert 'alt+p' not in bindings
     assert 'alt+m' not in bindings
-    assert 'alt+t' not in bindings
+    assert 'alt+d' in bindings and 'alt+t' in bindings
 
 
 def test_the_shortcuts_are_not_app_level_ctrl_bindings():

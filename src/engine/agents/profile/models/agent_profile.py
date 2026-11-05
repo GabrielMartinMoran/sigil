@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from src.engine.agents.profile.models.agent_role import AgentRole
+from src.engine.agents.profile.models.channel import UNIDIRECTIONAL, ChannelPolicy
 from src.engine.agents.profile.permissions import ToolPermissions
 
 
@@ -34,6 +36,19 @@ class AgentProfile:
 
     permissions: ToolPermissions = field(default_factory=ToolPermissions)
     """What the profile may call. Unrestricted when the file says nothing."""
+
+    role: AgentRole = AgentRole.AGENT
+    """Whether the user can select this profile or only an agent can summon it."""
+
+    max_steps: int | None = None
+    """Model calls this profile gets in one run, or ``None`` for the global limit.
+
+    Running out does not abort: the run gets one last call, with the tools taken
+    away, to explain where it got and what is left.
+    """
+
+    channel: ChannelPolicy = UNIDIRECTIONAL
+    """Which way messages may travel between this profile and its neighbours."""
 
     @property
     def label(self) -> str:
