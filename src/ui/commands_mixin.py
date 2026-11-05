@@ -280,6 +280,9 @@ class CommandsMixin:
         self._history = session.messages
         self.bind_agent(getattr(session, 'agent', ''))
         self.bind_roadmap()
+        # Another conversation is another window title: the repository is the same
+        # and the title is not.
+        self.paint_window_title()
 
     def _restore_session_model(self, session) -> None:
         """Re-applies the model the conversation was using.

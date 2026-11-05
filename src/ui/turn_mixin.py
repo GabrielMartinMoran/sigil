@@ -356,6 +356,10 @@ class TurnMixin:
             self.steer(text, attachments=attachments)
             return
         self._turn_active = True
+        # A session is named after the first thing it was asked to do. On the
+        # worker, so the turn starts immediately: the title arrives when it is
+        # ready, and the window title is repainted then.
+        self.name_session(self._session, text)
         self.run_turn(text, attachments=attachments)
 
     @work(exclusive=True)
