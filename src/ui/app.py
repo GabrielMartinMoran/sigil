@@ -14,7 +14,6 @@ each responsibility to a mixin with its own state.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Sequence
 from typing import Any, ClassVar
 
@@ -52,7 +51,7 @@ from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.command_menu import CommandMenu
 from src.ui.widgets.debug_view import AgentDebugView
 from src.ui.widgets.prompt_input import PromptInput
-from src.ui.widgets.question_screen import QuestionScreen
+from src.ui.widgets.question_panel import QuestionPanel
 from src.ui.widgets.roadmap_panel import RoadmapPanel
 from src.ui.widgets.sidebar_panel import SidebarPanel
 from src.ui.widgets.status_bar import StatusBar
@@ -145,8 +144,12 @@ class SigilApp(
                     RoadmapPanel(id='roadmap'),
                     id='sidebar',
                 ),
-                ChatLog(id='chat'),
-                AgentDebugView(id='debug'),
+                Vertical(
+                    ChatLog(id='chat'),
+                    AgentDebugView(id='debug'),
+                    QuestionPanel(id='questions'),
+                    id='conversation',
+                ),
                 id='main',
             ),
             CommandMenu(id='menu'),
@@ -249,17 +252,27 @@ class SigilApp(
     # --- interactive questions --------------------------------------------
 
     async def ask_question(self, questions: list[QuestionItem]) -> list[QuestionAnswer] | None:
-        """Opens the question screen and waits for the user's answer."""
-        if not questions:
-            return []
-        future: asyncio.Future[list[QuestionAnswer] | None] = asyncio.get_running_loop().create_future()
+        """Shows the questions under the chat and waits for the answers.
 
-        def _done(result: list[QuestionAnswer] | None) -> None:
-            if not future.done():
-                future.set_result(result)
+        It is not a modal screen: the questions are usually about what is in the
+        conversation, and that has to stay readable while answering. The panel
+        only borrows part of the chat's height, and the turn waits on the future
+        the panel resolves.
+        """
+        answers = await self.query_one(QuestionPanel).ask(questions)
+        self._restore_prompt_focus()
+        return answers
 
-        self.push_screen(QuestionScreen(questions), _done)
-        return await future
+    def _restore_prompt_focus(self) -> None:
+        """Gives the keys back to the prompt when the panel releases them.
+
+        While a turn runs the prompt is disabled and the turn itself takes care
+        of the focus when it ends, so this only applies when it can be focused.
+        """
+        prompt = self.query_one(PromptInput)
+        if prompt.disabled:
+            return
+        prompt.focus()
 
     # --- model information -------------------------------------------------
 

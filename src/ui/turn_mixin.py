@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from pydantic_ai.capabilities import ProcessEventStream
+from pydantic_ai.exceptions import RunCancelled
 from pydantic_ai.messages import (
     FunctionToolResultEvent,
     PartDeltaEvent,
@@ -14,6 +15,7 @@ from pydantic_ai.messages import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    repair_messages,
 )
 from pydantic_ai.usage import UsageLimits
 from textual import work
@@ -160,6 +162,14 @@ class TurnMixin:
                 f'Step limit of {self._settings.max_steps} reached; turn aborted.',
                 style='bold red',
             )
+        except RunCancelled:
+            # The user stopped the turn (cancelling an `ask_user` panel). It is
+            # not an error: no notice, no noise. What the run completed is kept,
+            # with the dangling tool calls closed out so the next message does
+            # not trip over an unanswered call.
+            if run is not None:
+                history = repair_messages(run.all_messages())
+            await chat.add_notice('Turn cancelled.', style='yellow')
         except Exception as exc:  # noqa: BLE001
             if run is not None:
                 history = run.all_messages()

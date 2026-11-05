@@ -64,6 +64,41 @@ def test_ask_user_cancelled():
     assert result.answers == []
 
 
+class _RecordingContext:
+    """Just enough of a `RunContext` to know whether cancellation was asked for."""
+
+    def __init__(self) -> None:
+        self.cancelled = False
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+
+def test_cancelling_the_panel_cancels_the_run():
+    async def asker(questions):
+        return None
+
+    hub = QuestionHub()
+    hub.set_asker(asker)
+    tool = _tool(hub)
+    ctx = _RecordingContext()
+    asyncio.run(tool(ctx, questions=[_question()]))
+    assert ctx.cancelled is True
+
+
+def test_answering_does_not_cancel_the_run():
+    async def asker(questions):
+        return [QuestionAnswer(question=questions[0].question, answer='A')]
+
+    hub = QuestionHub()
+    hub.set_asker(asker)
+    tool = _tool(hub)
+    ctx = _RecordingContext()
+    result = asyncio.run(tool(ctx, questions=[_question()]))
+    assert ctx.cancelled is False
+    assert result.cancelled is False
+
+
 def test_ask_user_without_ui_raises():
     hub = QuestionHub()
     tool = _tool(hub)

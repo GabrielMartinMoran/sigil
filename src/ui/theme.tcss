@@ -95,6 +95,11 @@ SessionPicker {
     width: 1fr;
 }
 
+#conversation {
+    width: 1fr;
+    height: 1fr;
+}
+
 #debug {
     width: 1fr;
     height: 1fr;
@@ -117,31 +122,49 @@ SessionPicker {
     height: auto;
 }
 
-QuestionScreen {
-    align: center middle;
-}
-
-#question-box {
-    width: 80%;
+QuestionPanel {
     height: auto;
-    max-height: 80%;
+    max-height: 60%;
     border: round $accent;
     background: $panel;
-    padding: 1 2;
+    padding: 0 1;
+    scrollbar-size-vertical: 1;
+}
+
+#question-progress {
+    height: 1;
+    color: $text-muted;
+}
+
+#question-title {
+    height: auto;
+}
+
+#question-answers {
+    height: auto;
+    margin-top: 1;
+    color: $text-muted;
 }
 
 #question-options {
     height: auto;
     max-height: 12;
+    margin-top: 1;
 }
 
 #question-custom {
     margin-top: 1;
 }
 
+#question-hint,
 #question-help {
+    height: auto;
     margin-top: 1;
     color: $text-muted;
+}
+
+#question-hint {
+    color: $warning;
 }
 
 /* --- provider screens ---------------------------------------------------- */
