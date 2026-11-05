@@ -13,7 +13,6 @@ from pathlib import Path
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from textual.widgets import Input
 
 from src.engine.interaction.hub import QuestionHub
 from src.engine.interaction.tools import register_interaction_tools
@@ -37,7 +36,7 @@ async def _wait_for_panel(app, pilot, timeout: int = 60) -> None:
 async def _wait_idle(app, pilot, timeout: int = 60) -> None:
     for _ in range(timeout):
         await pilot.pause()
-        if not app.query_one('#prompt', Input).disabled:
+        if not app._turn_active:
             return
 
 

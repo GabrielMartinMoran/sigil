@@ -168,17 +168,17 @@ def test_a_tool_can_ask_mid_turn_and_the_turn_continues():
                 panel = app.query_one(QuestionPanel)
                 assert panel.display is True
                 assert app.query_one(ChatLog).display is True
-                assert app.query_one('#prompt', Input).disabled is True
+                assert app._turn_active is True
 
                 await pilot.press('enter')
                 for _ in range(40):
                     await pilot.pause()
-                    if not app.query_one('#prompt', Input).disabled:
+                    if not app._turn_active:
                         break
 
                 assert seen == ['Recommended']
                 assert panel.display is False
-                assert app.query_one('#prompt', Input).disabled is False
+                assert app._turn_active is False
 
     asyncio.run(inner())
 
@@ -205,13 +205,13 @@ def test_escaping_the_panel_stops_the_turn_and_gives_control_back():
                 await pilot.press('escape')
                 for _ in range(40):
                     await pilot.pause()
-                    if not app.query_one('#prompt', Input).disabled:
+                    if not app._turn_active:
                         break
 
                 # The turn is over and the prompt is usable again: the panel took
                 # the whole turn with it, not just the question.
                 assert app.query_one(QuestionPanel).display is False
-                assert app.query_one('#prompt', Input).disabled is False
+                assert app._turn_active is False
                 assert app.focused is app.query_one('#prompt')
                 texts = [str(widget.render()) for widget in app.query_one(ChatLog).children]
                 # The notice is only written when the run was cancelled: it is
@@ -225,10 +225,10 @@ def test_escaping_the_panel_stops_the_turn_and_gives_control_back():
                 await pilot.press('enter')
                 for _ in range(40):
                     await pilot.pause()
-                    if not app.query_one('#prompt', Input).disabled:
+                    if not app._turn_active:
                         break
                 texts = [str(w.render()) for w in app.query_one(ChatLog).children]
-                assert app.query_one('#prompt', Input).disabled is False
+                assert app._turn_active is False
                 assert not any('Error' in text for text in texts)
                 assert any('hi' in text for text in texts)
 

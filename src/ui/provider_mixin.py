@@ -100,11 +100,22 @@ class ProviderMixin:
         self._select_model(choice, chat, query)
 
     async def open_models(self) -> None:
-        """`alt+m` / `/model` with no argument: the picker, from any context."""
+        """`alt+m` / `/model` with no argument: the picker, from any context.
+
+        It goes through the same mid-turn refusal as the command: the shortcut
+        is another door into the same room, and swapping the model under a
+        running turn is exactly what the referee is for.
+        """
+        if self.is_refused_while_busy('/model'):
+            await self.refuse_while_busy('/model', self.query_one(ChatLog))
+            return
         await self.show_models(self.query_one(ChatLog))
 
     async def open_effort(self) -> None:
         """`alt+t` / `/effort` with no argument: the effort picker."""
+        if self.is_refused_while_busy('/effort'):
+            await self.refuse_while_busy('/effort', self.query_one(ChatLog))
+            return
         await self.show_effort(self.query_one(ChatLog))
 
     def _select_model(self, choice: ModelChoice, chat: ChatLog, query: str) -> None:

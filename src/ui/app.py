@@ -18,7 +18,7 @@ from collections.abc import Sequence
 from typing import Any, ClassVar
 
 from pydantic_ai import Agent
-from textual import work
+from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -75,6 +75,10 @@ class SigilApp(
     # Focus lives in the input, which swallows the keys. The pickers therefore
     # read `ctrl+m` / `ctrl+t` in `PromptInput.on_key` instead of here: a global
     # binding would claim Enter on terminals that cannot tell it from Ctrl+M.
+    #
+    # There is no global `escape` binding on purpose: the focused widget sees the
+    # key first, and the abort has to coexist with the `escape` that cancels a
+    # question panel. The prompt handles it (see `PromptInput`).
     BINDINGS: ClassVar[list[Binding]] = [
         Binding('alt+d', 'toggle_debug', 'Debug view', priority=True, show=False),
     ]
@@ -127,12 +131,25 @@ class SigilApp(
         # Run in progress: `checkpoint` uses it to persist turn progress.
         self._current_run: Any = None
         self._last_checkpoint_at = 0.0
+        # A turn is accepted the moment the message is submitted, before the
+        # worker gets its turn on the event loop. `_turn_active` is what the
+        # prompt asks to know whether a message starts a turn or steers one.
+        self._turn_active = False
+        # Messages typed while the agent works, in order, so they can be
+        # delivered to the run and, if one misses, given back to the prompt.
+        self._steering: list[Any] = []
+        # The session the current turn belongs to (`checkpoint` writes there).
+        self._turn_session: Any = None
+        # Abort confirmation: `Esc` asks once, the second press inside the
+        # window stops the turn.
+        self._abort_deadline: float | None = None
+        self._abort_timer: Any = None
         self._wire_busy_flag()
 
     def _wire_busy_flag(self) -> None:
         """Lets the service refuse a model swap while a turn is running."""
         if self._model_service is not None:
-            self._model_service.is_busy = lambda: self._current_run is not None
+            self._model_service.is_busy = lambda: self._turn_active
 
     # --- composition -------------------------------------------------------
 
@@ -226,6 +243,32 @@ class SigilApp(
         It exists so `PromptInput` always has a target for the key: without it the
         focus would move to another widget and the prompt would stop receiving text.
         """
+
+    async def key_escape(self) -> None:
+        """`Esc` when the prompt is not the one that read it.
+
+        The prompt handles it while it has the focus (`PromptInput`), a question
+        panel handles it while a question is open, and this is the fallback: with
+        the focus on the chat or anywhere else, the abort still reaches you.
+
+        It is a `key_escape` method and not a binding on purpose: a non-priority
+        binding would show up in the help as a second way to do the same thing,
+        and a priority one would run before the question panel and swallow the
+        `Esc` that cancels a question.
+        """
+        if self.request_abort():
+            self.abort_turn()
+
+    async def on_key(self, event: events.Key) -> None:
+        """Any key that is not the confirming `Esc` cancels a pending abort.
+
+        The prompt does this for the keys it sees, but focus can be somewhere
+        else (the chat, the debug view). A confirmation that survives a keypress
+        anywhere in the app is a confirmation by accident.
+        """
+        if event.key == 'escape':
+            return
+        self.cancel_abort()
 
     async def on_model_retry_notice(self, message: ModelRetryNotice) -> None:
         notice = message.notice

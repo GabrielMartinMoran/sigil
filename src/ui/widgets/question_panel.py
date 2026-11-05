@@ -315,6 +315,16 @@ class QuestionPanel(VerticalScroll):
         return None
 
     def action_cancel(self) -> None:
+        """Esc: the way out of a question you do not want to answer.
+
+        It ends the turn instead of picking something for you, and it is a single
+        press on purpose: the panel's own help line says so, and a confirmation
+        on top of a panel that is already asking something would be a second
+        question to answer before the first one closes.
+
+        The two-press abort of the chat (`SigilApp.request_abort`) is for the
+        prompt, where `Esc` has no other meaning while the agent works.
+        """
         self._resolve(None)
 
     def _advance(self) -> None:

@@ -1,11 +1,16 @@
-"""Bottom bar input with command menu navigation and the model shortcuts.
+"""Bottom bar input with command menu navigation, the model shortcuts and abort.
 
-Two things are handled here rather than as app-level bindings, and the reason is
-the same for both: **the focused widget sees the key first**.
+Three things are handled here rather than as app-level bindings, and the reason
+is the same for all of them: **the focused widget sees the key first**.
 
 - The command menu (Up/Down/Tab/Enter/Esc) needs `priority`, because `Input`
   consumes those keys for editing and cursor movement.
 - `ctrl+m` and `ctrl+t` are handled in `on_key`.
+- `Esc` asks to stop the running turn, and any other key calls that request off.
+
+A `priority` binding is checked by the app before the key reaches the widget, so
+the actions below are where the menu keys land, not `on_key`. `on_key` sees
+everything else: the printable keys, the editing keys, and the shortcuts.
 
 Why `ctrl+m` needs care: in a legacy terminal, Ctrl+M and Enter are the same byte
 (CR, `0x0D`), so a global `ctrl+m` binding silently swallows Enter — which is how a
@@ -19,6 +24,11 @@ still collapse the two. Handling the key here means:
 
 Either way nothing is swallowed and Enter keeps working. `ctrl+t` has no such
 ambiguity but is handled next to it so both live in one place.
+
+Why `Esc` lives here and not in the app: the abort has to coexist with the `Esc`
+that cancels a question panel, which is the panel's own binding. A global
+`priority` binding at the app level would run before both of them and swallow
+them.
 """
 
 from __future__ import annotations
@@ -48,7 +58,7 @@ class PromptInput(Input):
     ]
 
     async def on_key(self, event: events.Key) -> None:
-        """Ctrl+M / Ctrl+T open the pickers.
+        """Ctrl+M / Ctrl+T open the pickers; anything else cancels a pending abort.
 
         They are read here, before the `Input` turns them into editing keys, and
         not bound globally: a global `ctrl+m` would claim Enter on any terminal
@@ -57,6 +67,9 @@ class PromptInput(Input):
         The opener runs in a worker because the pickers use `push_screen_wait`,
         which requires one.
         """
+        # Typing means "I am doing something else": a confirmation that survives
+        # other keys would confirm itself by accident.
+        self.app.cancel_abort()
         if event.key == CTRL_MODELS:
             event.stop()
             event.prevent_default()
@@ -68,9 +81,11 @@ class PromptInput(Input):
             self.run_worker(self.app.open_effort())
 
     async def action_menu_up(self) -> None:
+        self.app.cancel_abort()
         self.app.menu_move(-1)
 
     async def action_menu_down(self) -> None:
+        self.app.cancel_abort()
         self.app.menu_move(1)
 
     async def action_menu_complete(self) -> None:
@@ -80,6 +95,7 @@ class PromptInput(Input):
         trailing space when the command takes an argument, so the next keystroke is
         the argument rather than the rest of the name.
         """
+        self.app.cancel_abort()
         if self.app.menu_visible:
             self.app.menu_complete()
             return
@@ -87,10 +103,18 @@ class PromptInput(Input):
         self.app.action_tab_noop()
 
     async def action_menu_enter(self) -> None:
+        self.app.cancel_abort()
         if self.app.menu_visible:
             await self.app.menu_choose()
         else:
             await self.action_submit()
 
     async def action_menu_escape(self) -> None:
+        """Esc: closes the menu and asks to stop the turn.
+
+        Both happen in one press. With no turn running the second part is a no-op,
+        so `Esc` keeps behaving exactly as it did: it closes the menu.
+        """
         self.app.menu_hide()
+        if self.app.request_abort():
+            self.app.abort_turn()

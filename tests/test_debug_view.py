@@ -16,7 +16,6 @@ from src.engine.sessions.session_store import SessionStore
 from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.debug_view import AgentDebugView, build_debug_body, build_debug_header
-from src.ui.widgets.prompt_input import PromptInput
 
 
 def _make_app(tmp: str) -> SigilApp:
@@ -72,7 +71,7 @@ def test_alt_d_replaces_chat_with_debug_view(monkeypatch):
                 # Reemplaza: no conviven.
                 assert chat.display is False
                 # The input stays usable: you can prompt and watch the cost live.
-                assert app.query_one(PromptInput).disabled is False
+                assert app._turn_active is False
 
                 await pilot.press('alt+d')
                 await pilot.pause()
@@ -80,7 +79,7 @@ def test_alt_d_replaces_chat_with_debug_view(monkeypatch):
                 assert app.debug_visible is False
                 assert view.display is False
                 assert chat.display is True
-                assert app.query_one(PromptInput).disabled is False
+                assert app._turn_active is False
 
     asyncio.run(inner())
 
@@ -96,7 +95,7 @@ def test_debug_view_renders_agent_side_sections(monkeypatch):
                 await pilot.press('enter')
                 for _ in range(40):
                     await pilot.pause()
-                    if not app.query_one(PromptInput).disabled:
+                    if not app._turn_active:
                         break
 
                 await pilot.press('alt+d')
