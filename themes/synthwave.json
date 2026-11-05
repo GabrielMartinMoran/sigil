@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "name": "synthwave",
+  "dark": true,
+  "colors": {
+    "primary": "#ff2a6d",
+    "secondary": "#b967ff",
+    "accent": "#05d9e8",
+    "warning": "#f9c80e",
+    "error": "#ff3864",
+    "success": "#01ffc3",
+    "foreground": "#f8f8f2",
+    "background": "#0d0221",
+    "surface": "#1a0b2e",
+    "panel": "#241436",
+    "boost": "#33204d",
+    "tool-border": "#4b2a6b",
+    "tool-title": "#b967ff",
+    "tool-output": "#8a7ba8",
+    "reasoning": "#9d8ec7",
+    "diff-added": "#01ffc3",
+    "diff-removed": "#ff3864",
+    "sidebar-section": "#b967ff",
+    "muted": "#8a7ba8"
+  }
+}

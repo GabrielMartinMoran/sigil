@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "name": "dark",
+  "dark": true,
+  "colors": {
+    "primary": "#4a9eff",
+    "secondary": "#2a6fa8",
+    "accent": "#f0b429",
+    "warning": "#e0a030",
+    "error": "#e5484d",
+    "success": "#46a758",
+    "foreground": "#d4d4d8",
+    "background": "#121216",
+    "surface": "#1b1b21",
+    "panel": "#24242c",
+    "boost": "#32323d",
+    "tool-border": "#3a3a46",
+    "tool-title": "#8f8fa3",
+    "tool-output": "#6f6f80",
+    "reasoning": "#7a7a8c",
+    "diff-added": "#46a758",
+    "diff-removed": "#e5484d",
+    "sidebar-section": "#8f8fa3",
+    "muted": "#6f6f80"
+  }
+}

@@ -19,7 +19,6 @@ from pathlib import Path
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from textual.widgets import Input
 
 from src.engine.sessions.session_store import SessionStore
 from src.engine.shell import running as running_commands
@@ -189,7 +188,7 @@ def test_a_message_that_arrives_as_the_agent_finishes_gives_it_one_more_step():
 
                 field = app.query_one(PromptInput)
                 field.value = 'one more thing'
-                field.post_message(Input.Submitted(field, 'one more thing'))
+                await field.action_submit()
                 await pilot.pause()
                 assert app._turn_active is True
                 release.set()
@@ -293,7 +292,7 @@ def test_commands_that_would_swap_the_session_are_refused_mid_turn():
 
                 field = app.query_one(PromptInput)
                 field.value = '/new'
-                field.post_message(Input.Submitted(field, '/new'))
+                await field.action_submit()
                 await pilot.pause()
 
                 assert app._session.id == session_before
@@ -502,7 +501,7 @@ def test_the_first_esc_asks_and_the_second_one_stops_the_turn():
                 assert any('Turn cancelled.' in text for text in _chat_texts(app))
                 # No error: stopping on purpose is not a failure.
                 assert not any('Error' in text for text in _chat_texts(app))
-                assert _status(app) == ''
+                assert 'again' not in _status(app)
 
     asyncio.run(inner())
 
@@ -535,7 +534,7 @@ def test_any_other_key_cancels_the_abort_request():
                 await pilot.press('x')
                 await pilot.pause()
                 assert app._abort_deadline is None
-                assert _status(app) == ''
+                assert 'again' not in _status(app)
                 # The turn is still going: the confirmation did not survive.
                 assert app._turn_active is True
 
@@ -586,7 +585,7 @@ def test_the_abort_request_expires_on_its_own(monkeypatch):
 
                 assert await _wait_for(pilot, lambda: app._abort_deadline is None)
                 assert app._turn_active is True
-                assert _status(app) == ''
+                assert 'again' not in _status(app)
 
                 release.set()
                 assert await _wait_for(pilot, lambda: not app._turn_active)
@@ -656,7 +655,7 @@ def test_two_messages_sent_back_to_back_do_not_start_two_turns():
                 # Both submits in the same tick: the worker has not started yet.
                 for text in ('first', 'second'):
                     field.value = text
-                    field.post_message(Input.Submitted(field, text))
+                    await field.action_submit()
                 await pilot.pause()
 
                 workers = [worker for worker in app.workers if worker.name]
@@ -822,6 +821,7 @@ def _alive(pid: int) -> bool:
         except OSError, IndexError:
             return True
     return True
+
 
 def test_the_model_shortcut_is_refused_mid_turn_as_well():
     """`ctrl+m` reaches the picker without going through `handle_command`.

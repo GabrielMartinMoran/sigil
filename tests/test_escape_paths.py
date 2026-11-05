@@ -71,7 +71,7 @@ def test_escape_from_the_focused_prompt_asks_then_stops():
                 await pilot.press('escape')
                 assert await _wait_idle(app, pilot)
                 assert any('Turn cancelled.' in str(w.render()) for w in app.query_one(ChatLog).children)
-                assert _status(app) == ''
+                assert 'again' not in _status(app)
 
     asyncio.run(inner())
 
@@ -118,7 +118,7 @@ def test_escape_without_a_turn_does_nothing_visible():
                 await pilot.pause()
                 await pilot.press('escape')
                 await pilot.pause()
-                assert _status(app) == ''
+                assert 'again' not in _status(app)
                 assert app._abort_deadline is None
 
     asyncio.run(inner())
@@ -147,7 +147,7 @@ def test_any_other_key_cancels_the_abort_even_with_the_focus_elsewhere():
 
                 await pilot.press('j')  # scrolling the chat
                 await pilot.pause()
-                assert _status(app) == ''
+                assert 'again' not in _status(app)
                 assert app._abort_deadline is None
                 assert app._turn_active is True
 

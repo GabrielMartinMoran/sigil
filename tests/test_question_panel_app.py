@@ -11,7 +11,7 @@ from pathlib import Path
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from textual.widgets import Input, OptionList, Static
+from textual.widgets import OptionList, Static
 
 from src.engine.interaction.hub import QuestionHub
 from src.engine.interaction.models.question_item import QuestionItem, QuestionOption
@@ -19,6 +19,7 @@ from src.engine.interaction.tools import register_interaction_tools
 from src.engine.sessions.session_store import SessionStore
 from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
+from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.question_panel import QuestionPanel
 
 
@@ -136,7 +137,7 @@ def test_escape_cancels_without_touching_the_conversation():
                 # The prompt gets the focus back: typing a message works again.
                 assert app.focused is app.query_one('#prompt')
                 await pilot.press('h', 'i')
-                assert app.query_one('#prompt', Input).value == 'hi'
+                assert app.query_one(PromptInput).value == 'hi'
 
     asyncio.run(inner())
 

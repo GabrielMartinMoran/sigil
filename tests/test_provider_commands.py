@@ -13,7 +13,7 @@ from pathlib import Path
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from textual.widgets import Input, OptionList
+from textual.widgets import OptionList
 
 from src.engine.providers.bootstrap import ProviderPaths, build_service
 from src.engine.providers.catalog.probe import ProbeResult
@@ -123,7 +123,7 @@ def _submit(app, text: str) -> None:
     """
     field = app.query_one(PromptInput)
     field.value = text
-    field.post_message(Input.Submitted(field, text))
+    field.post_message(PromptInput.Submitted(text))
 
 
 async def _wait_idle(app, pilot, attempts: int = 40) -> None:
