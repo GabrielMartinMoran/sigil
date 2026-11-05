@@ -506,8 +506,20 @@ with the partial history kept and the unanswered call closed out.
 
 ### Files
 
-`read_file`, `write_file` and `patch_file` work inside the workspace: a path
-outside it is rejected with an error, it is not resolved silently.
+`read_file`, `write_file` and `patch_file` work inside the workspace and inside
+the OS temporary directory: any other path is rejected with an error, it is not
+resolved silently.
+
+The temporary directory is allowed because scratch files are what it is for. A
+command writes one, the model reads it back, and refusing the path would only
+push the work into the shell. The directory is resolved on every call, so
+`TMPDIR` is honoured; on POSIX, `/tmp` and `/var/tmp` are accepted as well,
+because a redirect to `/tmp` does not read `TMPDIR` either.
+
+The allowance is the temporary tree itself: `..` does not climb out of it, and a
+symlink is followed before the check, so it cannot be used to reach a file
+outside. A profile still rules on these paths like any other, so `write: {deny:
+['/tmp/*']}` closes the scratch area for an agent that must not have one.
 
 `patch_file` has two modes:
 
@@ -622,7 +634,8 @@ from `HEAD`, moves the process there and starts the session in it:
 The worktree directory lives **outside** the repository (under
 `SIGIL_WORKTREES_DIR`, `<SIGIL_HOME>/worktrees` by default) so that the file tools
 of one workspace cannot reach another's tree: `read_file` and `write_file` are
-limited to the active workspace.
+limited to the active workspace, plus the OS temporary directory, which no
+workspace owns.
 
 What a new worktree does **not** get, because it is not in the commit:
 
@@ -650,7 +663,8 @@ of **every** workspace of the repository, labelled:
   fix-login     9f8e7d6c  try the new parser
 ```
 
-`●` marks the workspace in use. Choosing a session of another worktree switches to
+`●` marks the workspace in use, and the last column is the session title. Choosing
+a session of another worktree switches to
 it (the same rebind as `/new --worktree`) and then loads the session: a session is
 never opened against a tree it does not belong to.
 
@@ -907,6 +921,35 @@ the chat says why.
 Carrying the window is what makes a cold start show the real context size instead
 of `?`: the catalogue is a network resource, and the side panel must not depend on
 a request to paint.
+
+### A session is named after its first message
+
+The first message of a session is sent once to the model the conversation already
+runs on, with a one-line instruction to name it, and the answer becomes the session
+title. It costs one cheap request (reasoning off) and nothing to configure: the
+account you picked answers it, and the answer the user is waiting for never waits
+on it, because the request runs on a worker while the turn does.
+
+The title is shown in two places:
+
+- **The terminal window title**, as `<repository> — <session title>`, so a row of
+  open terminals says which project and which conversation each one is. A linked
+  worktree adds its own label (`sigil:fix-login`), because two worktrees of the
+  same repository are two different trees. Outside a repository the folder name
+  takes the place of the repository.
+- **`/load`**, where each row shows the title instead of the raw first message.
+
+The title is a label and never a dependency. If the request fails, answers nothing
+usable or the terminal ignores the escape sequence, the session keeps working and
+the listing falls back to the first message cut to 60 characters. A session keeps
+the first title it gets: renaming it on every message would make the window change
+under the user while the conversation drifted away from the label.
+
+<!-- prettier-ignore -->
+> [!NOTE]
+> The window title is an escape sequence (`OSC 2`), supported by xterm, VTE
+> terminals, kitty, iTerm2 and Windows Terminal. A terminal that ignores it simply
+> keeps its own title; nothing else changes.
 
 ## Commands
 

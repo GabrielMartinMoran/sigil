@@ -13,6 +13,7 @@ each responsibility to a mixin with its own state.
 - `ActivityMixin`  : the status bar: spinner, workspace and diff counters.
 - `DebugMixin`     : agent debug view (`alt+d`), which replaces the chat.
 - `TurnMixin`      : turn execution and on-disk checkpoints.
+- `TitleMixin`     : the session title and the terminal window title.
 """
 
 from __future__ import annotations
@@ -58,6 +59,7 @@ from src.ui.model_view_mixin import ModelViewMixin
 from src.ui.provider_mixin import ProviderMixin
 from src.ui.sidebar_mixin import SidebarMixin
 from src.ui.theme_mixin import ThemeMixin
+from src.ui.title_mixin import TitleMixin
 from src.ui.tool_logging import ChatToolLogSink, ToolLogMessage
 from src.ui.turn_mixin import TurnMixin
 from src.ui.widgets.chat_log import ChatLog
@@ -82,6 +84,7 @@ class SigilApp(
     ActivityMixin,
     DebugMixin,
     TurnMixin,
+    TitleMixin,
     App,
 ):
     """Terminal chat: scrollable history, fixed input, menu and side panel."""
@@ -181,6 +184,13 @@ class SigilApp(
         # window stops the turn.
         self._abort_deadline: float | None = None
         self._abort_timer: Any = None
+        # The window title: what was last written to the terminal (the terminal
+        # cannot be read back), how many times naming each session was tried and
+        # the worker of the request in flight, so an unnameable session does not
+        # cost a request per message and a slow one is not asked for twice.
+        self._painted_title = ''
+        self._naming_attempts: dict[str, int] = {}
+        self._naming_workers: dict[str, Any] = {}
         self._wire_busy_flag()
 
     def _wire_busy_flag(self) -> None:
@@ -246,6 +256,9 @@ class SigilApp(
         self.query_one(PromptInput).focus()
         self.load_model_window()
         self.resolve_model_capabilities()
+        # The window says where and what from the first paint, before any message
+        # has given the session a name: the repository half is already known.
+        self.paint_window_title()
 
     async def on_unmount(self) -> None:
         self._stop_diff_polling()

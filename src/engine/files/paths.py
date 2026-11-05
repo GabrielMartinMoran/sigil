@@ -1,15 +1,29 @@
-"""Path resolution inside the workspace.
+"""Path resolution inside the workspace and inside the OS temporary directory.
 
-A path outside the workspace is rejected with an explicit error instead of
+A path outside those two trees is rejected with an explicit error instead of
 being resolved silently: the model has to ask for authorization, not guess.
+
+The temporary directory is allowed because scratch files are what it is for. A
+command writes one, the model reads it back, and refusing the path would turn a
+one-line workflow into a round trip through the shell that the shell would win
+anyway.
 """
 
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 from src.engine.files.models.file_tool_error import FileToolError
+
+_POSIX_TEMP_DIRS = ('/tmp', '/var/tmp')
+"""Standard temporary directories of a POSIX system.
+
+``tempfile.gettempdir()`` honours ``TMPDIR``, but a command that writes
+``> /tmp/out.txt`` does not: both spellings have to reach the same file or the
+allowance only holds while nobody exports ``TMPDIR``.
+"""
 
 
 def workspace_root() -> Path:
@@ -17,15 +31,50 @@ def workspace_root() -> Path:
     return Path.cwd().resolve()
 
 
+def temp_dirs() -> tuple[Path, ...]:
+    """The temporary directories of this session, resolved and without duplicates.
+
+    The list is read on every call instead of once at import, so pointing
+    ``TMPDIR`` at a sandbox takes effect for the tools. Resolving also makes a
+    symlinked temp directory (macOS: ``/var`` → ``/private/var``) compare equal
+    to the paths the tools actually receive. A directory that cannot be resolved
+    is skipped: it is not a place a file can be written to.
+    """
+    candidates = [tempfile.gettempdir()]
+    if os.name != 'nt':
+        candidates.extend(_POSIX_TEMP_DIRS)
+
+    resolved: dict[Path, None] = {}
+    for candidate in candidates:
+        try:
+            resolved.setdefault(Path(candidate).expanduser().resolve(), None)
+        except OSError:
+            continue
+    return tuple(resolved)
+
+
+def allowed_roots() -> tuple[Path, ...]:
+    """The trees the file tools may work in: the workspace and the temp directories."""
+    return (workspace_root(), *temp_dirs())
+
+
+def is_allowed(path: Path) -> bool:
+    """Whether ``path`` (already resolved) sits inside one of the allowed trees."""
+    return any(path.is_relative_to(root) for root in allowed_roots())
+
+
 def resolve(path: str) -> Path:
-    """Resolves ``path`` against the workspace and validates that it stays inside."""
+    """Resolves ``path`` and validates that it stays inside an allowed tree.
+
+    A relative path is resolved against the workspace; an absolute one is used
+    as given. Symlinks are followed *before* the check, so a link inside an
+    allowed tree cannot be used to reach a file outside it.
+    """
     root = workspace_root()
     candidate = Path(path).resolve() if os.path.isabs(path) else (root / path).resolve()
-    try:
-        candidate.relative_to(root)
-    except ValueError:
+    if not is_allowed(candidate):
         raise FileToolError(
-            f'Path {path!r} is outside the workspace ({root}). '
-            'Files outside the workspace need explicit authorization from the user.'
-        ) from None
+            f'Path {path!r} is outside the workspace ({root}) and outside the temporary directory. '
+            'Files outside them need explicit authorization from the user.'
+        )
     return candidate

@@ -55,6 +55,8 @@ class WorkspaceMixin:
         if self._loaded_skills is not None:
             self._loaded_skills.reset()
         self.refresh_sidebar()
+        # A new tree is a new first half of the window title.
+        self.paint_window_title()
 
     async def announce_switch(self, switch: WorkspaceSwitch, chat: ChatLog) -> None:
         """Paints what changed, including what the new workspace does *not* have."""
