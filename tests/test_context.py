@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+from decimal import Decimal
 from pathlib import Path
 
 from pydantic_ai.messages import (
@@ -17,7 +18,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from src.engine.context.budget import ContextBudget
 from src.engine.context.capability import ContextViewCapability
@@ -532,6 +533,48 @@ def test_meter_snapshot_and_report():
     assert 'Context' in text
     assert 'Budget' in text
     assert 'Turns' in text
+
+
+def test_the_report_carries_the_bill_of_the_session():
+    """`/context` shows the money next to the tokens: one is the window, the other its price."""
+    messages = [
+        _user('hi'),
+        ModelResponse(
+            parts=[TextPart(content='ok')],
+            usage=RequestUsage(input_tokens=1_000, output_tokens=100),
+            model_name='claude-sonnet-4-5',
+            provider_details={'cost': 0.042},
+        ),
+    ]
+
+    report = ContextMeter(window=200_000).report(messages)
+    text = render_report(report)
+
+    assert report.cost.total == Decimal('0.042')
+    assert 'Cost' in text
+    assert 'total            : $0.0420' in text
+    assert '1 reported by the provider' in text
+    # A reported amount is a charge, not an estimate: no note, no floor.
+    assert 'at list price' not in text
+    assert 'floor' not in text
+
+
+def test_the_report_marks_an_estimated_total():
+    messages = [ModelResponse(parts=[TextPart(content='ok')], usage=RequestUsage(input_tokens=10, output_tokens=1))]
+    messages[0].usage.cost = Decimal('0.0005')
+
+    text = render_report(ContextMeter(window=200_000).report(messages))
+
+    assert 'total            : $0.0005 (at list price)' in text
+
+
+def test_the_report_marks_a_total_that_is_a_floor():
+    messages = [ModelResponse(parts=[TextPart(content='ok')])]
+
+    text = render_report(ContextMeter(window=200_000).report(messages))
+
+    assert 'total            : ?' in text
+    assert 'floor' in text
 
 
 def test_meter_ignores_invalid_window():

@@ -1947,6 +1947,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "ddgs" },
+    { name = "genai-prices" },
     { name = "pillow" },
     { name = "prompt-toolkit" },
     { name = "pydantic" },
@@ -1968,6 +1969,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "ddgs", specifier = ">=9.16.1" },
+    { name = "genai-prices", specifier = ">=0.2.1" },
     { name = "pillow", specifier = ">=13.0.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.53" },
     { name = "pydantic", specifier = ">=2.14.2" },

@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+from decimal import Decimal
 from pathlib import Path
 
 from pydantic_ai import Agent
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RequestUsage
 
+from src.engine.context.meter.cost import SessionCost
 from src.engine.mcp.config.loader import load_config
 from src.engine.mcp.manager.manager import MCPManager
 from src.engine.roadmap.models.todo_item import TodoItem
@@ -96,6 +100,90 @@ def test_the_context_is_the_last_line_of_the_model_section():
     text = panel._build().plain
     assert 'Context' not in text
     assert text.index('effort: high') < text.index('context: 66%') < text.index('Loaded skills')
+
+
+def test_the_cost_rides_under_the_context_line():
+    """Same history, different unit: how full the window is, and what it cost."""
+    panel = _configured()
+    panel._context_state = ContextState(
+        percent=66.0,
+        used=132_000,
+        window=200_000,
+        cost=SessionCost(total=Decimal('0.043'), reported=3),
+    )
+    text = panel._build().plain
+    assert text.index('context: 66%') < text.index('cost: $0.04') < text.index('Loaded skills')
+
+
+def test_a_reported_total_carries_no_marks():
+    """OpenRouter charges what it reports: the number is an invoice, not a guess."""
+    panel = _configured()
+    panel._context_state = ContextState(
+        percent=10.0, used=20_000, window=200_000, cost=SessionCost(total=Decimal('1.2'), reported=4)
+    )
+    assert 'cost: $1.20' in panel._build().plain
+
+
+def test_an_estimated_total_carries_a_tilde():
+    """A list price is not a charge: a reseller or a plan can bill something else."""
+    panel = _configured()
+    panel._context_state = ContextState(
+        percent=10.0, used=20_000, window=200_000, cost=SessionCost(total=Decimal('0.043'), estimated=2)
+    )
+    assert 'cost: ~$0.04' in panel._build().plain
+
+
+def test_a_partial_total_carries_a_plus():
+    """A request nothing could price turns the total into a floor."""
+    panel = _configured()
+    panel._context_state = ContextState(
+        percent=10.0,
+        used=20_000,
+        window=200_000,
+        cost=SessionCost(total=Decimal('0.043'), reported=2, unpriced=1),
+    )
+    assert 'cost: $0.04+' in panel._build().plain
+
+
+def test_both_marks_together():
+    panel = _configured()
+    panel._context_state = ContextState(
+        percent=10.0,
+        used=20_000,
+        window=200_000,
+        cost=SessionCost(total=Decimal('0.043'), estimated=2, unpriced=1),
+    )
+    assert 'cost: ~$0.04+' in panel._build().plain
+
+
+def test_a_session_that_could_not_be_priced_at_all_shows_a_question_mark():
+    panel = _configured()
+    panel._context_state = ContextState(
+        percent=10.0,
+        used=20_000,
+        window=200_000,
+        cost=SessionCost(total=None, unpriced=2),
+    )
+    assert 'cost: ?' in panel._build().plain
+
+
+def test_a_session_with_nothing_sent_costs_zero():
+    """A real zero, not `?`: nothing went out, so nothing is unknown."""
+    panel = _configured()
+    panel._context_state = ContextState(percent=0.0, used=0, window=200_000, cost=SessionCost(total=Decimal(0)))
+    assert 'cost: $0' in panel._build().plain
+
+
+def test_the_cost_is_hidden_until_a_model_is_configured():
+    """A bill for a window that does not exist yet is a number that means nothing."""
+    panel = _panel()
+    panel._context_state = ContextState(
+        percent=12.0,
+        used=24_000,
+        window=200_000,
+        cost=SessionCost(total=Decimal('0.5'), reported=1),
+    )
+    assert 'cost:' not in panel._build().plain
 
 
 def test_the_roadmap_is_the_last_section_of_the_panel(tmp_path):
@@ -233,6 +321,40 @@ def test_mcp_counts_reports_broken_servers(tmp_path):
     ok, failed = manager.counts()
     assert ok == 0
     assert failed == 1
+
+
+def test_the_panel_reads_the_bill_from_the_session_history():
+    """The whole seam: history → `context_state` → panel.
+
+    The panel test above pins the rendering; this one pins that the number reaches
+    it, which is the part a refactor of `context_state` would break.
+    """
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
+            app = SigilApp(
+                agent=Agent(TestModel(custom_output_text='ok'), instructions='x'),
+                store=store,
+                session=store.create_session(),
+            )
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                app.model_state = lambda: ModelState(alias='work', provider='OpenRouter', model='anthropic/x')
+                app._history = [
+                    ModelRequest(parts=[UserPromptPart(content='hi')]),
+                    ModelResponse(
+                        parts=[TextPart(content='ok')],
+                        usage=RequestUsage(input_tokens=1_000, output_tokens=100),
+                        model_name='claude-sonnet-4-5',
+                        provider_details={'cost': 0.042},
+                    ),
+                ]
+                app.refresh_sidebar()
+                await pilot.pause()
+                assert 'cost: $0.04' in app.query_one(SidebarPanel).text
+
+    asyncio.run(inner())
 
 
 def test_sidebar_reflects_loaded_skills():

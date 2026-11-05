@@ -10,6 +10,7 @@ from textual.app import ScreenStackError
 from textual.css.query import NoMatches
 
 from src.engine.context.meter.context_meter import ContextMeter
+from src.engine.context.meter.cost import session_cost
 from src.engine.skills.loaded import LoadedSkills
 from src.ui.widgets.sidebar_panel import ContextState, MCPServerState, SidebarPanel
 
@@ -52,22 +53,27 @@ class SidebarMixin:
         panel.update_context(self.context_state(messages))
 
     def context_state(self, messages: Sequence[ModelMessage] | None = None) -> ContextState:
-        """How full the window is, from the meter.
+        """How full the window is and what the session has cost, from the meter.
 
         The **projected** number, not the measured one: the panel answers whether
         the next request fits, and the measured value describes the previous one.
 
         With no history there is nothing measured and nothing estimated, so the
         real usage is zero. Reporting it as unknown would paint `?` on every cold
-        start, which is the moment the panel is read most.
+        start, which is the moment the panel is read most. The bill is measured on
+        the same history and travels with it: a zero there means nothing was sent
+        yet, which is a fact, not a gap.
         """
-        snapshot = self._meter.snapshot(self._history if messages is None else messages)
+        history = self._history if messages is None else messages
+        snapshot = self._meter.snapshot(history)
+        cost = session_cost(history)
         if snapshot.projected is None and snapshot.window:
-            return ContextState(percent=0.0, used=0, window=snapshot.window)
+            return ContextState(percent=0.0, used=0, window=snapshot.window, cost=cost)
         return ContextState(
             percent=snapshot.projected_percent,
             used=snapshot.projected,
             window=snapshot.window,
+            cost=cost,
         )
 
     @work(exclusive=True, group='mcp')

@@ -18,6 +18,7 @@ resumable; projecting it is what keeps the request inside the window.
 - [What the model is told about its tools](#what-the-model-is-told-about-its-tools)
 - [Strategies](#strategies)
 - [Configuration](#configuration)
+- [What the session cost](#what-the-session-cost)
 - [Inspecting a session](#inspecting-a-session)
 - [Invariants](#invariants)
 
@@ -679,12 +680,54 @@ count is its own setting, and it is a quantity, not a mode.
 `all` exists because some routes require round-tripping the reasoning before they
 will answer. It is the expensive option, not the recommended one.
 
+## What the session cost
+
+The `cost:` line of the side panel and the `Cost` block of `/context` answer one
+question: what have these tokens cost so far. The answer is computed from the
+history, by `session_cost()` in `src/engine/context/meter/cost.py`, from what
+each `ModelResponse` recorded about itself.
+
+The price of a request comes from one of three places, and the difference
+travels with the number:
+
+| Source | Where it is read | Trust |
+| --- | --- | --- |
+| The provider | `ModelResponse.provider_details['cost']` | The invoice. OpenRouter sends the amount it will charge, and pydantic-ai stores it next to the upstream it routed to. |
+| The bundled table | `ModelResponse.usage.cost` | List price. pydantic-ai prices every other response with `genai-prices`. |
+| The vendor's rate | `genai_prices.calc_price()` on the model id | List price, for providers the table cannot name. OpenCode serves vendored models under its own name, so `usage.cost` arrives empty and the model id is priced on its own. |
+
+Three consequences follow, and the UI marks each one:
+
+- **An estimate is not a charge.** A reseller, a discount, or a plan can bill an
+  amount no list price knows, so an estimated total is marked `~`.
+- **A model no table knows is left out, not zeroed.** The amount would be a
+  guess about a blind spot; the total becomes a floor, marked `+`. A response
+  that arrived with no usage at all is set aside the same way and counted apart:
+  omitted usage and an unknown price are two different holes in a total.
+- **A subscription has no per-token price.** A ChatGPT plan signs in with OAuth
+  and the API bills nothing per token, so the figure is what those tokens would
+  have cost at the published rate. It is the comparison Claude Code shows its
+  subscribers, and the reason the panel says `~` instead of asserting a bill.
+
+The total is derived, never stored: reopening a session with `/load` shows the
+bill its own requests produced, and no extra request is ever sent to price
+anything. `/context` prints the same figure with the counts behind it — how
+many requests the provider priced, how many came from the table, and how many
+could not be priced.
+
+`genai-prices` bundles its data at release time. A model released after this
+install is priced as unknown until the package is updated; pydantic-ai's
+`update_in_background()` downloads a fresher table, and Sigil does not call it,
+because a diagnostics feature does not get to open a network connection on
+startup.
+
 ## Inspecting a session
 
 `/context` renders the report for the current session: measured versus
-projected, the budget split, the cost of each turn, and the heaviest tool
-results. The debug view builds the same projection the agent would send *now*,
-which is why it calls `project()` rather than reading the last `ViewResult`.
+projected, the budget split, the cost of the session and of each turn, and the
+heaviest tool results. The debug view builds the same projection the agent would
+send *now*, which is why it calls `project()` rather than reading the last
+`ViewResult`.
 
 To check a saved session without opening the UI:
 
@@ -735,6 +778,8 @@ one of them is a regression, not a trade-off.
 8. **Diagnostics never break a turn.** `on_view` failures are suppressed.
 9. **A tool the model cannot use is absent, not refused.** It has no definition and
    no bullet in the prompt, and a stray call is refused as a second line of defence.
+10. **An unpriced request never counts as zero.** The total reports the hole
+    (`+`, `?`) instead of shaving the amount down to a smaller lie.
 
 ## Where the code lives
 
@@ -747,6 +792,7 @@ one of them is a regression, not a trade-off.
 | `src/engine/context/strategy/` | `windowed`, `compacting`, `passthrough` |
 | `src/engine/context/strategy/turns.py` | Turn grouping, pinned-result detection |
 | `src/engine/context/meter/` | The `/context` report and the debug view |
+| `src/engine/context/meter/cost.py` | What the session cost, and where each amount came from |
 | `src/engine/attachments/library.py` | Image ids, and resolving one against the log |
 | `src/engine/attachments/tools.py` | `view_image`: hands a picture back as an image |
 | `src/engine/context/instructions/` | `AGENTS.md` / `CLAUDE.md` resolution over the scope |
