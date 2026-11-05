@@ -21,7 +21,11 @@ from collections.abc import Sequence
 from typing import Any
 
 from src.engine.providers.catalog.source import FetchJson, as_list
-from src.engine.providers.domain.model_capability import ModelCapability, normalize_efforts
+from src.engine.providers.domain.model_capability import (
+    ModelCapability,
+    accepts_image_input,
+    normalize_efforts,
+)
 from src.engine.providers.domain.provider_account import ProviderAccount
 from src.engine.providers.domain.provider_kind import ProviderKind
 
@@ -80,6 +84,7 @@ def _parse_entry(entry: dict[str, Any]) -> ModelCapability | None:
         efforts=normalize_efforts(efforts),
         dialect=DIALECT,
         supports_tools=_supports_tools(entry),
+        supports_images=_supports_images(entry),
     )
 
 
@@ -102,3 +107,15 @@ def _supports_tools(entry: dict[str, Any]) -> bool:
         # user can read.
         return True
     return 'tools' in params
+
+
+def _supports_images(entry: dict[str, Any]) -> bool:
+    """Whether the model takes image input, from its declared modalities.
+
+    OpenRouter publishes the bare ``image`` family today, but the decision is
+    delegated so a MIME-qualified list from the same endpoint reads the same.
+    """
+    architecture = entry.get('architecture')
+    if not isinstance(architecture, dict):
+        return True
+    return accepts_image_input(architecture.get('input_modalities'))

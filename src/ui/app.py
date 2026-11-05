@@ -301,6 +301,15 @@ class SigilApp(
         """Appends a notice posted from a synchronous context."""
         await self.query_one(ChatLog).add_notice(message.text, style=message.style)
 
+    async def on_prompt_input_attachment_rejected(self, message: PromptInput.AttachmentRejected) -> None:
+        """An image could not be attached: one line, and the composer keeps what it had.
+
+        The reason is the whole point of the line. "Pasted without an image" would
+        leave the user pressing the key again on a clipboard that will not work
+        until a package is installed, so the message names the fix.
+        """
+        await self.query_one(ChatLog).add_notice(f'✖ {message.reason}', style='yellow')
+
     async def on_tool_log_message(self, message: ToolLogMessage) -> None:
         event = message.event
         chat = self.query_one(ChatLog)

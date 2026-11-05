@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from textual.css.query import NoMatches
 from textual.widgets import TextArea
 
 from src.engine.commands import match_commands
@@ -65,8 +66,19 @@ class MenuMixin:
             menu.action_cursor_down()
 
     def menu_hide(self) -> None:
-        self.query_one(CommandMenu).display = False
+        """Hides the menu, whether or not it is mounted.
+
+        The composer writes its value from several paths — restoring a message that
+        missed its seam, a command handed back, a session switch — and some of them
+        run before the widget tree is composed. A menu that is not there is already
+        hidden.
+        """
         self.menu_visible = False
+        try:
+            menu = self.query_one(CommandMenu)
+        except NoMatches:
+            return
+        menu.display = False
 
     def menu_complete(self) -> None:
         """Tab in the menu: writes the highlighted command into the input.

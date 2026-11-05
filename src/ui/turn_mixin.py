@@ -41,6 +41,8 @@ from textual.css.query import NoMatches
 from textual.widgets import Static
 
 from src.engine.agents.step_limiter import StepLimiter, StepLimitExceeded
+from src.engine.attachments.content import user_content
+from src.engine.attachments.image_attachment import ImageAttachment
 from src.engine.providers.domain.thinking import settings_value as thinking_settings
 from src.engine.shell import running as running_commands
 from src.ui.messages import ChatNotice
@@ -71,9 +73,22 @@ class Steer:
     """
 
     text: str
+    attachments: tuple[ImageAttachment, ...] = field(default=())
     widget: Static | None = None
     enqueue_id: str | None = None
     delivered: bool = field(default=False)
+
+    def enqueued(self) -> tuple[str, ...]:
+        """The message as ``enqueue`` wants it: text first, then each image.
+
+        One argument per item, because ``enqueue`` gathers adjacent content into a
+        single ``UserPromptPart``. A list passed as one argument is a list, not a
+        multimodal prompt.
+        """
+        if not self.attachments:
+            return (self.text,)
+        ordered = sorted(self.attachments, key=lambda attachment: attachment.number)
+        return (self.text, *(attachment.to_content() for attachment in ordered))
 
 
 class TurnMixin:
@@ -187,15 +202,25 @@ class TurnMixin:
 
     # --- steering ----------------------------------------------------------
 
-    def steer(self, text: str, widget: Static | None = None) -> None:
+    def steer(
+        self,
+        text: str,
+        widget: Static | None = None,
+        *,
+        attachments: tuple[ImageAttachment, ...] = (),
+    ) -> None:
         """Hands a message typed mid-turn to the running turn.
 
         It goes through ``enqueue`` because that is the only path that keeps the
         run valid: the message becomes a real ``ModelRequest`` in the history,
         placed where the agent can read it without the pending tool calls losing
         their answers.
+
+        An image pasted mid-turn travels the same way: ``enqueue`` takes
+        multimodal content, so ``[Image #1]`` in the text and the picture beside
+        it arrive together in the request the agent reads next.
         """
-        entry = Steer(text=text, widget=widget)
+        entry = Steer(text=text, attachments=attachments, widget=widget)
         run = self._current_run
         if run is None:
             # The turn was accepted but the run is not up yet. The message waits
@@ -207,7 +232,9 @@ class TurnMixin:
     def _enqueue(self, entry: Steer, run: Any) -> None:
         """Queues one message on a live run."""
         try:
-            entry.enqueue_id = run.enqueue(entry.text)
+            # Spread, not the list itself: `enqueue` takes one item per argument,
+            # and a list passed as one item is not multimodal content.
+            entry.enqueue_id = run.enqueue(*entry.enqueued())
         except Exception as exc:  # noqa: BLE001 - a refused message must not be lost
             self.post_message(ChatNotice(f'Could not send it: {exc}', style='bold red'))
             self._steering.append(entry)
@@ -313,7 +340,7 @@ class TurnMixin:
 
     # --- the turn ----------------------------------------------------------
 
-    def start_turn(self, text: str) -> None:
+    def start_turn(self, text: str, *, attachments: tuple[ImageAttachment, ...] = ()) -> None:
         """Accepts a new turn.
 
         The flag is set here and not inside the worker: the worker does not start
@@ -321,13 +348,13 @@ class TurnMixin:
         know that a turn is already on its way.
         """
         if self._turn_active:
-            self.steer(text)
+            self.steer(text, attachments=attachments)
             return
         self._turn_active = True
-        self.run_turn(text)
+        self.run_turn(text, attachments=attachments)
 
     @work(exclusive=True)
-    async def run_turn(self, text: str) -> None:
+    async def run_turn(self, text: str, *, attachments: tuple[ImageAttachment, ...] = ()) -> None:
         """Runs a full turn, persisting progress along the way."""
         self._turn_active = True
         # The session this turn belongs to. A command that swaps it mid-turn is
@@ -360,7 +387,7 @@ class TurnMixin:
         self._last_checkpoint_at = 0.0
         try:
             async with self._agent.iter(
-                text,
+                user_content(text, attachments),
                 message_history=self._history,
                 capabilities=[ProcessEventStream(handler=handler)],
                 model_settings=self.model_settings(),
@@ -417,7 +444,9 @@ class TurnMixin:
         leftovers = self._take_undelivered()
         prompt = self.query_one(PromptInput)
         if leftovers:
-            prompt.value = '\n'.join(entry.text for entry in leftovers)
+            # Text and images together: a message whose text came back without its
+            # picture would point at an `[Image #1]` that no longer exists.
+            prompt.restore([(entry.text, entry.attachments) for entry in leftovers])
             for entry in leftovers:
                 if entry.widget is not None:
                     await entry.widget.remove()

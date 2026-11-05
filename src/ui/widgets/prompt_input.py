@@ -5,7 +5,7 @@ the same for all of them: **the focused widget sees the key first**.
 
 - The command menu (Up/Down/Tab/Esc) needs `priority`, because the text area
   consumes those keys for editing and cursor movement.
-- `ctrl+m`, `ctrl+t` and `ctrl+a` are handled in `_on_key`.
+- `ctrl+m`, `ctrl+t`, `ctrl+a` and `ctrl+v` are handled in `_on_key`.
 - `Enter` sends and `Shift+Enter` inserts a newline. The text area already treats
   Enter as a newline, so the split is decided in `_on_key`, before the area turns
   the key into an edit.
@@ -34,16 +34,39 @@ Why `Esc` lives here and not in the app: the abort has to coexist with the `Esc`
 that cancels a question panel, which is the panel's own binding. A global
 `priority` binding at the app level would run before both of them and swallow
 them.
+
+Pasting an image is the other thing that lives here, because clipboard access is
+not a keystroke the app can read: `ctrl+v` means "look at the clipboard", and a
+terminal only carries text. See `src/engine/attachments`.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from pathlib import Path
 from typing import ClassVar
 
+from rich.segment import Segment
+from rich.style import Style
 from textual import events
 from textual.binding import Binding
+from textual.document._edit import Edit
 from textual.message import Message
+from textual.strip import Strip
 from textual.widgets import TextArea
+
+from src.engine.attachments.clipboard import ClipboardUnavailable, read_clipboard_image
+from src.engine.attachments.image_attachment import ImageAttachment
+from src.engine.attachments.images import ImageError, prepare_image
+from src.engine.attachments.tokens import (
+    TOKEN_PATTERN,
+    block_deletion,
+    location,
+    numbers_in,
+    offset,
+    remap,
+    renumber,
+)
 
 CTRL_MODELS = 'ctrl+m'
 """Ctrl+M. Same byte as Enter on a legacy terminal; see the module docstring."""
@@ -55,8 +78,22 @@ CTRL_AGENT = 'ctrl+a'
 """Ctrl+A. `home` in the `TextArea` (and in readline), which is why it is read
 here: the prompt claims it before the widget turns it into a cursor move."""
 
+CTRL_PASTE = 'ctrl+v'
+"""Ctrl+V. The one key that can carry an image; see `_paste`."""
+
 NEWLINE_KEYS = frozenset({'shift+enter'})
 """Keys that insert a line break instead of sending. See the module docstring."""
+
+DELETE_KEYS = frozenset({'backspace', 'delete', 'ctrl+h', 'ctrl+w'})
+"""Keys whose deletion may have to take a whole `[Image #n]` with it."""
+
+TOKEN_STYLE = Style(bold=True, reverse=True)
+"""How the marker is drawn in the composer.
+
+Reverse video and not a foreground color: the composer is a `TextArea` painted by
+the stylesheet, which a Rich color cannot reach, and reverse video is legible on
+every theme — including the ones a user installs later.
+"""
 
 
 class PromptInput(TextArea):
@@ -66,6 +103,11 @@ class PromptInput(TextArea):
     document, not a field: a single-line field cannot show the second line, and
     the alternative — a hidden buffer with a fake display — would have to
     reimplement wrapping, selection and cursor movement.
+
+    It also owns the images pasted into the message. The bytes never enter the
+    document: the text carries `[Image #n]` and `attachments` keeps the rest, so
+    what the user edits stays a document and what travels to the model stays a
+    list of content parts.
     """
 
     BINDINGS: ClassVar[list[Binding]] = [
@@ -78,13 +120,22 @@ class PromptInput(TextArea):
     class Submitted(Message):
         """The user pressed Enter with a message worth sending.
 
-        It carries the text and not the widget: by the time the app handles it the
-        composer is already empty, and the turn needs what was in it.
+        It carries the text and the images and not the widget: by the time the
+        app handles it the composer is already empty, and the turn needs what was
+        in it.
         """
 
-        def __init__(self, value: str) -> None:
+        def __init__(self, value: str, attachments: tuple[ImageAttachment, ...] = ()) -> None:
             super().__init__()
             self.value = value
+            self.attachments = attachments
+
+    class AttachmentRejected(Message):
+        """An image could not be attached, with the reason to show the user."""
+
+        def __init__(self, reason: str) -> None:
+            super().__init__()
+            self.reason = reason
 
     def __init__(
         self,
@@ -105,6 +156,111 @@ class PromptInput(TextArea):
             tab_behavior='focus',
             highlight_cursor_line=False,
         )
+        self._attachments: dict[int, ImageAttachment] = {}
+        self._next_number = 1
+
+    # --- attachments ---------------------------------------------------------
+
+    @property
+    def attachments(self) -> tuple[ImageAttachment, ...]:
+        """The images the message carries, in the order the text mentions them."""
+        numbers = numbers_in(self.text)
+        return tuple(self._attachments[number] for number in numbers if number in self._attachments)
+
+    def attach(self, attachment: ImageAttachment) -> ImageAttachment:
+        """Adds an image to the message and writes its marker at the cursor.
+
+        The marker is inserted like typed text, so it lands inside the undo
+        history and the deletion that follows is one edit like any other.
+        """
+        numbered = self._numbered(attachment, self._next_number)
+        self._next_number += 1
+        self._attachments[numbered.number] = numbered
+        self.insert(numbered.token)
+        return numbered
+
+    @staticmethod
+    def _numbered(attachment: ImageAttachment, number: int) -> ImageAttachment:
+        """The same image under another number.
+
+        The number lives on the attachment and the attachment is frozen, so a copy
+        is the honest way to renumber one.
+        """
+        return ImageAttachment(
+            number=number,
+            data=attachment.data,
+            media_type=attachment.media_type,
+            width=attachment.width,
+            height=attachment.height,
+        )
+
+    def attach_path(self, path: str | Path) -> ImageAttachment:
+        """Attaches an image from disk, with the same bounds as a pasted one."""
+        return self.attach(prepare_image(Path(path).read_bytes()))
+
+    def restore(self, entries: Sequence[tuple[str, Sequence[ImageAttachment]]]) -> None:
+        """Puts messages back in the composer, images included.
+
+        It exists for the message that missed the last seam of a turn: it goes back
+        to the prompt so the next `Enter` sends it, and a message whose text came
+        back without its picture would point at an `[Image #1]` that no longer
+        exists. Each entry was numbered starting at one, so the images are
+        renumbered as the entries are appended and the markers follow them.
+        """
+        lines: list[str] = []
+        offset = 0
+        for text, attachments in entries:
+            mapping = {attachment.number: offset + index for index, attachment in enumerate(attachments, start=1)}
+            offset += len(attachments)
+            for attachment in attachments:
+                number = mapping[attachment.number]
+                self._attachments[number] = self._numbered(attachment, number)
+            lines.append(remap(text, mapping))
+        self._next_number = offset + 1
+        self.value = '\n'.join(lines)
+
+    def discard(self, number: int) -> None:
+        """Forgets an image whose marker is no longer in the text."""
+        self._attachments.pop(number, None)
+
+    def _sync_attachments(self) -> None:
+        """Drops the images the text no longer mentions and renumbers what is left.
+
+        Called after every edit. The numbers are the contract with the model, so
+        they cannot be left pointing at an image that was deleted, nor skip a
+        number because one in the middle went away.
+
+        The rewrite of the text is bookkeeping the user did not ask for, so it is
+        applied without entering the undo history, and the cursor keeps its
+        document offset instead of jumping to the end of the message.
+        """
+        mentioned = numbers_in(self.text)
+        alive = [number for number in mentioned if number in self._attachments]
+        for number in [number for number in self._attachments if number not in alive]:
+            del self._attachments[number]
+
+        if alive != list(range(1, len(alive) + 1)):
+            rewritten = renumber(self.text, alive)
+            if rewritten != self.text:
+                cursor = offset(self.text, self.cursor_location)
+                history = self.history
+                self.load_text(rewritten)
+                self.history = history
+                self.move_cursor(location(rewritten, min(cursor, len(rewritten))))
+
+        # `alive` still names the old numbers, in the order the text mentions
+        # them; the new dict is keyed by the position each one now occupies.
+        self._attachments = {
+            new: ImageAttachment(
+                number=new,
+                data=self._attachments[old].data,
+                media_type=self._attachments[old].media_type,
+                width=self._attachments[old].width,
+                height=self._attachments[old].height,
+            )
+            for new, old in enumerate(alive, start=1)
+        }
+        self._next_number = len(self._attachments) + 1
 
     # --- keys ---------------------------------------------------------------
 
@@ -151,8 +307,81 @@ class PromptInput(TextArea):
             event.prevent_default()
             self.run_worker(self.app.open_agent())
             return
+        if event.key == CTRL_PASTE:
+            event.stop()
+            event.prevent_default()
+            self._paste()
+            return
+
+        if event.key in DELETE_KEYS and self._delete_block(event.key):
+            event.stop()
+            event.prevent_default()
+            return
 
         await super()._on_key(event)
+
+    def _delete_block(self, key: str) -> bool:
+        """Deletes a whole `[Image #n]` when the key is aimed at one.
+
+        Returns:
+            ``True`` when the deletion was performed here, so the key must not
+            reach the `TextArea` and delete one character of the marker.
+        """
+        deletion = block_deletion(self.text, self.selection, backspace=key != 'delete')
+        if deletion is None:
+            return False
+        old = self.text
+        start = location(old, deletion.start)
+        end = location(old, deletion.end)
+        self.replace('', start, end)
+        self.move_cursor(start)
+        return True
+
+    def _paste(self) -> None:
+        """`ctrl+v`: an image from the clipboard if there is one, the text otherwise.
+
+        The image wins when both are offered, because a screenshot on the
+        clipboard is never accompanied by useful text, and a terminal that
+        carries only text still reaches `action_paste` through the fallback.
+        """
+        try:
+            raw = read_clipboard_image()
+        except ClipboardUnavailable as exc:
+            # The tool is missing, not the image: say so once and let the text
+            # paste happen, or the user loses the ability to paste at all.
+            self.post_message(self.AttachmentRejected(str(exc)))
+            raw = None
+        if raw is None:
+            self.action_paste()
+            return
+        if not self.app.accepts_images():
+            self.post_message(self.AttachmentRejected(self.app.images_refusal()))
+            return
+        try:
+            prepared = prepare_image(raw)
+        except ImageError as exc:
+            self.post_message(self.AttachmentRejected(str(exc)))
+            return
+        self.attach(prepared)
+
+    # --- rendering -----------------------------------------------------------
+
+    def render_line(self, y: int) -> Strip:
+        """Draws the markers highlighted, on top of what the text area painted.
+
+        Styling the line in `get_line` would be simpler, but it re-parses on every
+        line of every repaint; the rendered strip is already split into segments,
+        so the markers are found in a handful of strings instead of the whole
+        document.
+        """
+        strip = super().render_line(y)
+        segments = strip._segments
+        if not any(TOKEN_PATTERN.search(segment.text) for segment in segments):
+            return strip
+        highlighted: list[Segment] = []
+        for segment in segments:
+            highlighted.extend(_split_marker(segment.text, segment.style))
+        return Strip(highlighted, strip.cell_length)
 
     # --- value --------------------------------------------------------------
 
@@ -172,8 +401,10 @@ class PromptInput(TextArea):
         self.move_cursor(self.document.end)
 
     def clear(self) -> None:
-        """Empties the composer and puts the cursor back at the start."""
+        """Empties the composer, its images included, and resets the cursor."""
         self.load_text('')
+        self._attachments.clear()
+        self._next_number = 1
         self.move_cursor((0, 0))
 
     # --- actions ------------------------------------------------------------
@@ -181,10 +412,13 @@ class PromptInput(TextArea):
     async def action_submit(self) -> None:
         """Sends what is in the composer, unless it is only whitespace."""
         text = self.text.strip()
+        attachments = self.attachments if text else ()
         if not text:
             return
+        # A message that is only a pasted image has no text of its own: the
+        # marker it was written with is the whole message.
         self.clear()
-        self.post_message(self.Submitted(text))
+        self.post_message(self.Submitted(text, attachments))
 
     async def action_menu_up(self) -> None:
         self.app.cancel_abort()
@@ -197,9 +431,9 @@ class PromptInput(TextArea):
     async def action_menu_complete(self) -> None:
         """Tab completes the highlighted command instead of running it.
 
-        `Enter` is the one that executes; Tab only fills the word in, and appends a
-        trailing space when the command takes an argument, so the next keystroke is
-        the argument rather than the rest of the name.
+        `Enter` is the one that executes; Tab only fills the word in, and appends
+        a trailing space when the command takes an argument, so the next keystroke
+        is the argument rather than the rest of the name.
         """
         self.app.cancel_abort()
         if self.app.menu_visible:
@@ -217,3 +451,28 @@ class PromptInput(TextArea):
         self.app.menu_hide()
         if self.app.request_abort():
             self.app.abort_turn()
+
+    # --- edits --------------------------------------------------------------
+
+    def edit(self, edit: Edit):  # type: ignore[no-untyped-def]
+        """Runs the edit and keeps the attachments in sync with the text."""
+        result = super().edit(edit)
+        self._sync_attachments()
+        return result
+
+
+def _split_marker(text: str, style: Style | None) -> list[Segment]:
+    """Splits one painted segment so the markers in it get `TOKEN_STYLE`."""
+    if not TOKEN_PATTERN.search(text):
+        return [Segment(text, style)]
+    pieces: list[Segment] = []
+    position = 0
+    for match in TOKEN_PATTERN.finditer(text):
+        if match.start() > position:
+            pieces.append(Segment(text[position : match.start()], style))
+        base = style or Style()
+        pieces.append(Segment(match.group(0), base + TOKEN_STYLE))
+        position = match.end()
+    if position < len(text):
+        pieces.append(Segment(text[position:], style))
+    return pieces

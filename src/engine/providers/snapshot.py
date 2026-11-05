@@ -28,6 +28,10 @@ class ModelSnapshot:
     efforts: tuple[ThinkingEffort, ...] = ()
     """Levels the active model accepts, for the effort menu."""
 
+    images: bool = True
+    """Whether the active model reads images, so the composer can refuse a paste
+    before the turn is spent instead of failing at the provider."""
+
     notice: str | None = None
     """Why something is degraded (catalogue offline, model unknown)."""
 

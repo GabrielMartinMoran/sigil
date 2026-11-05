@@ -32,6 +32,13 @@ class Selection:
     efforts: tuple[ThinkingEffort, ...] = ()
     """Levels the model accepts, so `/effort` works on a cold start."""
 
+    images: bool = True
+    """Whether the model reads images, as the catalogue described it.
+
+    It travels with the selection for the same reason as the window: a cold start
+    has to refuse a paste on a text-only model without reaching the network first.
+    """
+
     def to_dict(self) -> dict[str, object]:
         return {
             'account_id': self.account_id,
@@ -39,6 +46,7 @@ class Selection:
             'thinking': str(self.thinking),
             'window': self.window,
             'efforts': list(self.efforts),
+            'images': self.images,
         }
 
     @classmethod
@@ -59,6 +67,7 @@ class Selection:
             thinking=thinking,  # type: ignore[arg-type]
             window=window if isinstance(window, int) and window > 0 else None,
             efforts=normalize_efforts(raw_efforts) if isinstance(raw_efforts, list) else (),
+            images=bool(data.get('images', True)),
         )
 
     def with_thinking(self, thinking: ThinkingChoice) -> Selection:
@@ -68,6 +77,7 @@ class Selection:
             thinking=thinking,
             window=self.window,
             efforts=self.efforts,
+            images=self.images,
         )
 
     def with_model(self, model: str, thinking: ThinkingChoice | None = None) -> Selection:
@@ -77,9 +87,16 @@ class Selection:
             thinking=self.thinking if thinking is None else thinking,
             window=self.window,
             efforts=self.efforts,
+            images=self.images,
         )
 
-    def with_capability(self, window: int | None, efforts: tuple[ThinkingEffort, ...]) -> Selection:
+    def with_capability(
+        self,
+        window: int | None,
+        efforts: tuple[ThinkingEffort, ...],
+        *,
+        images: bool | None = None,
+    ) -> Selection:
         """Copy carrying the catalogue data, so a restart needs no network."""
         return Selection(
             account_id=self.account_id,
@@ -87,4 +104,5 @@ class Selection:
             thinking=self.thinking,
             window=window,
             efforts=efforts,
+            images=self.images if images is None else images,
         )

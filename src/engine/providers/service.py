@@ -241,6 +241,7 @@ class ModelService:
             thinking=_fit_thinking(choice, capability),
             window=capability.context_window,
             efforts=capability.efforts,
+            images=capability.supports_images,
         )
 
         built = self._build(account, model, capability, self._secret_for(account))
@@ -301,6 +302,7 @@ class ModelService:
                 name=selection.model,
                 context_window=selection.window,
                 efforts=selection.efforts,
+                supports_images=selection.images,
             )
         notice = None
         if fetched is not None and fetched.error:
@@ -312,6 +314,7 @@ class ModelService:
             capability=capability,
             window=capability.context_window,
             efforts=capability.efforts,
+            images=capability.supports_images,
             notice=notice,
         )
 
@@ -339,7 +342,9 @@ class ModelService:
         catalog = await self.catalog.models(account, secret=self._api_key_for(account))
         found = catalog.find(selection.model)
         if found is not None:
-            self.state.set_last_selection(selection.with_capability(found.context_window, found.efforts))
+            self.state.set_last_selection(
+                selection.with_capability(found.context_window, found.efforts, images=found.supports_images)
+            )
         return self.snapshot()
 
     def resolve(self, session_selection: Selection | None = None) -> Selection | None:

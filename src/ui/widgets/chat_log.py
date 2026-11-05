@@ -18,9 +18,11 @@ Three kinds of block live here, and each one answers a different reading mode:
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from typing import Any
 
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -36,6 +38,9 @@ from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.widgets import Static
 
+from src.engine.attachments.content import describe_attachments, images_in
+from src.engine.attachments.image_attachment import ImageAttachment
+from src.engine.context.images import image_size
 from src.ui.palette import color
 
 RENDER_INTERVAL = 0.08
@@ -65,6 +70,9 @@ TOOL_OUTPUT_WIDTH = 160
 REASONING_MARKER = '✳'
 """Marker of the collapsed reasoning line. Not an arrow: it is not an action."""
 
+IMAGE_MARK = '▣'
+"""Marker of the attachment summary line: a picture, in one column."""
+
 
 def preview(value: Any, limit: int = TOOL_OUTPUT_WIDTH) -> str:
     """One line, whitespace collapsed, truncated with an ellipsis."""
@@ -92,11 +100,20 @@ def format_tool_args(args: Any) -> str:
     return preview(args)
 
 
-def _user_renderable(text: str, *, queued: bool) -> Text:
-    """One user line. A queued one says out loud that the agent has not read it."""
+def _user_renderable(text: str, *, queued: bool, attachments: Sequence[ImageAttachment] = ()) -> Text:
+    """One user line. A queued one says out loud that the agent has not read it.
+
+    The `[Image #n]` marker is printed as it was written, because it is what the
+    model reads and therefore what a later question will refer to. The line under
+    it says what the images are; a screenshot in the transcript has no other way
+    of showing that the model received pixels and not a filename.
+    """
     line = Text(f'› {text}', style='bold')
     if queued:
         line.append('  · queued for the running turn', style='dim italic')
+    described = describe_attachments(attachments)
+    if described:
+        line.append(f'\n  {IMAGE_MARK} {described}', style='dim')
     return line
 
 
@@ -127,6 +144,29 @@ def truncate_output(lines: list[str], limit: int = TOOL_OUTPUT_LINES) -> tuple[l
     """Head of ``lines`` plus how many were dropped. Returns ``(shown, omitted)``."""
     shown = [_clip(line) for line in lines[:limit]]
     return shown, max(0, len(lines) - len(shown))
+
+
+def _describe_parts(images: Sequence[BinaryContent]) -> tuple[ImageAttachment, ...]:
+    """Rebuilds the summary of images that came back from a stored history.
+
+    The parts do not carry a pixel size the way the composer knew it, so the
+    dimensions are read back from the payload header. It is the same information
+    the live turn printed: without it a reloaded conversation would show the
+    marker and nothing that says a picture travelled with it.
+    """
+    described: list[ImageAttachment] = []
+    for number, part in enumerate(images, start=1):
+        width, height = image_size(part.data)
+        described.append(
+            ImageAttachment(
+                number=number,
+                data=part.data,
+                media_type=str(part.media_type),
+                width=width,
+                height=height,
+            )
+        )
+    return tuple(described)
 
 
 class AssistantBlock(Static):
@@ -387,14 +427,17 @@ class ChatLog(VerticalScroll):
         self._last_block = widget
         await self.mount(widget)
 
-    async def add_user(self, text: str, *, queued: bool = False) -> Static:
+    async def add_user(self, text: str, *, queued: bool = False, attachments: Sequence[ImageAttachment] = ()) -> Static:
         """One user message. `queued` marks one the running turn has not read yet."""
         self._current = None
         self._open_tool = None
-        widget = Static(_user_renderable(text, queued=queued), classes='user-msg')
+        widget = Static(_user_renderable(text, queued=queued, attachments=attachments), classes='user-msg')
         if queued:
             # Kept so the line can be repainted when the agent picks it up.
             widget._queued_text = text  # type: ignore[attr-defined]
+        # Taken as a tuple and kept private: the block repaints itself when the
+        # queue mark goes away, and it has to remember what it was painting.
+        widget._attachments = tuple(attachments)  # type: ignore[attr-defined]
         await self._append(widget)
         return widget
 
@@ -404,7 +447,8 @@ class ChatLog(VerticalScroll):
         if text is None:
             return
         del widget._queued_text  # type: ignore[attr-defined]
-        widget.update(_user_renderable(text, queued=False))
+        attachments = getattr(widget, '_attachments', ())
+        widget.update(_user_renderable(text, queued=False, attachments=attachments))
 
     async def add_notice(self, text: str, *, style: str = 'yellow') -> None:
         self._current = None
@@ -507,12 +551,19 @@ class ChatLog(VerticalScroll):
 
         Tool calls and their returns come in separate messages, so the return is
         matched to the block still open — the same path a live turn takes.
+
+        A user prompt that carried images is rebuilt from its content parts: the
+        marker is already in the text, and the images come back as the summary the
+        live turn printed, so a reloaded conversation reads like the one that was
+        typed instead of like a message with a hole in it.
         """
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
                     if isinstance(part, UserPromptPart) and isinstance(part.content, str):
                         await self.add_user(part.content)
+                    elif isinstance(part, UserPromptPart) and isinstance(part.content, list):
+                        await self._add_user_from_content(part.content)
                     elif isinstance(part, ToolReturnPart):
                         ok = getattr(part, 'outcome', 'success') == 'success'
                         await self.add_tool_result(part.tool_name, part.content, ok=ok)
@@ -525,3 +576,10 @@ class ChatLog(VerticalScroll):
                     elif isinstance(part, ToolCallPart):
                         await self.add_tool_call(part.tool_name, part.args)
                 self._current = None
+
+    async def _add_user_from_content(self, content: list[Any]) -> None:
+        """One user message built from text plus images."""
+        text = ' '.join(item for item in content if isinstance(item, str))
+        images = images_in(content)
+        described = _describe_parts(images)
+        await self.add_user(text, attachments=described)

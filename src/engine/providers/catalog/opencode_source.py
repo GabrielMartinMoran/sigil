@@ -23,7 +23,11 @@ from __future__ import annotations
 from typing import Any
 
 from src.engine.providers.catalog.source import FetchJson, as_list
-from src.engine.providers.domain.model_capability import ModelCapability, normalize_efforts
+from src.engine.providers.domain.model_capability import (
+    ModelCapability,
+    accepts_image_input,
+    normalize_efforts,
+)
 from src.engine.providers.domain.provider_account import ProviderAccount
 from src.engine.providers.domain.provider_kind import ProviderKind
 from src.engine.providers.domain.thinking import ThinkingEffort
@@ -89,6 +93,7 @@ def parse_entry(entry: dict[str, Any]) -> ModelCapability | None:
         dialect=dialect,
         base_url=base_url,
         supports_tools=_supports_tools(entry),
+        supports_images=_supports_images(entry),
     )
 
 
@@ -132,6 +137,18 @@ def _supports_tools(entry: dict[str, Any]) -> bool:
     if not isinstance(tools, dict):
         return True
     return bool(tools.get('supported', True))
+
+
+def _supports_images(entry: dict[str, Any]) -> bool:
+    """Whether the model takes image input, from the catalogue's own modalities.
+
+    The tokens here are MIME types (``image/png``), which is why the decision is
+    delegated instead of compared against a literal.
+    """
+    modalities = entry.get('modalities')
+    if not isinstance(modalities, dict):
+        return True
+    return accepts_image_input(modalities.get('input'))
 
 
 def _display(entry: dict[str, Any]) -> str:
