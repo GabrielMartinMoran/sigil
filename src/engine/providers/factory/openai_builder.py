@@ -17,8 +17,6 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from pydantic_ai.models import Model
-from pydantic_ai.models.openai import OpenAIResponsesModel
-from pydantic_ai.providers.openai import OpenAIProvider
 
 from src.engine.providers.domain.auth_method import AuthMethod
 from src.engine.providers.domain.model_capability import ModelCapability
@@ -50,6 +48,12 @@ class OpenAIKeyBuilder:
         capability: ModelCapability,
         secret: SecretMaterial,
     ) -> Model:
+        # Imported here: `pydantic_ai.models.openai` pulls in the whole `openai`
+        # SDK, ~300 ms of the cold start, and nothing on the first paint builds a
+        # model — the selection already carries the one it needs.
+        from pydantic_ai.models.openai import OpenAIResponsesModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
         key = require_api_key(account, secret)
         provider = OpenAIProvider(api_key=key.key)
         return OpenAIResponsesModel(model_name=model, provider=provider, profile=_profile(capability))
@@ -73,6 +77,8 @@ class OpenAIOAuthBuilder:
         capability: ModelCapability,
         secret: SecretMaterial,
     ) -> Model:
+        from pydantic_ai.models.openai import OpenAIResponsesModel
+
         credential = require_oauth(account, secret)
         provider = self._provider_factory(credential, account)
         return OpenAIResponsesModel(model_name=model, provider=provider, profile=_profile(capability))

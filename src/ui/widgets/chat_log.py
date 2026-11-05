@@ -507,21 +507,71 @@ class ChatLog(VerticalScroll):
 
         Tool calls and their returns come in separate messages, so the return is
         matched to the block still open — the same path a live turn takes.
+
+        The widgets are built first and mounted in a single batch. Mounting one at a
+        time lets Textual lay out after each, and a layout walks the whole log: that
+        made restoring a long conversation quadratic, several seconds for a session
+        of a thousand messages, before the window was usable.
         """
+        batches: list[Static] = []
+        # A tool block receives its result after it is mounted, which is what
+        # `add_tool_result` does through `_open_tool`.
+        open_tool: ToolCallBlock | None = None
+        current: AssistantBlock | None = None
+
+        def follows_a_tool_block() -> bool:
+            # The same rule a live turn applies: the margin keys off the block that
+            # was appended last, not off the one still waiting for its result. A
+            # result clears `open_tool`, and the next call still belongs to the run.
+            return bool(batches) and isinstance(batches[-1], ToolCallBlock)
+
+        def block_for_tool(name: str, args: Any) -> ToolCallBlock:
+            nonlocal open_tool
+            block = ToolCallBlock(name, args, classes='tool-call tight' if follows_a_tool_block() else 'tool-call')
+            batches.append(block)
+            open_tool = block
+            return block
+
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
                     if isinstance(part, UserPromptPart) and isinstance(part.content, str):
-                        await self.add_user(part.content)
+                        current = None
+                        open_tool = None
+                        batches.append(Static(_user_renderable(part.content, queued=False), classes='user-msg'))
                     elif isinstance(part, ToolReturnPart):
                         ok = getattr(part, 'outcome', 'success') == 'success'
-                        await self.add_tool_result(part.tool_name, part.content, ok=ok)
+                        block = open_tool if open_tool is not None and open_tool.name == part.tool_name else None
+                        if block is None:
+                            block = block_for_tool(part.tool_name, {})
+                        block.set_result(part.content, ok=ok)
+                        open_tool = None
             elif isinstance(message, ModelResponse):
                 for part in message.parts:
                     if isinstance(part, ThinkingPart) and part.content:
-                        await self.add_thinking(part.content)
+                        if current is None:
+                            current = AssistantBlock(reasoning_visible=self._reasoning_visible, classes='assistant-msg')
+                            batches.append(current)
+                        current.add_thinking(part.content)
                     elif isinstance(part, TextPart) and part.content:
-                        await self.add_text(part.content)
+                        if current is None:
+                            current = AssistantBlock(reasoning_visible=self._reasoning_visible, classes='assistant-msg')
+                            batches.append(current)
+                        current.add_text(part.content)
                     elif isinstance(part, ToolCallPart):
-                        await self.add_tool_call(part.tool_name, part.args)
-                self._current = None
+                        current = None
+                        block_for_tool(part.tool_name, part.args)
+                current = None
+
+        if not batches:
+            return
+        if self.is_mounted and self.app is not None:
+            # One layout for the whole history instead of one per message.
+            with self.app.batch_update():
+                await self.mount_all(batches)
+        else:
+            for widget in batches:
+                await self.mount(widget)
+        self._current = None
+        self._open_tool = None
+        self._last_block = batches[-1]

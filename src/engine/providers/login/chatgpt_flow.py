@@ -22,7 +22,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTOAuthFlow
 
 from src.engine.providers.domain.provider_account import ProviderAccount
 from src.engine.providers.domain.provider_error import LoginError
@@ -58,6 +57,10 @@ class ChatGPTLoginFlow:
         Raises:
             LoginError: When the sign-in fails, is denied, or grants no plan usage.
         """
+        # Imported here: this module drags in the OpenAI SDK, and the flow is only
+        # built when a user actually signs in — never during startup.
+        from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTOAuthFlow
+
         flow = OpenAIChatGPTOAuthFlow(
             app_name=APP_NAME,
             host_id=self.state.installation_id(),

@@ -9,8 +9,6 @@ work on that service.
 from __future__ import annotations
 
 from pydantic_ai.models import Model
-from pydantic_ai.models.openrouter import OpenRouterModel
-from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 from src.engine.providers.domain.auth_method import AuthMethod
 from src.engine.providers.domain.model_capability import ModelCapability
@@ -36,6 +34,12 @@ class OpenRouterBuilder:
         secret: SecretMaterial,
     ) -> Model:
         key = require_api_key(account, secret)
+        # Imported here: the OpenRouter classes pull in the OpenAI SDK stack, which
+        # is a large share of the cold start, and nothing on the first paint builds
+        # a model — the stored selection already carries the one it needs.
+        from pydantic_ai.models.openrouter import OpenRouterModel
+        from pydantic_ai.providers.openrouter import OpenRouterProvider
+
         provider = OpenRouterProvider(api_key=key.key, app_title=f'Sigil {SIGIL_VERSION}')
         return OpenRouterModel(model_name=model, provider=provider, profile=_profile(capability))
 

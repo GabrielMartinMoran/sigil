@@ -1,19 +1,29 @@
-"""Transports and construction of a server's ``MCPToolset``."""
+"""Transports and construction of a server's ``MCPToolset``.
+
+Every pydantic-ai name this module needs lives in ``pydantic_ai.mcp``, and it is
+imported **inside** the functions rather than at module level: that module drags
+in FastMCP and the whole MCP SDK, which is half of Sigil's cold start. Building a
+toolset is heavy work that already happens on the loading worker, so the import
+belongs there too.
+"""
 
 from __future__ import annotations
 
-from typing import Any
-
-from pydantic_ai.mcp import MCPToolset, SSETransport, StdioTransport
+from typing import TYPE_CHECKING, Any
 
 from src.engine.mcp.config_models.server_spec import MCPServerSpec
 from src.engine.mcp.server.tool_hook import tool_hook
 from src.engine.shell.guard import SELF_GUARD_ENV
 from src.engine.tooling.logging import ToolLogger
 
+if TYPE_CHECKING:
+    from pydantic_ai.mcp import MCPToolset
 
-def stdio_transport(spec: MCPServerSpec) -> StdioTransport:
+
+def stdio_transport(spec: MCPServerSpec) -> Any:
     """stdio transport, with the environment guard on the child process."""
+    from pydantic_ai.mcp import StdioTransport
+
     config = spec.config
     cwd = spec.cwd_path
     return StdioTransport(
@@ -29,6 +39,8 @@ def stdio_transport(spec: MCPServerSpec) -> StdioTransport:
 
 def create_toolset(spec: MCPServerSpec, logger: ToolLogger | None) -> MCPToolset:
     """Creates the server's ``MCPToolset``, without filters or prefix."""
+    from pydantic_ai.mcp import MCPToolset, SSETransport
+
     config = spec.config
     options: dict[str, Any] = {
         'id': spec.name,
