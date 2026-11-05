@@ -22,11 +22,10 @@ from pathlib import Path
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
-    ModelRequest,
-    UserPromptPart,
 )
 
 from src.engine.providers.domain.selection import Selection
+from src.engine.sessions.titling import first_user_message, shorten
 
 DEFAULT_SESSIONS_DIR = Path.home() / '.sigil' / 'sessions'
 INDEX_FILENAME = 'index.json'
@@ -85,15 +84,20 @@ class Session:
     @property
     def preview(self) -> str:
         """First user message, useful to list sessions."""
-        for message in self.messages:
-            if not isinstance(message, ModelRequest):
-                continue
-            for part in message.parts:
-                if isinstance(part, UserPromptPart) and isinstance(part.content, str):
-                    text = ' '.join(part.content.split())
-                    if text:
-                        return text
-        return ''
+        return first_user_message(self.messages)
+
+    @property
+    def display_title(self) -> str:
+        """What the session is called in the window and in the listing.
+
+        The generated title when there is one. A session that has not sent a
+        message yet, or whose title request failed, falls back to the first
+        message cut to the same length: an unnamed session must still be
+        recognizable in `/load` instead of reading as a bare id.
+        """
+        if self.title:
+            return self.title
+        return shorten(self.preview)
 
 
 class SessionStore:

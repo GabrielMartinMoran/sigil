@@ -16,11 +16,13 @@ from src.engine.sessions.catalog import CatalogEntry
 
 
 def session_option(entry: CatalogEntry) -> Option:
-    """One line per session: workspace badge, short id and preview.
+    """One line per session: workspace badge, short id and its title.
 
-    The badge is what tells two sessions with the same preview apart, which is
+    The badge is what tells two sessions with the same title apart, which is
     exactly what happens when the same task is tried in the main worktree and in a
-    worktree of its own.
+    worktree of its own. The title is already cut to one line
+    (``Session.display_title``), so the row keeps a fixed shape whether the session
+    was named or not.
     """
     badge = Text(f'{entry.label:<12}', style='bold yellow' if entry.is_worktree else 'bold cyan')
     marker = Text('● ' if entry.is_current else '  ', style='green')
@@ -28,7 +30,7 @@ def session_option(entry: CatalogEntry) -> Option:
     prompt.append(marker)
     prompt.append(badge)
     prompt.append(f'{entry.session.short_id}  ', style='bold')
-    prompt.append(entry.session.preview[:60] or '(empty)', style='dim')
+    prompt.append(entry.session.display_title or '(empty)', style='dim')
     return Option(prompt, id=entry.session.id)
 
 
