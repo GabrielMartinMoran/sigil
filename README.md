@@ -299,6 +299,16 @@ the rest of the conversation keeps going and the error stays visible in `/mcp`.
 Parsing errors are reported per server, so a broken entry does not invalidate the
 rest.
 
+### Startup and quit
+
+The MCP layer is built **after** the first paint, on a worker thread: building it
+imports the MCP SDK, which is half a second that nothing on screen needs. Until it
+is ready the agent holds an empty placeholder, so a turn that starts in that first
+second simply has no MCP tools — the state of a session whose servers are still
+starting. `SIGIL_MCP_SHUTDOWN_TIMEOUT` (default `0.2`, in seconds) bounds how long
+a stdio server has to exit on EOF when the app quits; the ones that ignore it are
+signalled, so nothing is left running.
+
 ### Limitations
 
 Sampling, elicitation and roots are not announced to the server. They require the
@@ -1226,6 +1236,7 @@ change behaviour behind your back.
 | `SIGIL_CONTEXT_MAX_TOOL_RESULT_CHARS` | `4000` | Cap of an old tool result. |
 | `SIGIL_CONTEXT_OUTPUT_RESERVE` | `8000` | Tokens reserved for the response. |
 | `SIGIL_WORKTREES_DIR` | `<SIGIL_HOME>/worktrees` | Where `/new --worktree` creates the worktrees. |
+| `SIGIL_MCP_SHUTDOWN_TIMEOUT` | `0.2` | Seconds a stdio MCP server has to exit on EOF when quitting. |
 
 A value that cannot be parsed fails loudly at startup instead of silently falling
 back to the default. `.env.example` lists all of them.
