@@ -148,6 +148,19 @@ def test_no_module_reads_the_provider_environment_at_import():
     assert completed.stdout.strip().endswith('ok')
 
 
+def test_the_mcp_shutdown_timeout_is_read_by_the_loader_not_by_a_worker():
+    """The grace period follows the same rule as every other setting.
+
+    The regression: `apply_shutdown_timeout()` read `os.environ` on the MCP loading
+    worker, so the value was frozen at whatever the process had at that moment —
+    outside the composition root, and invisible to a test that passes a mapping.
+    """
+    from src.engine.mcp.shutdown import DEFAULT_SHUTDOWN_TIMEOUT, read_shutdown_timeout
+
+    assert read_shutdown_timeout({}) == DEFAULT_SHUTDOWN_TIMEOUT
+    assert read_shutdown_timeout({'SIGIL_MCP_SHUTDOWN_TIMEOUT': '1.5'}) == 1.5
+
+
 def test_the_legacy_provider_module_is_gone():
     """`ConfigProvider` read the environment in its class body; it must not come back."""
     assert not (REPO / 'src' / 'config_provider.py').exists()

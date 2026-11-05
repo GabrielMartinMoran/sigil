@@ -38,6 +38,26 @@ class ModelViewMixin:
             return ModelSnapshot()
         return service.snapshot()
 
+    def accepts_images(self) -> bool:
+        """Whether the active model can read an image.
+
+        With no model configured it answers ``True``: the turn will fail on the
+        missing credential anyway, and a message about the wrong problem is worse
+        than the one the provider is about to give.
+        """
+        snapshot = self._model_snapshot()
+        if not snapshot.is_configured:
+            return True
+        return snapshot.images
+
+    def images_refusal(self) -> str:
+        """Why an image cannot be attached, naming the way out."""
+        snapshot = self._model_snapshot()
+        return (
+            f'{snapshot.model or "This model"} does not accept images. '
+            'Pick a multimodal model with `/model`, or describe it in words.'
+        )
+
 
 def effort_label(model: ModelSnapshot, in_effect: str) -> str:
     """Readable effort, falling back to the selection when the history says nothing."""

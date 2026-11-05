@@ -5,8 +5,16 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Sequence
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ThinkingPart, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ThinkingPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 
+from src.engine.context.images import is_image_part
 from src.engine.context.strategy.turns import has_pinned_result, split_turns
 from src.engine.context.tokens import estimate_messages_tokens, estimate_tokens, tool_return_text
 
@@ -164,6 +172,62 @@ def _truncate_text(text: str, head_chars: int) -> str:
     omitted = len(text) - head_chars
     tokens = estimate_tokens(text)
     return f'{text[:head_chars]}\n\n[tool result truncated: {omitted:,} chars omitted, ~{tokens:,} tokens total]'
+
+
+IMAGE_OMITTED = (
+    '[{number} image{s} from an earlier turn omitted from the request: '
+    'it is still in the session, and asking about it again re-attaches it]'
+)
+"""What replaces an image the view drops. Says where it went and how to get it back."""
+
+
+def drop_old_images(turns: list[list[ModelMessage]], *, recent_start: int) -> tuple[list[ModelMessage], int]:
+    """Drops the image parts of the old turns, keeping their text.
+
+    An image is the most expensive item in the history per unit of usefulness: it
+    matters while the conversation is about it and costs full price forever. The
+    text is kept and a note says the image was there, so the model still knows the
+    conversation happened while the pixels stop being paid for on every step.
+
+    Args:
+        turns: The conversation, split into turns.
+        recent_start: Index of the first turn kept whole.
+
+    Returns:
+        The flattened messages and how many images were dropped.
+    """
+    result: list[ModelMessage] = []
+    dropped = 0
+    for index, turn in enumerate(turns):
+        for message in turn:
+            if index < recent_start:
+                message, count = _drop_images_of(message)
+                dropped += count
+            result.append(message)
+    return result, dropped
+
+
+def _drop_images_of(message: ModelMessage) -> tuple[ModelMessage, int]:
+    """Removes the image parts of one request, appending the note to its text."""
+    if not isinstance(message, ModelRequest):
+        return message, 0
+    parts: list[object] = []
+    dropped = 0
+    for part in message.parts:
+        if not (isinstance(part, UserPromptPart) and isinstance(part.content, list)):
+            parts.append(part)
+            continue
+        kept = [item for item in part.content if not is_image_part(item)]
+        count = len(part.content) - len(kept)
+        if not count:
+            parts.append(part)
+            continue
+        dropped += count
+        note = IMAGE_OMITTED.format(number=count, s='' if count == 1 else 's')
+        parts.append(dataclasses.replace(part, content=[*kept, '\n', note]))
+    if not dropped:
+        return message, 0
+    return dataclasses.replace(message, parts=parts), dropped
 
 
 def truncate_old_tool_results(

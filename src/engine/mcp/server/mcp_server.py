@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.toolsets import AbstractToolset
 
 from src.engine.mcp.config_models.server_spec import MCPServerSpec
 from src.engine.mcp.tool_models.server_status import ServerStatus
+
+if TYPE_CHECKING:
+    from pydantic_ai.mcp import MCPToolset
 
 
 @dataclass
@@ -16,6 +19,9 @@ class MCPServer:
     """Configured MCP server and its runtime state."""
 
     spec: MCPServerSpec
+    # The annotation is a string at runtime (`from __future__ import annotations`),
+    # so naming `MCPToolset` does not make this module import `pydantic_ai.mcp` —
+    # and that import is half the cold start.
     toolset: MCPToolset | None = None
     agent_toolset: AbstractToolset | None = None
     error: str | None = None

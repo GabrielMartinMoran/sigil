@@ -40,6 +40,8 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
+from src.engine.context.images import image_part_tokens, is_image_part
+
 CHARS_PER_TOKEN = 4
 """Estimation heuristic. The provider's measured value wins when it exists."""
 
@@ -74,19 +76,44 @@ def _as_text(value: Any) -> str:
 
 
 def part_text(part: Any) -> str:
-    """Text a part contributes to the context, to estimate its cost."""
+    """Text a part contributes to the context, to estimate its cost.
+
+    An image contributes no text at all: its cost is in `part_tokens`, which knows
+    to price pixels. Stringifying it here is what made a screenshot look like ten
+    tokens.
+    """
     if isinstance(part, SystemPromptPart | TextPart | ThinkingPart | CompactionPart):
         return part.content or ''
     if isinstance(part, UserPromptPart):
         content = part.content
         if isinstance(content, str):
             return content
-        return ' '.join(_as_text(item) for item in content)
+        return ' '.join(_as_text(item) for item in content if not is_image_part(item))
     if isinstance(part, ToolCallPart):
         return f'{part.tool_name} {_as_text(part.args)}'
     if isinstance(part, ToolReturnPart | RetryPromptPart):
         return f'{part.tool_name or ""} {tool_return_text(part)}'
+    if is_image_part(part):
+        return ''
     return _as_text(getattr(part, 'content', ''))
+
+
+def part_tokens(part: Any) -> int:
+    """Cost estimate of one part, images included.
+
+    It is the single place that knows a part may not be text. Every caller that
+    priced a message by summing `part_text` was undercounting every image in the
+    history by four orders of magnitude.
+    """
+    if is_image_part(part):
+        return image_part_tokens(part)
+    if isinstance(part, UserPromptPart) and isinstance(part.content, list):
+        # A multimodal prompt is text plus files: each item is priced by its own
+        # kind, so a prompt with a picture is not charged as its caption.
+        return estimate_tokens(part_text(part)) + sum(
+            image_part_tokens(item) for item in part.content if is_image_part(item)
+        )
+    return estimate_tokens(part_text(part))
 
 
 def tool_return_text(part: Any) -> str:
@@ -119,7 +146,7 @@ def estimate_message_tokens(message: ModelMessage) -> int:
     What the instructions cost on this request is measured once, from the
     parameters (`src.engine.context.overhead`), and travels in `ContextBudget`.
     """
-    return sum(estimate_tokens(part_text(part)) for part in getattr(message, 'parts', ()))
+    return sum(part_tokens(part) for part in getattr(message, 'parts', ()))
 
 
 def estimate_messages_tokens(messages: Sequence[ModelMessage]) -> int:

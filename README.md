@@ -299,6 +299,16 @@ the rest of the conversation keeps going and the error stays visible in `/mcp`.
 Parsing errors are reported per server, so a broken entry does not invalidate the
 rest.
 
+### Startup and quit
+
+The MCP layer is built **after** the first paint, on a worker thread: building it
+imports the MCP SDK, which is half a second that nothing on screen needs. Until it
+is ready the agent holds an empty placeholder, so a turn that starts in that first
+second simply has no MCP tools — the state of a session whose servers are still
+starting. `SIGIL_MCP_SHUTDOWN_TIMEOUT` (default `0.2`, in seconds) bounds how long
+a stdio server has to exit on EOF when the app quits; the ones that ignore it are
+signalled, so nothing is left running.
+
 ### Limitations
 
 Sampling, elicitation and roots are not announced to the server. They require the
@@ -752,14 +762,46 @@ panel. The turn stops on purpose, so no error is reported; the chat says
 `Turn cancelled.`, and the history keeps what already happened.
 
 Either way the session stays usable and the next message starts a new turn
-instead of failing on a call that never got its result. pydantic-ai closes the
-gap in the step-limit case; for a cancelled turn Sigil does it, so a call cut
-off mid-flight does not survive in the saved history.
+instead of failing on a call that never got its result. Sigil closes the gap
+itself when the turn ends, so a call cut off mid-flight does not survive in the
+saved history.
 
 pydantic-ai brings its own cap of 50 requests per run. Sigil disables it
 (`request_limit=None`) so the only limit is the step one: otherwise a long turn
 died with a `UsageLimitExceeded` nobody configured, before reaching the real
 limit.
+
+### A crashed turn does not break the session
+
+A turn is saved after every step, which is what lets a long turn survive the
+process dying halfway: what the run completed is already on disk. The flip side
+is that the last save can land in the middle of a tool batch, with a model
+response that asked for tools and no results behind it.
+
+pydantic-ai refuses a new prompt on top of that, and it refuses it every time:
+one crash that lands in that window used to break the session for every message
+after it, with `Cannot provide a new user prompt when the message history
+contains unprocessed tool calls` in the chat.
+
+Sigil checks the history at both ends of a turn:
+
+1. At the start, before anything reaches the agent. This is the case a crashed
+   process leaves behind: the app is opened again on a broken session.
+2. At the end, on every path. A cancelled turn, a turn that died on an error
+   while a tool ran, and a step limit all leave a tail a provider would reject,
+   and the save that follows would write it to disk.
+
+Either way the damage is closed out. When the repair happens at the start of a
+turn the chat says `Recovered the session: …`, because that is damage a previous
+process left behind, and you need to know the session you opened was not what
+you saved. When it happens at the end of a turn the chat has already reported
+what ended it (`Turn cancelled.`, the error, the step limit), so the repair stays
+quiet.
+
+The synthesized results are marked with `pydantic_ai_synthesized_tool_return`,
+so nothing pretends a tool ran when it didn't. A healthy history is left exactly
+as it was — no copy, no reordering — so the model's prompt cache prefix is never
+churned.
 
 ## Providers and models
 
@@ -790,6 +832,7 @@ and a work OpenAI org — and switch between them with `/provider`.
 | `ctrl+a` | the agent picker |
 | `ctrl+t` | the reasoning-effort picker |
 | `ctrl+m` | the model picker |
+| `ctrl+v` | paste an image from the clipboard (or text) |
 | `alt+d` | the agent debug view |
 
 `ctrl+m`, `ctrl+t` and `ctrl+a` are read by the prompt itself rather than bound
@@ -910,6 +953,59 @@ message is sent instead of split. That is the same behaviour every other
 line-oriented chat has, and it fails towards the familiar thing rather than
 towards a lost keystroke.
 
+### Pasting an image
+
+`ctrl+v` with an image on the clipboard attaches it to the message. A terminal
+carries text and nothing else, so the bytes are read from the desktop, and the
+composer writes `[Image #1]` where the cursor was:
+
+```text
+› explain what breaks in this diff [Image #1] and compare it with the test
+```
+
+The marker is the message: the model reads that text and the picture beside it,
+in the same order, so "the second screenshot" means what it says. It is painted
+in reverse video to stand out from what you typed, and it is deleted as **one
+block**: a single `backspace` removes the whole marker, the image goes with it,
+and the remaining markers are renumbered, so `[Image #2]` never survives the
+deletion of `[Image #1]`.
+
+Each image is bounded before it is sent: the longest side is scaled to 1568 px,
+a PNG stays a PNG (recompressing a terminal screenshot as JPEG fuzzes the text),
+a JPEG stays a JPEG, and anything above 4 MB is compressed further. The chat shows
+what travelled: `▣ 1 image (1280×720 PNG)`.
+
+**Clipboard tools.** The bytes come from the desktop, and each one needs its own:
+
+| Desktop | Needs | Install |
+| --- | --- | --- |
+| X11 | `xclip` | `apt install xclip` |
+| Wayland | `wl-paste` | `apt install wl-clipboard` |
+| macOS | `pngpaste` | `brew install pngpaste` |
+| Windows | PowerShell (built in) | — |
+
+If the tool is missing, the composer says so once and pastes text as usual: the
+feature degrades to the behaviour that existed before, it does not break pasting.
+Wayland is detected from `XDG_SESSION_TYPE` (or `WAYLAND_DISPLAY` when the session
+type is not declared) and never falls back to `xclip`, which in an XWayland session
+answers from a stale X selection.
+
+**Only multimodal models.** A model whose catalogue declares text only refuses the
+paste with a line naming `/model`; the turn is not spent on a 400. A catalogue that
+says nothing is assumed capable, because refusing a paste the model would have
+accepted is the worse mistake. The flag travels with the saved selection, so a
+cold start decides without reaching the network.
+
+An image pasted mid-turn (see [Sending a message mid-turn](#sending-a-message-mid-turn))
+goes into the running turn like any other message.
+
+**What it costs.** The context meter prices an image by its pixels — patches of
+28×28 — not by the size of the file, and images from the turns the view has moved
+past are dropped from the request with a note where they were, because a
+screenshot costs full price forever while being useful for about one turn. They
+stay in the session on disk: the note says so, and asking about one again
+re-attaches it.
+
 ### Status bar
 
 The line under the composer answers four questions, left to right.
@@ -964,8 +1060,9 @@ The sections, from top to bottom:
 - **Loaded skills**: the skills the agent loaded in this session, in load order.
   It is the quick diagnostic of whether it is following the protocol.
 - **MCP**: the count goes inline with the title, in parentheses. Below, each
-  server is listed: `●` in green for the ones that work, `✗` in red for the ones
-  that do not. With no configured servers, the section does not appear.
+  server is listed with the same `•` the skills above it use: green for the ones
+  that work, `✗` in red for the ones that do not. With no configured servers, the
+  section does not appear.
 - **Roadmap**: the plan of the task, one line per item, with its notes. It is the
   last section, and the one read after every message.
 
@@ -986,9 +1083,9 @@ Loaded skills
  • frontend-design
 
 MCP (3, 1 ✗)
- ● github
- ● playwright
- ● filesystem
+ • github
+ • playwright
+ • filesystem
  ✗ broken
 
 Roadmap
@@ -1227,6 +1324,7 @@ change behaviour behind your back.
 | `SIGIL_CONTEXT_MAX_TOOL_RESULT_CHARS` | `4000` | Cap of an old tool result. |
 | `SIGIL_CONTEXT_OUTPUT_RESERVE` | `8000` | Tokens reserved for the response. |
 | `SIGIL_WORKTREES_DIR` | `<SIGIL_HOME>/worktrees` | Where `/new --worktree` creates the worktrees. |
+| `SIGIL_MCP_SHUTDOWN_TIMEOUT` | `0.2` | Seconds a stdio MCP server has to exit on EOF when quitting. |
 
 A value that cannot be parsed fails loudly at startup instead of silently falling
 back to the default. `.env.example` lists all of them.

@@ -21,7 +21,8 @@ from src.engine.files.tools import register_file_tools
 from src.engine.interaction.hub import QuestionHub
 from src.engine.interaction.tools import register_interaction_tools
 from src.engine.mcp.config.loader import load_config
-from src.engine.mcp.manager.manager import MCPManager
+from src.engine.mcp.deferred import MCPGateway
+from src.engine.mcp.shutdown import read_shutdown_timeout
 from src.engine.mcp.tools import register_mcp_tools
 from src.engine.paths import providers_dir
 from src.engine.preferences import PreferencesStore
@@ -82,6 +83,23 @@ def _build_strategy(settings: SigilSettings):
         reasoning=settings.reasoning,
         reasoning_steps=settings.reasoning_steps,
     )
+
+
+def _mcp_loader(config, logger, shutdown_timeout):
+    """Builds the MCP layer, off the startup path.
+
+    Returned as a callable so the heavy import happens on the worker thread that
+    calls it, not here while the window is still waiting to be composed. The values
+    it needs are captured now, while the environment is still being read here.
+    """
+    servers = config.servers
+
+    def build():
+        from src.engine.mcp.deferred import build_manager
+
+        return build_manager(servers, logger, shutdown_timeout)
+
+    return build
 
 
 def run() -> None:
@@ -168,9 +186,14 @@ def run() -> None:
     )
 
     # MCP servers declared in .sigil/config.json (and in ~/.sigil/config.json).
-    # Config errors do not abort startup: they are shown in the chat.
+    # Config errors do not abort startup: they are shown in the chat. Parsing the
+    # file is cheap and stays here; building the manager is not, and happens on a
+    # worker once the window is up (see `MCPGateway`).
     config = load_config()
-    mcp_manager = MCPManager(config.servers, tool_logger=tool_logger)
+    mcp = MCPGateway(configured=len(config.servers), config_errors=tuple(config.errors))
+    # How long a stdio server has to exit on EOF when the app quits. Read here,
+    # with the rest of the settings, and handed to the loader as a value.
+    mcp_shutdown_timeout = read_shutdown_timeout()
 
     # Retries on transient model failures. The instance is shared
     # with the UI so it announces every retry in the chat.
@@ -179,7 +202,9 @@ def run() -> None:
     agent = create_agent(
         skill_registry,
         model=model_service.current_model(),
-        toolsets=mcp_manager.toolsets,
+        # The placeholder, not the real toolsets: the agent is built before the
+        # MCP layer exists, and `MCPGateway.install` fills it in.
+        toolsets=[mcp.pending],
         model_retry=model_retry,
         workspace=workspace,
         scope=scope,
@@ -190,7 +215,7 @@ def run() -> None:
 
     register_shell_tools(agent, logger=tool_logger)
     register_skill_tools(agent, skill_registry, logger=tool_logger, loaded=loaded_skills)
-    register_mcp_tools(agent, mcp_manager, logger=tool_logger)
+    register_mcp_tools(agent, mcp, logger=tool_logger)
     register_web_tools(agent, logger=tool_logger)
     register_file_tools(agent, logger=tool_logger)
     register_interaction_tools(agent, question_hub, logger=tool_logger)
@@ -204,8 +229,9 @@ def run() -> None:
         model_service=model_service,
         login_flow=ChatGPTLoginFlow(state=state),
         tool_logger=tool_logger,
-        mcp_manager=mcp_manager,
-        startup_notices=(*config.errors, *mcp_manager.errors),
+        mcp_manager=mcp,
+        startup_notices=(*config.errors,),
+        mcp_loader=_mcp_loader(config, tool_logger, mcp_shutdown_timeout),
         question_hub=question_hub,
         roadmap_store=roadmap_store,
         model_retry=model_retry,

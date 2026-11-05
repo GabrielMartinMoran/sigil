@@ -17,7 +17,8 @@ each responsibility to a mixin with its own state.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import asyncio
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 from typing import Any, ClassVar
 
@@ -110,6 +111,7 @@ class SigilApp(
         tool_logger: ToolLoggerHub | None = None,
         mcp_manager: MCPManager | None = None,
         startup_notices: Sequence[str] = (),
+        mcp_loader: Callable[[], MCPManager] | None = None,
         question_hub: QuestionHub | None = None,
         roadmap_store: RoadmapStore | None = None,
         model_retry: RetryTransientModelErrors | None = None,
@@ -133,6 +135,7 @@ class SigilApp(
         self._login_flow = login_flow
         self._tool_logger = tool_logger
         self._mcp_manager = mcp_manager
+        self._mcp_loader = mcp_loader
         self._startup_notices = tuple(startup_notices)
         self._question_hub = question_hub
         self._roadmap_store = roadmap_store
@@ -226,7 +229,7 @@ class SigilApp(
         # conversation saved before any switch still remembers it.
         self.remember_agent(self.active_agent())
         self.refresh_sidebar()
-        self.refresh_mcp_status()
+        self.boot_mcp()
         self.refresh_workspace_badge()
         self.refresh_diff()
         self._start_diff_polling()
@@ -256,6 +259,45 @@ class SigilApp(
             self._question_hub.set_asker(None)
         if self._roadmap_store is not None:
             self._roadmap_store.remove_listener(self.handle_roadmap_store_change)
+        # Last, and awaited: the MCP probe leaves a kept-alive session per server
+        # open on purpose, and the event loop waits them out when it shuts down.
+        # Closing them here is what keeps the quit from stalling on a server that
+        # ignores the EOF (see `src.engine.mcp.shutdown`).
+        await self.close_mcp_servers()
+
+    @work(exclusive=True, group='mcp-boot')
+    async def boot_mcp(self) -> None:
+        """Builds the MCP layer off the startup path, then probes it.
+
+        Building the manager imports ``pydantic_ai.mcp`` and the whole MCP SDK —
+        half a second that used to happen before the first paint. It runs here
+        instead, on a thread, while the window is already up.
+
+        The thread only *builds*. Installing the toolsets and probing the servers
+        happen back on this loop, because that is the loop that enters, uses and
+        closes them.
+        """
+        gateway = self._mcp_manager
+        loader = self._mcp_loader
+        if gateway is None or not gateway:
+            return
+        if loader is None:
+            # A manager handed over already built (the tests, and any caller that
+            # prefers to build it itself): there is nothing to load, only to probe.
+            self.refresh_mcp_status()
+            return
+        try:
+            manager = await asyncio.to_thread(loader)
+        except Exception as exc:  # noqa: BLE001 - a failed load is not a failed app
+            gateway.fail(f'MCP unavailable: {type(exc).__name__}: {exc}')
+            await self.query_one(ChatLog).add_notice(f'✖ MCP unavailable: {exc}', style='yellow')
+            return
+        gateway.install(manager)
+        for error in manager.errors:
+            await self.query_one(ChatLog).add_notice(f'✖ {error}', style='yellow')
+        # The probe connects and lists the real tools, which is what the panel
+        # and `/mcp` report. It is a worker of its own: scheduling it is enough.
+        self.refresh_mcp_status()
 
     # --- theme changes -----------------------------------------------------
 
@@ -300,6 +342,15 @@ class SigilApp(
     async def on_chat_notice(self, message: ChatNotice) -> None:
         """Appends a notice posted from a synchronous context."""
         await self.query_one(ChatLog).add_notice(message.text, style=message.style)
+
+    async def on_prompt_input_attachment_rejected(self, message: PromptInput.AttachmentRejected) -> None:
+        """An image could not be attached: one line, and the composer keeps what it had.
+
+        The reason is the whole point of the line. "Pasted without an image" would
+        leave the user pressing the key again on a clipboard that will not work
+        until a package is installed, so the message names the fix.
+        """
+        await self.query_one(ChatLog).add_notice(f'✖ {message.reason}', style='yellow')
 
     async def on_tool_log_message(self, message: ToolLogMessage) -> None:
         event = message.event

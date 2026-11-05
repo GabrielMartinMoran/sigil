@@ -18,9 +18,11 @@ Three kinds of block live here, and each one answers a different reading mode:
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from typing import Any
 
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -36,6 +38,9 @@ from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.widgets import Static
 
+from src.engine.attachments.content import describe_attachments, images_in
+from src.engine.attachments.image_attachment import ImageAttachment
+from src.engine.context.images import image_size
 from src.ui.palette import color
 
 RENDER_INTERVAL = 0.08
@@ -65,6 +70,9 @@ TOOL_OUTPUT_WIDTH = 160
 REASONING_MARKER = '✳'
 """Marker of the collapsed reasoning line. Not an arrow: it is not an action."""
 
+IMAGE_MARK = '▣'
+"""Marker of the attachment summary line: a picture, in one column."""
+
 
 def preview(value: Any, limit: int = TOOL_OUTPUT_WIDTH) -> str:
     """One line, whitespace collapsed, truncated with an ellipsis."""
@@ -92,11 +100,20 @@ def format_tool_args(args: Any) -> str:
     return preview(args)
 
 
-def _user_renderable(text: str, *, queued: bool) -> Text:
-    """One user line. A queued one says out loud that the agent has not read it."""
+def _user_renderable(text: str, *, queued: bool, attachments: Sequence[ImageAttachment] = ()) -> Text:
+    """One user line. A queued one says out loud that the agent has not read it.
+
+    The `[Image #n]` marker is printed as it was written, because it is what the
+    model reads and therefore what a later question will refer to. The line under
+    it says what the images are; a screenshot in the transcript has no other way
+    of showing that the model received pixels and not a filename.
+    """
     line = Text(f'› {text}', style='bold')
     if queued:
         line.append('  · queued for the running turn', style='dim italic')
+    described = describe_attachments(attachments)
+    if described:
+        line.append(f'\n  {IMAGE_MARK} {described}', style='dim')
     return line
 
 
@@ -127,6 +144,44 @@ def truncate_output(lines: list[str], limit: int = TOOL_OUTPUT_LINES) -> tuple[l
     """Head of ``lines`` plus how many were dropped. Returns ``(shown, omitted)``."""
     shown = [_clip(line) for line in lines[:limit]]
     return shown, max(0, len(lines) - len(shown))
+
+
+def _describe_parts(images: Sequence[BinaryContent]) -> tuple[ImageAttachment, ...]:
+    """Rebuilds the summary of images that came back from a stored history.
+
+    The parts do not carry a pixel size the way the composer knew it, so the
+    dimensions are read back from the payload header. It is the same information
+    the live turn printed: without it a reloaded conversation would show the
+    marker and nothing that says a picture travelled with it.
+    """
+    described: list[ImageAttachment] = []
+    for number, part in enumerate(images, start=1):
+        width, height = image_size(part.data)
+        described.append(
+            ImageAttachment(
+                number=number,
+                data=part.data,
+                media_type=str(part.media_type),
+                width=width,
+                height=height,
+            )
+        )
+    return tuple(described)
+
+
+def _user_widget(content: str | list[Any]) -> Static:
+    """One user line, from a plain prompt or from text plus images.
+
+    Both shapes reach `render_history`: a turn typed before images existed saved
+    its prompt as a string, and one with a pasted screenshot saved it as a list of
+    text and `BinaryContent`. The marker `[Image #n]` is already in the text, so
+    the images only have to be summarised back into the line under it.
+    """
+    if isinstance(content, str):
+        return Static(_user_renderable(content, queued=False), classes='user-msg')
+    text = ' '.join(item for item in content if isinstance(item, str))
+    described = _describe_parts(images_in(content))
+    return Static(_user_renderable(text, queued=False, attachments=described), classes='user-msg')
 
 
 class AssistantBlock(Static):
@@ -387,14 +442,17 @@ class ChatLog(VerticalScroll):
         self._last_block = widget
         await self.mount(widget)
 
-    async def add_user(self, text: str, *, queued: bool = False) -> Static:
+    async def add_user(self, text: str, *, queued: bool = False, attachments: Sequence[ImageAttachment] = ()) -> Static:
         """One user message. `queued` marks one the running turn has not read yet."""
         self._current = None
         self._open_tool = None
-        widget = Static(_user_renderable(text, queued=queued), classes='user-msg')
+        widget = Static(_user_renderable(text, queued=queued, attachments=attachments), classes='user-msg')
         if queued:
             # Kept so the line can be repainted when the agent picks it up.
             widget._queued_text = text  # type: ignore[attr-defined]
+        # Taken as a tuple and kept private: the block repaints itself when the
+        # queue mark goes away, and it has to remember what it was painting.
+        widget._attachments = tuple(attachments)  # type: ignore[attr-defined]
         await self._append(widget)
         return widget
 
@@ -404,7 +462,8 @@ class ChatLog(VerticalScroll):
         if text is None:
             return
         del widget._queued_text  # type: ignore[attr-defined]
-        widget.update(_user_renderable(text, queued=False))
+        attachments = getattr(widget, '_attachments', ())
+        widget.update(_user_renderable(text, queued=False, attachments=attachments))
 
     async def add_notice(self, text: str, *, style: str = 'yellow') -> None:
         self._current = None
@@ -507,21 +566,76 @@ class ChatLog(VerticalScroll):
 
         Tool calls and their returns come in separate messages, so the return is
         matched to the block still open — the same path a live turn takes.
+
+        A user prompt that carried images is rebuilt from its content parts: the
+        marker is already in the text, and the images come back as the summary the
+        live turn printed, so a reloaded conversation reads like the one that was
+        typed instead of like a message with a hole in it.
+
+        The widgets are built first and mounted in a single batch. Mounting one at a
+        time lets Textual lay out after each, and a layout walks the whole log: that
+        made restoring a long conversation quadratic, several seconds for a session
+        of a thousand messages, before the window was usable.
         """
+        batches: list[Static] = []
+        # A tool block receives its result after it is mounted, which is what
+        # `add_tool_result` does through `_open_tool`.
+        open_tool: ToolCallBlock | None = None
+        current: AssistantBlock | None = None
+
+        def follows_a_tool_block() -> bool:
+            # The same rule a live turn applies: the margin keys off the block that
+            # was appended last, not off the one still waiting for its result. A
+            # result clears `open_tool`, and the next call still belongs to the run.
+            return bool(batches) and isinstance(batches[-1], ToolCallBlock)
+
+        def block_for_tool(name: str, args: Any) -> ToolCallBlock:
+            nonlocal open_tool
+            block = ToolCallBlock(name, args, classes='tool-call tight' if follows_a_tool_block() else 'tool-call')
+            batches.append(block)
+            open_tool = block
+            return block
+
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
-                    if isinstance(part, UserPromptPart) and isinstance(part.content, str):
-                        await self.add_user(part.content)
+                    if isinstance(part, UserPromptPart):
+                        current = None
+                        open_tool = None
+                        batches.append(_user_widget(part.content))
                     elif isinstance(part, ToolReturnPart):
                         ok = getattr(part, 'outcome', 'success') == 'success'
-                        await self.add_tool_result(part.tool_name, part.content, ok=ok)
+                        block = open_tool if open_tool is not None and open_tool.name == part.tool_name else None
+                        if block is None:
+                            block = block_for_tool(part.tool_name, {})
+                        block.set_result(part.content, ok=ok)
+                        open_tool = None
             elif isinstance(message, ModelResponse):
                 for part in message.parts:
                     if isinstance(part, ThinkingPart) and part.content:
-                        await self.add_thinking(part.content)
+                        if current is None:
+                            current = AssistantBlock(reasoning_visible=self._reasoning_visible, classes='assistant-msg')
+                            batches.append(current)
+                        current.add_thinking(part.content)
                     elif isinstance(part, TextPart) and part.content:
-                        await self.add_text(part.content)
+                        if current is None:
+                            current = AssistantBlock(reasoning_visible=self._reasoning_visible, classes='assistant-msg')
+                            batches.append(current)
+                        current.add_text(part.content)
                     elif isinstance(part, ToolCallPart):
-                        await self.add_tool_call(part.tool_name, part.args)
-                self._current = None
+                        current = None
+                        block_for_tool(part.tool_name, part.args)
+                current = None
+
+        if not batches:
+            return
+        if self.is_mounted and self.app is not None:
+            # One layout for the whole history instead of one per message.
+            with self.app.batch_update():
+                await self.mount_all(batches)
+        else:
+            for widget in batches:
+                await self.mount(widget)
+        self._current = None
+        self._open_tool = None
+        self._last_block = batches[-1]

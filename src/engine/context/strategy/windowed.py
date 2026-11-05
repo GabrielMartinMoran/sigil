@@ -20,6 +20,7 @@ from src.engine.context.strategy.constants import (
 )
 from src.engine.context.strategy.rewriting import (
     accepts_replayed_reasoning,
+    drop_old_images,
     fit_to_budget,
     keep_fitting_steps,
     keep_recent_steps,
@@ -75,6 +76,9 @@ class WindowedStrategy:
         turns = split_turns(working)
         recent_start = max(0, len(turns) - self.keep_recent_turns)
 
+        working, dropped_images = drop_old_images(turns, recent_start=recent_start)
+        turns = split_turns(working)
+
         working, truncated_results = truncate_old_tool_results(
             turns,
             recent_start=recent_start,
@@ -95,6 +99,7 @@ class WindowedStrategy:
             dropped_messages=dropped_messages,
             dropped_thinking=dropped_thinking,
             truncated_results=truncated_results,
+            dropped_images=dropped_images,
         )
 
     def _drop_reasoning_that_cannot_be_replayed(self, messages: list[ModelMessage]) -> tuple[list[ModelMessage], int]:
