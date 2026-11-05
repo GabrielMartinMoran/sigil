@@ -34,6 +34,15 @@ class ModelCapability:
 
     supports_tools: bool = True
 
+    supports_images: bool = True
+    """Whether the model accepts image input.
+
+    Defaults to true because that is what every current flagship does, and because
+    a wrong ``False`` blocks a paste the provider would have accepted. A catalogue
+    that declares ``text`` only sets it false, which refuses the paste before the
+    turn is spent instead of failing with a 400 in the middle of one.
+    """
+
     @property
     def label(self) -> str:
         return self.display_name or self.name
@@ -67,6 +76,24 @@ def normalize_efforts(raw: object) -> tuple[ThinkingEffort, ...]:
         return ()
     seen = {str(item).strip().lower() for item in raw}  # type: ignore[union-attr]
     return tuple(level for level in EFFORT_LEVELS if level in seen)
+
+
+def accepts_image_input(modalities: object) -> bool:
+    """Whether a catalogue's declared input modalities include an image.
+
+    Two spellings for the same thing, and neither is stable: OpenCode publishes
+    MIME types (``image/png``, ``image/jpeg``, ``image/webp``), OpenRouter
+    publishes the bare family (``image``), and the next provider will publish
+    whichever it likes. Matching the literal ``"image"`` is what once declared
+    every multimodal OpenCode model blind, so the family prefix decides.
+
+    A list that mentions no image is text-only and refuses the paste. Anything
+    that is not a list is silence, and silence answers ``True``: refusing a paste
+    a model would have accepted is the worse mistake.
+    """
+    if not isinstance(modalities, list):
+        return True
+    return any(isinstance(token, str) and token.strip().lower().split('/')[0] == 'image' for token in modalities)
 
 
 @dataclass(frozen=True, slots=True)

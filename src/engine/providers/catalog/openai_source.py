@@ -82,6 +82,10 @@ def _capability(name: str, profile: Profile | None) -> ModelCapability:
         context_window=window if isinstance(window, int) and window > 0 else None,
         efforts=efforts,
         dialect=DIALECT,
+        # OpenAI publishes ids and nothing else, so the bundled profile is the
+        # only source for this. For a model it does not know, leaving the default
+        # is what lets the paste through.
+        supports_images=bool(profile.get('supports_image_input', True)) if profile else True,
     )
 
 

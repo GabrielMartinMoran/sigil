@@ -7,5 +7,6 @@ from src.engine.commands import COMMANDS
 HELP_TEXT = 'Commands: ' + ', '.join(f'{command.name} — {command.description}' for command in COMMANDS)
 
 KEYS_TEXT = (
-    'Keys: Enter sends · Shift+Enter adds a line · Up/Down pick in the menu · Tab completes · Esc closes the menu'
+    'Keys: Enter sends · Shift+Enter adds a line · ctrl+v pastes an image · '
+    'Up/Down pick in the menu · Tab completes · Esc closes the menu'
 )

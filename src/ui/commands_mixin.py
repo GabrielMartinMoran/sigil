@@ -65,8 +65,9 @@ class CommandsMixin:
 
         self.menu_hide()
         chat = self.query_one(ChatLog)
+        attachments = event.attachments
 
-        if text.startswith('/'):
+        if text.startswith('/') and not attachments:
             name, _, args = text.partition(' ')
             if self.is_refused_while_busy(name):
                 await self.refuse_while_busy(text, chat)
@@ -77,12 +78,12 @@ class CommandsMixin:
         if self._turn_active:
             # Queued for the run in flight: it lands before the agent decides
             # what to do next, not as a second turn competing with it.
-            widget = await chat.add_user(text, queued=True)
-            self.steer(text, widget)
+            widget = await chat.add_user(text, queued=True, attachments=attachments)
+            self.steer(text, widget, attachments=attachments)
             return
 
-        await chat.add_user(text)
-        self.start_turn(text)
+        await chat.add_user(text, attachments=attachments)
+        self.start_turn(text, attachments=attachments)
 
     def is_refused_while_busy(self, name: str) -> bool:
         """Whether ``name`` is one of the commands a running turn forbids.

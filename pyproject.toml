@@ -13,6 +13,7 @@ dependencies = [
     "rich>=15.0.0",
     "textual>=8.2.8",
     "ddgs>=9.16.1",
+    "pillow>=13.0.0",
 ]
 
 

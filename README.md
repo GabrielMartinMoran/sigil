@@ -832,6 +832,7 @@ and a work OpenAI org — and switch between them with `/provider`.
 | `ctrl+a` | the agent picker |
 | `ctrl+t` | the reasoning-effort picker |
 | `ctrl+m` | the model picker |
+| `ctrl+v` | paste an image from the clipboard (or text) |
 | `alt+d` | the agent debug view |
 
 `ctrl+m`, `ctrl+t` and `ctrl+a` are read by the prompt itself rather than bound
@@ -951,6 +952,59 @@ terminal sends a bare carriage return and the key reads as `Enter`, so the
 message is sent instead of split. That is the same behaviour every other
 line-oriented chat has, and it fails towards the familiar thing rather than
 towards a lost keystroke.
+
+### Pasting an image
+
+`ctrl+v` with an image on the clipboard attaches it to the message. A terminal
+carries text and nothing else, so the bytes are read from the desktop, and the
+composer writes `[Image #1]` where the cursor was:
+
+```text
+› explain what breaks in this diff [Image #1] and compare it with the test
+```
+
+The marker is the message: the model reads that text and the picture beside it,
+in the same order, so "the second screenshot" means what it says. It is painted
+in reverse video to stand out from what you typed, and it is deleted as **one
+block**: a single `backspace` removes the whole marker, the image goes with it,
+and the remaining markers are renumbered, so `[Image #2]` never survives the
+deletion of `[Image #1]`.
+
+Each image is bounded before it is sent: the longest side is scaled to 1568 px,
+a PNG stays a PNG (recompressing a terminal screenshot as JPEG fuzzes the text),
+a JPEG stays a JPEG, and anything above 4 MB is compressed further. The chat shows
+what travelled: `▣ 1 image (1280×720 PNG)`.
+
+**Clipboard tools.** The bytes come from the desktop, and each one needs its own:
+
+| Desktop | Needs | Install |
+| --- | --- | --- |
+| X11 | `xclip` | `apt install xclip` |
+| Wayland | `wl-paste` | `apt install wl-clipboard` |
+| macOS | `pngpaste` | `brew install pngpaste` |
+| Windows | PowerShell (built in) | — |
+
+If the tool is missing, the composer says so once and pastes text as usual: the
+feature degrades to the behaviour that existed before, it does not break pasting.
+Wayland is detected from `XDG_SESSION_TYPE` (or `WAYLAND_DISPLAY` when the session
+type is not declared) and never falls back to `xclip`, which in an XWayland session
+answers from a stale X selection.
+
+**Only multimodal models.** A model whose catalogue declares text only refuses the
+paste with a line naming `/model`; the turn is not spent on a 400. A catalogue that
+says nothing is assumed capable, because refusing a paste the model would have
+accepted is the worse mistake. The flag travels with the saved selection, so a
+cold start decides without reaching the network.
+
+An image pasted mid-turn (see [Sending a message mid-turn](#sending-a-message-mid-turn))
+goes into the running turn like any other message.
+
+**What it costs.** The context meter prices an image by its pixels — patches of
+28×28 — not by the size of the file, and images from the turns the view has moved
+past are dropped from the request with a note where they were, because a
+screenshot costs full price forever while being useful for about one turn. They
+stay in the session on disk: the note says so, and asking about one again
+re-attaches it.
 
 ### Status bar
 

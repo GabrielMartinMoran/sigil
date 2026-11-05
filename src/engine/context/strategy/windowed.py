@@ -14,7 +14,12 @@ from src.engine.context.strategy.constants import (
     DEFAULT_TOOL_RESULT_HEAD_CHARS,
     PINNED_TOOLS,
 )
-from src.engine.context.strategy.rewriting import drop_thinking, fit_to_budget, truncate_old_tool_results
+from src.engine.context.strategy.rewriting import (
+    drop_old_images,
+    drop_thinking,
+    fit_to_budget,
+    truncate_old_tool_results,
+)
 from src.engine.context.strategy.turns import split_turns
 from src.engine.context.strategy.view_result import ViewResult
 from src.engine.context.tokens import estimate_messages_tokens
@@ -52,6 +57,9 @@ class WindowedStrategy:
         turns = split_turns(working)
         recent_start = max(0, len(turns) - self.keep_recent_turns)
 
+        working, dropped_images = drop_old_images(turns, recent_start=recent_start)
+        turns = split_turns(working)
+
         working, truncated_results = truncate_old_tool_results(
             turns,
             recent_start=recent_start,
@@ -71,4 +79,5 @@ class WindowedStrategy:
             dropped_messages=dropped_messages,
             dropped_thinking=dropped_thinking,
             truncated_results=truncated_results,
+            dropped_images=dropped_images,
         )
