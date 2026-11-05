@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from pydantic_ai.messages import ModelMessage
 
 from src.engine.context.budget import DEFAULT_OUTPUT_RESERVE, ContextBudget
+from src.engine.context.meter.cost import session_cost
 from src.engine.context.meter.report import ContextReport
 from src.engine.context.meter.snapshot import ContextSnapshot
 from src.engine.context.meter.usage import heaviest_tool_results, turn_usage
@@ -60,6 +61,7 @@ class ContextMeter:
             instructions=self._instructions,
             tools=self._tools,
             history=estimate_messages_tokens(messages),
+            cost=session_cost(messages),
             turns=turn_usage(messages),
             heaviest_tool_results=heaviest_tool_results(messages),
             view=view,

@@ -14,7 +14,9 @@ panel stays short on a cold start and grows as the session does.
 The context budget is a line of the model section and not a section of its own: it
 is a property of that model's window, it is read with the model, and a heading for
 one number cost two rows in a 34-column panel. It reads as ``context: 66% (132K /
-200K)``, the same shape as ``effort: high`` above it.
+200K)``, the same shape as ``effort: high`` above it. The bill of the session is
+the line under it —``cost: $0.04``— because "how full is the window" and "what has
+filling it cost" are the same question asked in tokens and in dollars.
 
 The whole panel scrolls and not just the roadmap: with one box there is one
 scrollbar, and giving the plan a nested one would put a scrollbar inside a
@@ -32,7 +34,9 @@ from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Static
 
+from src.engine.context.meter.cost import SessionCost
 from src.engine.roadmap.store import RoadmapStore
+from src.ui.money_format import compact_usd
 from src.ui.palette import color
 from src.ui.token_format import compact_tokens
 
@@ -80,16 +84,20 @@ class ModelState:
 
 @dataclass(frozen=True, slots=True)
 class ContextState:
-    """How much of the window the next request is going to take.
+    """How much of the window the next request is going to take, and what it cost.
 
     ``used`` is the **projected** number, not the measured one: the panel answers
     "does the next request fit?", and the measured value describes a request that
     already happened.
+
+    ``cost`` is the bill of the whole session, not of that request: it only moves
+    forward, and it is the number a reader compares against their balance.
     """
 
     percent: float | None = None
     used: int | None = None
     window: int | None = None
+    cost: SessionCost | None = None
 
 
 class SidebarPanel(Vertical):
@@ -213,7 +221,7 @@ class SidebarPanel(Vertical):
         text.append(f'{title}\n', style=f'bold {color(self, "sidebar-section")}')
 
     def _append_model(self, text: Text) -> None:
-        """The model, its reasoning effort and the budget of its window.
+        """The model, its reasoning effort, the budget of its window and the bill.
 
         The context line lives here rather than in a section of its own because it
         is the same fact as the model: which window, and how much of it is gone.
@@ -232,6 +240,7 @@ class SidebarPanel(Vertical):
         text.append(' effort: ', style='dim')
         text.append(f'{state.effort}\n', style='magenta')
         self._append_context_line(text)
+        self._append_cost_line(text)
 
     def _append_context_line(self, text: Text) -> None:
         state = self._context_state
@@ -243,6 +252,19 @@ class SidebarPanel(Vertical):
             # The pair rides with the percentage: without one there is nothing to
             # compare the used tokens against, and `? (? / 200K)` reads like a bug.
             text.append(f' ({compact_tokens(state.used)} / {compact_tokens(state.window)})', style='dim')
+        text.append('\n')
+
+    def _append_cost_line(self, text: Text) -> None:
+        """What the session has cost so far.
+
+        It hangs off the same state as the context line: both are measured on the
+        history, so a session with no measurement has no bill to show either.
+        """
+        state = self._context_state
+        if state is None or state.cost is None:
+            return
+        text.append(' cost: ', style='dim')
+        text.append(_cost_text(state.cost), style='bold')
         text.append('\n')
 
     def _append_skills(self, text: Text) -> None:
@@ -314,3 +336,20 @@ def _percent_style(percent: float | None) -> str:
     if percent < CRITICAL_PERCENT:
         return 'yellow'
     return 'bold red'
+
+
+def _cost_text(cost: SessionCost) -> str:
+    """The amount, with the marks that say how much to trust it.
+
+    `~` in front when part of it is a list price rather than a charge, `+` behind
+    when something could not be priced at all and the total is therefore a floor.
+    Both are one column, which is what a 34-column panel can spare; `/context`
+    spells out the counts behind them.
+    """
+    amount = compact_usd(cost.total)
+    if cost.total is None:
+        # Nothing in this session could be priced: `?` is the honest answer.
+        return amount
+    prefix = '~' if cost.approximate else ''
+    suffix = '+' if cost.partial else ''
+    return f'{prefix}{amount}{suffix}'
