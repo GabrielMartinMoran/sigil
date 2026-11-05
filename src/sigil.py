@@ -23,6 +23,7 @@ from src.engine.mcp.config.loader import load_config
 from src.engine.mcp.manager.manager import MCPManager
 from src.engine.mcp.tools import register_mcp_tools
 from src.engine.paths import providers_dir
+from src.engine.preferences import PreferencesStore
 from src.engine.providers.bootstrap import ProviderPaths, build_service
 from src.engine.providers.factory.unconfigured import UnconfiguredModel
 from src.engine.providers.login.chatgpt_flow import ChatGPTLoginFlow
@@ -37,8 +38,10 @@ from src.engine.shell.tools import register_shell_tools
 from src.engine.skills.loaded import LoadedSkills
 from src.engine.skills.registry import SkillRegistry
 from src.engine.skills.tools import register_skill_tools
+from src.engine.themes import ThemeRegistry
 from src.engine.tooling.logging import ToolLoggerHub
 from src.engine.web.tools import register_web_tools
+from src.engine.workspace.manager import WorkspaceManager
 from src.ui.app import SigilApp
 
 
@@ -129,6 +132,16 @@ def run() -> None:
     question_hub = QuestionHub()
     roadmap_store = RoadmapStore(session_id=session.id)
 
+    # Workspace: the directory Sigil works in, which can be a linked git worktree.
+    # Switching re-points the components that cached the old root; the agent is
+    # built once and closes over these same instances.
+    workspace_manager = WorkspaceManager(
+        workspace_root,
+        session_store=store,
+        roadmap_store=roadmap_store,
+        rebindables=[scope, workspace, skill_registry],
+    )
+
     # MCP servers declared in .sigil/config.json (and in ~/.sigil/config.json).
     # Config errors do not abort startup: they are shown in the chat.
     config = load_config()
@@ -176,5 +189,10 @@ def run() -> None:
         scope=scope,
         workspace=workspace,
         loaded_skills=loaded_skills,
+        workspace_manager=workspace_manager,
+        # UI preferences live outside the session: they are the user's, not the
+        # conversation's, and they have to be read before the first paint.
+        preferences_store=PreferencesStore(),
+        themes=ThemeRegistry.load(),
         agent_registry=agent_registry,
     ).run()

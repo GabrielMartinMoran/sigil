@@ -40,6 +40,19 @@ class ScopeTracker:
         """Goes back to the minimal scope: root only."""
         self._active = {self._root}
 
+    def rebind(self, root: str | Path) -> None:
+        """Moves the scope to another workspace and drops the observed directories.
+
+        The scope describes where the agent is working *now*, so a switch starts
+        from the new root: a directory of the previous workspace inside the scope
+        would keep its instructions alive for no reason.
+        """
+        target = Path(os.path.realpath(str(root)))
+        if target == self._root:
+            return
+        self._root = target
+        self._active = {target}
+
     def observe(self, tool_name: str, args: Mapping[str, object] | None) -> bool:
         """Records the paths of a call. Returns ``True`` if the scope changed."""
         if not args:

@@ -290,3 +290,46 @@ def test_ctrl_m_is_not_bound_because_it_is_enter():
     bindings = {binding.key for binding in SigilApp.BINDINGS}
     assert 'ctrl+m' not in bindings
     assert 'ctrl+t' not in bindings
+
+
+# --- command menu: an argument closes it ------------------------------------
+
+
+def test_typing_an_argument_closes_the_menu():
+    """`Enter` on `/agent reviewer` runs the command, not the highlighted row.
+
+    The menu completes the *name*. Left open while the argument is typed, it
+    holds one row, `Enter` picks it, and the argument is silently dropped: with
+    `TextArea` the text is edited in place instead of being submitted, so the
+    submit path never gets the whole line.
+    """
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _app(tmp)
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                field = app.query_one(PromptInput)
+                field.value = '/agent reviewer'
+                await pilot.pause()
+                assert app.menu_visible is False
+
+    asyncio.run(inner())
+
+
+def test_the_menu_reopens_when_the_argument_is_erased():
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _app(tmp)
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                field = app.query_one(PromptInput)
+                field.value = '/agent reviewer'
+                await pilot.pause()
+                assert app.menu_visible is False
+
+                field.value = '/agen'
+                await pilot.pause()
+                assert app.menu_visible is True
+
+    asyncio.run(inner())

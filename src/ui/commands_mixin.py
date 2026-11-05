@@ -1,14 +1,15 @@
-"""Slash commands: session, sidebar, MCP, context and help."""
+"""Slash commands: session, workspace, sidebar, MCP, context, theme and help."""
 
 from __future__ import annotations
 
 import inspect
 
-from textual.widgets import Input
-
 from src.engine.context.meter.render import render_report
+from src.engine.sessions.catalog import catalog
 from src.engine.shell import running as running_commands
-from src.ui.help_text import HELP_TEXT
+from src.engine.workspace.arguments import UsageError, parse_new_args
+from src.engine.workspace.models.workspace_error import WorkspaceError
+from src.ui.help_text import HELP_TEXT, KEYS_TEXT
 from src.ui.mcp_report import format_mcp_status
 from src.ui.messages import ChatNotice
 from src.ui.widgets.chat_log import ChatLog
@@ -42,28 +43,26 @@ class CommandsMixin:
 
     It expects the app to define ``_store``, ``_session``, ``_history``,
     ``_scope``, ``_loaded_skills``, ``_mcp_manager``, ``_meter``,
-    ``_context_capability``, ``_workspace``, ``_roadmap_store``, ``_turn_active``
-    and ``start_turn``.
+    ``_context_capability``, ``_workspace``, ``_roadmap_store``, ``_turn_active``,
+    ``_workspace_manager`` and ``start_turn``.
     """
 
     _turn_active: bool
 
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Enter on the prompt: slash command, a new turn, or steering the current one.
+    async def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
+        """Enter on the composer: slash command, a new turn, or steering the current one.
 
         While a turn runs the prompt is not blocked any more. What is typed there
         goes to that turn when it is a message, and is refused when it is a
         command that would pull the session out from under the running agent.
-        """
-        if event.input is not self.query_one(PromptInput):
-            return
 
+        The composer clears itself before posting, so a slow turn cannot leave the
+        typed text sitting in the box for a second send.
+        """
         text = event.value.strip()
         if not text:
             return
 
-        prompt = self.query_one(PromptInput)
-        prompt.value = ''
         self.menu_hide()
         chat = self.query_one(ChatLog)
 
@@ -125,17 +124,19 @@ class CommandsMixin:
             return
 
         handlers = {
-            '/new': lambda: self.new_session(chat),
+            '/new': lambda: self.new_session(chat, args),
             '/load': lambda: self.load_session(chat),
             '/agent': lambda: self.show_agent(chat, args),
             '/provider': lambda: self.show_providers(chat),
             '/model': lambda: self.show_models(chat, args),
             '/effort': lambda: self.show_effort(chat, args),
+            '/reasoning-visibility': lambda: self.handle_reasoning_visibility(args, chat),
+            '/theme': lambda: self.handle_theme_command(args, chat),
             '/sidebar': lambda: self.handle_sidebar(args, chat),
             '/mcp': lambda: self.show_mcp(chat),
             '/context': lambda: self.show_context(chat),
             '/debug': lambda: self.handle_debug(args, chat),
-            '/help': lambda: chat.add_notice(HELP_TEXT, style='cyan'),
+            '/help': lambda: self.show_help(chat),
             '/quit': lambda: self.action_quit(),
         }
         handler = handlers.get(name)
@@ -148,6 +149,28 @@ class CommandsMixin:
         # came out as a worker failure, which is a crash for the user.
         if inspect.isawaitable(result):
             await result
+
+    async def show_help(self, chat: ChatLog) -> None:
+        """Commands plus the keys that are not discoverable from the menu."""
+        await chat.add_notice(HELP_TEXT, style='cyan')
+        await chat.add_notice(KEYS_TEXT, style='dim')
+
+    async def handle_theme_command(self, args: str, chat: ChatLog) -> None:
+        """`/theme --list` lists; anything else goes to the theme flow.
+
+        Listing is separate from opening the picker because the errors of a broken
+        theme file belong somewhere readable, and the picker only shows what loaded.
+        """
+        if args.strip().lower() in {'--list', 'list'}:
+            errors = self.reload_themes()
+            await chat.add_notice(self.describe_themes(), style='white')
+            for error in errors:
+                await chat.add_notice(f'✖ {error}', style='yellow')
+            return
+        # Re-read first: a theme dropped in the folder while the app was open is
+        # exactly the case this command exists for.
+        self.reload_themes()
+        await self.handle_theme(args, chat)
 
     def action_quit(self) -> None:
         """Closes the application, persisting the session.
@@ -166,9 +189,27 @@ class CommandsMixin:
         self.persist()
         self.exit()
 
-    async def new_session(self, chat: ChatLog) -> None:
-        """Starts an empty session and clears the UI state."""
-        self.persist()
+    async def new_session(self, chat: ChatLog, args: str = '') -> None:
+        """Starts an empty session, in the current workspace or in a new worktree."""
+        try:
+            request = parse_new_args(args)
+        except UsageError as exc:
+            await chat.add_notice(str(exc), style='yellow')
+            return
+
+        if request.worktree is not None:
+            # The previous session is saved *before* the switch: it belongs to the
+            # workspace that is about to stop being active.
+            self.persist()
+            try:
+                switch = self.create_worktree_workspace(request.worktree)
+            except WorkspaceError as exc:
+                await chat.add_notice(f'✖ {exc}', style='bold red')
+                return
+        else:
+            self.persist()
+            switch = None
+
         session = self._store.create_session()
         # A new session inherits the agent in effect: starting a conversation
         # should not silently drop back to the default profile.
@@ -181,21 +222,43 @@ class CommandsMixin:
             self._loaded_skills.reset()
         self.refresh_sidebar()
         await chat.clear()
+        if switch is not None:
+            await self.announce_switch(switch, chat)
         await chat.add_notice(f'New session {self._session.short_id}.', style='green')
 
     async def load_session(self, chat: ChatLog) -> None:
-        """Loads a session chosen by the user."""
-        sessions = self._store.list_sessions()
-        if not sessions:
+        """Loads a session chosen by the user, switching workspace when needed."""
+        entries = catalog(self._store.cwd, base_dir=self._store.base_dir)
+        if not entries:
             await chat.add_notice('No saved sessions.', style='yellow')
             return
-        chosen = await self.push_screen_wait(SessionPicker(sessions))
+
+        chosen = await self.push_screen_wait(SessionPicker(entries))
         if not chosen:
             return
-        self.persist()
-        loaded = self._store.load(chosen)
-        if loaded is None:
+
+        entry = next((candidate for candidate in entries if candidate.session.id == chosen), None)
+        if entry is None:
             return
+
+        self.persist()
+        if not entry.is_current:
+            # A session belongs to the workspace it was created in: loading it means
+            # going back there, not opening it against another tree.
+            try:
+                switch = self.switch_workspace(str(entry.workspace.root))
+            except WorkspaceError as exc:
+                await chat.add_notice(f'✖ {exc}', style='bold red')
+                return
+            loaded = self._store.load(entry.session.id)
+        else:
+            switch = None
+            loaded = self._store.load(entry.session.id)
+
+        if loaded is None:
+            await chat.add_notice(f'Could not read session {entry.session.short_id}.', style='red')
+            return
+
         self.bind_session(loaded)
         if self._scope is not None:
             self._scope.reset()
@@ -204,6 +267,8 @@ class CommandsMixin:
         self._restore_session_model(loaded)
         self.refresh_sidebar()
         await chat.clear()
+        if switch is not None:
+            await self.announce_switch(switch, chat)
         await chat.render_history(loaded.messages)
         chat.finalize()
         await chat.add_notice(f'Loaded session {loaded.short_id}.', style='green')
@@ -253,11 +318,16 @@ class CommandsMixin:
         self._session.selection = service.snapshot().selection
 
     async def handle_sidebar(self, args: str, chat: ChatLog) -> None:
-        """`/sidebar` toggles; `/sidebar on|off` sets the state."""
-        from src.ui.widgets.roadmap_panel import RoadmapPanel
+        """`/sidebar` toggles; `/sidebar on|off` sets the state.
+
+        It is one panel and one flag: the diagnostics and the roadmap are read as
+        a single answer —"what is it doing, with what, and how far has it got?"— so
+        there is no state where one is visible and the other is not.
+        """
+        from src.ui.widgets.sidebar_panel import SidebarPanel
 
         value = args.strip().lower()
-        panel = self.query_one(RoadmapPanel)
+        panel = self.query_one(SidebarPanel)
         if value in {'', 'toggle'}:
             panel.set_shown(not panel.shown)
         elif value in {'on', 'show'}:
@@ -295,6 +365,16 @@ class CommandsMixin:
         view = self._context_capability.last_view if self._context_capability is not None else None
         report = self._meter.report(self._history, view=view)
         lines = [render_report(report)]
+
+        if self._workspace_manager is not None:
+            workspace = self._workspace_manager.current()
+            lines.append('')
+            lines.append('Workspace')
+            lines.append(f'  name             : {workspace.label}')
+            lines.append(f'  root             : {workspace.root}')
+            lines.append(f'  branch           : {workspace.branch or "(none)"}')
+            if workspace.worktree is not None:
+                lines.append(f'  worktree         : {"main" if workspace.worktree.is_main else "linked"}')
 
         if self._scope is not None:
             scopes = self._scope.relative_scopes()

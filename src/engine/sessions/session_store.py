@@ -108,6 +108,24 @@ class SessionStore:
 
     # --- public API ----------------------------------------------------------
 
+    def rebind(self, cwd: str | Path) -> None:
+        """Points the store at another workspace's session directory.
+
+        Switching workspace keeps the same store object: the app and the turn
+        machinery hold a reference to it, so its identity cannot change.
+        """
+        target = os.path.realpath(str(cwd))
+        if target == self.cwd:
+            return
+        self.cwd = target
+        self.directory = self.base_dir / cwd_hash(target)
+        self.directory.mkdir(parents=True, exist_ok=True)
+        self.index_path = self.directory / INDEX_FILENAME
+
+    def directory_for(self, cwd: str | Path) -> Path:
+        """Session directory of any workspace, without moving this store."""
+        return self.base_dir / cwd_hash(cwd)
+
     def create_session(self, title: str | None = None) -> Session:
         """Creates an empty session and persists it immediately."""
         session = Session(id=uuid.uuid4().hex, cwd=self.cwd, title=title)

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from textual.widgets import Input
+from textual.widgets import TextArea
 
 from src.engine.commands import match_commands
 from src.ui.widgets.command_menu import CommandMenu
 from src.ui.widgets.prompt_input import PromptInput
 
-ARITY_ONE = frozenset({'/model', '/effort'})
+ARITY_ONE = frozenset({'/model', '/effort', '/theme', '/reasoning-visibility'})
 """Commands whose first argument is a single word worth completing verbatim."""
 
 
@@ -20,11 +20,32 @@ class MenuMixin:
 
     menu_visible: bool
 
-    def on_input_changed(self, event: Input.Changed) -> None:
-        if event.input is not self.query_one(PromptInput):
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        """The composer changed: refilter the menu.
+
+        `TextArea` posts `Changed` for every edit, including the one `clear()`
+        makes when a message is sent, so the menu closes on send without the
+        submit path having to say so.
+
+        The menu belongs to the **name**, not to the arguments: it closes as soon
+        as the text holds anything past the first word. Otherwise a command typed
+        with an argument keeps one row highlighted, `Enter` picks that row, and the
+        argument is dropped — `/agent reviewer` ran `/agent`, `/sidebar off` toggled
+        instead of setting. The names are complete by then; there is nothing left
+        to choose between.
+        """
+        if not isinstance(event.text_area, PromptInput):
             return
 
-        matches = match_commands(event.value)
+        text = event.text_area.text
+        name = text.split(maxsplit=1)[0] if text.strip() else ''
+        if text.strip() and text.strip() != name:
+            # An argument was typed (or a trailing space was completed in): the
+            # command is decided, and what comes next is not the menu's business.
+            self.menu_hide()
+            return
+
+        matches = match_commands(text)
         menu = self.query_one(CommandMenu)
         if matches:
             menu.update_matches(matches)
@@ -63,7 +84,7 @@ class MenuMixin:
         name = str(option.id)
         field = self.query_one(PromptInput)
         field.value = f'{name} ' if name in ARITY_ONE else name
-        field.cursor_position = len(field.value)
+        field.move_cursor(field.document.end)
 
     async def menu_choose(self) -> None:
         menu = self.query_one(CommandMenu)
@@ -71,6 +92,6 @@ class MenuMixin:
         if option is None or option.id is None:
             return
         self.menu_hide()
-        self.query_one(PromptInput).value = ''
+        self.query_one(PromptInput).clear()
         # In a worker to be able to use `push_screen_wait` (e.g. /load).
         self.run_worker(self.handle_command(option.id))

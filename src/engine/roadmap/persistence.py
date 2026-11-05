@@ -6,13 +6,23 @@ import hashlib
 import json
 from pathlib import Path
 
+from src.engine.paths import roadmaps_dir
 from src.engine.roadmap.models.todo_item import TodoItem
 
 
 def default_directory() -> Path:
     """Roadmap directory of the current workspace."""
-    cwd_hash = hashlib.sha256(str(Path.cwd().resolve()).encode('utf-8')).hexdigest()[:16]
-    return Path.home() / '.sigil' / 'roadmaps' / cwd_hash
+    return directory_for(Path.cwd())
+
+
+def directory_for(root: str | Path) -> Path:
+    """Roadmap directory of ``root``: one folder per workspace.
+
+    It goes through `paths.roadmaps_dir` so ``SIGIL_HOME`` moves the roadmaps with
+    the rest of Sigil's state, instead of pinning them to ``~/.sigil``.
+    """
+    cwd_hash = hashlib.sha256(str(Path(root).resolve()).encode('utf-8')).hexdigest()[:16]
+    return roadmaps_dir() / cwd_hash
 
 
 def path_for(directory: Path, session_id: str | None) -> Path | None:

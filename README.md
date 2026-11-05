@@ -568,8 +568,8 @@ gets to react to the cancellation and never decides what to do next on its own.
 
 ### Roadmap
 
-`update_roadmap` maintains the task list of the left panel. Each item stays in
-`pending`, `in_progress`, `done` or `blocked`.
+`update_roadmap` maintains the task list at the end of the sidebar. Each item
+stays in `pending`, `in_progress`, `done` or `blocked`.
 
 The panel shows a single list in plan order, without grouping by status. The icon
 and the color are enough to read it at a glance:
@@ -586,6 +586,71 @@ with an empty list, advances with it and recovers it when loading it with
 `/load`. The state is saved in
 `~/.sigil/roadmaps/<cwd-hash>/<session-id>.json`. If the write fails, the list
 keeps working in memory and the error stays in `persistence_error`.
+
+The list scrolls with the panel, so a long plan never grows the sidebar past the
+screen. It does not scroll to follow the agent: the plan is read as a whole, and
+a list that jumped every time an item changed state would be unreadable at
+exactly the moment it is worth reading.
+
+## Workspaces and worktrees
+
+A **workspace** is the directory Sigil works in. When that directory belongs to a
+git repository it is one of its *worktrees*: the main one, or a linked worktree
+created with `git worktree add`.
+
+```
+~/.sigil/worktrees/<repo>/<name>     ← created by /new --worktree
+```
+
+`/new --worktree <name>` creates that worktree on a new branch `sigil/<name>`
+from `HEAD`, moves the process there and starts the session in it:
+
+```
+/new --worktree fix-login     # also -w, --worktree=fix-login and -w=fix-login
+```
+
+The worktree directory lives **outside** the repository (under
+`SIGIL_WORKTREES_DIR`, `<SIGIL_HOME>/worktrees` by default) so that the file tools
+of one workspace cannot reach another's tree: `read_file` and `write_file` are
+limited to the active workspace.
+
+What a new worktree does **not** get, because it is not in the commit:
+
+- uncommitted changes of the current workspace,
+- ignored files: `.env`, `.venv`, `.sigil/config.json`.
+
+Sigil says so in the chat when the worktree is created. The MCP configuration is
+read **once**, at startup, from the directory Sigil was launched in: a worktree
+usually has no `.sigil/config.json` of its own, and reloading it per workspace
+would leave the session without MCP servers.
+
+### Sessions and workspaces
+
+A session belongs to the workspace it was created in, and each workspace keeps its
+own session folder (`~/.sigil/sessions/<cwd-hash>/`). `/load` lists the sessions
+of **every** workspace of the repository, labelled:
+
+| Label | Workspace |
+| --- | --- |
+| `main` | the repository's main worktree |
+| `<name>` | a linked worktree (`fix-login`) |
+
+```
+● main          1a2b3c4d  fix the login form
+  fix-login     9f8e7d6c  try the new parser
+```
+
+`●` marks the workspace in use. Choosing a session of another worktree switches to
+it (the same rebind as `/new --worktree`) and then loads the session: a session is
+never opened against a tree it does not belong to.
+
+Starting Sigil in a subdirectory of a worktree is fine: the subdirectory is its own
+workspace for sessions, and it shows the label of the worktree that contains it.
+The side panel no longer repeats the workspace — the status bar carries it — and
+`/context` prints its root and branch.
+
+A session whose worktree was `git worktree remove`d stops being listed: there is no
+workspace left to open it against. The file stays on disk.
 
 ## Working while the agent runs
 
@@ -807,17 +872,19 @@ type.
 
 | Command | What it does |
 | --- | --- |
-| `/new` | Starts a new session, with its empty roadmap |
-| `/load` | Loads a saved session and its roadmap |
+| `/new [--worktree <name>]` | Starts a new session, with its empty roadmap; `--worktree` creates a git worktree and works there |
+| `/load` | Loads a saved session and its roadmap, switching workspace if it belongs to another worktree |
 | `/agent [name]` | Opens the agent picker; with a name, switches directly |
 | `/provider` | Manage provider accounts: add, rename, remove, activate |
 | `/model` | Picks the model for the active account |
 | `/effort [level]` | Opens the effort picker; with a level, sets it directly |
+| `/reasoning-visibility [on\|off]` | Shows or collapses the reasoning in the chat; without an argument, toggles |
+| `/theme [name\|--list]` | Opens the theme picker with a live preview; with a name, applies it; `--list` lists the installed ones |
 | `/sidebar [on\|off]` | Shows or hides the sidebar; without an argument, toggles |
 | `/mcp` | Queries the state of the MCP servers |
 | `/context` | Shows the breakdown of the used context |
 | `/debug [on\|off\|--text]` | Shows or hides the agent debug view; without an argument, toggles |
-| `/help` | Lists the available commands |
+| `/help` | Lists the available commands and the keys |
 | `/quit` | Exits Sigil |
 
 While a turn runs, only the read-only commands are available: `/context`,
@@ -830,49 +897,232 @@ changes.
 The sidebar starts visible. Hiding it does not erase the roadmap: the agent keeps
 updating it and it comes back with `/sidebar on`.
 
-Under the prompt, the bar has two halves: the **agent in effect** on the left,
-always visible, and a transient message on the right (`Press Esc again to stop
-the agent`). They coexist: the agent does not disappear because the abort asked
-for attention.
+### The composer
+
+`Enter` sends the message and `Shift+Enter` adds a line. The composer grows with
+the message up to ten rows and then scrolls, so a pasted stack trace does not
+push the conversation off the screen.
+
+`Shift+Enter` needs a terminal that reports modifiers (the Kitty keyboard
+protocol, which Textual enables on capable terminals). On one that does not, the
+terminal sends a bare carriage return and the key reads as `Enter`, so the
+message is sent instead of split. That is the same behaviour every other
+line-oriented chat has, and it fails towards the familiar thing rather than
+towards a lost keystroke.
+
+### Status bar
+
+The line under the composer answers four questions, left to right.
+
+**Who?** The **agent in effect**, always visible. It is the one piece of context
+that changes how every answer reads, and having to open a modal to remember which
+agent is talking is exactly the confusion the bar removes.
+
+**Is it working?** A spinner and the verb of the moment — `Thinking`, `Writing`,
+`Running read_file` — with the elapsed time once a turn passes a second. Between
+turns it rests on `● Ready`. Without it, an app waiting on the model looks
+exactly like an app waiting on you.
+
+**Where?** The worktree and the branch the agent is working on: `main main` for
+the main worktree, `fix-login sigil/fix-login` for a linked one. With worktrees in
+the picture, two sessions look the same and write to different trees.
+
+**How much?** `+18 −4  1 new`: the added and removed lines of the working tree in
+the green and red `git diff` uses, plus a count of the files git does not track
+yet. It comes from `git diff --numstat HEAD`, so staged and unstaged changes are
+counted together. Untracked files are a count and not a line count, because
+`git diff` has no diff for a file outside the index and any number there would be
+an invention.
+
+```
+agent Wizard  ·  ⠋ Thinking 12s           main sigil/refactor-ui  +18 −4  1 new
+```
+
+A transient message (`Press Esc again to stop the agent`) takes the place of the
+activity group for as long as it is up, so the bar does not grow a second line for
+two words. It never takes the agent: what answers is not transient.
+
+The summary is read off the event loop after every tool call and on a 1.5-second
+poll; a tool can change the tree through a shell command the file tools never see,
+so there is no event to subscribe to. Outside a git repository the section does
+not appear at all.
 
 ### Sidebar
 
-Above the roadmap, the session panel shows:
+The sidebar is one panel with the sections the session needs, in the order they
+are read. The diagnostics —what the agent is working with— come first, and the
+roadmap of the task closes the list: they are read together, so a second box
+under the first only cost a border, a margin and the height of a column that sat
+mostly empty.
 
-- **Model**: the active account alias, its provider family, the model and the
-  reasoning level in effect. Before anything is configured it says `not
-  configured — /provider`, which is the first thing to do on a fresh install.
-- **Context**: the percentage of the window the next request is going to take,
-  with the pair it comes from in parentheses. It is hidden until a model is
-  configured, and it colours green, yellow and red across 70% and 90%.
+The sections, from top to bottom:
+
+- **Model**: the active account alias, its provider family, the model, the
+  reasoning level in effect, and the context budget of that model's window.
+  Before anything is configured it says `not configured — /provider`, which is
+  the first thing to do on a fresh install.
 - **Loaded skills**: the skills the agent loaded in this session, in load order.
   It is the quick diagnostic of whether it is following the protocol.
 - **MCP**: the count goes inline with the title, in parentheses. Below, each
   server is listed: `●` in green for the ones that work, `✗` in red for the ones
   that do not. With no configured servers, the section does not appear.
+- **Roadmap**: the plan of the task, one line per item, with its notes. It is the
+  last section, and the one read after every message.
 
-The interface, the code and the documentation are all in English.
-
-```
-Context
- 66% (132K / 200K)
-```
-
-The tokens are compacted so the pair fits in a 34-column panel: `K` for
-thousands and `M` for millions, no decimals once the number is `>= 100K` and
-never for millions. Below 100K a single decimal survives when it says something
-—`12.4K`, `5.5K`— and disappears when it would read `.0`.
+The context budget is the last line of the model section and not a section of
+its own: it is a property of that window, it is read with the model, and a
+heading for one number cost two rows of a 34-column panel. It reads like the
+line above it:
 
 ```
+Model
+ work · OpenRouter
+ anthropic/claude-sonnet-4
+ effort: high
+ context: 66% (132K / 200K)
+
+Loaded skills
+ • clean-code
+ • frontend-design
+
 MCP (3, 1 ✗)
  ● github
  ● playwright
  ● filesystem
  ✗ broken
+
+Roadmap
+ ▶ Rewrite the tool renderer
+ ✓ Read the current one
+ ○ Update the tests
 ```
+
+The percentage colours green, yellow and red across 70% and 90%, and the pair it
+comes from rides in parentheses. The tokens are compacted so it fits in the
+column: `K` for thousands and `M` for millions, no decimals once the number is
+`>= 100K` and never for millions. Below 100K a single decimal survives when it
+says something —`12.4K`, `5.5K`— and disappears when it would read `.0`.
+
+The whole panel scrolls, not just the roadmap. With one box there is one
+scrollbar: nesting a scrolling list inside a scrolling panel would put a
+scrollbar inside a scrollbar in a column that is 34 characters wide. A plan of
+thirty items and twenty loaded skills stay inside the panel instead of pushing
+the composer off the screen.
+
+`/sidebar off` hides the panel, and `/sidebar on` brings it back. Hiding does
+not erase anything: the agent keeps updating the roadmap while it is out of
+view.
 
 The MCP count refreshes on startup (in a worker, without blocking the UI) and
 every time you run `/mcp`.
+
+
+## Reading the chat
+
+### Reasoning
+
+The model's reasoning is **collapsed by default**. It is the part of the transcript
+nobody reads twice, and expanded it buries the answer. The collapsed turn still
+says it thought, how much, and how to see it:
+
+```
+✳ Reasoning · 42 lines  /reasoning-visibility on
+```
+
+`/reasoning-visibility on` expands every block in place — the conversation on
+screen is not rebuilt, so a turn in flight keeps its pending deltas — and
+`/reasoning-visibility off` collapses them again. The choice is stored in
+`~/.sigil/ui.json` and applies to the next session too.
+
+### Tool calls
+
+A tool call and its result are one block, with the output indented under a gutter
+on the left:
+
+```
+  │ read_file src/parser.py  ✓
+  │ def parse(x):
+  │     return x.split(",")
+  │ … +34 more
+```
+
+The gutter is what groups them: a run of calls reads as one column hanging under
+the answer that caused it, instead of a list of unrelated lines that all start at
+the left margin. Consecutive calls share no gap, so the column is continuous.
+
+- The header carries the name, the arguments and a state mark: `…` while it runs,
+  `✓` or `✗` after. One column, so nothing shifts when the call ends.
+- A dict of arguments is rendered as `key=value` pairs; a single argument is shown
+  on its own, which is what makes `run(command='ls')` read as `run ls`.
+- The output keeps its leading whitespace, because a diff, a stack trace or a
+  snippet of code is unreadable without it. Trailing whitespace is dropped.
+- Past six lines the block truncates with `… +N more`, and past 160 characters a
+  long line truncates with an ellipsis. Enough to recognize the result, never
+  enough to take over the screen.
+
+## Themes
+
+A theme is a JSON file with a name and a set of colors. Sigil ships two and reads
+the ones installed in `~/.sigil/themes`, one file each:
+
+```
+~/.sigil/themes/
+  my-theme.json
+```
+
+```json
+{
+  "name": "my-theme",
+  "dark": true,
+  "colors": {
+    "primary": "#ff2a6d",
+    "accent": "#05d9e8",
+    "background": "#0d0221",
+    "foreground": "#f8f8f2",
+    "tool-border": "#4b2a6b",
+    "reasoning": "#9d8ec7",
+    "diff-added": "#01ffc3",
+    "diff-removed": "#ff3864"
+  }
+}
+```
+
+Two kinds of key live under `colors`:
+
+- The roles Textual knows — `primary`, `secondary`, `accent`, `warning`, `error`,
+  `success`, `foreground`, `background`, `surface`, `panel`, `boost` — become the
+  theme's palette. `primary` is required; the rest are inherited when omitted.
+- Anything else becomes a CSS variable of that name. That is how a theme reaches
+  the parts of Sigil the palette does not cover: `tool-border`, `tool-title`,
+  `tool-output`, `reasoning`, `diff-added`, `diff-removed`, `sidebar-section` and
+  `muted`.
+
+A color that does not parse rejects the whole file instead of half-applying it: a
+theme with two valid colors and one typo would paint an interface nobody designed.
+A file that fails is reported in the chat at startup and skipped; the rest still
+load. A user file with the same name as a builtin replaces it, which is the way to
+keep the `dark` layout with your own colors.
+
+`SIGIL_THEMES_DIR` moves the directory, so a theme can live in a dotfiles
+repository instead of being copied around.
+
+### Builtin themes
+
+| Theme | What it is |
+| --- | --- |
+| `dark` | The default: a neutral dark surface with a cool accent, quiet enough not to compete with the content |
+| `synthwave` | Neon on deep purple: hot pink, electric cyan and a violet sky. It exists to prove the system moves every surface and not just the accent |
+
+### `/theme`
+
+`/theme` opens the picker and applies each theme as the highlight moves, over the
+real app: what you see while moving is what you get on Enter. `Esc` puts back the
+theme that was active when the picker opened, and `Enter` applies the highlighted
+one and stores it. `/theme --list` lists the installed themes with their origin and
+reports the files that could not be read; `/theme <name>` applies one directly.
+
+The picker re-reads the directory before opening, so a theme dropped in while
+Sigil is running shows up without a restart.
 
 ## Context management
 
@@ -975,6 +1225,7 @@ change behaviour behind your back.
 | `SIGIL_CONTEXT_KEEP_RECENT_TURNS` | `3` | Turns kept intact before trimming. |
 | `SIGIL_CONTEXT_MAX_TOOL_RESULT_CHARS` | `4000` | Cap of an old tool result. |
 | `SIGIL_CONTEXT_OUTPUT_RESERVE` | `8000` | Tokens reserved for the response. |
+| `SIGIL_WORKTREES_DIR` | `<SIGIL_HOME>/worktrees` | Where `/new --worktree` creates the worktrees. |
 
 A value that cannot be parsed fails loudly at startup instead of silently falling
 back to the default. `.env.example` lists all of them.

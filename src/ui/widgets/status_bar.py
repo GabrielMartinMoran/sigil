@@ -1,55 +1,123 @@
-"""Status bar: the one line under the prompt.
+"""Status bar: who is answering, what it is doing, where, and how much it changed.
 
-It carries two things, and they are different in kind:
+The bar answers four questions in one line, left to right:
 
-- **Who is answering.** The active agent profile sits at the left, always
-  visible. It is the one piece of context that changes how every answer reads,
-  and having to open a modal to remember which agent is in effect is exactly the
-  confusion the bar removes.
-- **A transient question.** "Press `Esc` again to stop the agent" is read here,
-  next to the prompt, without taking the eye away from it.
+- **Who?** The active agent profile, always visible. It is the one piece of context
+  that changes how every answer reads, and opening a modal to remember which agent
+  is in effect is exactly the confusion the bar removes.
+- **Is it working?** An animated spinner and the elapsed time while a turn runs, and
+  a quiet resting mark when it does not. A chat that is waiting on a model looks
+  identical to one that is waiting on the user, and the difference matters: it
+  decides whether to wait or to type.
+- **Where?** The worktree and the branch the agent is working on. With worktrees in
+  the picture, two sessions look the same and write to different trees.
+- **How much?** `+added −removed` for the working tree, in the same green and red
+  `git diff --stat` uses, plus a count of files git does not track yet.
 
-The model, the reasoning effort and the context usage used to live here. They
-moved to the side panel, which has room for the detail.
+It is also the place for a transient question ("press `Esc` again to stop the
+agent"): the bottom line of the screen, read without taking the eye off the prompt.
+A message shown here replaces the activity group while it is there, so the bar does
+not grow a second line for two words, and the agent stays where it was.
 
-With no transient message the transient half paints nothing: a bar that repeats
-what the panel already says only spends a line of the terminal.
+The right-hand side is right-aligned, so the bar reads as two groups instead of one
+sentence that grows and shrinks with the branch name.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from rich.text import Text
 from textual.widgets import Static
 
+from src.engine.workspace.diff import DiffStat
+from src.ui.palette import color
+
+SPINNER_FRAMES = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+"""Braille frames: one column each, so the bar does not jitter as it spins."""
+
+SPINNER_INTERVAL = 0.1
+"""Seconds per frame. Fast enough to read as motion, slow enough to stay calm."""
+
+IDLE_MARK = '●'
+"""Resting state. A dot, not a spinner frozen on a frame."""
+
+MIN_GAP = 2
+"""Columns kept between the left and right groups before the right one is dropped."""
+
+
+@dataclass(frozen=True, slots=True)
+class ActivityState:
+    """Whether a turn is running and what it is doing right now."""
+
+    running: bool = False
+    label: str = ''
+    elapsed: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceBadge:
+    """The tree the agent is working in."""
+
+    label: str = ''
+    branch: str | None = None
+    is_worktree: bool = False
+
 
 class StatusBar(Static):
-    """Agent in effect on the left, transient messages in the middle."""
+    """One line: who answers, a transient message or the activity, and the workspace."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(Text(''), **kwargs)
         self._agent = ''
-        self._message = ''
-        self._message_style = 'yellow'
+        self._activity = ActivityState()
+        self._workspace: WorkspaceBadge | None = None
+        self._diff: DiffStat | None = None
+        self._message: Text | None = None
+        self._frame = 0
+        self._timer: Any = None
 
-    # --- the two halves ----------------------------------------------------
+    # --- state --------------------------------------------------------------
 
     def set_agent(self, name: str) -> None:
-        """Paints (or clears) the active agent profile."""
+        """Paints (or clears) the active agent profile. It never borrows the line."""
         self._agent = name.strip()
-        self._paint()
+        self.refresh()
 
     def show(self, text: str, *, style: str = 'yellow') -> None:
-        """Paints a transient message and keeps the agent in place."""
-        self._message = text
-        self._message_style = style
-        self._paint()
+        """Shows a transient message in place of the activity group.
+
+        The abort hint is the reason it exists: it has to be read on the same line
+        the spinner is on, without pushing the screen down a row and back. It
+        replaces the activity, not the agent: what answers is not transient.
+        """
+        self._message = Text(text, style=style)
+        self.refresh()
 
     def clear(self) -> None:
-        """Takes the transient message away, leaving the agent."""
-        self._message = ''
-        self._paint()
+        """Takes the transient message away and gives the line back to the spinner."""
+        self._message = None
+        self.refresh()
+
+    def set_activity(self, state: ActivityState) -> None:
+        """Starts or stops the spinner. The timer only exists while it spins."""
+        was_running = self._activity.running
+        self._activity = state
+        if state.running and not was_running:
+            self._start_spinner()
+        elif not state.running and was_running:
+            self._stop_spinner()
+        self.refresh()
+
+    def set_workspace(self, workspace: WorkspaceBadge | None) -> None:
+        self._workspace = workspace
+        self.refresh()
+
+    def set_diff(self, diff: DiffStat | None) -> None:
+        """Diff summary. ``None`` means "not a repository", and nothing is painted."""
+        self._diff = diff
+        self.refresh()
 
     @property
     def agent(self) -> str:
@@ -57,25 +125,110 @@ class StatusBar(Static):
 
     @property
     def message(self) -> str:
-        return self._message
+        return self._message.plain if self._message is not None else ''
 
-    # --- painting ----------------------------------------------------------
+    def _start_spinner(self) -> None:
+        self._frame = 0
+        if self._timer is None:
+            self._timer = self.set_interval(SPINNER_INTERVAL, self._advance)
 
-    def _paint(self) -> None:
-        self.update(self._build())
+    def _stop_spinner(self) -> None:
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
 
-    def _build(self) -> Text:
+    def _advance(self) -> None:
+        self._frame = (self._frame + 1) % len(SPINNER_FRAMES)
+        self.refresh()
+
+    def on_unmount(self) -> None:
+        self._stop_spinner()
+
+    # --- rendering ----------------------------------------------------------
+
+    def render(self) -> Text:
+        """Left group, then the right group pushed to the edge.
+
+        It renders from state instead of caching a string so a resize re-flows the
+        two groups without anyone having to recompute them. It returns the left
+        group alone while the bar has no width, which is the case before the first
+        layout and in a bare unit test.
+        """
+        left = self._left()
+        right = self._right()
+        width = self.size.width
+        if not right.plain or width <= 0:
+            return left
+        if len(left.plain) + len(right.plain) + MIN_GAP > width:
+            # The bar is narrower than its content: the activity wins, because it is
+            # the part that changes and the part the user is waiting on.
+            return left
+        gap = ' ' * (width - len(left.plain) - len(right.plain))
+        return left + Text(gap) + right
+
+    def plain(self) -> str:
+        """The whole bar as one string, for tests and for diagnostics.
+
+        `render` needs a laid-out width to place the right group; this joins the two
+        groups so a test does not have to mount the widget to read them.
+        """
+        left, right = self._left(), self._right()
+        if not right.plain:
+            return left.plain
+        return f'{left.plain}  {right.plain}'
+
+    def _left(self) -> Text:
+        """Who answers, then either the transient question or what it is doing."""
         text = Text()
         if self._agent:
-            text.append('agent ', style='dim')
-            text.append(self._agent, style='bold cyan')
-        if self._message:
-            if self._agent:
-                text.append('  ·  ', style='dim')
-            text.append(self._message, style=self._message_style)
+            text.append('agent ', style=color(self, 'muted'))
+            text.append(self._agent, style=f'bold {color(self, "accent")}')
+        if self._message is not None:
+            # A question outranks the progress report: one line, one thing to read.
+            if text.plain:
+                text.append('  ·  ', style=color(self, 'muted'))
+            text.append_text(self._message)
+            return text
+        if text.plain:
+            text.append('  ·  ', style=color(self, 'muted'))
+        state = self._activity
+        if state.running:
+            text.append(f'{SPINNER_FRAMES[self._frame]} ', style=f'bold {color(self, "accent")}')
+            text.append(state.label or 'Working', style='bold')
+            if state.elapsed >= 1:
+                text.append(f' {_elapsed(state.elapsed)}', style=color(self, 'muted'))
+            return text
+        text.append(f'{IDLE_MARK} ', style=color(self, 'muted'))
+        text.append(state.label or 'Ready', style=color(self, 'muted'))
         return text
 
-    @property
-    def text(self) -> str:
-        """The bar as plain text, for tests and diagnostics."""
-        return self._build().plain
+    def _right(self) -> Text:
+        text = Text()
+        workspace = self._workspace
+        if workspace is not None and workspace.label:
+            text.append(workspace.label, style='bold yellow' if workspace.is_worktree else 'bold cyan')
+            if workspace.branch:
+                text.append(f' {workspace.branch}', style=color(self, 'muted'))
+        diff = self._diff
+        if diff is not None:
+            if text.plain:
+                text.append('  ', style=color(self, 'muted'))
+            text.append(f'+{diff.added}', style=color(self, 'diff-added'))
+            text.append(' ', style=color(self, 'muted'))
+            text.append(f'−{diff.removed}', style=color(self, 'diff-removed'))
+            if diff.untracked:
+                # Spelled out instead of a symbol: `1?` is a puzzle, `1 new` is not.
+                text.append(f'  {diff.untracked} new', style=color(self, 'muted'))
+        return text
+
+
+def _elapsed(seconds: float) -> str:
+    """`7s`, `1m04s`. Short, and it never grows past a few columns."""
+    total = int(seconds)
+    if total < 60:
+        return f'{total}s'
+    minutes, rest = divmod(total, 60)
+    if minutes < 60:
+        return f'{minutes}m{rest:02d}s'
+    hours, minutes = divmod(minutes, 60)
+    return f'{hours}h{minutes:02d}m'

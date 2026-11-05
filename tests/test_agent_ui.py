@@ -18,6 +18,7 @@ from pathlib import Path
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
+from rich.text import Text
 from textual.widgets import OptionList
 
 from src.engine.agents.profile.registry import AgentRegistry
@@ -103,12 +104,12 @@ def test_a_transient_message_does_not_erase_the_agent():
     asyncio.run(inner())
 
 
-def test_the_bar_without_an_agent_paints_nothing():
-    """`_build()` directly: `update()` needs an active app to render."""
+def test_the_bar_without_an_agent_paints_only_the_activity():
+    """`_left()` directly: `render()` needs a layout to place the right group."""
     bar = StatusBar()
-    assert bar._build().plain == ''
-    bar._message = 'Esc again'
-    assert bar._build().plain == 'Esc again'
+    assert bar._left().plain == '● Ready'
+    bar._message = Text('Esc again')
+    assert bar._left().plain == 'Esc again'
 
 
 # --- the picker --------------------------------------------------------------

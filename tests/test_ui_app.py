@@ -13,9 +13,10 @@ from src.engine.sessions.session_store import SessionStore
 from src.engine.tooling.logging import ToolLoggerHub
 from src.engine.tooling.registrar import ToolRegistrar
 from src.ui.app import SigilApp
-from src.ui.widgets.chat_log import AssistantBlock, ChatLog
+from src.ui.widgets.chat_log import AssistantBlock, ChatLog, ToolCallBlock
 from src.ui.widgets.command_menu import CommandMenu
 from src.ui.widgets.prompt_input import PromptInput
+from tests.ui_helpers import render_text
 
 
 async def _wait_idle(app, pilot, attempts: int = 40) -> None:
@@ -64,7 +65,7 @@ def test_command_menu_filters_and_selects(monkeypatch):
 
                 menu = app.query_one(CommandMenu)
                 assert menu.display is True
-                assert menu.option_count == 12
+                assert menu.option_count == 14
 
                 await pilot.press('n')
                 await pilot.pause()
@@ -148,13 +149,22 @@ def test_tool_call_and_result_are_rendered(monkeypatch):
                 await _wait_idle(app, pilot)
 
                 widgets = list(app.query_one(ChatLog).children)
-                class_names = {name for widget in widgets for name in widget.classes}
-                assert 'tool-call' in class_names
-                assert 'tool-result' in class_names
-                assert any('ping' in str(widget.render()) for widget in widgets)
+                blocks = [widget for widget in widgets if isinstance(widget, ToolCallBlock)]
+                # One block per call: the result lands inside it, it is not a line
+                # of its own. That is the whole point of the block.
+                assert len(blocks) == 1
+                assert blocks[0].name == 'ping'
+                text = _block_text(blocks[0])
+                assert 'ping' in text
+                assert 'pong' in text
                 assert len(app._session.messages) >= 3
 
     asyncio.run(inner())
+
+
+def _block_text(block) -> str:
+    """Plain text of a tool block, whatever Rich renderable it holds."""
+    return render_text(block._build())
 
 
 def test_tool_error_is_rendered_as_notice(monkeypatch):
@@ -175,8 +185,13 @@ def test_tool_error_is_rendered_as_notice(monkeypatch):
                 await pilot.press('enter')
                 await _wait_idle(app, pilot)
 
-                texts = [str(widget.render()) for widget in app.query_one(ChatLog).children]
-                assert any('kaboom' in text for text in texts)
+                widgets = list(app.query_one(ChatLog).children)
+                blocks = [widget for widget in widgets if isinstance(widget, ToolCallBlock)]
+                # A failed call stays in its block, marked with a cross, instead of
+                # breaking out as a separate notice line.
+                assert len(blocks) == 1
+                assert 'kaboom' in _block_text(blocks[0])
+                assert '✗' in _block_text(blocks[0])
 
     asyncio.run(inner())
 
