@@ -24,7 +24,11 @@ from src.engine.files.text import (
     split_lines,
 )
 from src.engine.tooling.logging import ToolLogger
+from src.engine.tooling.permission import ResourceKind, ToolGroup, ToolPermission
 from src.engine.tooling.registrar import ToolRegistrar
+
+_READ = ToolPermission(groups=(ToolGroup.READ,), resource='path', kind=ResourceKind.PATH)
+_WRITE = ToolPermission(groups=(ToolGroup.WRITE,), resource='path', kind=ResourceKind.PATH)
 
 
 def _read_line_range(target: Any, path: str, size: int, start_line: int | None, end_line: int | None) -> FileContent:
@@ -127,7 +131,7 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None) -> None:
     """Registers the file tools on a pydantic-ai agent."""
     tools = ToolRegistrar(agent, logger)
 
-    @tools.tool
+    @tools.tool(permission=_READ)
     def read_file(
         path: str,
         start_line: int | None = None,
@@ -153,7 +157,7 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None) -> None:
             return _read_line_range(target, path, size, start_line, end_line)
         return _read_whole(target, size, max_bytes)
 
-    @tools.tool(concurrency=same_file_conflict)
+    @tools.tool(concurrency=same_file_conflict, permission=_WRITE)
     def write_file(path: str, content: str, append: bool = False) -> WriteResult:
         """Write or append to a text file in the workspace.
 
@@ -177,7 +181,7 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None) -> None:
             handle.write(data)
         return WriteResult(path=str(target), bytes_written=len(data), created=created, appended=append)
 
-    @tools.tool(concurrency=same_file_conflict)
+    @tools.tool(concurrency=same_file_conflict, permission=_WRITE)
     def patch_file(
         path: str,
         old_string: str | None = None,

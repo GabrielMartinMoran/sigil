@@ -16,7 +16,11 @@ from src.engine.mcp.tool_models.resource_content import ResourceContent
 from src.engine.mcp.tool_models.resource_info import ResourceInfo
 from src.engine.mcp.tool_models.server_status import ServerStatus
 from src.engine.tooling.logging import ToolLogger
+from src.engine.tooling.permission import ToolGroup, ToolPermission
 from src.engine.tooling.registrar import ToolRegistrar
+
+_MCP = ToolPermission(groups=(ToolGroup.MCP,))
+_MCP_SERVER = ToolPermission(groups=(ToolGroup.MCP,), resource='server')
 
 
 def register_mcp_tools(agent: Any, manager: MCPManager, logger: ToolLogger | None = None) -> None:
@@ -30,7 +34,7 @@ def register_mcp_tools(agent: Any, manager: MCPManager, logger: ToolLogger | Non
 
     tools = ToolRegistrar(agent, logger)
 
-    @tools.tool
+    @tools.tool(permission=_MCP)
     async def list_mcp_servers(connect: bool = False) -> list[ServerStatus]:
         """List the configured MCP servers and their state.
 
@@ -44,7 +48,7 @@ def register_mcp_tools(agent: Any, manager: MCPManager, logger: ToolLogger | Non
         """
         return await manager.describe(connect=connect)
 
-    @tools.tool
+    @tools.tool(permission=_MCP_SERVER)
     async def list_mcp_resources(server: str | None = None) -> list[ResourceInfo]:
         """List resources exposed by MCP servers.
 
@@ -56,7 +60,7 @@ def register_mcp_tools(agent: Any, manager: MCPManager, logger: ToolLogger | Non
         """
         return await manager.list_resources(server)
 
-    @tools.tool
+    @tools.tool(permission=_MCP_SERVER)
     async def read_mcp_resource(server: str, uri: str) -> ResourceContent:
         """Read an MCP resource by URI.
 
@@ -69,7 +73,7 @@ def register_mcp_tools(agent: Any, manager: MCPManager, logger: ToolLogger | Non
         """
         return await manager.read_resource(server, uri)
 
-    @tools.tool
+    @tools.tool(permission=_MCP_SERVER)
     async def list_mcp_prompts(server: str | None = None) -> list[PromptInfo]:
         """List prompts (reusable message templates) exposed by MCP servers.
 
@@ -80,7 +84,7 @@ def register_mcp_tools(agent: Any, manager: MCPManager, logger: ToolLogger | Non
         """
         return await manager.list_prompts(server)
 
-    @tools.tool
+    @tools.tool(permission=_MCP_SERVER)
     async def get_mcp_prompt(
         server: str,
         name: str,

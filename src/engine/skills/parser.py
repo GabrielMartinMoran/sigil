@@ -6,17 +6,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-import yaml
-
+from src.engine.markdown.frontmatter import FrontmatterError
+from src.engine.markdown.frontmatter import split_frontmatter as _split
 from src.engine.skills.models.skill_metadata import SkillMetadata
 from src.engine.skills.models.skill_parse_error import SkillParseError
-
-# The frontmatter must open on the first line with ``---`` and close with another
-# ``---`` line. We support CRLF line endings and a leading BOM.
-_FRONTMATTER_RE = re.compile(
-    r'\A---[ \t]*\r?\n(?P<frontmatter>.*?)\r?\n---[ \t]*(?:\r?\n|\Z)',
-    re.DOTALL,
-)
 
 _NAME_RE = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
 _MAX_NAME_LENGTH = 64
@@ -42,27 +35,10 @@ def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     Returns ``(frontmatter, body)``. Raises ``SkillParseError`` if the
     document does not follow the protocol format.
     """
-    text = text.removeprefix('\ufeff')
-
-    if not text.startswith('---'):
-        raise SkillParseError('SKILL.md must start with a YAML frontmatter block delimited by `---`.')
-
-    match = _FRONTMATTER_RE.match(text)
-    if match is None:
-        raise SkillParseError('SKILL.md has an invalid or unterminated YAML frontmatter block.')
-
-    raw = match.group('frontmatter')
     try:
-        data = yaml.safe_load(raw)
-    except yaml.YAMLError as exc:
-        raise SkillParseError(f'Invalid YAML in SKILL.md frontmatter: {exc}') from exc
-
-    if data is None:
-        data = {}
-    if not isinstance(data, dict):
-        raise SkillParseError('SKILL.md frontmatter must be a YAML mapping.')
-
-    return data, text[match.end() :]
+        return _split(text, label='SKILL.md')
+    except FrontmatterError as exc:
+        raise SkillParseError(str(exc)) from exc
 
 
 def _clean_string(value: Any, field_name: str) -> str:

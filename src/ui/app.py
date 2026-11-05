@@ -4,6 +4,7 @@ The app is the UI composition point: it builds the widget tree and delegates
 each responsibility to a mixin with its own state.
 
 - `ModelViewMixin` : the active model and effort in effect, read by the chrome.
+- `AgentMixin`     : `/agent`, the `ctrl+a` picker and the agent in the status bar.
 - `SidebarMixin`   : side panel: active model, context budget, skills, MCP servers.
 - `MenuMixin`      : command menu that appears when typing `/`.
 - `CommandsMixin`  : slash commands and session switching.
@@ -27,6 +28,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 
+from src.engine.agents.profile.registry import AgentRegistry
 from src.engine.agents.retry import RetryNotice, RetryTransientModelErrors
 from src.engine.context.capability import ContextViewCapability
 from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
@@ -46,6 +48,7 @@ from src.engine.themes import ThemeRegistry
 from src.engine.tooling.logging import ToolLoggerHub
 from src.engine.workspace.manager import WorkspaceManager
 from src.ui.activity_mixin import ActivityMixin
+from src.ui.agent_mixin import AgentMixin
 from src.ui.commands_mixin import CommandsMixin
 from src.ui.debug_mixin import DebugMixin
 from src.ui.menu_mixin import MenuMixin
@@ -68,6 +71,7 @@ from src.ui.workspace_mixin import WorkspaceMixin
 
 class SigilApp(
     ModelViewMixin,
+    AgentMixin,
     SidebarMixin,
     MenuMixin,
     CommandsMixin,
@@ -118,6 +122,7 @@ class SigilApp(
         preferences: Preferences | None = None,
         preferences_store: PreferencesStore | None = None,
         themes: ThemeRegistry | None = None,
+        agent_registry: AgentRegistry | None = None,
     ) -> None:
         super().__init__()
         self._settings = settings or load_settings({})
@@ -143,6 +148,7 @@ class SigilApp(
         self._preferences_store = preferences_store or PreferencesStore()
         self._preferences = preferences or self._preferences_store.load()
         self._themes = themes or ThemeRegistry.load()
+        self._agent_registry = agent_registry
         self._tool_log_sink: ChatToolLogSink | None = None
         self._history: list[Any] = list(session.messages)
         self.menu_visible = False
@@ -216,11 +222,16 @@ class SigilApp(
             self._roadmap_store.add_listener(self.handle_roadmap_store_change)
             self.query_one(SidebarPanel).set_store(self._roadmap_store)
         self.query_one(CommandMenu).display = False
+        # The session carries the agent it runs with from the first paint, so a
+        # conversation saved before any switch still remembers it.
+        self.remember_agent(self.active_agent())
         self.refresh_sidebar()
         self.refresh_mcp_status()
         self.refresh_workspace_badge()
         self.refresh_diff()
         self._start_diff_polling()
+        for error in self.agent_notices():
+            await self.query_one(ChatLog).add_notice(f'✖ {error}', style='yellow')
         for notice in self._startup_notices:
             await self.query_one(ChatLog).add_notice(notice, style='yellow')
         for error in self._themes.errors:

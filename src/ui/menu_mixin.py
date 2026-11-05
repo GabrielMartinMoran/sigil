@@ -26,11 +26,26 @@ class MenuMixin:
         `TextArea` posts `Changed` for every edit, including the one `clear()`
         makes when a message is sent, so the menu closes on send without the
         submit path having to say so.
+
+        The menu belongs to the **name**, not to the arguments: it closes as soon
+        as the text holds anything past the first word. Otherwise a command typed
+        with an argument keeps one row highlighted, `Enter` picks that row, and the
+        argument is dropped — `/agent reviewer` ran `/agent`, `/sidebar off` toggled
+        instead of setting. The names are complete by then; there is nothing left
+        to choose between.
         """
         if not isinstance(event.text_area, PromptInput):
             return
 
-        matches = match_commands(event.text_area.text)
+        text = event.text_area.text
+        name = text.split(maxsplit=1)[0] if text.strip() else ''
+        if text.strip() and text.strip() != name:
+            # An argument was typed (or a trailing space was completed in): the
+            # command is decided, and what comes next is not the menu's business.
+            self.menu_hide()
+            return
+
+        matches = match_commands(text)
         menu = self.query_one(CommandMenu)
         if matches:
             menu.update_matches(matches)

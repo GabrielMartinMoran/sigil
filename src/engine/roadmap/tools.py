@@ -10,7 +10,10 @@ from src.engine.roadmap.models.todo_item import TodoItem
 from src.engine.roadmap.models.todo_status import TodoStatus
 from src.engine.roadmap.store import RoadmapStore
 from src.engine.tooling.logging import ToolLogger
+from src.engine.tooling.permission import ToolGroup, ToolPermission
 from src.engine.tooling.registrar import ToolRegistrar
+
+_ROADMAP = ToolPermission(groups=(ToolGroup.ROADMAP,))
 
 
 class RoadmapItemInput(BaseModel):
@@ -83,7 +86,7 @@ def register_roadmap_tools(agent: Any, store: RoadmapStore, logger: ToolLogger |
     """Registers the roadmap tool on a pydantic-ai agent."""
     tools = ToolRegistrar(agent, logger)
 
-    @tools.tool
+    @tools.tool(permission=_ROADMAP)
     def update_roadmap(
         action: Literal['set', 'add', 'update', 'remove', 'clear'],
         items: list[RoadmapItemInput] | None = None,

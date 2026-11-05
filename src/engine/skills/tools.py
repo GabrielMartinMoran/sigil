@@ -29,7 +29,13 @@ from src.engine.skills.tool_models.script_run_result import ScriptRunResult
 from src.engine.skills.tool_models.skill_resource_info import SkillResourceInfo
 from src.engine.skills.tool_models.skill_summary import SkillSummary
 from src.engine.tooling.logging import ToolLogger
+from src.engine.tooling.permission import ToolGroup, ToolPermission
 from src.engine.tooling.registrar import ToolRegistrar
+
+_SKILLS = ToolPermission(groups=(ToolGroup.SKILLS,))
+_SKILL_RESOURCE = ToolPermission(groups=(ToolGroup.SKILLS,), resource='name')
+_SKILL_SCRIPT = ToolPermission(groups=(ToolGroup.SKILLS, ToolGroup.RUN), resource='name')
+
 
 DEFAULT_SCRIPT_TIMEOUT = 30
 
@@ -83,7 +89,7 @@ def register_skill_tools(
     """
     tools = ToolRegistrar(agent, logger)
 
-    @tools.tool
+    @tools.tool(permission=_SKILLS)
     def list_skills(query: str | None = None) -> list[SkillSummary]:
         """List installed Agent Skills (metadata only).
 
@@ -103,7 +109,7 @@ def register_skill_tools(
             skills = [skill for skill in skills if _matches(skill, needle)]
         return [_summary(skill) for skill in skills]
 
-    @tools.tool
+    @tools.tool(permission=_SKILL_RESOURCE)
     def load_skill(name: str) -> LoadedSkill:
         """Load a skill and list its bundled resources.
 
@@ -138,7 +144,7 @@ def register_skill_tools(
             ),
         )
 
-    @tools.tool
+    @tools.tool(permission=_SKILL_RESOURCE)
     def read_skill_resource(
         name: str,
         path: str,
@@ -168,7 +174,7 @@ def register_skill_tools(
             content=content,
         )
 
-    @tools.tool
+    @tools.tool(permission=_SKILL_SCRIPT)
     async def run_skill_script(
         name: str,
         script: str,

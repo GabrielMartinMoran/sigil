@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.engine.tooling.concurrency import ConcurrencyGuard
 from src.engine.tooling.logging import ToolLogger
+from src.engine.tooling.permission import ToolPermission
 from src.engine.tooling.wrapper import wrap_tool
 
 if TYPE_CHECKING:
@@ -32,15 +33,24 @@ class ToolRegistrar:
         name: str | None = None,
         description: str | None = None,
         concurrency: ConcurrencyGuard | None = None,
+        permission: ToolPermission | None = None,
         **tool_kwargs: Any,
     ) -> Any:
         """Decorator equivalent to ``agent.tool_plain`` with logging.
 
         ``concurrency`` declares when the call cannot coexist with the
-        previous ones of the same model response.
+        previous ones of the same model response. ``permission`` declares what
+        the tool is for the agent profile, which is what lets a profile deny a
+        whole group or a specific path instead of only the tool by name.
         """
         return self._make(
-            func, use_context=False, name=name, description=description, concurrency=concurrency, **tool_kwargs
+            func,
+            use_context=False,
+            name=name,
+            description=description,
+            concurrency=concurrency,
+            permission=permission,
+            **tool_kwargs,
         )
 
     def context_tool(
@@ -50,11 +60,18 @@ class ToolRegistrar:
         name: str | None = None,
         description: str | None = None,
         concurrency: ConcurrencyGuard | None = None,
+        permission: ToolPermission | None = None,
         **tool_kwargs: Any,
     ) -> Any:
         """Decorator equivalent to ``agent.tool`` (it receives a ``RunContext``)."""
         return self._make(
-            func, use_context=True, name=name, description=description, concurrency=concurrency, **tool_kwargs
+            func,
+            use_context=True,
+            name=name,
+            description=description,
+            concurrency=concurrency,
+            permission=permission,
+            **tool_kwargs,
         )
 
     def register(
@@ -65,6 +82,7 @@ class ToolRegistrar:
         name: str | None = None,
         description: str | None = None,
         concurrency: ConcurrencyGuard | None = None,
+        permission: ToolPermission | None = None,
         **tool_kwargs: Any,
     ) -> Callable[..., Any]:
         """Registers an already defined function and returns the wrapper."""
@@ -74,6 +92,7 @@ class ToolRegistrar:
             name=name,
             description=description,
             concurrency=concurrency,
+            permission=permission,
             **tool_kwargs,
         )
 
@@ -85,6 +104,7 @@ class ToolRegistrar:
         name: str | None,
         description: str | None,
         concurrency: ConcurrencyGuard | None = None,
+        permission: ToolPermission | None = None,
         **tool_kwargs: Any,
     ) -> Any:
         def decorator(target: Callable[..., Any]) -> Callable[..., Any]:
@@ -103,6 +123,7 @@ class ToolRegistrar:
                 use_context=use_context or concurrency is not None,
                 name=name,
                 description=description,
+                metadata=permission.metadata() if permission is not None else None,
                 **tool_kwargs,
             )
             return wrapped
@@ -116,9 +137,10 @@ class ToolRegistrar:
         use_context: bool,
         name: str | None,
         description: str | None,
+        metadata: dict[str, Any] | None = None,
         **tool_kwargs: Any,
     ) -> None:
-        options = {'name': name, 'description': description, **tool_kwargs}
+        options = {'name': name, 'description': description, 'metadata': metadata, **tool_kwargs}
         options = {key: value for key, value in options.items() if value is not None}
         register = self.agent.tool if use_context else self.agent.tool_plain
         if options:
@@ -136,6 +158,7 @@ def register_tool(
     name: str | None = None,
     description: str | None = None,
     concurrency: ConcurrencyGuard | None = None,
+    permission: ToolPermission | None = None,
     **tool_kwargs: Any,
 ) -> Any:
     """Shorthand to register a standalone tool with logging."""
@@ -149,6 +172,7 @@ def register_tool(
                 name=name,
                 description=description,
                 concurrency=concurrency,
+                permission=permission,
                 **tool_kwargs,
             )
 
@@ -160,5 +184,6 @@ def register_tool(
         name=name,
         description=description,
         concurrency=concurrency,
+        permission=permission,
         **tool_kwargs,
     )

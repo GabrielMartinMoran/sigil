@@ -7,6 +7,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from src.engine.agents.agent import create_agent
+from src.engine.agents.profile.registry import AgentRegistry
 from src.engine.agents.retry import RetryTransientModelErrors
 from src.engine.context.capability import ContextViewCapability
 from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
@@ -98,6 +99,11 @@ def run() -> None:
     if session is None:
         session = store.create_session()
 
+    # The agent profiles installed for this directory: the built-in set plus
+    # whatever the project and the user added. The session remembers which one
+    # it was using, so a resumed conversation comes back with its own agent.
+    agent_registry = AgentRegistry(active=session.agent)
+
     # Providers: accounts, credentials and the model the agent talks to. The
     # router starts on a model that refuses to run until something is configured,
     # so the app opens and `/provider` is reachable from a cold start.
@@ -153,6 +159,7 @@ def run() -> None:
         workspace=workspace,
         scope=scope,
         loaded_skills=loaded_skills,
+        agent_registry=agent_registry,
         extra_capabilities=[context_capability],
     )
 
@@ -187,4 +194,5 @@ def run() -> None:
         # conversation's, and they have to be read before the first paint.
         preferences_store=PreferencesStore(),
         themes=ThemeRegistry.load(),
+        agent_registry=agent_registry,
     ).run()

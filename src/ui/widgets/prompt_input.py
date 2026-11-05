@@ -5,7 +5,7 @@ the same for all of them: **the focused widget sees the key first**.
 
 - The command menu (Up/Down/Tab/Esc) needs `priority`, because the text area
   consumes those keys for editing and cursor movement.
-- `ctrl+m` and `ctrl+t` are handled in `_on_key`.
+- `ctrl+m`, `ctrl+t` and `ctrl+a` are handled in `_on_key`.
 - `Enter` sends and `Shift+Enter` inserts a newline. The text area already treats
   Enter as a newline, so the split is decided in `_on_key`, before the area turns
   the key into an edit.
@@ -50,6 +50,10 @@ CTRL_MODELS = 'ctrl+m'
 
 CTRL_EFFORT = 'ctrl+t'
 """Ctrl+T. Free of ambiguity, but Ctrl+T is `transpose-chars` in readline."""
+
+CTRL_AGENT = 'ctrl+a'
+"""Ctrl+A. `home` in the `TextArea` (and in readline), which is why it is read
+here: the prompt claims it before the widget turns it into a cursor move."""
 
 NEWLINE_KEYS = frozenset({'shift+enter'})
 """Keys that insert a line break instead of sending. See the module docstring."""
@@ -141,6 +145,11 @@ class PromptInput(TextArea):
             event.stop()
             event.prevent_default()
             self.run_worker(self.app.open_effort())
+            return
+        if event.key == CTRL_AGENT:
+            event.stop()
+            event.prevent_default()
+            self.run_worker(self.app.open_agent())
             return
 
         await super()._on_key(event)

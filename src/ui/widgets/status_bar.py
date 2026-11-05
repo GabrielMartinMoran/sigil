@@ -1,7 +1,10 @@
-"""Status bar: what the agent is doing, where, and how much it has changed.
+"""Status bar: who is answering, what it is doing, where, and how much it changed.
 
-The bar answers three questions in one line, left to right:
+The bar answers four questions in one line, left to right:
 
+- **Who?** The active agent profile, always visible. It is the one piece of context
+  that changes how every answer reads, and opening a modal to remember which agent
+  is in effect is exactly the confusion the bar removes.
 - **Is it working?** An animated spinner and the elapsed time while a turn runs, and
   a quiet resting mark when it does not. A chat that is waiting on a model looks
   identical to one that is waiting on the user, and the difference matters: it
@@ -13,8 +16,8 @@ The bar answers three questions in one line, left to right:
 
 It is also the place for a transient question ("press `Esc` again to stop the
 agent"): the bottom line of the screen, read without taking the eye off the prompt.
-A message shown here borrows the left group while it is there, so the bar does not
-grow a second line for two words.
+A message shown here replaces the activity group while it is there, so the bar does
+not grow a second line for two words, and the agent stays where it was.
 
 The right-hand side is right-aligned, so the bar reads as two groups instead of one
 sentence that grows and shrinks with the branch name.
@@ -63,10 +66,11 @@ class WorkspaceBadge:
 
 
 class StatusBar(Static):
-    """One-line status: a transient message, activity, workspace and diff counters."""
+    """One line: who answers, a transient message or the activity, and the workspace."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(Text(''), **kwargs)
+        self._agent = ''
         self._activity = ActivityState()
         self._workspace: WorkspaceBadge | None = None
         self._diff: DiffStat | None = None
@@ -76,11 +80,17 @@ class StatusBar(Static):
 
     # --- state --------------------------------------------------------------
 
+    def set_agent(self, name: str) -> None:
+        """Paints (or clears) the active agent profile. It never borrows the line."""
+        self._agent = name.strip()
+        self.refresh()
+
     def show(self, text: str, *, style: str = 'yellow') -> None:
         """Shows a transient message in place of the activity group.
 
         The abort hint is the reason it exists: it has to be read on the same line
-        the spinner is on, without pushing the screen down a row and back.
+        the spinner is on, without pushing the screen down a row and back. It
+        replaces the activity, not the agent: what answers is not transient.
         """
         self._message = Text(text, style=style)
         self.refresh()
@@ -108,6 +118,14 @@ class StatusBar(Static):
         """Diff summary. ``None`` means "not a repository", and nothing is painted."""
         self._diff = diff
         self.refresh()
+
+    @property
+    def agent(self) -> str:
+        return self._agent
+
+    @property
+    def message(self) -> str:
+        return self._message.plain if self._message is not None else ''
 
     def _start_spinner(self) -> None:
         self._frame = 0
@@ -160,11 +178,20 @@ class StatusBar(Static):
         return f'{left.plain}  {right.plain}'
 
     def _left(self) -> Text:
+        """Who answers, then either the transient question or what it is doing."""
+        text = Text()
+        if self._agent:
+            text.append('agent ', style=color(self, 'muted'))
+            text.append(self._agent, style=f'bold {color(self, "accent")}')
         if self._message is not None:
             # A question outranks the progress report: one line, one thing to read.
-            return self._message
+            if text.plain:
+                text.append('  ·  ', style=color(self, 'muted'))
+            text.append_text(self._message)
+            return text
+        if text.plain:
+            text.append('  ·  ', style=color(self, 'muted'))
         state = self._activity
-        text = Text()
         if state.running:
             text.append(f'{SPINNER_FRAMES[self._frame]} ', style=f'bold {color(self, "accent")}')
             text.append(state.label or 'Working', style='bold')

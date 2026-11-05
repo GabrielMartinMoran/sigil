@@ -67,6 +67,14 @@ class Session:
     different model would silently change cost and behaviour.
     """
 
+    agent: str = ''
+    """Agent profile the conversation runs with, by name.
+
+    It travels with the session for the same reason as the model: the
+    instructions a conversation was built under are part of it. An empty string
+    means "no choice recorded", and the registry falls back to its default.
+    """
+
     def touch(self) -> None:
         self.updated_at = _now()
 
@@ -197,6 +205,7 @@ class SessionStore:
             'updated_at': session.updated_at,
             'title': session.title,
             'selection': session.selection.to_dict() if session.selection is not None else None,
+            'agent': session.agent,
             'messages': ModelMessagesTypeAdapter.dump_python(session.messages, mode='json'),
         }
 
@@ -209,6 +218,7 @@ class SessionStore:
             updated_at=data.get('updated_at') or _now(),
             title=data.get('title'),
             selection=_selection_from(data.get('selection')),
+            agent=str(data.get('agent') or ''),
         )
 
     # --- Index and atomic write ----------------------------------------------

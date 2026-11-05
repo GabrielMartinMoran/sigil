@@ -213,6 +213,7 @@ QuestionPanel {
 ProviderScreen,
 AccountFormScreen,
 ModelPickerScreen,
+AgentPickerScreen,
 ConfirmScreen,
 TextPromptScreen {
     align: center middle;
@@ -235,6 +236,7 @@ TextPromptScreen {
 #provider-list,
 #form-options,
 #picker-models,
+#agent-list,
 #confirm-options {
     height: auto;
     max-height: 16;
@@ -248,12 +250,14 @@ TextPromptScreen {
 #form-alias,
 #form-secret,
 #picker-filter,
+#agent-filter,
 #prompt-text {
     margin-top: 1;
 }
 
 #form-status,
 #picker-status,
+#agent-status,
 #prompt-status {
     margin-top: 1;
     height: auto;

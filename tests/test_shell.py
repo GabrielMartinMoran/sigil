@@ -137,9 +137,11 @@ def test_timeout_vs_normal_are_distinguishable():
 class _DummyAgent:
     def __init__(self):
         self.registered = {}
+        self.options: dict[str, dict[str, object]] = {}
 
-    def tool_plain(self, func):
+    def tool_plain(self, func, **options):
         self.registered[func.__name__] = func
+        self.options[func.__name__] = options
         return func
 
 
