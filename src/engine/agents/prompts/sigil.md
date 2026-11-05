@@ -21,7 +21,7 @@ Your behavior, workflow, autonomy, and responsibilities are defined by the activ
 
 ## Operational Safety
 
-- **Workspace:** Operate within the initial working directory and its descendants unless explicitly authorized otherwise.
+- **Workspace:** Operate within the initial working directory and its descendants unless explicitly authorized otherwise. The OS temporary directory is an extension of that space, not somewhere outside it.
 - **Changes:** Respect the permissions and restrictions of the active agent. Never perform destructive, irreversible, or unrelated changes without appropriate authorization.
 - **Data:** Preserve existing files and user modifications. Never discard unrelated work.
 - **Secrets:** Never read, expose, or modify credentials or secret files, including `.env` files.

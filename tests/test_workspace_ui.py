@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -210,8 +211,16 @@ def test_tools_operate_on_the_new_worktree_after_the_switch(monkeypatch, tmp_pat
             pwd = await execute_commands(['pwd'])
             assert pwd[0].stdout.strip() == str(tmp_path / 'worktrees' / 'project' / 'isolated')
 
-            # The parent tree is out of reach for the file tools.
+            # The parent tree is out of reach for the file tools. The sandbox of
+            # the test lives under `/tmp`, which the tools allow, so the temp
+            # allowance is emptied here: the claim under test is that switching
+            # worktree narrows the tools to the new tree, not that `/tmp` is
+            # reachable.
+            from src.engine.files import paths
             from src.engine.files.models.file_tool_error import FileToolError
+
+            monkeypatch.setattr(paths, '_POSIX_TEMP_DIRS', ())
+            monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path / 'scratch'))
 
             with pytest.raises(FileToolError):
                 recorder.tools['read_file'](path=str(repo / 'README.md'))
