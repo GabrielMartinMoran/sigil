@@ -84,11 +84,32 @@ Screen {
     padding: 0 1;
 }
 
-/* --- side panel ---------------------------------------------------------- */
+/* --- side column --------------------------------------------------------- */
 
+/* The column holds two boxes and hands the leftover height to the roadmap: the
+ * diagnostics above are as tall as their content, the plan takes the rest. It
+ * does not scroll itself — each box keeps its own scroll, so a long model name
+ * does not drag the roadmap out of view. */
 #sidebar {
     width: 34;
     height: 1fr;
+}
+
+#sidebar-panel {
+    height: auto;
+    border: round $primary;
+    padding: 0 1;
+    margin-bottom: 1;
+    scrollbar-size-vertical: 1;
+}
+
+/* The roadmap is the last thing in the column and the only box that grows. With
+ * a plan of twenty items it scrolls on its own instead of squeezing the panel
+ * above it or pushing the composer off the screen. */
+#roadmap {
+    width: 1fr;
+    height: 1fr;
+    min-height: 5;
     border: round $primary;
     padding: 0 1;
     overflow-y: auto;
@@ -96,6 +117,11 @@ Screen {
 }
 
 /* --- debug view ---------------------------------------------------------- */
+
+#conversation {
+    width: 1fr;
+    height: 1fr;
+}
 
 #debug {
     width: 1fr;
@@ -122,7 +148,6 @@ Screen {
 /* --- modal chrome -------------------------------------------------------- */
 
 SessionPicker,
-QuestionScreen,
 ProviderScreen,
 AccountFormScreen,
 ModelPickerScreen,
@@ -145,27 +170,62 @@ ThemePickerScreen {
     height: 1fr;
 }
 
-#question-box {
-    width: 80%;
+/* Not a modal: it borrows height from the chat and lets the conversation stay
+ * readable while the question is answered. */
+QuestionPanel {
     height: auto;
-    max-height: 80%;
+    max-height: 60%;
     border: round $accent;
     background: $panel;
-    padding: 1 2;
+    padding: 0 1;
+    scrollbar-size-vertical: 1;
+}
+
+#question-progress {
+    height: 1;
+    color: $text-muted;
+}
+
+#question-title {
+    height: auto;
+}
+
+#question-answers {
+    height: auto;
+    margin-top: 1;
+    color: $text-muted;
 }
 
 #question-options {
     height: auto;
     max-height: 12;
+    margin-top: 1;
 }
 
 #question-custom {
     margin-top: 1;
 }
 
+#question-hint,
 #question-help {
+    height: auto;
     margin-top: 1;
     color: $text-muted;
+}
+
+/* The hint is the abort warning (`Esc` cancels the run): it earns the color. */
+#question-hint {
+    color: $warning;
+}
+
+/* --- provider screens ---------------------------------------------------- */
+
+ProviderScreen,
+AccountFormScreen,
+ModelPickerScreen,
+ConfirmScreen,
+TextPromptScreen {
+    align: center middle;
 }
 
 #provider-box {

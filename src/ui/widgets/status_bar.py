@@ -11,6 +11,11 @@ The bar answers three questions in one line, left to right:
 - **How much?** `+added −removed` for the working tree, in the same green and red
   `git diff --stat` uses, plus a count of files git does not track yet.
 
+It is also the place for a transient question ("press `Esc` again to stop the
+agent"): the bottom line of the screen, read without taking the eye off the prompt.
+A message shown here borrows the left group while it is there, so the bar does not
+grow a second line for two words.
+
 The right-hand side is right-aligned, so the bar reads as two groups instead of one
 sentence that grows and shrinks with the branch name.
 """
@@ -58,17 +63,33 @@ class WorkspaceBadge:
 
 
 class StatusBar(Static):
-    """One-line status: activity, workspace and diff counters."""
+    """One-line status: a transient message, activity, workspace and diff counters."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(Text(''), **kwargs)
         self._activity = ActivityState()
         self._workspace: WorkspaceBadge | None = None
         self._diff: DiffStat | None = None
+        self._message: Text | None = None
         self._frame = 0
         self._timer: Any = None
 
     # --- state --------------------------------------------------------------
+
+    def show(self, text: str, *, style: str = 'yellow') -> None:
+        """Shows a transient message in place of the activity group.
+
+        The abort hint is the reason it exists: it has to be read on the same line
+        the spinner is on, without pushing the screen down a row and back.
+        """
+        self._message = Text(text, style=style)
+        self.refresh()
+
+    def clear(self) -> None:
+        """Takes the transient message away and gives the line back to the spinner."""
+        self._message = None
+        self.refresh()
+
 
     def set_activity(self, state: ActivityState) -> None:
         """Starts or stops the spinner. The timer only exists while it spins."""
@@ -140,6 +161,9 @@ class StatusBar(Static):
         return f'{left.plain}  {right.plain}'
 
     def _left(self) -> Text:
+        if self._message is not None:
+            # A question outranks the progress report: one line, one thing to read.
+            return self._message
         state = self._activity
         text = Text()
         if state.running:

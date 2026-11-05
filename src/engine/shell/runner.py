@@ -12,6 +12,7 @@ import os
 import subprocess
 import time
 
+from src.engine.shell import running
 from src.engine.shell.guard import SELF_GUARD_ENV, is_self_invocation
 from src.engine.shell.limits import DEFAULT_TIMEOUT, MAX_TIMEOUT
 from src.engine.shell.models.run_tool_output import RunToolOutput
@@ -97,6 +98,9 @@ def execute_command(
     except OSError as exc:
         return RunToolOutput(returncode=_NOT_FOUND_RETURNCODE, stderr=str(exc))
 
+    # Registered while it runs, so an aborted turn can kill it instead of
+    # leaving it working until its own timeout.
+    running.track(process)
     try:
         return _from_drain(drain(process, deadline))
     except Exception as exc:  # noqa: BLE001 - a drain failure must not bring the turn down
@@ -106,6 +110,8 @@ def execute_command(
         except subprocess.TimeoutExpired:
             pass
         return RunToolOutput(returncode=1, stderr=str(exc))
+    finally:
+        running.forget(process)
 
 
 async def execute_commands(

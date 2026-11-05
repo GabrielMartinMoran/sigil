@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
+
 from src.engine.context.meter.render import render_report
 from src.engine.sessions.catalog import catalog
+from src.engine.shell import running as running_commands
 from src.engine.workspace.arguments import UsageError, parse_new_args
 from src.engine.workspace.models.workspace_error import WorkspaceError
 from src.ui.help_text import HELP_TEXT, KEYS_TEXT
@@ -13,18 +16,44 @@ from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.session_picker import SessionPicker
 
+BUSY_COMMANDS = frozenset({'/new', '/load', '/provider', '/model', '/effort', '/quit'})
+"""Commands a running turn refuses.
+
+They are the ones that would change what the turn is working with, or end the
+process: `/new` and `/load` swap the session out from under it, `/provider`
+adds and deletes accounts, `/model` and `/effort` would swap the model mid-run,
+and `/quit` closes the app.
+
+`/model` and `/effort` are here even though the service also refuses them: the
+service refuses the *change*, and only after the picker fetched the catalogue and
+opened a modal. Refusing up front is what makes the refusal nothing more than a
+line in the chat.
+
+The rest read state and are safe mid-turn: `/context`, `/debug`, `/sidebar`,
+`/mcp` and `/help` do not touch the conversation or the model.
+"""
+
+BUSY_REFUSAL = '{name} is not available while the agent works. Esc twice stops the turn first.'
+"""What a refused command says. It names the way out, so the refusal is not a dead end."""
+
 
 class CommandsMixin:
     """Dispatches the slash commands and manages session switching.
 
     It expects the app to define ``_store``, ``_session``, ``_history``,
     ``_scope``, ``_loaded_skills``, ``_mcp_manager``, ``_meter``,
-    ``_context_capability``, ``_workspace``, ``_roadmap_store`` and
-    ``_workspace_manager``.
+    ``_context_capability``, ``_workspace``, ``_roadmap_store``, ``_turn_active``,
+    ``_workspace_manager`` and ``start_turn``.
     """
 
+    _turn_active: bool
+
     async def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
-        """Enter on the composer: slash command or agent turn.
+        """Enter on the composer: slash command, a new turn, or steering the current one.
+
+        While a turn runs the prompt is not blocked any more. What is typed there
+        goes to that turn when it is a message, and is refused when it is a
+        command that would pull the session out from under the running agent.
 
         The composer clears itself before posting, so a slow turn cannot leave the
         typed text sitting in the box for a second send.
@@ -34,18 +63,64 @@ class CommandsMixin:
             return
 
         self.menu_hide()
+        chat = self.query_one(ChatLog)
 
         if text.startswith('/'):
             name, _, args = text.partition(' ')
+            if self.is_refused_while_busy(name):
+                await self.refuse_while_busy(text, chat)
+                return
             self.run_worker(self.handle_command(name, args))
             return
 
-        await self.query_one(ChatLog).add_user(text)
-        self.run_turn(text)
+        if self._turn_active:
+            # Queued for the run in flight: it lands before the agent decides
+            # what to do next, not as a second turn competing with it.
+            widget = await chat.add_user(text, queued=True)
+            self.steer(text, widget)
+            return
+
+        await chat.add_user(text)
+        self.start_turn(text)
+
+    def is_refused_while_busy(self, name: str) -> bool:
+        """Whether ``name`` is one of the commands a running turn forbids.
+
+        ``_turn_active`` and not ``_current_run``: the flag is set the moment the
+        message is accepted, so a command typed in the gap before the worker
+        starts is refused too.
+        """
+        return self._turn_active and name in BUSY_COMMANDS
+
+    async def refuse_while_busy(self, command: str, chat: ChatLog) -> None:
+        """The one refusal: a notice in the chat, the command back in the prompt.
+
+        It lives next to ``BUSY_COMMANDS`` because there is more than one way
+        into the commands: `on_input_submitted` (typed) and ``menu_choose`` (the
+        `Enter` that picks the highlighted row of the menu). A guard on only one
+        of them is not a guard; it is a guard with a door next to it.
+
+        Nothing else happens: the session, the history, the run and the chat are
+        left exactly as they were.
+        """
+        await chat.add_notice(BUSY_REFUSAL.format(name=command.split(' ', 1)[0]), style='yellow')
+        # Back in the prompt, so the command is one Enter away once the turn
+        # ends instead of lost. Both paths clear the field before calling.
+        prompt = self.query_one(PromptInput)
+        prompt.value = command
+        prompt.cursor_position = len(command)
 
     async def handle_command(self, name: str, args: str = '') -> None:
-        """Runs the requested command."""
+        """Runs the requested command.
+
+        The busy check is here too, at the choke point every path goes through,
+        and not only in the callers: it is the last chance to stop a command that
+        would swap the session out from under a running turn.
+        """
         chat = self.query_one(ChatLog)
+        if self.is_refused_while_busy(name):
+            await self.refuse_while_busy(f'{name} {args}'.strip(), chat)
+            return
 
         handlers = {
             '/new': lambda: self.new_session(chat, args),
@@ -66,7 +141,12 @@ class CommandsMixin:
         if handler is None:
             await chat.add_notice(f'Unknown command: {name}', style='red')
             return
-        await handler()
+        result = handler()
+        # Not every handler is a coroutine: `/quit` closes the app and returns
+        # `None`. Awaiting the value of a plain lambda raised a `TypeError` that
+        # came out as a worker failure, which is a crash for the user.
+        if inspect.isawaitable(result):
+            await result
 
     async def show_help(self, chat: ChatLog) -> None:
         """Commands plus the keys that are not discoverable from the menu."""
@@ -91,7 +171,20 @@ class CommandsMixin:
         await self.handle_theme(args, chat)
 
     def action_quit(self) -> None:
-        """Closes the application, persisting the session."""
+        """Closes the application, persisting the session.
+
+        With a turn running there is a run in flight and, possibly, shell
+        commands: closing the terminal only ends the UI, so the commands are
+        killed and the run cancelled first, and what was completed is already on
+        disk thanks to the checkpoints.
+
+        The two-press `Esc` guard is skipped on purpose: `Ctrl+Q` is the exit, not
+        a mistake, and making the exit conditional would leave a user who lost
+        the key stuck in a turn.
+        """
+        running_commands.kill_all()
+        self.abort_turn()
+        self.persist()
         self.exit()
 
     async def new_session(self, chat: ChatLog, args: str = '') -> None:

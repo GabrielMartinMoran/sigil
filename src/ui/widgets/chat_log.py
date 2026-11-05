@@ -92,6 +92,14 @@ def format_tool_args(args: Any) -> str:
     return preview(args)
 
 
+def _user_renderable(text: str, *, queued: bool) -> Text:
+    """One user line. A queued one says out loud that the agent has not read it."""
+    line = Text(f'› {text}', style='bold')
+    if queued:
+        line.append('  · queued for the running turn', style='dim italic')
+    return line
+
+
 def output_lines(value: Any) -> list[str]:
     """The lines of a tool result, ready to be indented under the gutter.
 
@@ -379,10 +387,24 @@ class ChatLog(VerticalScroll):
         self._last_block = widget
         await self.mount(widget)
 
-    async def add_user(self, text: str) -> None:
+    async def add_user(self, text: str, *, queued: bool = False) -> Static:
+        """One user message. `queued` marks one the running turn has not read yet."""
         self._current = None
         self._open_tool = None
-        await self._append(Static(Text(f'› {text}', style='bold'), classes='user-msg'))
+        widget = Static(_user_renderable(text, queued=queued), classes='user-msg')
+        if queued:
+            # Kept so the line can be repainted when the agent picks it up.
+            widget._queued_text = text  # type: ignore[attr-defined]
+        await self._append(widget)
+        return widget
+
+    def mark_delivered(self, widget: Static) -> None:
+        """Drops the "queued" mark from a message the run just injected."""
+        text = getattr(widget, '_queued_text', None)
+        if text is None:
+            return
+        del widget._queued_text  # type: ignore[attr-defined]
+        widget.update(_user_renderable(text, queued=False))
 
     async def add_notice(self, text: str, *, style: str = 'yellow') -> None:
         self._current = None

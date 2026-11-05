@@ -22,7 +22,7 @@ from tests.ui_helpers import render_text
 async def _wait_idle(app, pilot, attempts: int = 40) -> None:
     for _ in range(attempts):
         await pilot.pause()
-        if not app.query_one(PromptInput).disabled:
+        if not app._turn_active:
             return
 
 

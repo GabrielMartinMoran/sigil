@@ -297,6 +297,10 @@ A tool error does not cut the turn: it goes back to the model as a failed result
 `old_string` does not appear, the model reads the error and corrects the call
 instead of handing control back to you mid-task.
 
+The one deliberate exception is a cancelled `ask_user`: that is not a tool
+failure but your decision to stop. It ends the turn and returns control to you,
+with the partial history kept and the unanswered call closed out.
+
 ### Files
 
 `read_file`, `write_file` and `patch_file` work inside the workspace: a path
@@ -329,11 +333,45 @@ come back in base64.
 
 ### Interactive questions
 
-`ask_user` opens a modal with 2 or 3 options per question —the recommended one
-appears marked— and a free field to type another answer. The agent uses it when
-the requirements are ambiguous or an action needs explicit authorization. If you
-cancel, the tool returns `cancelled: true` and the turn keeps going without an
-answer.
+`ask_user` asks 2 or 3 options per question —the recommended one appears
+marked— plus a free field to type another answer. The agent uses it when the
+requirements are ambiguous or an action needs explicit authorization.
+
+The questions appear **in a panel under the chat**, not in a modal: the answer
+usually lives in the conversation, and covering it is exactly what makes the
+question hard to answer. The chat gives up part of its height while the panel is
+open and takes it back when it closes; the sidebar and the prompt stay where
+they are, so you can keep reading the conversation and scrolling it.
+
+Each question keeps its own answer. Moving between them never loses anything:
+
+| Key | What it does |
+| --- | --- |
+| `↑` / `↓` | Moves the highlight in the list |
+| `Enter` | Answers with the highlighted option, or with the typed text |
+| `alt+←` / `alt+→` | Goes back and forward between questions |
+| `Tab` | Moves between the list and the free field |
+| `ctrl+↑` / `ctrl+↓` | Scrolls the conversation without leaving the panel |
+| `Esc` | Stops the turn: the panel closes and the prompt comes back |
+
+Going back shows what you chose: the option you picked appears with a `✓`, the
+text you typed is still in the field, and the panel keeps a short summary of
+what was already answered. The questions close once all of them have an answer,
+and if you try to finish early, the panel takes you to the one that is still
+missing.
+
+`Esc` is the way out of a question you do not want to answer, so it ends the
+turn instead of picking something for you: the agent stops where it is, the chat
+shows `Turn cancelled.` and control goes back to you. Nothing is lost: the
+messages already exchanged stay in the session, the unanswered call is closed
+out, and the next message starts from a valid history.
+
+Here `Esc` is a single press, not the two-press confirmation that stops a plain
+turn: the panel is already asking you something, and adding a confirmation would
+mean answering one question in order to decline another.
+
+Cancelling is not an error and not an answer. The run stops, so the model never
+gets to react to the cancellation and never decides what to do next on its own.
 
 ### Roadmap
 
@@ -416,11 +454,109 @@ The side panel shows the active workspace above the context section, and
 A session whose worktree was `git worktree remove`d stops being listed: there is no
 workspace left to open it against. The file stays on disk.
 
+## Working while the agent runs
+
+The agent does not take the keyboard hostage. While a turn runs you can keep
+typing: a plain message is **queued** for that turn and injected into it, and
+only the commands that would pull the session out from under the running agent
+are refused.
+
+### Sending a message mid-turn
+
+Type it and press `Enter`, exactly as when the agent is idle. The chat shows it
+with a `queued for the running turn` mark until the run reads it.
+
+Delivery happens at the earliest point where the conversation is still valid:
+
+- the agent finishes the tool batch it is waiting on, and **the message lands
+  right after the tool results**, before the model decides what to do next;
+- or the agent was about to end the turn, and the message gives it one more step
+  instead of becoming a separate turn.
+
+Either way the model reads it as a new user instruction, so a correction arrives
+while the work is in progress. The chat, while the tool is still running and
+right after the message is read:
+
+```text
+› refactor the parser                                    │  › refactor the parser
+› use the new tokenizer  · queued for the running turn    │  › use the new tokenizer
+                                                         │  ↳ 1  """Parser entry point."""
+```
+
+On the left the message is on screen immediately, marked as waiting; on the right
+the mark is gone because the run has already injected it. The model reads it after
+the tool result it was waiting for, before deciding what to do next.
+
+The chat is a live log, so what it shows is the order things arrived: a message
+typed before a tool finished appears above that tool's result. What the model
+reads is the order in the history, which is the one that matters and the one
+`/load` renders back.
+
+The queue is not a second conversation: the message goes into the same history,
+in order, and the session on disk records it in the position the model saw it.
+
+A message that misses the last seam -- the turn ended before it could be
+delivered -- goes back to the prompt, and the chat says so. It is never dropped
+silently.
+
+### What you can still do mid-turn
+
+| Command | Mid-turn |
+| --- | --- |
+| `/context`, `/debug`, `/sidebar`, `/mcp`, `/help` | Available: they only read state |
+| `/new`, `/load`, `/provider`, `/model`, `/effort`, `/quit` | Refused: they would swap the session, the model or the process under the running turn |
+
+A refused command does nothing beyond saying so: the chat gets one yellow line
+naming it, and the command goes back into the prompt — the turn, the session,
+the history and the chat are left exactly as they were. It is refused whether
+you type it or pick it from the `/` menu with `Enter`.
+
+`/model` and `/effort` are refused up front, before the catalogue is fetched and
+the picker opens. The service would also refuse the change, but only after a
+network round-trip and a modal you would have to cancel.
+
+## Stopping a turn
+
+`Esc` stops the agent, and it asks first: stopping throws away what the model was
+writing, so it is not a single keystroke's decision.
+
+1. Press `Esc`. The status bar under the prompt says
+   `Press Esc again to stop the agent.`
+2. Press `Esc` again within three seconds. The turn stops.
+
+Anything else cancels the request: any other key, or the three seconds running
+out. The bar goes back to empty and the agent keeps working.
+
+Stopping is not a failure and not an error:
+
+- The run is cancelled where it is, and the shell commands it spawned are killed
+  by process group, so a build or a `sleep` does not outlive the turn.
+- The chat says `Turn cancelled.`
+- What the run completed stays in the session. The tool calls that were cut off
+  mid-flight are closed out, so the next message starts from a history a
+  provider accepts.
+
+`Esc` inside an `ask_user` panel is different: there it closes the panel and ends
+the turn in one press, because the panel is already asking you something and a
+confirmation on top would be a second question to answer.
+
 ## Turn limits
 
-A turn is cut for a single reason: `SIGIL_MAX_STEPS` (default `256`). Every model
-response and every tool call counts as one step; exceeding the limit aborts the
-turn with a notice in the chat and what was completed stays in the session.
+A turn ends early for two reasons.
+
+`SIGIL_MAX_STEPS` (default `256`) is the hard limit. Every model response and
+every tool call counts as one step; exceeding it aborts the turn with a notice
+in the chat and what was completed stays in the session.
+
+The other reason is you, with `Esc` twice (see
+[Stopping a turn](#stopping-a-turn)) or with a single `Esc` inside an `ask_user`
+panel. The turn stops on purpose, so no error is reported; the chat says
+`Turn cancelled.`, and the history keeps what already happened.
+
+Either way the session stays usable and the next message starts a new turn
+instead of failing on a call that never got its result. pydantic-ai closes the
+gap in the step-limit case; for a cancelled turn Sigil does it, so a call cut
+off mid-flight does not survive in the saved history.
 
 pydantic-ai brings its own cap of 50 requests per run. Sigil disables it
 (`request_limit=None`) so the only limit is the step one: otherwise a long turn
@@ -548,6 +684,12 @@ type.
 | `/debug [on\|off\|--text]` | Shows or hides the agent debug view; without an argument, toggles |
 | `/help` | Lists the available commands and the keys |
 | `/quit` | Exits Sigil |
+
+While a turn runs, only the read-only commands are available: `/context`,
+`/debug`, `/sidebar`, `/mcp` and `/help`. `/new`, `/load`, `/provider`, `/model`,
+`/effort` and `/quit` are refused: they would swap the session, the model or the
+process under the running turn. A refused command comes back into the prompt
+after one yellow line in the chat, and nothing else changes.
 
 The sidebar starts visible. Hiding it does not erase the roadmap: the agent keeps
 updating it and it comes back with `/sidebar on`.

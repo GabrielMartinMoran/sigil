@@ -16,13 +16,12 @@ each responsibility to a mixin with its own state.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Sequence
 from contextlib import suppress
 from typing import Any, ClassVar
 
 from pydantic_ai import Agent
-from textual import work
+from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -61,7 +60,8 @@ from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.command_menu import CommandMenu
 from src.ui.widgets.debug_view import AgentDebugView
 from src.ui.widgets.prompt_input import PromptInput
-from src.ui.widgets.question_screen import QuestionScreen
+from src.ui.widgets.question_panel import QuestionPanel
+from src.ui.widgets.roadmap_panel import RoadmapPanel
 from src.ui.widgets.sidebar_panel import SidebarPanel
 from src.ui.widgets.status_bar import StatusBar
 from src.ui.workspace_mixin import WorkspaceMixin
@@ -88,6 +88,10 @@ class SigilApp(
     # Focus lives in the input, which swallows the keys. The pickers therefore
     # read `ctrl+m` / `ctrl+t` in `PromptInput._on_key` instead of here: a global
     # binding would claim Enter on terminals that cannot tell it from Ctrl+M.
+    #
+    # There is no global `escape` binding on purpose: the focused widget sees the
+    # key first, and the abort has to coexist with the `escape` that cancels a
+    # question panel. The prompt handles it (see `PromptInput`).
     BINDINGS: ClassVar[list[Binding]] = [
         Binding('alt+d', 'toggle_debug', 'Debug view', priority=True, show=False),
     ]
@@ -156,21 +160,42 @@ class SigilApp(
         self._turn_started_at = 0.0
         self._last_diff = None
         self._diff_timer: Any = None
+        # A turn is accepted the moment the message is submitted, before the
+        # worker gets its turn on the event loop. `_turn_active` is what the
+        # prompt asks to know whether a message starts a turn or steers one.
+        self._turn_active = False
+        # Messages typed while the agent works, in order, so they can be
+        # delivered to the run and, if one misses, given back to the prompt.
+        self._steering: list[Any] = []
+        # The session the current turn belongs to (`checkpoint` writes there).
+        self._turn_session: Any = None
+        # Abort confirmation: `Esc` asks once, the second press inside the
+        # window stops the turn.
+        self._abort_deadline: float | None = None
+        self._abort_timer: Any = None
         self._wire_busy_flag()
 
     def _wire_busy_flag(self) -> None:
         """Lets the service refuse a model swap while a turn is running."""
         if self._model_service is not None:
-            self._model_service.is_busy = lambda: self._current_run is not None
+            self._model_service.is_busy = lambda: self._turn_active
 
     # --- composition -------------------------------------------------------
 
     def compose(self) -> ComposeResult:
         yield Vertical(
             Horizontal(
-                SidebarPanel(id='sidebar'),
-                ChatLog(id='chat', reasoning_visible=self._preferences.reasoning_visible),
-                AgentDebugView(id='debug'),
+                Vertical(
+                    SidebarPanel(id='sidebar-panel'),
+                    RoadmapPanel(id='roadmap'),
+                    id='sidebar',
+                ),
+                Vertical(
+                    ChatLog(id='chat', reasoning_visible=self._preferences.reasoning_visible),
+                    AgentDebugView(id='debug'),
+                    QuestionPanel(id='questions'),
+                    id='conversation',
+                ),
                 id='main',
             ),
             CommandMenu(id='menu'),
@@ -301,6 +326,32 @@ class SigilApp(
         focus would move to another widget and the prompt would stop receiving text.
         """
 
+    async def key_escape(self) -> None:
+        """`Esc` when the prompt is not the one that read it.
+
+        The prompt handles it while it has the focus (`PromptInput`), a question
+        panel handles it while a question is open, and this is the fallback: with
+        the focus on the chat or anywhere else, the abort still reaches you.
+
+        It is a `key_escape` method and not a binding on purpose: a non-priority
+        binding would show up in the help as a second way to do the same thing,
+        and a priority one would run before the question panel and swallow the
+        `Esc` that cancels a question.
+        """
+        if self.request_abort():
+            self.abort_turn()
+
+    async def on_key(self, event: events.Key) -> None:
+        """Any key that is not the confirming `Esc` cancels a pending abort.
+
+        The prompt does this for the keys it sees, but focus can be somewhere
+        else (the chat, the debug view). A confirmation that survives a keypress
+        anywhere in the app is a confirmation by accident.
+        """
+        if event.key == 'escape':
+            return
+        self.cancel_abort()
+
     async def on_model_retry_notice(self, message: ModelRetryNotice) -> None:
         notice = message.notice
         await self.query_one(ChatLog).add_notice(
@@ -326,17 +377,27 @@ class SigilApp(
     # --- interactive questions --------------------------------------------
 
     async def ask_question(self, questions: list[QuestionItem]) -> list[QuestionAnswer] | None:
-        """Opens the question screen and waits for the user's answer."""
-        if not questions:
-            return []
-        future: asyncio.Future[list[QuestionAnswer] | None] = asyncio.get_running_loop().create_future()
+        """Shows the questions under the chat and waits for the answers.
 
-        def _done(result: list[QuestionAnswer] | None) -> None:
-            if not future.done():
-                future.set_result(result)
+        It is not a modal screen: the questions are usually about what is in the
+        conversation, and that has to stay readable while answering. The panel
+        only borrows part of the chat's height, and the turn waits on the future
+        the panel resolves.
+        """
+        answers = await self.query_one(QuestionPanel).ask(questions)
+        self._restore_prompt_focus()
+        return answers
 
-        self.push_screen(QuestionScreen(questions), _done)
-        return await future
+    def _restore_prompt_focus(self) -> None:
+        """Gives the keys back to the prompt when the panel releases them.
+
+        While a turn runs the prompt is disabled and the turn itself takes care
+        of the focus when it ends, so this only applies when it can be focused.
+        """
+        prompt = self.query_one(PromptInput)
+        if prompt.disabled:
+            return
+        prompt.focus()
 
     # --- model information -------------------------------------------------
 
