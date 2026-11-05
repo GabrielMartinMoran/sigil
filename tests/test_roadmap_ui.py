@@ -13,7 +13,8 @@ from src.engine.sessions.session_store import SessionStore
 from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
-from src.ui.widgets.sidebar_panel import SidebarPanel
+from src.ui.widgets.roadmap_panel import RoadmapPanel
+from src.ui.widgets.sidebar_column import SidebarColumn
 
 
 def test_roadmap_panel_shows_and_updates(monkeypatch):
@@ -33,13 +34,13 @@ def test_roadmap_panel_shows_and_updates(monkeypatch):
             )
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
-                panel = app.query_one(SidebarPanel)
+                panel = app.query_one(RoadmapPanel)
                 assert panel.display is True
-                assert 'Task A' in panel.render().plain
+                assert 'Task A' in panel.text
 
                 roadmap.set_items([TodoItem(title='Task B', status='done')])
                 await pilot.pause()
-                assert 'Task B' in panel.render().plain
+                assert 'Task B' in panel.text
 
     asyncio.run(inner())
 
@@ -61,15 +62,15 @@ def test_new_session_gets_its_own_empty_roadmap(monkeypatch):
             )
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
-                panel = app.query_one(SidebarPanel)
-                assert 'Old task' in panel.render().plain
+                panel = app.query_one(RoadmapPanel)
+                assert 'Old task' in panel.text
 
                 await app.handle_command('/new')
                 await pilot.pause()
 
                 assert roadmap.session_id == app._session.id
                 assert roadmap.snapshot() == []
-                assert 'Old task' not in panel.render().plain
+                assert 'Old task' not in panel.text
 
     asyncio.run(inner())
 
@@ -95,15 +96,15 @@ def test_loading_a_session_restores_its_roadmap(monkeypatch):
             )
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
-                panel = app.query_one(SidebarPanel)
-                assert 'Task from the second' in panel.render().plain
+                panel = app.query_one(RoadmapPanel)
+                assert 'Task from the second' in panel.text
 
                 app._session = store.load(first.id)
                 app.bind_roadmap()
                 await pilot.pause()
 
-                assert 'Task from the first' in panel.render().plain
-                assert 'Task from the second' not in panel.render().plain
+                assert 'Task from the first' in panel.text
+                assert 'Task from the second' not in panel.text
 
     asyncio.run(inner())
 
@@ -144,7 +145,7 @@ def test_sidebar_command_hides_and_shows_the_panel(monkeypatch):
             app = _sidebar_app(tmp, roadmap, session)
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
-                panel = app.query_one(SidebarPanel)
+                panel = app.query_one(SidebarColumn)
                 assert panel.display is True
 
                 await app.handle_command('/sidebar', 'off')
@@ -171,7 +172,7 @@ def test_sidebar_command_without_argument_toggles(monkeypatch):
             app = _sidebar_app(tmp, roadmap, session)
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
-                panel = app.query_one(SidebarPanel)
+                panel = app.query_one(SidebarColumn)
 
                 await app.handle_command('/sidebar')
                 await pilot.pause()
@@ -195,7 +196,7 @@ def test_hidden_sidebar_stays_hidden_when_the_roadmap_changes(monkeypatch):
             app = _sidebar_app(tmp, roadmap, session)
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
-                panel = app.query_one(SidebarPanel)
+                panel = app.query_one(SidebarColumn)
 
                 await app.handle_command('/sidebar', 'off')
                 await pilot.pause()
@@ -219,7 +220,7 @@ def test_sidebar_command_rejects_unknown_arguments(monkeypatch):
             app = _sidebar_app(tmp, roadmap, session)
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
-                panel = app.query_one(SidebarPanel)
+                panel = app.query_one(SidebarColumn)
 
                 await app.handle_command('/sidebar', 'maybe')
                 await pilot.pause()
@@ -242,7 +243,7 @@ def test_sidebar_command_typed_in_the_prompt(monkeypatch):
             app = _sidebar_app(tmp, roadmap, session)
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
-                panel = app.query_one(SidebarPanel)
+                panel = app.query_one(SidebarColumn)
                 assert panel.display is True
 
                 app.query_one(PromptInput).value = '/sidebar off'

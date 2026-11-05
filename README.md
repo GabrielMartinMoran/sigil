@@ -375,8 +375,8 @@ gets to react to the cancellation and never decides what to do next on its own.
 
 ### Roadmap
 
-`update_roadmap` maintains the task list of the side panel. Each item stays in
-`pending`, `in_progress`, `done` or `blocked`.
+`update_roadmap` maintains the task list in the bottom box of the sidebar. Each
+item stays in `pending`, `in_progress`, `done` or `blocked`.
 
 The panel shows a single list in plan order, without grouping by status. The icon
 and the color are enough to read it at a glance:
@@ -393,6 +393,11 @@ with an empty list, advances with it and recovers it when loading it with
 `/load`. The state is saved in
 `~/.sigil/roadmaps/<cwd-hash>/<session-id>.json`. If the write fails, the list
 keeps working in memory and the error stays in `persistence_error`.
+
+The list scrolls inside its box, so a long plan never grows the sidebar past the
+screen. It does not scroll to follow the agent: the plan is read as a whole, and
+a list that jumped every time an item changed state would be unreadable at
+exactly the moment it is worth reading.
 
 ## Workspaces and worktrees
 
@@ -448,7 +453,7 @@ never opened against a tree it does not belong to.
 
 Starting Sigil in a subdirectory of a worktree is fine: the subdirectory is its own
 workspace for sessions, and it shows the label of the worktree that contains it.
-The side panel shows the active workspace above the context section, and
+The side panel no longer repeats the workspace — the status bar carries it — and
 `/context` prints its root and branch.
 
 A session whose worktree was `git worktree remove`d stops being listed: there is no
@@ -738,41 +743,39 @@ not appear at all.
 
 ### Sidebar
 
-The panel is one column, from the model down to the MCP servers. It used to be two
-boxes — diagnostics on top, roadmap underneath — but they are read together and the
-split only cost a border and half a column.
+The column has two boxes. On top, the diagnostics; at the bottom, the roadmap of
+the session. They are read together — "what is it doing, with what, and how far
+has it got?" — and the split is what lets the plan have the height it needs
+without the diagnostics squeezing it.
 
-- **Model**: the active account alias, its provider family, the model and the
-  reasoning level in effect. Before anything is configured it says `not
-  configured — /provider`, which is the first thing to do on a fresh install.
-- **Workspace**: the tree the agent is working in: `main` for the repository's
-  main worktree, or the name of a linked one. It also shows the branch, and it is
-  the reason two sessions of the same repository are told apart.
-- **Context**: the percentage of the window the next request is going to take,
-  with the pair it comes from in parentheses. It is hidden until a model is
-  configured, and it colours green, yellow and red across 70% and 90%.
-- **Roadmap**: the plan of the task, one line per item, with its notes. It is the
-  last section of the diagnostics on purpose: the model and the budget are context
-  for the plan, and the plan is what you check after every message.
+**Diagnostics**, from top to bottom:
+
+- **Model**: the active account alias, its provider family, the model, the
+  reasoning level in effect, and the context budget of that model's window.
+  Before anything is configured it says `not configured — /provider`, which is
+  the first thing to do on a fresh install.
 - **Loaded skills**: the skills the agent loaded in this session, in load order.
   It is the quick diagnostic of whether it is following the protocol.
 - **MCP**: the count goes inline with the title, in parentheses. Below, each
   server is listed: `●` in green for the ones that work, `✗` in red for the ones
   that do not. With no configured servers, the section does not appear.
 
-The interface, the code and the documentation are all in English.
+The context budget is the last line of the model section and not a section of
+its own: it is a property of that window, it is read with the model, and a
+heading for one number cost two rows of a 34-column panel. It reads like the
+line above it:
 
 ```
-Context
- 66% (132K / 200K)
-```
+Model
+ work · OpenRouter
+ anthropic/claude-sonnet-4
+ effort: high
+ context: 66% (132K / 200K)
 
-The tokens are compacted so the pair fits in a 34-column panel: `K` for
-thousands and `M` for millions, no decimals once the number is `>= 100K` and
-never for millions. Below 100K a single decimal survives when it says something
-—`12.4K`, `5.5K`— and disappears when it would read `.0`.
+Loaded skills
+ • clean-code
+ • frontend-design
 
-```
 MCP (3, 1 ✗)
  ● github
  ● playwright
@@ -780,8 +783,29 @@ MCP (3, 1 ✗)
  ✗ broken
 ```
 
+The percentage colours green, yellow and red across 70% and 90%, and the pair it
+comes from rides in parentheses. The tokens are compacted so it fits in the
+column: `K` for thousands and `M` for millions, no decimals once the number is
+`>= 100K` and never for millions. Below 100K a single decimal survives when it
+says something —`12.4K`, `5.5K`— and disappears when it would read `.0`.
+
+**Roadmap**, under the diagnostics: the plan of the task, one line per item,
+with its notes. It is the box that grows, so it gets the leftover height of the
+column and scrolls inside itself — a plan of thirty items stays in its box
+instead of pushing the composer off the screen. The heading does not scroll with
+the items: a label that scrolls away leaves a column of checkmarks with nothing
+saying what they are.
+
+The diagnostics are capped at 60% of the column and scroll on their own for the
+same reason: a session with twenty loaded skills must not eat the roadmap.
+
+`/sidebar off` hides both boxes, and `/sidebar on` brings them back. Hiding does
+not erase anything: the agent keeps updating the roadmap while it is out of
+view.
+
 The MCP count refreshes on startup (in a worker, without blocking the UI) and
 every time you run `/mcp`.
+
 
 ## Reading the chat
 

@@ -90,7 +90,6 @@ class StatusBar(Static):
         self._message = None
         self.refresh()
 
-
     def set_activity(self, state: ActivityState) -> None:
         """Starts or stops the spinner. The timer only exists while it spins."""
         was_running = self._activity.running

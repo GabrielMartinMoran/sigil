@@ -1,14 +1,23 @@
-"""Side panel: everything the user needs to know about the current turn, in one column.
+"""Side panel diagnostics: the model in use, the context budget and the MCP servers.
 
-The panel used to be two: a diagnostics box on top and the roadmap under it. They
-were read together — "what is it doing, with what, and how far has it got?" — so the
-split bought nothing and cost a border, a margin and the top half of a column that
-was mostly empty. The roadmap is now the last section of the same panel.
+The column has two boxes. This one is the top: what the agent is doing with, and
+how much room it has left. Under it, ``RoadmapPanel`` carries the plan. The split
+is not cosmetic — this box is as tall as its content up to a share of the column,
+and the plan takes whatever is left and scrolls inside it, so neither one can push
+the composer off the screen.
 
-The sections are ordered by how often they are read: the model, the workspace, the
-context budget, the roadmap of the task, the skills loaded in the session and the
-MCP servers. A section with nothing to say does not appear at all, so the panel
-stays short on a cold start and grows as the session does.
+Both boxes scroll on their own, which is why both are containers with a body inside
+and not a bare `Static`: a `Static` reports its own size as its virtual size, so
+overflow is clipped silently instead of becoming a scrollbar, and a clipped list of
+MCP servers looks exactly like a short one.
+
+The context budget is a line of the model section and not a section of its own: it
+is a property of that model's window, it is read with the model, and a heading for
+one number cost two rows in a 34-column panel. It reads as ``context: 66% (132K /
+200K)``, the same shape as ``effort: high`` above it.
+
+A section with nothing to say does not appear at all, so the panel stays short on a
+cold start and grows as the session does.
 """
 
 from __future__ import annotations
@@ -18,9 +27,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from rich.text import Text
+from textual.app import ComposeResult
+from textual.containers import Vertical
 from textual.widgets import Static
 
-from src.engine.roadmap.store import RoadmapStore
 from src.ui.palette import color
 from src.ui.token_format import compact_tokens
 
@@ -29,15 +39,6 @@ FAIL_MARK = '✗'
 
 WARNING_PERCENT = 70.0
 CRITICAL_PERCENT = 90.0
-
-ROADMAP_ICON = {'in_progress': '▶', 'pending': '○', 'blocked': '!', 'done': '✓'}
-ROADMAP_STYLE = {
-    'in_progress': 'bold blue',
-    'pending': '',
-    'blocked': 'bold yellow',
-    'done': 'green strike',
-}
-ROADMAP_FALLBACK_ICON = '·'
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,90 +74,67 @@ class ContextState:
     window: int | None = None
 
 
-class SidebarPanel(Static):
-    """Model, workspace, context, roadmap, skills and MCP state, in one column."""
+class SidebarPanel(Vertical):
+    """Model (with its context budget), loaded skills and MCP state, in one scrolling box."""
 
-    def __init__(self, store: RoadmapStore | None = None, **kwargs: Any) -> None:
-        super().__init__(Text(''), **kwargs)
-        self._store = store
-        self._shown = True
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._skills: tuple[str, ...] = ()
         self._servers: tuple[MCPServerState, ...] = ()
         self._mcp_known = False
         self._model: ModelState | None = None
         self._context_state: ContextState | None = None
 
-    def on_mount(self) -> None:
-        self.refresh_from_store()
-
-    # --- roadmap ------------------------------------------------------------
-
-    @property
-    def shown(self) -> bool:
-        """Whether the user asked to see the panel, regardless of its content.
-
-        It is not called ``visible`` because Textual already uses that name for the
-        CSS ``visibility`` rule, which reserves space instead of releasing it.
-        """
-        return self._shown
-
-    def set_shown(self, shown: bool) -> None:
-        """Shows or hides the panel and redraws it."""
-        self._shown = shown
-        self.refresh_from_store()
-
-    def set_store(self, store: RoadmapStore | None) -> None:
-        self._store = store
-        self.refresh_from_store()
-
-    def refresh_from_store(self) -> None:
-        """Repaints after the roadmap changed.
-
-        The user toggle wins: a changing roadmap does not bring back a panel the
-        user hid.
-        """
-        self.display = self._shown
-        if self._shown:
-            self.update(self._build())
-
-    def refresh_palette(self) -> None:
-        """Rebuilds the text after a theme change.
-
-        The panel's content is a Rich `Text` built once per state change, and the
-        widget caches it. Without this the section headings and the roadmap icons
-        keep the colors of the theme the app started with.
-        """
-        self.update(self._build())
+    def compose(self) -> ComposeResult:
+        yield Static(Text(''), id='sidebar-body')
 
     # --- state --------------------------------------------------------------
 
     def update_model(self, state: ModelState | None) -> None:
         self._model = state
-        self.update(self._build())
+        self._repaint()
 
     def update_context(self, state: ContextState | None) -> None:
         """Context usage. It is hidden until a model is configured: the usage of
         a window that does not exist yet would be a number that means nothing."""
         self._context_state = state
-        self.update(self._build())
+        self._repaint()
 
     def update_skills(self, names: Sequence[str]) -> None:
         self._skills = tuple(names)
-        self.update(self._build())
+        self._repaint()
 
     def update_mcp(self, servers: Sequence[MCPServerState]) -> None:
         """MCP server state. With no servers, the section does not appear."""
         self._servers = tuple(servers)
         self._mcp_known = True
-        self.update(self._build())
+        self._repaint()
+
+    def refresh_palette(self) -> None:
+        """Rebuilds the text after a theme change.
+
+        The panel's content is a Rich `Text` built once per state change, and the
+        widget caches it. Without this the section headings keep the colors of the
+        theme the app started with.
+        """
+        self._repaint()
+
+    def _repaint(self) -> None:
+        """Pushes the rebuilt text into the body.
+
+        The body may not exist yet: the panel is updated from `on_mount` of the app
+        and from a worker, and both can land before `compose` has run.
+        """
+        try:
+            self.query_one('#sidebar-body', Static).update(self._build())
+        except Exception:  # noqa: BLE001 - not mounted yet; `on_mount` paints it
+            return
 
     # --- rendering ----------------------------------------------------------
 
     def _build(self) -> Text:
         text = Text()
         self._append_model(text)
-        self._append_context(text)
-        self._append_roadmap(text)
         self._append_skills(text)
         self._append_mcp(text)
         return text
@@ -173,6 +151,11 @@ class SidebarPanel(Static):
         text.append(f'{title}\n', style=f'bold {color(self, "sidebar-section")}')
 
     def _append_model(self, text: Text) -> None:
+        """The model, its reasoning effort and the budget of its window.
+
+        The context line lives here rather than in a section of its own because it
+        is the same fact as the model: which window, and how much of it is gone.
+        """
         self._section(text, 'Model', first=True)
         state = self._model
         if state is None or not state.alias:
@@ -186,43 +169,19 @@ class SidebarPanel(Static):
         text.append('\n')
         text.append(' effort: ', style='dim')
         text.append(f'{state.effort}\n', style='magenta')
+        self._append_context_line(text)
 
-    def _append_context(self, text: Text) -> None:
+    def _append_context_line(self, text: Text) -> None:
         state = self._context_state
-        if state is None or self._model is None or not self._model.alias:
+        if state is None:
             return
-        self._section(text, 'Context')
-        text.append(' ', style='dim')
+        text.append(' context: ', style='dim')
         text.append(_percent_text(state.percent), style=_percent_style(state.percent))
         if state.percent is not None and state.window:
             # The pair rides with the percentage: without one there is nothing to
             # compare the used tokens against, and `? (? / 200K)` reads like a bug.
             text.append(f' ({compact_tokens(state.used)} / {compact_tokens(state.window)})', style='dim')
         text.append('\n')
-
-    def _append_roadmap(self, text: Text) -> None:
-        """The roadmap of the task, as the last thing the session is doing.
-
-        It sits under the diagnostics on purpose: the model and the budget are
-        context for the plan, and the plan is what the user checks after every
-        message.
-        """
-        self._section(text, 'Roadmap')
-        if self._store is None:
-            text.append(' No roadmap.\n', style='dim')
-            return
-        items = self._store.snapshot()
-        if not items:
-            text.append(' No tasks yet.\n', style='dim')
-            return
-        for item in items:
-            style = ROADMAP_STYLE.get(item.status, '')
-            icon = ROADMAP_ICON.get(item.status, ROADMAP_FALLBACK_ICON)
-            text.append(f' {icon} ', style=style)
-            text.append(item.title, style=style)
-            text.append('\n')
-            if item.notes:
-                text.append(f'   {item.notes}\n', style='dim')
 
     def _append_skills(self, text: Text) -> None:
         self._section(text, 'Loaded skills')

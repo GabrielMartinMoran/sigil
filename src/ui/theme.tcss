@@ -86,34 +86,49 @@ Screen {
 
 /* --- side column --------------------------------------------------------- */
 
-/* The column holds two boxes and hands the leftover height to the roadmap: the
- * diagnostics above are as tall as their content, the plan takes the rest. It
- * does not scroll itself — each box keeps its own scroll, so a long model name
- * does not drag the roadmap out of view. */
+/* The column holds two boxes and hands the height to them in a fixed proportion:
+ * the diagnostics take what their content needs up to 60% of the column, and the
+ * roadmap takes the rest. Both scroll inside themselves, so a session with twenty
+ * skills and a plan of thirty items still leaves the composer where it belongs. */
 #sidebar {
     width: 34;
     height: 1fr;
-}
-
-#sidebar-panel {
+}#sidebar-panel {
     height: auto;
-    border: round $primary;
-    padding: 0 1;
-    margin-bottom: 1;
-    scrollbar-size-vertical: 1;
-}
-
-/* The roadmap is the last thing in the column and the only box that grows. With
- * a plan of twenty items it scrolls on its own instead of squeezing the panel
- * above it or pushing the composer off the screen. */
-#roadmap {
-    width: 1fr;
-    height: 1fr;
-    min-height: 5;
+    max-height: 60%;
     border: round $primary;
     padding: 0 1;
     overflow-y: auto;
     scrollbar-size-vertical: 1;
+}
+
+#sidebar-body {
+    height: auto;
+}
+
+/* The roadmap is the last thing in the column and takes the leftover height. The
+ * heading is fixed and the list under it scrolls, so a plan of twenty items stays
+ * inside the box instead of pushing the composer off the screen. */
+#roadmap {
+    width: 1fr;
+    height: 1fr;
+    min-height: 5;
+    margin-top: 1;
+    border: round $primary;
+    padding: 0 1;
+}
+
+#roadmap-title {
+    height: 1;
+}
+
+#roadmap-scroll {
+    height: 1fr;
+    scrollbar-size-vertical: 1;
+}
+
+#roadmap-body {
+    height: auto;
 }
 
 /* --- debug view ---------------------------------------------------------- */

@@ -1,4 +1,4 @@
-"""Side panel: active model, context usage, roadmap, loaded skills and MCP state."""
+"""Side panel: active model, context budget, loaded skills and MCP state."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class SidebarMixin:
     _history: list[ModelMessage]
 
     def refresh_sidebar(self) -> None:
-        """Model, workspace, context, roadmap, skills and MCP, in one column."""
+        """Model, context budget, skills and MCP: the diagnostics above the roadmap."""
         try:
             panel = self.query_one(SidebarPanel)
         except NoMatches, ScreenStackError:
@@ -70,12 +70,18 @@ class SidebarMixin:
             window=snapshot.window,
         )
 
-    @work(exclusive=True)
+    @work(exclusive=True, group='mcp')
     async def refresh_mcp_status(self) -> None:
         """Real MCP server count: it connects and updates the panel.
 
         It runs in a worker so as not to block startup: bringing the servers
         up can take time. If it fails, the panel keeps what it already knew.
+
+        It has a worker group of its own because it shares the startup with
+        ``resolve_model_capabilities``, and both used to live in the default
+        group: the second exclusive worker cancelled the first, so the MCP probe
+        never ran and the section never appeared. A turn is also exclusive in
+        that group, which would have cancelled it mid-connection.
         """
         if self._mcp_manager is None or not self._mcp_manager:
             return

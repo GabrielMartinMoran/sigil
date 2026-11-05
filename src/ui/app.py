@@ -4,7 +4,7 @@ The app is the UI composition point: it builds the widget tree and delegates
 each responsibility to a mixin with its own state.
 
 - `ModelViewMixin` : the active model and effort in effect, read by the chrome.
-- `SidebarMixin`   : side panel: active model, context, roadmap, skills, MCP servers.
+- `SidebarMixin`   : side panel: active model, context budget, skills, MCP servers.
 - `MenuMixin`      : command menu that appears when typing `/`.
 - `CommandsMixin`  : slash commands and session switching.
 - `ProviderMixin`  : `/provider`, `/model`, `/effort` and their screens.
@@ -62,6 +62,7 @@ from src.ui.widgets.debug_view import AgentDebugView
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.question_panel import QuestionPanel
 from src.ui.widgets.roadmap_panel import RoadmapPanel
+from src.ui.widgets.sidebar_column import SidebarColumn
 from src.ui.widgets.sidebar_panel import SidebarPanel
 from src.ui.widgets.status_bar import StatusBar
 from src.ui.workspace_mixin import WorkspaceMixin
@@ -185,11 +186,7 @@ class SigilApp(
     def compose(self) -> ComposeResult:
         yield Vertical(
             Horizontal(
-                Vertical(
-                    SidebarPanel(id='sidebar-panel'),
-                    RoadmapPanel(id='roadmap'),
-                    id='sidebar',
-                ),
+                SidebarColumn(store=self._roadmap_store, id='sidebar'),
                 Vertical(
                     ChatLog(id='chat', reasoning_visible=self._preferences.reasoning_visible),
                     AgentDebugView(id='debug'),
@@ -219,7 +216,7 @@ class SigilApp(
             self._model_retry.on_retry = self.notify_model_retry
         if self._roadmap_store is not None:
             self._roadmap_store.add_listener(self.handle_roadmap_store_change)
-            self.query_one(SidebarPanel).set_store(self._roadmap_store)
+            self.query_one(SidebarColumn).set_store(self._roadmap_store)
         self.query_one(CommandMenu).display = False
         self.refresh_sidebar()
         self.refresh_mcp_status()
@@ -263,6 +260,8 @@ class SigilApp(
         """
         with suppress(NoMatches):
             self.query_one(SidebarPanel).refresh_palette()
+        with suppress(NoMatches):
+            self.query_one(RoadmapPanel).refresh_palette()
         with suppress(NoMatches):
             self.query_one(ChatLog).repaint()
         with suppress(NoMatches):
@@ -372,7 +371,7 @@ class SigilApp(
         self.post_message(RoadmapChanged())
 
     def on_roadmap_changed(self, message: RoadmapChanged) -> None:
-        self.query_one(SidebarPanel).refresh_from_store()
+        self.query_one(RoadmapPanel).refresh_from_store()
 
     # --- interactive questions --------------------------------------------
 

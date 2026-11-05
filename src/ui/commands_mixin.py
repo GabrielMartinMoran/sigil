@@ -310,21 +310,26 @@ class CommandsMixin:
         self._session.selection = service.snapshot().selection
 
     async def handle_sidebar(self, args: str, chat: ChatLog) -> None:
-        """`/sidebar` toggles; `/sidebar on|off` sets the state."""
-        from src.ui.widgets.sidebar_panel import SidebarPanel
+        """`/sidebar` toggles; `/sidebar on|off` sets the state.
+
+        It toggles the whole column and not one box: the diagnostics and the
+        roadmap are two halves of the same answer, and hiding one of them would
+        leave the other half explaining itself alone.
+        """
+        from src.ui.widgets.sidebar_column import SidebarColumn
 
         value = args.strip().lower()
-        panel = self.query_one(SidebarPanel)
+        column = self.query_one(SidebarColumn)
         if value in {'', 'toggle'}:
-            panel.set_shown(not panel.shown)
+            column.set_shown(not column.shown)
         elif value in {'on', 'show'}:
-            panel.set_shown(True)
+            column.set_shown(True)
         elif value in {'off', 'hide'}:
-            panel.set_shown(False)
+            column.set_shown(False)
         else:
             await chat.add_notice('Usage: /sidebar [on|off]', style='yellow')
             return
-        await chat.add_notice(f'Sidebar {"shown" if panel.shown else "hidden"}.', style='cyan')
+        await chat.add_notice(f'Sidebar {"shown" if column.shown else "hidden"}.', style='cyan')
 
     async def handle_debug(self, args: str, chat: ChatLog) -> None:
         """`/debug` toggles the view; `/debug on|off` sets the state; `--text` dumps the report.
