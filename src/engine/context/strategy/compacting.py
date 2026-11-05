@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest
+from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest, ModelResponse, ThinkingPart
 
 from src.engine.context.budget import ContextBudget
 from src.engine.context.strategy.constants import (
+    DEFAULT_KEEP_THINKING_STEPS,
     DEFAULT_MAX_TOOL_RESULT_CHARS,
     DEFAULT_TOOL_RESULT_HEAD_CHARS,
     PINNED_TOOLS,
 )
-from src.engine.context.strategy.rewriting import drop_thinking, fit_to_budget, truncate_old_tool_results
+from src.engine.context.strategy.rewriting import (
+    accepts_replayed_reasoning,
+    fit_to_budget,
+    keep_fitting_steps,
+    keep_recent_steps,
+    truncate_old_tool_results,
+)
 from src.engine.context.strategy.turn_summary import summarize_turn
 from src.engine.context.strategy.turns import has_pinned_result, split_turns
 from src.engine.context.strategy.view_result import ViewResult
@@ -42,9 +49,14 @@ class CompactingStrategy:
     keep_recent_turns: int = 2
     max_tool_result_chars: int = DEFAULT_MAX_TOOL_RESULT_CHARS
     tool_result_head_chars: int = DEFAULT_TOOL_RESULT_HEAD_CHARS
-    drop_thinking: bool = True
+    keep_thinking_steps: int | None = DEFAULT_KEEP_THINKING_STEPS
+    """Reasoning blocks kept from the round in progress: ``0`` drops all, ``None``
+    keeps all. Same policy as `WindowedStrategy`."""
     keep_thinking: bool = False
     max_summary_chars: int = 400
+    provider: str | None = None
+    """The provider the request is going to: signed reasoning is only replayed to
+    the provider that produced it."""
     pinned_tools: frozenset[str] = PINNED_TOOLS
     include_working_set: bool = True
     """Whether the summary closes with the touched files."""
@@ -54,8 +66,11 @@ class CompactingStrategy:
     def view(self, messages: Sequence[ModelMessage], budget: ContextBudget) -> ViewResult:
         working = list(messages)
         dropped_thinking = 0
-        if self.drop_thinking and not self.keep_thinking:
-            working, dropped_thinking = drop_thinking(working)
+        steps = None if self.keep_thinking else self.keep_thinking_steps
+        if steps is None:
+            working, dropped_thinking = self._drop_reasoning_that_cannot_be_replayed(working)
+        else:
+            working, _, dropped_thinking = keep_recent_steps(working, steps=steps, provider=self.provider)
 
         turns = split_turns(working)
         recent_start = max(0, len(turns) - self.keep_recent_turns)
@@ -109,7 +124,7 @@ class CompactingStrategy:
         dropped = 0
         available = budget.available_for_history
         if available is not None:
-            result, dropped = fit_keeping_summary(result, available, pinned_tools=self.pinned_tools)
+            result, dropped = self._fit_dropping_reasoning_first(result, available)
 
         return ViewResult(
             messages=result,
@@ -119,6 +134,34 @@ class CompactingStrategy:
             truncated_results=truncated,
             compacted_turns=compacted,
         )
+
+    def _drop_reasoning_that_cannot_be_replayed(self, messages: list[ModelMessage]) -> tuple[list[ModelMessage], int]:
+        """When everything is kept, a block the receiver rejects is still useless."""
+        if self.provider is None:
+            return messages, 0
+        kept: list[ModelMessage] = []
+        dropped = 0
+        for message in messages:
+            if not isinstance(message, ModelResponse):
+                kept.append(message)
+                continue
+            parts = [
+                part
+                for part in message.parts
+                if not isinstance(part, ThinkingPart) or accepts_replayed_reasoning(part, self.provider)
+            ]
+            dropped += len(message.parts) - len(parts)
+            kept.append(message if len(parts) == len(message.parts) else replace(message, parts=parts))
+        return kept, dropped
+
+    def _fit_dropping_reasoning_first(
+        self, messages: list[ModelMessage], available: int
+    ) -> tuple[list[ModelMessage], int]:
+        """Reasoning goes before a turn does, and the summary is never discarded."""
+        kept = keep_fitting_steps(messages, available, provider=self.provider)
+        if kept is not None:
+            return kept, 0
+        return fit_keeping_summary(messages, available, pinned_tools=self.pinned_tools)
 
 
 def fit_keeping_summary(

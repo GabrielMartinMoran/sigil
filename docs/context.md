@@ -12,6 +12,7 @@ resumable; projecting it is what keeps the request inside the window.
 - [The pipeline of one request](#the-pipeline-of-one-request)
 - [The budget](#the-budget)
 - [The three levers](#the-three-levers)
+- [Reasoning: a window of steps](#reasoning-a-window-of-steps)
 - [Tokens: measured versus projected](#tokens-measured-versus-projected)
 - [What travels and what does not](#what-travels-and-what-does-not)
 - [Strategies](#strategies)
@@ -143,8 +144,8 @@ only one that loses messages.
 flowchart TD
     IN["Full history"] --> L1
 
-    L1{"Lever 1<br/>Drop ThinkingPart"}
-    L1 -->|"always, unless keep_thinking"| A1["Reasoning gone<br/>no information loss:<br/>it is not resent to the model"]
+    L1{"Lever 1<br/>Trim reasoning"}
+    L1 -->|"keeps the last N steps<br/>of the round in progress"| A1["Past rounds: dropped<br/>Current round: last N kept<br/>Signed by another provider: dropped"]
 
     A1 --> L2{"Lever 2<br/>Truncate old tool results"}
     L2 -->|"turns older than keep_recent_turns"| A2["Each result clipped to<br/>max_tool_result_chars,<br/>head kept so the signal survives.<br/>Pinned tools are exempt"]
@@ -156,6 +157,10 @@ flowchart TD
     style L3 fill:#bf870022,stroke:#bf8700
     style A3 fill:#bf870022,stroke:#bf8700
 ```
+
+Reasoning is the first lever because it is the cheapest thing to lose. It is also
+the one that is not all-or-nothing: see
+[Reasoning: a window of steps](#reasoning-a-window-of-steps).
 
 ### Why whole turns
 
@@ -284,11 +289,113 @@ resent and which are recorded is what makes the estimate correct.
 | `UserPromptPart`, `TextPart` | yes | yes |
 | `ToolCallPart` (name + args) | yes | yes |
 | `ToolReturnPart` | yes, unless truncated or discarded | yes |
-| `ThinkingPart` | no, dropped by lever 1 | no |
+| `ThinkingPart` | the last N steps of the round in progress | only what is sent |
 | `instructions` of past requests | **no** | **no** (bug fixed) |
 | `instructions` of the current request | yes | via `ContextBudget` |
 | Tool schemas | yes, on every request | via `ContextBudget` |
 | Provider envelope | yes | no — invisible to any text estimate |
+
+## Reasoning: a window of steps
+
+Reasoning is not resent to the model by default, and that blanket rule had a
+measurable cost. While the agent is **inside** a round, it re-reads its own
+reasoning step after step. In a measured session, 38 of the 77 reasoning blocks of
+one round —76% of its volume— were the model re-deciding the same ambiguity:
+whether "I uploaded those changes" meant it had, or that it should. It could not
+see that it had already answered, so it asked itself again for 110 steps.
+
+What fixes that is the reasoning of the steps next to the work in progress. What a
+round's reasoning is not, is a record worth its price: it is resent on every
+request.
+
+### A round, a step, a window
+
+| Term | Meaning |
+| --- | --- |
+| **Round** | Everything until control goes back to the user: one `run_id`. A prompt typed while the agent works is enqueued into the same run, so steering does not open a new round. |
+| **Step** | One model request and its response, inside a round. |
+| **Window** | How many steps of the round in progress keep their reasoning. `SIGIL_CONTEXT_KEEP_THINKING`, default 4. |
+
+```mermaid
+flowchart LR
+    subgraph done["Finished rounds — reasoning dropped"]
+        R1["round 1<br/>317 steps"]
+        R2["round 2<br/>110 steps"]
+    end
+
+    subgraph current["Round in progress — last N steps keep it"]
+        direction LR
+        S1["step 1"] --> S2["step 2"] --> S3["step 3"] --> S4["step 4<br/>reasoning kept"]
+    end
+
+    done --> current
+    current --> NEXT["next request"]
+
+    style done fill:#da363322,stroke:#da3633
+    style current fill:#23863622,stroke:#238636
+```
+
+### Why steps and not the whole round
+
+Resending a whole round is quadratic: each request carries every reasoning block
+produced so far in that round.
+
+| Round | Steps | Reasoning blocks | Extra billed if the whole round is resent |
+| --- | --- | --- | --- |
+| 1 | 317 | 198,525 tokens | **44.1M tokens** |
+| 2 | 110 | 128,577 tokens | **9.1M tokens** |
+| 3 | 24 | 3,877 tokens | 51k tokens |
+
+A window of steps costs `K × tamaño_de_paso`, linearly. The loop it prevents
+(re-deciding what was already decided) is local to a few steps, which is where a
+window belongs.
+
+### Signed reasoning belongs to its provider
+
+`ThinkingPart.signature` is not Anthropic-only: Anthropic, Bedrock, Google and
+OpenAI all sign reasoning, and a signature is only sent back to the provider that
+produced it. Keeping a signed block for a different receiver spends history on
+something the adapter has to render as plain text anyway.
+
+```mermaid
+flowchart TD
+    P["ThinkingPart<br/>signature + provider_name"]
+
+    P --> Q{"signed?"}
+    Q -->|no| KEEP["Replayable by anyone"]
+    Q -->|yes| S{"provider_name ==<br/>receiving provider?"}
+
+    S -->|yes| KEEP
+    S -->|no| DROP["Dropped: it would be<br/>rendered as plain text"]
+
+    style KEEP fill:#23863622,stroke:#238636
+    style DROP fill:#bf870022,stroke:#bf8700
+```
+
+The receiving provider is read per request, not at startup: the model can be
+swapped mid-session and the strategy is built once. When the provider is unknown,
+the check is skipped rather than guessed — a wrong guess drops reasoning that was
+fine.
+
+### Reasoning is a lever, not a guarantee
+
+Keeping it never costs a turn. If the reasoning the policy kept does not fit the
+budget, the window shrinks step by step until it does; tool results are truncated
+and turns discarded only after all reasoning is gone.
+
+```mermaid
+flowchart TD
+    A["View with the reasoning<br/>the policy kept"] --> B{"fits?"}
+    B -->|yes| SEND["Send"]
+    B -->|no| C["Shrink the window<br/>one step"]
+    C --> D{"fits?"}
+    D -->|no, and steps left| C
+    D -->|yes| SEND
+    D -->|no steps left| E["Truncate old tool results,<br/>then discard turns"]
+
+    style SEND fill:#23863622,stroke:#238636
+    style E fill:#bf870022,stroke:#bf8700
+```
 
 ## Strategies
 
@@ -319,7 +426,7 @@ not touched.
 | `SIGIL_CONTEXT_KEEP_RECENT_TURNS` | `3` | Turns kept intact before trimming starts |
 | `SIGIL_CONTEXT_MAX_TOOL_RESULT_CHARS` | `4000` | Cap of an old tool result |
 | `SIGIL_CONTEXT_OUTPUT_RESERVE` | `8000` | Tokens reserved for the answer |
-| `SIGIL_CONTEXT_KEEP_THINKING` | `false` | Per-provider escape hatch: keeps `ThinkingPart` |
+| `SIGIL_CONTEXT_KEEP_THINKING` | `4` | Reasoning blocks kept from the round in progress: a number, `all` or `off`. `1`/`true`/`on` keep everything (legacy). |
 
 `SIGIL_CONTEXT_KEEP_THINKING` exists because some routes require round-tripping
 the reasoning. Turning it on disables lever 1 entirely, so nothing gets dropped
@@ -371,12 +478,14 @@ one of them is a regression, not a trade-off.
    `keep_recent_turns` keeps the last ones intact.
 3. **A `ToolCallPart` never loses its `ToolReturnPart`.** Turns are the unit of
    discard for exactly this reason.
-4. **Pinned tool results are never truncated or compacted.** They are
+4. **Reasoning of past rounds is not resent, and reasoning of the round in
+   progress never costs a turn.** The window shrinks before anything else does.
+5. **Pinned tool results are never truncated or compacted.** They are
    instructions, not data.
-5. **Instructions are counted once per request, never per historical message.**
-6. **With an unknown window, nothing is dropped.** `fits()` returns `None` and
+6. **Instructions are counted once per request, never per historical message.**
+7. **With an unknown window, nothing is dropped.** `fits()` returns `None` and
    no lever runs.
-7. **Diagnostics never break a turn.** `on_view` failures are suppressed.
+8. **Diagnostics never break a turn.** `on_view` failures are suppressed.
 
 ## Where the code lives
 

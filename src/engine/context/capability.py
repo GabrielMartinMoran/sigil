@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Callable
-from dataclasses import KW_ONLY, dataclass, field
+from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.capabilities import AbstractCapability
@@ -44,6 +44,14 @@ class ContextViewCapability(AbstractCapability[Any]):
     on_view: Callable[[ViewResult], None] | None = None
     """Diagnostics callback. It must not break the request if it fails."""
 
+    provider: Callable[[], str | None] | None = None
+    """The provider the next request goes to, read per request.
+
+    The model can be swapped mid-session and the strategy is built once, so this is
+    a callable, not a value. Signed reasoning is only replayed to the provider that
+    produced it.
+    """
+
     id: str | None = 'context_view'
     """A single view per agent: two different strategies make no sense."""
 
@@ -65,7 +73,17 @@ class ContextViewCapability(AbstractCapability[Any]):
         This is what the debug view uses: it wants to know what the agent would send
         *now*, not what it sent on the previous request.
         """
-        return self.strategy.view(messages, self.meter.budget())
+        return self._strategy_for_now().view(messages, self.meter.budget())
+
+    def _strategy_for_now(self) -> ContextStrategy:
+        """The strategy, pointed at the provider the next request is going to.
+
+        `replace` keeps the strategy a frozen value object: the provider is the only
+        thing that changes between requests, and only when the model is swapped.
+        """
+        if self.provider is None:
+            return self.strategy
+        return replace(self.strategy, provider=self.provider())
 
     async def before_model_request(
         self,
@@ -79,7 +97,7 @@ class ContextViewCapability(AbstractCapability[Any]):
         self.meter.set_overhead(instructions=instructions, tools=tools)
         self._snapshot = snapshot_request(parameters)
 
-        result = self.strategy.view(request_context.messages, self.meter.budget())
+        result = self._strategy_for_now().view(request_context.messages, self.meter.budget())
         # Assigning the sequence is request-only; mutating a message in place
         # would affect the persistent history.
         request_context.messages = result.messages

@@ -3,18 +3,25 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelResponse, ThinkingPart
 
 from src.engine.context.budget import ContextBudget
 from src.engine.context.strategy.constants import (
     DEFAULT_KEEP_RECENT_TURNS,
+    DEFAULT_KEEP_THINKING_STEPS,
     DEFAULT_MAX_TOOL_RESULT_CHARS,
     DEFAULT_TOOL_RESULT_HEAD_CHARS,
     PINNED_TOOLS,
 )
-from src.engine.context.strategy.rewriting import drop_thinking, fit_to_budget, truncate_old_tool_results
+from src.engine.context.strategy.rewriting import (
+    accepts_replayed_reasoning,
+    fit_to_budget,
+    keep_fitting_steps,
+    keep_recent_steps,
+    truncate_old_tool_results,
+)
 from src.engine.context.strategy.turns import split_turns
 from src.engine.context.strategy.view_result import ViewResult
 from src.engine.context.tokens import estimate_messages_tokens
@@ -26,8 +33,10 @@ class WindowedStrategy:
 
     Order of the levers, from cheapest to most destructive:
 
-    1. Drop `ThinkingPart`: it adds nothing to the next step and is the most
-       voluminous. Verified safe with Anthropic through OpenRouter.
+    1. Trim reasoning: it adds nothing to the next step and is the most
+       voluminous. The reasoning of the round in progress is the exception: it is
+       what stops the agent from re-deciding a decision it already made, so the
+       last `keep_thinking_steps` steps of that round are kept.
     2. Truncate tool results of old turns: 80% of the weight is usually there.
     3. Discard whole turns, oldest to newest.
     """
@@ -35,10 +44,19 @@ class WindowedStrategy:
     keep_recent_turns: int = DEFAULT_KEEP_RECENT_TURNS
     max_tool_result_chars: int = DEFAULT_MAX_TOOL_RESULT_CHARS
     tool_result_head_chars: int = DEFAULT_TOOL_RESULT_HEAD_CHARS
-    drop_thinking: bool = True
+    keep_thinking_steps: int | None = DEFAULT_KEEP_THINKING_STEPS
+    """Reasoning blocks to keep from the round in progress.
+
+    ``0`` drops all reasoning, which is what a route that cannot replay it needs.
+    ``None`` keeps every block. The window is on steps, not on the round: resending
+    a whole round is quadratic.
+    """
     keep_thinking: bool = False
     """Per-provider escape hatch: if a route requires round-tripping the
     reasoning, you turn it on here and nothing gets dropped."""
+    provider: str | None = None
+    """The provider the request is going to. Signed reasoning is only replayed to
+    the provider that produced it; ``None`` trusts the adapter."""
     pinned_tools: frozenset[str] = PINNED_TOOLS
     """Tools whose result is instruction and is never truncated."""
 
@@ -46,8 +64,11 @@ class WindowedStrategy:
         working = list(messages)
         dropped_thinking = 0
 
-        if self.drop_thinking and not self.keep_thinking:
-            working, dropped_thinking = drop_thinking(working)
+        steps = None if self.keep_thinking else self.keep_thinking_steps
+        if steps is None:
+            working, dropped_thinking = self._drop_reasoning_that_cannot_be_replayed(working)
+        else:
+            working, _, dropped_thinking = keep_recent_steps(working, steps=steps, provider=self.provider)
 
         turns = split_turns(working)
         recent_start = max(0, len(turns) - self.keep_recent_turns)
@@ -63,7 +84,8 @@ class WindowedStrategy:
         dropped_messages = 0
         available = budget.available_for_history
         if available is not None:
-            working, dropped_messages = fit_to_budget(working, available, pinned_tools=self.pinned_tools)
+            working, dropped_for_budget = self._fit_dropping_reasoning_first(working, available)
+            dropped_messages = dropped_for_budget
 
         return ViewResult(
             messages=working,
@@ -72,3 +94,36 @@ class WindowedStrategy:
             dropped_thinking=dropped_thinking,
             truncated_results=truncated_results,
         )
+
+    def _drop_reasoning_that_cannot_be_replayed(self, messages: list[ModelMessage]) -> tuple[list[ModelMessage], int]:
+        """When everything is kept, a block the receiver rejects is still useless."""
+        if self.provider is None:
+            return messages, 0
+        kept: list[ModelMessage] = []
+        dropped = 0
+        for message in messages:
+            if not isinstance(message, ModelResponse):
+                kept.append(message)
+                continue
+            parts = [
+                part
+                for part in message.parts
+                if not isinstance(part, ThinkingPart) or accepts_replayed_reasoning(part, self.provider)
+            ]
+            dropped += len(message.parts) - len(parts)
+            kept.append(message if len(parts) == len(message.parts) else replace(message, parts=parts))
+        return kept, dropped
+
+    def _fit_dropping_reasoning_first(
+        self, messages: list[ModelMessage], available: int
+    ) -> tuple[list[ModelMessage], int]:
+        """Reasoning is the cheapest thing to lose: it goes before a turn does.
+
+        Keeping the reasoning of the round is a lever like the others: if what the
+        policy kept does not fit, the window shrinks until it does, and only then
+        are tool results truncated and turns discarded.
+        """
+        kept = keep_fitting_steps(messages, available, provider=self.provider)
+        if kept is not None:
+            return kept, 0
+        return fit_to_budget(messages, available, pinned_tools=self.pinned_tools)

@@ -17,6 +17,7 @@ import pytest
 
 from src.engine.settings import (
     DEFAULT_CONTEXT_STRATEGY,
+    DEFAULT_KEEP_THINKING_STEPS,
     DEFAULT_MAX_STEPS,
     DEFAULT_MODEL_MAX_ATTEMPTS,
     SigilSettings,
@@ -65,14 +66,36 @@ def test_an_unknown_context_strategy_is_rejected():
         load_settings({'SIGIL_CONTEXT_STRATEGY': 'magic'})
 
 
-@pytest.mark.parametrize('raw', ['1', 'true', 'YES', 'on'])
-def test_truthy_flags(raw):
-    assert load_settings({'SIGIL_CONTEXT_KEEP_THINKING': raw}).keep_thinking
+@pytest.mark.parametrize('raw', ['1', 'true', 'YES', 'on', 'all'])
+def test_the_legacy_truthy_values_keep_every_reasoning_block(raw):
+    """An existing `SIGIL_CONTEXT_KEEP_THINKING=1` keeps meaning "keep it all"."""
+    assert load_settings({'SIGIL_CONTEXT_KEEP_THINKING': raw}).keep_thinking is None
 
 
-@pytest.mark.parametrize('raw', ['', '0', 'false', 'no'])
-def test_falsey_flags(raw):
-    assert not load_settings({'SIGIL_CONTEXT_KEEP_THINKING': raw}).keep_thinking
+@pytest.mark.parametrize('raw', ['0', 'false', 'no', 'off', 'none'])
+def test_turning_it_off_drops_all_reasoning(raw):
+    assert load_settings({'SIGIL_CONTEXT_KEEP_THINKING': raw}).keep_thinking == 0
+
+
+def test_the_default_keeps_a_window_of_the_round_in_progress():
+    assert load_settings({}).keep_thinking == DEFAULT_KEEP_THINKING_STEPS
+
+
+@pytest.mark.parametrize('raw,expected', [('2', 2), ('8', 8), ('12', 12)])
+def test_a_number_keeps_that_many_steps(raw, expected):
+    assert load_settings({'SIGIL_CONTEXT_KEEP_THINKING': raw}).keep_thinking == expected
+
+
+def test_a_negative_step_count_fails_loudly():
+    with pytest.raises(ValueError) as error:
+        load_settings({'SIGIL_CONTEXT_KEEP_THINKING': '-3'})
+    assert 'SIGIL_CONTEXT_KEEP_THINKING' in str(error.value)
+
+
+def test_a_bad_reasoning_policy_fails_loudly_instead_of_falling_back():
+    with pytest.raises(ValueError) as error:
+        load_settings({'SIGIL_CONTEXT_KEEP_THINKING': 'sometimes'})
+    assert 'SIGIL_CONTEXT_KEEP_THINKING' in str(error.value)
 
 
 def test_settings_are_immutable():

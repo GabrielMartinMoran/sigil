@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -45,6 +46,20 @@ from src.engine.workspace.manager import WorkspaceManager
 from src.ui.app import SigilApp
 
 
+def _active_provider(model_service: Any) -> str | None:
+    """`system` of the model the next request goes to, or ``None`` if unknown.
+
+    It is the same string a `ThinkingPart` records in `provider_name`, which is what
+    decides whether its signature can be sent back. ``None`` disables the check
+    rather than guessing: a wrong guess drops reasoning that was fine.
+    """
+    try:
+        model = model_service.current_model()
+    except Exception:  # noqa: BLE001 - the router can be unconfigured
+        return None
+    return getattr(model, 'system', None)
+
+
 def _build_strategy(settings: SigilSettings):
     """View strategy based on configuration.
 
@@ -58,12 +73,12 @@ def _build_strategy(settings: SigilSettings):
         return CompactingStrategy(
             keep_recent_turns=settings.keep_recent_turns,
             max_tool_result_chars=settings.max_tool_result_chars,
-            keep_thinking=settings.keep_thinking,
+            keep_thinking_steps=settings.keep_thinking,
         )
     return WindowedStrategy(
         keep_recent_turns=settings.keep_recent_turns,
         max_tool_result_chars=settings.max_tool_result_chars,
-        keep_thinking=settings.keep_thinking,
+        keep_thinking_steps=settings.keep_thinking,
     )
 
 
@@ -92,7 +107,6 @@ def run() -> None:
     tool_logger.add_sink(ScopeSink(scope))
 
     meter = ContextMeter(output_reserve=settings.output_reserve)
-    context_capability = ContextViewCapability(strategy=_build_strategy(settings), meter=meter)
     # Active session: the roadmap and the history hang off it.
     store = SessionStore()
     session = store.load_last()
@@ -125,6 +139,15 @@ def run() -> None:
     # start shows `ctx: ?` and cannot budget. The selection carries the last known
     # value, so this needs no network.
     meter.set_window(model_service.stored_window())
+
+    # The context strategy is built once but the provider can be swapped mid-session,
+    # so it reads the active one per request: signed reasoning is only replayed to
+    # the provider that produced it.
+    context_capability = ContextViewCapability(
+        strategy=_build_strategy(settings),
+        meter=meter,
+        provider=lambda: _active_provider(model_service),
+    )
 
     # Bridge for interactive questions and roadmap state: the engine
     # updates, the UI consumes them. The roadmap is per session: it is born empty with

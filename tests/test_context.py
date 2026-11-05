@@ -242,10 +242,22 @@ def test_passthrough_returns_everything():
 
 
 def test_windowed_drops_thinking():
+    """Past rounds' reasoning is a record, not working memory: it goes."""
     messages = [*_turn(1, thinking='long reasoning'), *_turn(2, thinking='more reasoning')]
-    result = WindowedStrategy().view(messages, ContextBudget(window=None))
+    result = WindowedStrategy(keep_thinking_steps=0).view(messages, ContextBudget(window=None))
     assert result.dropped_thinking == 2
     assert not any(isinstance(part, ThinkingPart) for message in result.messages for part in message.parts)
+
+
+def test_windowed_keeps_the_reasoning_of_the_round_in_progress():
+    """Only the current round's reasoning is kept, and only its last steps."""
+    messages = [*_turn(1, thinking='from a finished round'), *_turn(2, thinking='current round')]
+
+    result = WindowedStrategy(keep_thinking_steps=1).view(messages, ContextBudget(window=None))
+
+    contents = [part.content for message in result.messages for part in message.parts if isinstance(part, ThinkingPart)]
+    assert contents == ['current round']
+    assert result.dropped_thinking == 1
 
 
 def test_windowed_keeps_thinking_when_asked():
@@ -540,7 +552,7 @@ def test_capability_is_not_destructive():
 
     messages = [*_turn(1, thinking='reasoning'), *_turn(2, thinking='more')]
     meter = ContextMeter(window=100_000)
-    capability = ContextViewCapability(strategy=WindowedStrategy(), meter=meter)
+    capability = ContextViewCapability(strategy=WindowedStrategy(keep_thinking_steps=1), meter=meter)
 
     model = TestModel()
     ctx = RunContext(deps=None, model=model, usage=RunUsage())
@@ -555,8 +567,9 @@ def test_capability_is_not_destructive():
 
     result = asyncio.run(capability.before_model_request(ctx, request_context))
 
-    # The request lost the reasoning...
-    assert not any(isinstance(part, ThinkingPart) for message in result.messages for part in message.parts)
+    # The request lost the reasoning of the finished steps...
+    kept = [part for message in result.messages for part in message.parts if isinstance(part, ThinkingPart)]
+    assert len(kept) == 1
     # ...but the persistent history stays intact.
     assert any(isinstance(part, ThinkingPart) for message in ctx.messages for part in message.parts)
     assert capability.last_view is not None

@@ -40,8 +40,12 @@ DEFAULT_CONTEXT_STRATEGY = 'windowed'
 DEFAULT_KEEP_RECENT_TURNS = 3
 DEFAULT_MAX_TOOL_RESULT_CHARS = 4000
 DEFAULT_OUTPUT_RESERVE = 8000
+DEFAULT_KEEP_THINKING_STEPS = 4
+"""Reasoning blocks kept from the round in progress, before trimming starts."""
 
 _TRUTHY = frozenset({'1', 'true', 'yes', 'on'})
+_THINKING_ALL = frozenset({'all', 'on', 'true', 'yes', '1', '-'})
+_THINKING_OFF = frozenset({'off', 'none', 'no', 'false', '0'})
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +55,12 @@ class SigilSettings:
     max_steps: int = DEFAULT_MAX_STEPS
     model_max_attempts: int = DEFAULT_MODEL_MAX_ATTEMPTS
     context_strategy: str = DEFAULT_CONTEXT_STRATEGY
-    keep_thinking: bool = False
+    keep_thinking: int | None = DEFAULT_KEEP_THINKING_STEPS
+    """Reasoning blocks kept from the round in progress.
+
+    ``0`` drops all reasoning, ``None`` keeps every block. The window is on steps,
+    not on the round: resending a whole round is quadratic.
+    """
     keep_recent_turns: int = DEFAULT_KEEP_RECENT_TURNS
     max_tool_result_chars: int = DEFAULT_MAX_TOOL_RESULT_CHARS
     output_reserve: int = DEFAULT_OUTPUT_RESERVE
@@ -70,6 +79,8 @@ class SigilSettings:
             raise ValueError('max_tool_result_chars must be at least 200')
         if self.output_reserve < 0:
             raise ValueError('output_reserve cannot be negative')
+        if self.keep_thinking is not None and self.keep_thinking < 0:
+            raise ValueError('keep_thinking cannot be negative')
 
 
 def _read_int(env: Mapping[str, str], name: str, default: int) -> int:
@@ -84,6 +95,33 @@ def _read_int(env: Mapping[str, str], name: str, default: int) -> int:
 
 def _read_bool(env: Mapping[str, str], name: str) -> bool:
     return env.get(name, '').strip().lower() in _TRUTHY
+
+
+def _read_keep_thinking(env: Mapping[str, str]) -> int | None:
+    """Reasoning policy, as the number of steps to keep from the current round.
+
+    ``off``/``none``/``0`` drops all reasoning. ``all``, or any of the legacy truthy
+    values (``1``, ``true``, ``yes``, ``on``), keeps every block, so an existing
+    `SIGIL_CONTEXT_KEEP_THINKING=1` behaves exactly as it did. Any other number keeps
+    that many steps of the round in progress.
+
+    ``1`` is the one value that cannot be read as a count: it was the documented way
+    to turn this on, and it stays "keep everything". Use ``2`` or more for steps.
+    """
+    raw = env.get(ENV_CONTEXT_KEEP_THINKING, '').strip().lower()
+    if not raw:
+        return DEFAULT_KEEP_THINKING_STEPS
+    if raw in _THINKING_ALL:
+        return None
+    if raw in _THINKING_OFF:
+        return 0
+    try:
+        steps = int(raw)
+    except ValueError as exc:
+        raise ValueError(f'{ENV_CONTEXT_KEEP_THINKING} must be a number of steps, "all" or "off"; got {raw!r}') from exc
+    if steps < 0:
+        raise ValueError(f'{ENV_CONTEXT_KEEP_THINKING} cannot be negative; got {steps}')
+    return steps
 
 
 def load_settings(environ: Mapping[str, str] | None = None) -> SigilSettings:
@@ -101,7 +139,7 @@ def load_settings(environ: Mapping[str, str] | None = None) -> SigilSettings:
         max_steps=_read_int(env, ENV_MAX_STEPS, DEFAULT_MAX_STEPS),
         model_max_attempts=_read_int(env, ENV_MODEL_MAX_ATTEMPTS, DEFAULT_MODEL_MAX_ATTEMPTS),
         context_strategy=env.get(ENV_CONTEXT_STRATEGY, '').strip().lower() or DEFAULT_CONTEXT_STRATEGY,
-        keep_thinking=_read_bool(env, ENV_CONTEXT_KEEP_THINKING),
+        keep_thinking=_read_keep_thinking(env),
         keep_recent_turns=_read_int(env, ENV_CONTEXT_KEEP_RECENT_TURNS, DEFAULT_KEEP_RECENT_TURNS),
         max_tool_result_chars=_read_int(env, ENV_CONTEXT_MAX_TOOL_RESULT_CHARS, DEFAULT_MAX_TOOL_RESULT_CHARS),
         output_reserve=_read_int(env, ENV_CONTEXT_OUTPUT_RESERVE, DEFAULT_OUTPUT_RESERVE),

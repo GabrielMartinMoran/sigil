@@ -25,6 +25,141 @@ def drop_thinking(messages: list[ModelMessage]) -> tuple[list[ModelMessage], int
     return result, dropped
 
 
+def accepts_replayed_reasoning(part: ThinkingPart, provider: str | None) -> bool:
+    """Whether the receiving provider can be sent this reasoning back.
+
+    "Signatures are only sent back to the same provider" (`ThinkingPart.signature`):
+    Anthropic, Bedrock, Google and OpenAI sign the reasoning and accept their own
+    signature back, not another's. Keeping a signed block the receiver is going to
+    reject spends history on something the adapter renders as plain text anyway.
+
+    Unsigned reasoning has no owner, so it travels to any provider. A part that
+    names no provider, or an unknown receiver, is trusted: the adapter decides, and
+    a wrong guess costs a retry, not a rejected request.
+    """
+    if not part.signature:
+        return True
+    if part.provider_name is None or provider is None:
+        return True
+    return part.provider_name == provider
+
+
+def thinking_labels(messages: Sequence[ModelMessage]) -> list[str | None]:
+    """The round each step with reasoning belonged to, in order.
+
+    `run_id` is the round: pydantic-ai stamps the same id on every message of one
+    run, and a prompt typed while the agent works is enqueued into the same run, so
+    steering does not open a new round. Sessions saved before `run_id` existed group
+    per message instead of merging unrelated rounds into one.
+    """
+    return [
+        message.run_id
+        for message in messages
+        if isinstance(message, ModelResponse) and any(isinstance(part, ThinkingPart) for part in message.parts)
+    ]
+
+
+def steps_with_reasoning(messages: Sequence[ModelMessage], *, provider: str | None = None) -> int:
+    """How many reasoning blocks of the round in progress can be kept.
+
+    It is the ceiling of the window: asking for more than this would keep the
+    previous rounds' reasoning too, which is a record, not working memory.
+    """
+    rounds = thinking_labels(messages)
+    current_round = rounds[-1] if rounds else None
+    return sum(
+        1
+        for message in messages
+        if isinstance(message, ModelResponse)
+        and message.run_id == current_round
+        and any(isinstance(part, ThinkingPart) for part in message.parts)
+        and all(accepts_replayed_reasoning(part, provider) for part in message.parts if isinstance(part, ThinkingPart))
+    )
+
+
+def keep_fitting_steps(
+    messages: list[ModelMessage],
+    available: int,
+    *,
+    provider: str | None = None,
+) -> list[ModelMessage] | None:
+    """Rewrites the history keeping as many reasoning steps as fit in `available`.
+
+    It starts from the most the current round can keep and shrinks one step at a
+    time, so the result is the largest window that fits. Returns ``None`` when not
+    even dropping all the reasoning makes it fit: the caller then has to truncate
+    tool results or discard turns, which costs more than reasoning does.
+    """
+    if estimate_messages_tokens(messages) <= available:
+        return messages
+    for steps in range(steps_with_reasoning(messages, provider=provider) - 1, -1, -1):
+        shrunk, _, _ = keep_recent_steps(messages, steps=steps, provider=provider)
+        if estimate_messages_tokens(shrunk) <= available:
+            return shrunk
+    return None
+
+
+def keep_recent_steps(
+    messages: list[ModelMessage],
+    *,
+    steps: int,
+    provider: str | None = None,
+) -> tuple[list[ModelMessage], int, int]:
+    """Keeps the reasoning of the last `steps` steps of the round in progress.
+
+    The round in progress is the one the latest step belongs to. Its steps are
+    walked backwards until either `steps` reasoning blocks are kept or the round
+    ends, so a short round does not borrow the previous one's reasoning. Every other
+    reasoning block is dropped: it is not working memory, it is a record, and it
+    costs what it costs on every request.
+
+    The window is on steps, not on the round, because resending a whole round is
+    quadratic: a measured 317-step round would bill 44M extra tokens, while the loop
+    this fixes is local to a few steps.
+    """
+    if steps <= 0:
+        result, dropped = drop_thinking(messages)
+        return result, 0, dropped
+
+    rounds = thinking_labels(messages)
+    current_round = rounds[-1] if rounds else None
+
+    # Walk the round in progress backwards: the steps closest to the work in
+    # progress are the ones that stop the agent from re-deciding what it already
+    # decided. A round shorter than the window keeps only its own reasoning.
+    keep: set[int] = set()
+    kept = 0
+    for order in range(len(messages) - 1, -1, -1):
+        if kept >= steps:
+            break
+        message = messages[order]
+        if not isinstance(message, ModelResponse) or message.run_id != current_round:
+            continue
+        parts = [part for part in message.parts if isinstance(part, ThinkingPart)]
+        if not parts:
+            continue
+        if not all(accepts_replayed_reasoning(part, provider) for part in parts):
+            continue
+        keep.add(order)
+        kept += 1
+
+    result: list[ModelMessage] = []
+    dropped = 0
+    for order, message in enumerate(messages):
+        if not isinstance(message, ModelResponse):
+            result.append(message)
+            continue
+        if order in keep:
+            result.append(message)
+            continue
+        kept_parts = [part for part in message.parts if not isinstance(part, ThinkingPart)]
+        dropped += len(message.parts) - len(kept_parts)
+        result.append(
+            message if len(kept_parts) == len(message.parts) else dataclasses.replace(message, parts=kept_parts)
+        )
+    return result, kept, dropped
+
+
 def _truncate_text(text: str, head_chars: int) -> str:
     omitted = len(text) - head_chars
     tokens = estimate_tokens(text)
