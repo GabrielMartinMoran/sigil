@@ -973,7 +973,7 @@ type.
 | `/theme [name\|--list]` | Opens the theme picker with a live preview; with a name, applies it; `--list` lists the installed ones |
 | `/sidebar [on\|off]` | Shows or hides the sidebar; without an argument, toggles |
 | `/mcp` | Queries the state of the MCP servers |
-| `/context` | Shows the breakdown of the used context |
+| `/context` | Shows the breakdown of the used context and what the session cost |
 | `/debug [on\|off\|--text]` | Shows or hides the agent debug view; without an argument, toggles |
 | `/help` | Lists the available commands and the keys |
 | `/quit` | Exits Sigil |
@@ -1102,7 +1102,8 @@ mostly empty.
 The sections, from top to bottom:
 
 - **Model**: the active account alias, its provider family, the model, the
-  reasoning level in effect, and the context budget of that model's window.
+  reasoning level in effect, the context budget of that model's window, and the
+  cost of the session so far.
   Before anything is configured it says `not configured — /provider`, which is
   the first thing to do on a fresh install.
 - **Loaded skills**: the skills the agent loaded in this session, in load order.
@@ -1117,7 +1118,7 @@ The sections, from top to bottom:
 The context budget is the last line of the model section and not a section of
 its own: it is a property of that window, it is read with the model, and a
 heading for one number cost two rows of a 34-column panel. It reads like the
-line above it:
+line above it, and the bill of the session closes the same block:
 
 ```
 Model
@@ -1125,6 +1126,7 @@ Model
  anthropic/claude-sonnet-4
  effort: high
  context: 66% (132K / 200K)
+ cost: $0.04
 
 Loaded skills
  • clean-code
@@ -1160,6 +1162,42 @@ view.
 
 The MCP count refreshes on startup (in a worker, without blocking the UI) and
 every time you run `/mcp`.
+
+#### Session cost
+
+The `cost:` line is what the session has spent so far. It comes from the
+provider whenever the provider reports it: OpenRouter sends the amount it is
+going to charge for a request, and that number wins, because it is the invoice
+and not an estimate. Every other request is priced by `genai-prices`, the
+list-price table pydantic-ai ships. The panel marks that case with `~`, since a
+list price is not a charge.
+
+A model no table knows is left out rather than counted as zero, and a session
+with such a request shows `+`: the amount is a floor.
+
+| Line | Meaning |
+| --- | --- |
+| `cost: $1.20` | Every request was priced by the provider: this is the bill. |
+| `cost: ~$0.04` | Priced at list price. A reseller, a discount or a plan can charge something else. |
+| `cost: $0.04+` | At least this much. Something in the session could not be priced. |
+| `cost: ~$0.04+` | Both: a list price, and incomplete. |
+| `cost: ?` | Nothing in the session could be priced at all. |
+| `cost: $0` | Nothing has been sent yet. |
+
+Amounts under a cent keep four decimals, because that is what the first requests
+of a session cost and `$0.00` would read as free. Above a cent they are rounded
+to cents.
+
+A subscription is the case no estimator can answer: signing in with a ChatGPT
+plan bills nothing per token, so the line shows what those tokens would have
+cost at the published rate. That comparison is what most tools show their
+subscribers, and it is why the amount carries a `~` rather than a promise.
+
+The number is calculated from the session history, so it survives `/load`: a
+restored conversation shows the bill its own requests produced, not zero.
+`/context` prints the same figure with the counts behind it — how many
+requests were priced by the provider, how many came from the table, and how
+many could not be priced.
 
 
 ## Reading the chat
@@ -1307,7 +1345,8 @@ turn on the next one.
 The side panel shows the **projected** number: the measured value of the last
 request plus an estimate of what was added since then. The measured one describes
 the past; the projected one is what matters to know whether the next request fits
-in the window. `/context` shows both, the budget and the breakdown per turn.
+in the window. `/context` shows both, the budget, the breakdown per turn and the
+cost of the session so far.
 
 ### Agent debug view (`alt+d`)
 
