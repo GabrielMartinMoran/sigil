@@ -11,8 +11,11 @@ Two hooks, because a profile rules on two different things:
   failed result, so the model adapts inside the same turn instead of the turn
   dying on an exception.
 
-It reads the registry live, not at construction: switching agent with `/agent`
-repaints the tool set on the next request without rebuilding the agent.
+It reads the profile through a ``ProfileSource``, per request and never at
+construction. For the agent at the root of the session that source is the
+registry, so switching agent with `/agent` repaints the tool set on the next
+request without rebuilding the agent. For a subagent it is the profile that
+summoned it, which does not change for the length of its run.
 """
 
 from __future__ import annotations
@@ -30,7 +33,7 @@ if TYPE_CHECKING:
     from pydantic_ai.tools import RunContext, ToolDefinition
 
     from src.engine.agents.profile.models.agent_profile import AgentProfile
-    from src.engine.agents.profile.registry import AgentRegistry
+    from src.engine.agents.profile.source import ProfileSource
 
 DENIED_PREFIX = 'PermissionDenied'
 """Prefix of the message, so a refusal is greppable in the history."""
@@ -42,12 +45,12 @@ class ToolPermissionsCapability(AbstractCapability[Any]):
 
     _: KW_ONLY
 
-    registry: AgentRegistry
+    source: ProfileSource
     id: str | None = 'agent_permissions'
     """One per agent: it is the profile in effect, and there is only one."""
 
     def _profile(self) -> AgentProfile | None:
-        return self.registry.active
+        return self.source.profile()
 
     async def prepare_tools(
         self,

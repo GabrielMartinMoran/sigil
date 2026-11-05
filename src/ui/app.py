@@ -5,6 +5,8 @@ each responsibility to a mixin with its own state.
 
 - `ModelViewMixin` : the active model and effort in effect, read by the chrome.
 - `AgentMixin`     : `/agent`, the `ctrl+a` picker and the agent in the status bar.
+- `TreeMixin`      : the session's tree of agents: `alt+t`, the subagent view and
+                     the messages a finished subagent sends back.
 - `SidebarMixin`   : side panel: active model, context budget, skills, MCP servers.
 - `MenuMixin`      : command menu that appears when typing `/`.
 - `CommandsMixin`  : slash commands and session switching.
@@ -32,6 +34,8 @@ from textual.css.query import NoMatches
 
 from src.engine.agents.profile.registry import AgentRegistry
 from src.engine.agents.retry import RetryNotice, RetryTransientModelErrors
+from src.engine.agents.tree.store import AgentTreeStore
+from src.engine.agents.tree.summoner import SubagentSummoner
 from src.engine.context.capability import ContextViewCapability
 from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
 from src.engine.context.meter.context_meter import ContextMeter
@@ -61,7 +65,9 @@ from src.ui.sidebar_mixin import SidebarMixin
 from src.ui.theme_mixin import ThemeMixin
 from src.ui.title_mixin import TitleMixin
 from src.ui.tool_logging import ChatToolLogSink, ToolLogMessage
+from src.ui.tree_mixin import TreeMixin
 from src.ui.turn_mixin import TurnMixin
+from src.ui.widgets.agent_view import AgentView
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.command_menu import CommandMenu
 from src.ui.widgets.debug_view import AgentDebugView
@@ -83,6 +89,7 @@ class SigilApp(
     WorkspaceMixin,
     ActivityMixin,
     DebugMixin,
+    TreeMixin,
     TurnMixin,
     TitleMixin,
     App,
@@ -96,11 +103,16 @@ class SigilApp(
     # read `ctrl+m` / `ctrl+t` in `PromptInput._on_key` instead of here: a global
     # binding would claim Enter on terminals that cannot tell it from Ctrl+M.
     #
+    # The two that are bound here open a *view* over the chat — the debug view and
+    # the tree of agents — and have to be reachable with the focus anywhere,
+    # including the composer while it is disabled.
+    #
     # There is no global `escape` binding on purpose: the focused widget sees the
     # key first, and the abort has to coexist with the `escape` that cancels a
     # question panel. The prompt handles it (see `PromptInput`).
     BINDINGS: ClassVar[list[Binding]] = [
         Binding('alt+d', 'toggle_debug', 'Debug view', priority=True, show=False),
+        Binding('alt+t', 'toggle_tree', 'Agents', priority=True, show=False),
     ]
 
     def __init__(
@@ -128,6 +140,8 @@ class SigilApp(
         preferences_store: PreferencesStore | None = None,
         themes: ThemeRegistry | None = None,
         agent_registry: AgentRegistry | None = None,
+        agent_tree: AgentTreeStore | None = None,
+        summoner: SubagentSummoner | None = None,
     ) -> None:
         super().__init__()
         self._settings = settings or load_settings({})
@@ -155,6 +169,12 @@ class SigilApp(
         self._preferences = preferences or self._preferences_store.load()
         self._themes = themes or ThemeRegistry.load()
         self._agent_registry = agent_registry
+        # The tree of the session and the object that summons subagents into it.
+        # Both are optional: an app built without them still runs the conversation,
+        # and `alt+t` says there is no tree instead of failing.
+        self._agent_tree = agent_tree
+        self._summoner = summoner
+        self._viewed_node: str | None = None
         self._tool_log_sink: ChatToolLogSink | None = None
         self._history: list[Any] = list(session.messages)
         self.menu_visible = False
@@ -207,6 +227,7 @@ class SigilApp(
                 Vertical(
                     ChatLog(id='chat', reasoning_visible=self._preferences.reasoning_visible),
                     AgentDebugView(id='debug'),
+                    AgentView(id='agent'),
                     QuestionPanel(id='questions'),
                     id='conversation',
                 ),
@@ -235,6 +256,15 @@ class SigilApp(
             self._roadmap_store.add_listener(self.handle_roadmap_store_change)
             self.query_one(SidebarPanel).set_store(self._roadmap_store)
         self.query_one(CommandMenu).display = False
+        self.query_one(AgentView).display = False
+        # The listeners of the tree belong to the app: it is what paints a node and
+        # what can hand a finished subagent's message to the running turn.
+        if self._summoner is not None:
+            self._summoner.listen(
+                on_change=self.announce_tree_change,
+                root_run=self.root_run,
+                on_delivered=self.announce_subagent_message,
+            )
         # The session carries the agent it runs with from the first paint, so a
         # conversation saved before any switch still remembers it.
         self.remember_agent(self.active_agent())
@@ -262,6 +292,8 @@ class SigilApp(
 
     async def on_unmount(self) -> None:
         self._stop_diff_polling()
+        if self._summoner is not None:
+            self._summoner.listen()
         self.theme_changed_signal.unsubscribe(self)
         if self._model_retry is not None:
             self._model_retry.on_retry = None
@@ -328,6 +360,9 @@ class SigilApp(
             self.query_one(ChatLog).repaint()
         with suppress(NoMatches):
             self.query_one(StatusBar).refresh()
+        # The node view is not composed in every app (the tests build them without
+        # one), and the mixin already ignores the absence.
+        self.run_worker(self.repaint_agent_view())
 
     # --- diff polling ------------------------------------------------------
 
@@ -387,7 +422,16 @@ class SigilApp(
 
     def action_toggle_debug(self) -> None:
         """`alt+d`: replaces the chat with the agent debug view."""
+        if self.subagent_open:
+            # The two views replace the same space. Opening the debug view closes
+            # the node one here and not on a worker: a frame with both is a frame
+            # with two conversations and no way to tell which one is on screen.
+            self.show_chat()
         self.toggle_debug()
+
+    def action_toggle_tree(self) -> None:
+        """`alt+t`: the agents of the session, and the way into any subagent."""
+        self.run_worker(self.open_tree())
 
     def action_tab_noop(self) -> None:
         """Tab outside the command menu does nothing.
@@ -410,6 +454,12 @@ class SigilApp(
         """
         if self.request_abort():
             self.abort_turn()
+            return
+        # Not aborting and not running: `Esc` inside a subagent is the way back,
+        # which is the one navigation key that has to work with the composer
+        # disabled.
+        if not self._turn_active and self.subagent_open:
+            await self.open_parent()
 
     async def on_key(self, event: events.Key) -> None:
         """Any key that is not the confirming `Esc` cancels a pending abort.

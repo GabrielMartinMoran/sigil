@@ -14,13 +14,19 @@ in two places with two different values.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 
 from src.engine.agents.agent import create_agent
+from src.engine.agents.profile.registry import AgentRegistry
+from src.engine.agents.tree.store import AgentTreeStore
+from src.engine.agents.tree.summoner import SubagentSummoner
+from src.engine.agents.tree.tools import register_tree_tools
 from src.engine.files.tools import register_file_tools
 from src.engine.interaction.hub import QuestionHub
 from src.engine.interaction.tools import register_interaction_tools
@@ -48,6 +54,9 @@ def _registered_tools() -> dict[str, Any]:
     register_skill_tools(agent, SkillRegistry())
     register_interaction_tools(agent, QuestionHub())
     register_roadmap_tools(agent, RoadmapStore())
+    # `summon` is a built-in of the tree, not of a provider: it is registered like
+    # the rest so the table cannot drift from the tool.
+    register_tree_tools(agent, _summoner())
 
     declarations: dict[str, Any] = {}
 
@@ -62,6 +71,15 @@ def _registered_tools() -> dict[str, Any]:
 
 def _context() -> Any:
     return RunContext(deps=None, model=TestModel(), usage=None)
+
+
+def _summoner() -> SubagentSummoner:
+    """Enough summoner for the tool to register: the table only needs the name."""
+    return SubagentSummoner(
+        trees=AgentTreeStore(),
+        registry=AgentRegistry([('builtin', Path('/nonexistent-agent-root'))]),
+        builder=lambda: lambda profile: Agent(TestModel()),
+    )
 
 
 @pytest.fixture(scope='module')

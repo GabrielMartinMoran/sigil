@@ -135,9 +135,39 @@ Screen {
     height: auto;
 }
 
+/* --- agent view (a subagent, opened) ------------------------------------- */
+
+#agent {
+    width: 1fr;
+    height: 1fr;
+    border: round $success;
+    padding: 0 1;
+    scrollbar-size-vertical: 1;
+}
+
+#agent-header {
+    height: auto;
+    padding: 0 0 1 0;
+}
+
+#agent-chat {
+    height: 1fr;
+    scrollbar-size-vertical: 1;
+}
+
+#tree-status {
+    height: 1;
+    color: $text-muted;
+}
+
+#tree-list {
+    height: 1fr;
+}
+
 /* --- modal chrome -------------------------------------------------------- */
 
 SessionPicker,
+AgentTreeScreen,
 ProviderScreen,
 AccountFormScreen,
 ModelPickerScreen,

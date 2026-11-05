@@ -63,6 +63,10 @@ Use the available tools according to their intended purpose:
 - **`read_url`** — retrieve web content. <!-- if: read_url -->
 - **`ask_user`** — request user input or authorization. <!-- if: ask_user -->
 - **`update_roadmap`** — track multi-step task progress. <!-- if: update_roadmap -->
+- **`summon`** — start a subagent: its own context, its own task, its own answer. <!-- if: summon -->
+- **`send_message`** — steer a subagent, or answer a notice from one. <!-- if: send_message -->
+- **`kill_subagent`** — stop a subagent and everything under it. <!-- if: kill_subagent -->
+- **`list_agents`** — the ids, names and states of the agents of this session. <!-- if: list_agents -->
 - **`view_image`** — load an image by id, URL or path. <!-- if: view_image -->
 
 Guidelines:
@@ -71,6 +75,8 @@ Guidelines:
 - Prefer targeted edits over unnecessary full-file rewrites.
 - Use `ask_user` according to the active agent's autonomy and clarification requirements.
 - Use `update_roadmap` when task complexity or the active agent's workflow warrants it.
+- Use `summon` for a separable task whose reading would flood this context: the subagent keeps its own transcript. <!-- if: summon -->
+- Keep the id a `summon` returns: it is how you continue that same subagent (`agent_id`), steer it, or stop it. <!-- if: summon -->
 - Never fabricate tool results or ignore relevant failures.
 
 <!-- if: list_skills -->

@@ -8,5 +8,6 @@ HELP_TEXT = 'Commands: ' + ', '.join(f'{command.name} — {command.description}'
 
 KEYS_TEXT = (
     'Keys: Enter sends · Shift+Enter adds a line · ctrl+v pastes an image · '
-    'Up/Down pick in the menu · Tab completes · Esc closes the menu'
+    'Up/Down pick in the menu · Tab completes · Esc closes the menu · '
+    'alt+t the agents of the session · alt+d the agent debug view'
 )
