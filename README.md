@@ -762,14 +762,46 @@ panel. The turn stops on purpose, so no error is reported; the chat says
 `Turn cancelled.`, and the history keeps what already happened.
 
 Either way the session stays usable and the next message starts a new turn
-instead of failing on a call that never got its result. pydantic-ai closes the
-gap in the step-limit case; for a cancelled turn Sigil does it, so a call cut
-off mid-flight does not survive in the saved history.
+instead of failing on a call that never got its result. Sigil closes the gap
+itself when the turn ends, so a call cut off mid-flight does not survive in the
+saved history.
 
 pydantic-ai brings its own cap of 50 requests per run. Sigil disables it
 (`request_limit=None`) so the only limit is the step one: otherwise a long turn
 died with a `UsageLimitExceeded` nobody configured, before reaching the real
 limit.
+
+### A crashed turn does not break the session
+
+A turn is saved after every step, which is what lets a long turn survive the
+process dying halfway: what the run completed is already on disk. The flip side
+is that the last save can land in the middle of a tool batch, with a model
+response that asked for tools and no results behind it.
+
+pydantic-ai refuses a new prompt on top of that, and it refuses it every time:
+one crash that lands in that window used to break the session for every message
+after it, with `Cannot provide a new user prompt when the message history
+contains unprocessed tool calls` in the chat.
+
+Sigil checks the history at both ends of a turn:
+
+1. At the start, before anything reaches the agent. This is the case a crashed
+   process leaves behind: the app is opened again on a broken session.
+2. At the end, on every path. A cancelled turn, a turn that died on an error
+   while a tool ran, and a step limit all leave a tail a provider would reject,
+   and the save that follows would write it to disk.
+
+Either way the damage is closed out. When the repair happens at the start of a
+turn the chat says `Recovered the session: …`, because that is damage a previous
+process left behind, and you need to know the session you opened was not what
+you saved. When it happens at the end of a turn the chat has already reported
+what ended it (`Turn cancelled.`, the error, the step limit), so the repair stays
+quiet.
+
+The synthesized results are marked with `pydantic_ai_synthesized_tool_return`,
+so nothing pretends a tool ran when it didn't. A healthy history is left exactly
+as it was — no copy, no reordering — so the model's prompt cache prefix is never
+churned.
 
 ## Providers and models
 
