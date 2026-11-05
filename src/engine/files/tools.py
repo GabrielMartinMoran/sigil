@@ -138,11 +138,12 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None) -> None:
         end_line: int | None = None,
         max_bytes: int = MAX_READ_BYTES,
     ) -> FileContent:
-        """Read a text or binary file from the workspace.
+        """Read a text or binary file from the workspace or the temporary directory.
 
         Use this to inspect a file before editing it. Paths are resolved
-        against the workspace; paths outside it are rejected. For large files,
-        request a line range or a byte limit.
+        against the workspace; the OS temporary directory is allowed too. Any
+        other path is rejected. For large files, request a line range or a byte
+        limit.
 
         Args:
             path: File path, absolute or relative to the workspace.
@@ -159,7 +160,7 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None) -> None:
 
     @tools.tool(concurrency=same_file_conflict, permission=_WRITE)
     def write_file(path: str, content: str, append: bool = False) -> WriteResult:
-        """Write or append to a text file in the workspace.
+        """Write or append to a text file in the workspace or the temporary directory.
 
         Parent directories are created as needed. Use `patch_file` for focused
         edits to an existing file; use this tool to create a new file or to
@@ -191,7 +192,7 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None) -> None:
         expected_text: str | None = None,
         replace_all: bool = False,
     ) -> PatchResult:
-        """Edit an existing file, with two modes.
+        """Edit an existing file in the workspace or the temporary directory, with two modes.
 
         Prefer the exact-match mode: pass `old_string` (text to find) and
         `new_string` (replacement). The old text must appear exactly once unless

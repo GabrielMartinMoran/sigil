@@ -506,8 +506,20 @@ with the partial history kept and the unanswered call closed out.
 
 ### Files
 
-`read_file`, `write_file` and `patch_file` work inside the workspace: a path
-outside it is rejected with an error, it is not resolved silently.
+`read_file`, `write_file` and `patch_file` work inside the workspace and inside
+the OS temporary directory: any other path is rejected with an error, it is not
+resolved silently.
+
+The temporary directory is allowed because scratch files are what it is for. A
+command writes one, the model reads it back, and refusing the path would only
+push the work into the shell. The directory is resolved on every call, so
+`TMPDIR` is honoured; on POSIX, `/tmp` and `/var/tmp` are accepted as well,
+because a redirect to `/tmp` does not read `TMPDIR` either.
+
+The allowance is the temporary tree itself: `..` does not climb out of it, and a
+symlink is followed before the check, so it cannot be used to reach a file
+outside. A profile still rules on these paths like any other, so `write: {deny:
+['/tmp/*']}` closes the scratch area for an agent that must not have one.
 
 `patch_file` has two modes:
 
@@ -622,7 +634,8 @@ from `HEAD`, moves the process there and starts the session in it:
 The worktree directory lives **outside** the repository (under
 `SIGIL_WORKTREES_DIR`, `<SIGIL_HOME>/worktrees` by default) so that the file tools
 of one workspace cannot reach another's tree: `read_file` and `write_file` are
-limited to the active workspace.
+limited to the active workspace, plus the OS temporary directory, which no
+workspace owns.
 
 What a new worktree does **not** get, because it is not in the commit:
 
