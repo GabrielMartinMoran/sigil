@@ -14,6 +14,11 @@ Three responsibilities share this file because they share one object: the run.
   waits three seconds; the second one cancels the run and the shell commands it
   spawned, and the history is repaired so the next turn starts from a
   conversation a provider accepts.
+- **Surviving a crash.** The history is checkpointed as the turn advances, so a
+  process that dies mid-turn leaves a session whose last message can be a tool
+  call with no result behind it. That history is repaired before it reaches the
+  agent (see ``src.engine.sessions.recovery``), because pydantic-ai refuses a new
+  prompt on top of it — permanently.
 """
 
 from __future__ import annotations
@@ -33,7 +38,6 @@ from pydantic_ai.messages import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
-    repair_messages,
 )
 from pydantic_ai.usage import UsageLimits
 from textual import work
@@ -42,6 +46,7 @@ from textual.widgets import Static
 
 from src.engine.agents.step_limiter import StepLimiter, StepLimitExceeded
 from src.engine.providers.domain.thinking import settings_value as thinking_settings
+from src.engine.sessions.recovery import recover_history
 from src.engine.shell import running as running_commands
 from src.ui.messages import ChatNotice
 from src.ui.widgets.chat_log import ChatLog
@@ -353,15 +358,32 @@ class TurnMixin:
         # bounds the turn, and the default would cut earlier with a `UsageLimitExceeded`
         # the user did not configure.
         run: Any = None
-        history = self._history
+        # The history of the session this turn belongs to, not "the current one":
+        # a run started before a session swap must continue the conversation it was
+        # started from.
+        history = session.messages
         # Where `checkpoint` writes: the session this turn started on.
         self._turn_session = session
         # The first checkpoint of the turn (the user prompt) is saved right away.
         self._last_checkpoint_at = 0.0
         try:
+            # A process that died mid-turn leaves the last checkpoint *inside* a
+            # tool batch: a response that asked for tools and no results, because the
+            # results never came. pydantic-ai refuses a new prompt on top of that, and
+            # it refuses it on every message after it, so the history is repaired here
+            # — before it reaches the agent, not after the refusal. A healthy history
+            # comes back untouched.
+            recovery = recover_history(history)
+            if recovery.changed:
+                history = recovery.messages
+                session.messages = history
+                if session is self._session:
+                    self._history = history
+                self._store.save(session)
+                await chat.add_notice(recovery.notice, style='yellow')
             async with self._agent.iter(
                 text,
-                message_history=self._history,
+                message_history=history,
                 capabilities=[ProcessEventStream(handler=handler)],
                 model_settings=self.model_settings(),
                 usage_limits=UsageLimits(request_limit=None),
@@ -384,10 +406,10 @@ class TurnMixin:
         except RunCancelled:
             # The user stopped the turn: cancelling an `ask_user` panel, or `Esc`
             # twice. It is not an error, so there is no error to report. What the
-            # run completed is kept, with the dangling tool calls closed out so
-            # the next message does not trip over an unanswered call.
+            # run completed is kept; the calls that were cut off are closed out
+            # below, with the rest of the turn's tails.
             if run is not None:
-                history = repair_messages(run.all_messages())
+                history = run.all_messages()
             await chat.add_notice('Turn cancelled.', style='yellow')
         except Exception as exc:  # noqa: BLE001
             if run is not None:
@@ -404,6 +426,12 @@ class TurnMixin:
             self._paint_status('')
             chat.finalize()
 
+        # The end of the turn is repaired, on every path. A cancelled turn leaves a
+        # call without a result, and so does a turn that died on an exception while a
+        # tool ran; a step limit leaves a response nothing acted on. The next message
+        # would be refused on any of them, and the save below would write the damage
+        # to disk. It is a no-op for a turn that ended cleanly.
+        history = recover_history(history).messages
         # Written to the session the turn started on. If it is no longer the
         # active one, the turn's result is still saved where it belongs and the
         # conversation on screen is left alone.
