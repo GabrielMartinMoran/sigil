@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 from pydantic_ai import Agent
 
+from src.engine.agents.profile.capability import ToolPermissionsCapability
+from src.engine.agents.profile.rendering import render_agent_profile
 from src.engine.agents.retry import RetryTransientModelErrors
 from src.engine.agents.tool_errors import ToolErrorRecovery
 from src.engine.providers.factory.unconfigured import UnconfiguredModel
@@ -17,6 +19,7 @@ if TYPE_CHECKING:
     from pydantic_ai.models import Model
     from pydantic_ai.toolsets import AbstractToolset
 
+    from src.engine.agents.profile.registry import AgentRegistry
     from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
     from src.engine.context.scope import ScopeTracker
     from src.engine.skills.loaded import LoadedSkills
@@ -39,6 +42,7 @@ def create_agent(
     workspace: WorkspaceInstructions | None = None,
     scope: ScopeTracker | None = None,
     loaded_skills: LoadedSkills | None = None,
+    agent_registry: AgentRegistry | None = None,
     extra_capabilities: Sequence[AbstractCapability] | None = None,
 ) -> Agent:
     """Builds the agent.
@@ -48,10 +52,20 @@ def create_agent(
             ``ModelRouter`` that the service swaps between turns; when nothing is
             configured yet it is an ``UnconfiguredModel`` that refuses to run with
             an actionable message instead of failing at import time.
+        agent_registry: The agent profiles. The active one contributes an
+            instruction block and decides which tools exist.
     """
     # Provider 502/429/timeouts are retried before bringing the turn down.
     if model_retry is None:
         model_retry = RetryTransientModelErrors(max_attempts=DEFAULT_MODEL_MAX_ATTEMPTS)
+
+    capabilities: list[AbstractCapability] = [model_retry, ToolErrorRecovery()]
+    if agent_registry is not None:
+        # Not an `append` block: switching agent replaces the block, and the
+        # previous profile's instructions have to stop travelling with the
+        # conversation. It goes right after the base prompt, before everything
+        # that describes the session.
+        capabilities.append(ToolPermissionsCapability(registry=agent_registry))
 
     agent = Agent(
         model if model is not None else UnconfiguredModel(),
@@ -62,11 +76,18 @@ def create_agent(
         end_strategy='exhaustive',
         # A tool error goes back to the model as a failed result instead of
         # aborting the turn; transient provider failures are retried.
-        capabilities=[model_retry, ToolErrorRecovery(), *(extra_capabilities or [])],
+        capabilities=[*capabilities, *(extra_capabilities or [])],
         # External toolsets (e.g. MCP servers); function tools are still
         # registered afterwards with `ToolManager`.
         toolsets=list(toolsets or []),
     )
+
+    if agent_registry is not None:
+        # The profile has to be able to set the behaviour, so its block goes
+        # before the ones that only describe the workspace.
+        @agent.instructions(name='agent-profile')
+        def _agent_profile() -> str:
+            return render_agent_profile(agent_registry)
 
     if workspace is not None and scope is not None:
         # `on_change='append'`: the scope widens mid-turn when a

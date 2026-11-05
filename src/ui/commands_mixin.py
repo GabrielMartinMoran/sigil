@@ -15,13 +15,14 @@ from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.session_picker import SessionPicker
 
-BUSY_COMMANDS = frozenset({'/new', '/load', '/provider', '/model', '/effort', '/quit'})
+BUSY_COMMANDS = frozenset({'/new', '/load', '/agent', '/provider', '/model', '/effort', '/quit'})
 """Commands a running turn refuses.
 
 They are the ones that would change what the turn is working with, or end the
-process: `/new` and `/load` swap the session out from under it, `/provider`
-adds and deletes accounts, `/model` and `/effort` would swap the model mid-run,
-and `/quit` closes the app.
+process: `/new` and `/load` swap the session out from under it, `/agent` swaps
+the instructions and the tool set of a run whose definitions were already
+computed, `/provider` adds and deletes accounts, `/model` and `/effort` would
+swap the model mid-run, and `/quit` closes the app.
 
 `/model` and `/effort` are here even though the service also refuses them: the
 service refuses the *change*, and only after the picker fetched the catalogue and
@@ -126,6 +127,7 @@ class CommandsMixin:
         handlers = {
             '/new': lambda: self.new_session(chat),
             '/load': lambda: self.load_session(chat),
+            '/agent': lambda: self.show_agent(chat, args),
             '/provider': lambda: self.show_providers(chat),
             '/model': lambda: self.show_models(chat, args),
             '/effort': lambda: self.show_effort(chat, args),
@@ -167,7 +169,12 @@ class CommandsMixin:
     async def new_session(self, chat: ChatLog) -> None:
         """Starts an empty session and clears the UI state."""
         self.persist()
-        self.bind_session(self._store.create_session())
+        session = self._store.create_session()
+        # A new session inherits the agent in effect: starting a conversation
+        # should not silently drop back to the default profile.
+        profile = self.active_agent()
+        session.agent = profile.name if profile is not None else ''
+        self.bind_session(session)
         if self._scope is not None:
             self._scope.reset()
         if self._loaded_skills is not None:
@@ -202,9 +209,10 @@ class CommandsMixin:
         await chat.add_notice(f'Loaded session {loaded.short_id}.', style='green')
 
     def bind_session(self, session: object) -> None:
-        """Points the app at ``session``: history, roadmap and persistence."""
+        """Points the app at ``session``: history, agent, roadmap and persistence."""
         self._session = session
         self._history = session.messages
+        self.bind_agent(getattr(session, 'agent', ''))
         self.bind_roadmap()
 
     def _restore_session_model(self, session) -> None:

@@ -64,7 +64,7 @@ def test_command_menu_filters_and_selects(monkeypatch):
 
                 menu = app.query_one(CommandMenu)
                 assert menu.display is True
-                assert menu.option_count == 11
+                assert menu.option_count == 12
 
                 await pilot.press('n')
                 await pilot.pause()

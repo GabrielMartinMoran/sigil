@@ -9,11 +9,15 @@ from typing import Any, Literal
 from ddgs import DDGS
 
 from src.engine.tooling.logging import ToolLogger
+from src.engine.tooling.permission import ToolGroup, ToolPermission
 from src.engine.tooling.registrar import ToolRegistrar
 from src.engine.web.limits import MAX_PAGE_CHARS, MAX_SEARCH_RESULTS
 from src.engine.web.models.page_content import PageContent
 from src.engine.web.models.search_response import SearchResponse
 from src.engine.web.models.search_result import SearchResult
+
+_SEARCH = ToolPermission(groups=(ToolGroup.WEB,), resource='query')
+_FETCH = ToolPermission(groups=(ToolGroup.WEB,), resource='url')
 
 
 def _search(
@@ -64,7 +68,7 @@ def register_web_tools(agent: Any, logger: ToolLogger | None = None) -> None:
     """Registers the web tools on a pydantic-ai agent."""
     tools = ToolRegistrar(agent, logger)
 
-    @tools.tool
+    @tools.tool(permission=_SEARCH)
     async def web_search(
         query: str,
         max_results: int = 8,
@@ -91,7 +95,7 @@ def register_web_tools(agent: Any, logger: ToolLogger | None = None) -> None:
         results = [_as_result(item) for item in raw]
         return SearchResponse(query=query, count=len(results), results=results)
 
-    @tools.tool
+    @tools.tool(permission=_FETCH)
     async def read_url(
         url: str,
         fmt: str = 'text_markdown',

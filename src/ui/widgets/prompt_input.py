@@ -5,7 +5,7 @@ is the same for all of them: **the focused widget sees the key first**.
 
 - The command menu (Up/Down/Tab/Enter/Esc) needs `priority`, because `Input`
   consumes those keys for editing and cursor movement.
-- `ctrl+m` and `ctrl+t` are handled in `on_key`.
+- `ctrl+m`, `ctrl+t` and `ctrl+a` are handled in `on_key`.
 - `Esc` asks to stop the running turn, and any other key calls that request off.
 
 A `priority` binding is checked by the app before the key reaches the widget, so
@@ -45,6 +45,10 @@ CTRL_MODELS = 'ctrl+m'
 CTRL_EFFORT = 'ctrl+t'
 """Ctrl+T. Free of ambiguity, but Ctrl+T is `transpose-chars` in readline."""
 
+CTRL_AGENT = 'ctrl+a'
+"""Ctrl+A. `home` in the `Input` (and in readline), which is why it is read here:
+the prompt claims it before the widget turns it into a cursor move."""
+
 
 class PromptInput(Input):
     """Always visible input; Up/Down/Tab/Enter/Esc drive the menu when it is open."""
@@ -79,6 +83,11 @@ class PromptInput(Input):
             event.stop()
             event.prevent_default()
             self.run_worker(self.app.open_effort())
+            return
+        if event.key == CTRL_AGENT:
+            event.stop()
+            event.prevent_default()
+            self.run_worker(self.app.open_agent())
 
     async def action_menu_up(self) -> None:
         self.app.cancel_abort()

@@ -44,9 +44,11 @@ def write_skill(
 class DummyAgent:
     def __init__(self) -> None:
         self.registered = {}
+        self.options: dict[str, dict[str, object]] = {}
 
-    def tool_plain(self, func):
+    def tool_plain(self, func, **options):
         self.registered[func.__name__] = func
+        self.options[func.__name__] = options
         return func
 
 

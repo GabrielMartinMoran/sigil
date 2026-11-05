@@ -3,6 +3,16 @@
 Terminal agent built with [pydantic-ai](https://ai.pydantic.dev/) and
 [Textual](https://textual.textualize.io/).
 
+## Working with agents
+
+Sigil's behaviour is set by an **agent profile**: a Markdown file whose
+frontmatter names it and lists the tools it may use, and whose body is injected
+after the base prompt. `/agent` (or `ctrl+a`) picks one, and the agent in effect
+is painted under the prompt. Project profiles live in `.sigil/agents`, global
+ones in `~/.sigil/agents`, and Sigil ships with one of its own.
+
+See [Agents](#agents) for the format and the permission rules.
+
 ## Agent Skills
 
 Sigil implements the [Agent Skills](https://github.com/anthropics/skills) protocol:
@@ -106,6 +116,27 @@ rest of the calls keep running in parallel, with no global barriers.
 
 A direct call from code —without a `RunContext`— runs anyway, without a guard:
 there are no siblings to compare against.
+
+### What a tool is, for the permissions
+
+A tool can declare the group it belongs to and the argument it acts on, which is
+what lets a profile rule on `write` instead of listing every tool that writes,
+and on the path instead of on the tool:
+
+```python
+from src.engine.tooling.permission import ResourceKind, ToolGroup,
+ToolPermission
+
+_READ = ToolPermission(groups=(ToolGroup.READ,), resource='path',
+kind=ResourceKind.PATH)
+
+
+@registrar.tool(permission=_READ) def read_file(path: str) -> FileContent: ...
+```
+
+The declaration travels as tool metadata: nothing in the signature changes, and
+a tool that does not declare one is matched by its name alone — which is what
+MCP tools and `agent.tool_plain` do.
 
 Scripts run with the Sigil interpreter for `.py`, `bash` for `.sh`/`.bash`,
 `node` for `.js`, and shebang/permissions for the rest. They inherit the
@@ -275,22 +306,184 @@ client to lend the model or the UI mid-turn, and that opens recursion and
 interactive questions inside a tool. A server that depends on those capabilities
 will fail when asking for them.
 
+## Agents
+
+Sigil's base prompt says *how to work*; an **agent profile** says *who is
+working*. A profile is a Markdown file with a YAML frontmatter: the frontmatter
+names it and declares which tools it may use, and the body is the prompt that
+sets its behaviour.
+
+### Where they are looked up
+
+In order of precedence (the first one wins):
+
+1. `<cwd>/.sigil/agents` — agents that belong to the project.
+2. `~/.sigil/agents` (or `$SIGIL_HOME/agents`) — agents for every project.
+3. The profiles Sigil ships with.
+
+A project profile with the same name as a global one shadows it, and either of
+them shadows a built-in. Profiles are flat `*.md` files; a name starting with
+`_` or `.` is skipped, so a notes file next to them is not parsed as one.
+
+Sigil ships with a single profile, `wizard`, which is also the agent in effect
+when nothing else is chosen or remembered. It is the smallest complete example:
+copy it, rename it, rewrite the body.
+
+Create the directories yourself; Sigil reads them and does not create them. A
+profile added while the session is open shows up on the next `/agent`, without a
+restart.
+
+### The file
+
+```markdown
+---
+name: reviewer
+description: Reads a diff and reports only what would break in production.
+permissions:
+  all: deny                    # nothing, then open what a review needs
+  read: allow
+  web: allow
+  run:                         # and the shell, but only for inspection
+    allow: ['git diff *', 'git status *', 'git log *']
+    deny: ['git push *']
+---
+You review code. You never edit it. Rank what you find by what it costs in
+production, not by how clever the fix is.
+```
+
+| Key | Required | What it does |
+| --- | --- | --- |
+| `name` | yes | Identifier for `/agent`. Kebab-case, up to 64 characters |
+| `description` | yes | One line the picker shows so the choice is informed |
+| `permissions` | no | What the profile may use. Without it, every tool is available |
+
+Any other key is an error rather than a silent no-op: a typo in `permissions`
+would otherwise leave the profile unrestricted, which is the opposite of what it
+asked for.
+
+### Permissions
+
+`permissions` is a set of rules **grouped by tool**, in the order they are
+written. Each key is a scope and each value is `allow`, `deny`, or a mapping
+with the two.
+
+| Scope | What it covers |
+| --- | --- |
+| `all` (or `'*'`) | Every tool |
+| `read`, `write`, `run`, `web`, `skills`, `mcp`, `ask`, `roadmap` | A group of tools |
+| `read_file`, `patch_file`, … | One built-in tool |
+| `mcp_github_*` | A glob over names — how a whole MCP server is targeted |
+
+There are three shapes, from loosest to strictest:
+
+```yaml
+# (nothing)                     every tool, including MCP and the shell
+permissions: [read, web, ask]   # a bare list is an allowlist
+permissions:                    # the explicit, ordered form
+  all: deny
+  read: allow
+  write: allow
+```
+
+**The last matching rule wins**, so a profile reads top to bottom: close
+everything first, then open what it needs. A tool rule beats the group it sits
+in, which is how `write: allow` plus `patch_file: deny` means "create files, but
+never edit one".
+
+A scope nobody can match is an error, not a silent no-op: `permissions: {reed:
+deny}` is rejected with the list of valid scopes, because a typo would leave the
+tool in place while the profile reads as if it were closed.
+
+#### Granularity: paths, commands and queries
+
+A rule can also talk about the **resource** a tool acts on. Instead of `run:
+deny`, write:
+
+```yaml
+run:
+  allow: ['git status *', 'git diff *', 'git log *']
+  deny: ['git push *']
+```
+
+The tool stays visible and each call is judged on its own. Patterns are matched
+against what the tool receives:
+
+| Group | Resource | Matching |
+| --- | --- | --- |
+| `read`, `write` | The path | Matched both workspace-relative and absolute, so `*.env` blocks `.env` and `/repo/.env`. `~`, `$HOME` and `${HOME}` are expanded |
+| `run` | Each command | Whitespace is collapsed, and a pattern ending in ` *` also matches the command with no arguments: `git status *` covers `git status` and `git status --short` |
+| `web` | The query or the URL | As given |
+| `skills`, `mcp` | The skill or server name | As given |
+
+`run` executes several commands in one call: **one** denied command refuses the
+whole call, and the model reads the refusal as a failed result it can adapt to.
+
+An **allow list** over a resource is exhaustive: a command it does not name is
+refused. A **deny list** subtracts: everything else is fine. With both, the
+allow list bounds the tool and the deny list removes from it.
+
+This is not a sandbox. It is a rule on the tool, and a shell is still a shell: a
+command that is allowed can reach anything the process can reach. Prefer a
+narrow allowlist over a list of patterns that try to recognize every dangerous
+command.
+
+#### What a denial does
+
+Two different things, depending on the rule:
+
+- A rule that closes the **whole tool** removes it from the request. The model
+  never sees the definition, so it cannot call it — the call fails as an unknown
+  tool, not as a permission error.
+- A rule narrowed by **resource** keeps the tool and refuses the call, which
+  comes back as `PermissionDenied: the active agent profile does not allow …` in
+  the conversation, so the model adapts inside the same turn instead of the turn
+  dying.
+
+### Switching agent
+
+`/agent` opens the picker, `/agent <name>` switches directly, and `ctrl+a` opens
+the same picker from anywhere in the prompt. The agent in effect is painted at
+the left of the bar under the prompt, always — the one piece of context that
+changes how every answer reads.
+
+The choice **travels with the session**, the way the model does: `/new` inherits
+the agent in effect, and `/load` brings back the one the conversation was built
+under. A profile deleted from disk since then is not an error: the registry
+falls back to the default and the conversation still loads.
+
+Switching agent takes effect on the next request, without a restart. It is
+refused while a turn runs: unlike a model swap, it changes the instructions and
+the tool set of a run whose definitions were already computed.
+
+The profile's body is injected as an instruction block **after** the base prompt
+and before the rest, and it is rewritten rather than appended — so the previous
+profile's instructions stop travelling with the conversation the moment you
+switch.
+
 ## Built-in tools
 
 Besides the skills and the MCP servers, Sigil registers a set of its own tools.
 They all go through the same logger, so every call shows up in the chat with its
 duration and its arguments.
 
-| Tool | What it does |
-| --- | --- |
-| `run` | Runs a shell command with a timeout and an anti-self-launch guard |
-| `read_file` | Reads a file, or a line range, with a byte limit |
-| `write_file` | Creates a file, or replaces or appends its content |
-| `patch_file` | Edits a file by exact text or by line range |
-| `web_search` | Searches the web and returns each result's title, URL and snippet |
-| `read_url` | Extracts a page as Markdown, text or HTML |
-| `ask_user` | Asks the user with options, inside the UI |
-| `update_roadmap` | Publishes and updates the roadmap of the current task |
+| Tool | Group | What it does |
+| --- | --- | --- |
+| `run` | `run` | Runs a shell command with a timeout and an anti-self-launch guard |
+| `read_file` | `read` | Reads a file, or a line range, with a byte limit |
+| `write_file` | `write` | Creates a file, or replaces or appends its content |
+| `patch_file` | `write` | Edits a file by exact text or by line range |
+| `web_search` | `web` | Searches the web and returns each result's title, URL and snippet |
+| `read_url` | `web` | Extracts a page as Markdown, text or HTML |
+| `list_skills`, `load_skill`, `read_skill_resource`, `run_skill_script` | `skills` | Discovers, loads and reads Agent Skills; a bundled script also counts as `run` |
+| `list_mcp_servers`, `list_mcp_resources`, `read_mcp_resource`, `list_mcp_prompts`, `get_mcp_prompt` | `mcp` | The meta-tools over MCP servers, resources and prompts |
+| `ask_user` | `ask` | Asks the user with options, inside the UI |
+| `update_roadmap` | `roadmap` | Publishes and updates the roadmap of the current task |
+
+The group is what a profile's `permissions` rules on, together with the tool
+name: `permissions: {write: deny}` closes `write_file` and `patch_file` in one
+line. A tool declares its group once, next to its definition, and
+`tests/test_tool_groups.py` fails if the declaration and the documented table
+drift apart.
 
 A tool error does not cut the turn: it goes back to the model as a failed result
 (`outcome: failed`) and the agent decides how to proceed. If a `patch_file`
@@ -529,16 +722,19 @@ and a work OpenAI org — and switch between them with `/provider`.
 
 | Shortcut | What it opens |
 | --- | --- |
+| `ctrl+a` | the agent picker |
 | `ctrl+t` | the reasoning-effort picker |
 | `ctrl+m` | the model picker |
 | `alt+d` | the agent debug view |
 
-`ctrl+m` and `ctrl+t` are read by the prompt itself rather than bound globally, so
-Enter keeps working: on a terminal without the Kitty keyboard protocol, Ctrl+M and
-Enter are the same byte (CR, `0x0D`). Textual enables the protocol's
-"disambiguate escape codes" flag, so a capable terminal sends a distinct sequence
-for Ctrl+M and both shortcuts work; a legacy terminal sends Enter and the message
-is sent, exactly as before. Nothing is swallowed either way.
+`ctrl+m`, `ctrl+t` and `ctrl+a` are read by the prompt itself rather than bound
+globally, so Enter keeps working: on a terminal without the Kitty keyboard
+protocol, Ctrl+M and Enter are the same byte (CR, `0x0D`). Textual enables the
+protocol's "disambiguate escape codes" flag, so a capable terminal sends a
+distinct sequence for Ctrl+M and all the shortcuts work; a legacy terminal sends
+Enter and the message is sent, exactly as before. Nothing is swallowed either
+way. `ctrl+a` is `home` in a text input, and that is precisely why it is read
+here: the prompt claims it before the widget turns it into a cursor move.
 
 In every list: `↑`/`↓` move, `PgUp`/`PgDn` jump, `Enter` chooses, `Tab`
 completes (writes the highlighted value into the input without committing), `Esc`
@@ -613,6 +809,7 @@ type.
 | --- | --- |
 | `/new` | Starts a new session, with its empty roadmap |
 | `/load` | Loads a saved session and its roadmap |
+| `/agent [name]` | Opens the agent picker; with a name, switches directly |
 | `/provider` | Manage provider accounts: add, rename, remove, activate |
 | `/model` | Picks the model for the active account |
 | `/effort [level]` | Opens the effort picker; with a level, sets it directly |
@@ -624,13 +821,19 @@ type.
 | `/quit` | Exits Sigil |
 
 While a turn runs, only the read-only commands are available: `/context`,
-`/debug`, `/sidebar`, `/mcp` and `/help`. `/new`, `/load`, `/provider`, `/model`,
-`/effort` and `/quit` are refused: they would swap the session, the model or the
-process under the running turn. A refused command comes back into the prompt
-after one yellow line in the chat, and nothing else changes.
+`/debug`, `/sidebar`, `/mcp` and `/help`. `/new`, `/load`, `/agent`, `/provider`,
+`/model`, `/effort` and `/quit` are refused: they would swap the session, the
+agent, the model or the process under the running turn. A refused command comes
+back into the prompt after one yellow line in the chat, and nothing else
+changes.
 
 The sidebar starts visible. Hiding it does not erase the roadmap: the agent keeps
 updating it and it comes back with `/sidebar on`.
+
+Under the prompt, the bar has two halves: the **agent in effect** on the left,
+always visible, and a transient message on the right (`Press Esc again to stop
+the agent`). They coexist: the agent does not disappear because the abort asked
+for attention.
 
 ### Sidebar
 

@@ -823,6 +823,7 @@ def _alive(pid: int) -> bool:
             return True
     return True
 
+
 def test_the_model_shortcut_is_refused_mid_turn_as_well():
     """`ctrl+m` reaches the picker without going through `handle_command`.
 

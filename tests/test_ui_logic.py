@@ -18,6 +18,7 @@ def test_match_commands_filters_by_prefix():
     assert names == [
         '/new',
         '/load',
+        '/agent',
         '/provider',
         '/model',
         '/effort',
