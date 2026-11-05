@@ -10,6 +10,14 @@ There are two different numbers and they must not be confused:
 
 The estimate is ``chars / 4``. It does not claim to be exact: it serves to compare
 blocks against each other and to project a delta. The exact number is the measured one.
+It underestimates by ~30% against what a provider bills, because a `chars / 4`
+heuristic cannot see the per-message envelope (role tokens, separators, the tool
+protocol wrapping) the API adds on top of the text. That is why the projection is
+anchored on the last measured value and only the delta is estimated: the envelope
+of the messages that are already in the measurement is already in the measurement.
+
+**What is measured is only what travels.** The `instructions` recorded on a saved
+`ModelRequest` are not part of the history: see `estimate_message_tokens`.
 """
 
 from __future__ import annotations
@@ -98,16 +106,20 @@ def tool_return_text(part: Any) -> str:
 
 
 def estimate_message_tokens(message: ModelMessage) -> int:
-    """Cost estimate of a whole message."""
-    total = sum(estimate_tokens(part_text(part)) for part in getattr(message, 'parts', ()))
-    # Instructions travel on the request but are not message parts.
-    # They can be an already rendered string or a list of `InstructionPart`.
-    instructions = getattr(message, 'instructions', None)
-    if isinstance(instructions, str):
-        total += estimate_tokens(instructions)
-    elif instructions:
-        total += sum(estimate_tokens(getattr(part, 'content', '') or '') for part in instructions)
-    return total
+    """Cost estimate of a whole message: its parts only.
+
+    The `instructions` a saved `ModelRequest` carries are **not** counted. They
+    are not resent with the history: pydantic-ai sends the instructions of the
+    request being made (`model_request_parameters.instruction_parts`), and the
+    ones recorded on earlier messages only document what that request was made
+    with. Counting them made a conversation weigh what its instructions weigh
+    once per message —a 12x overestimate on a measured session— and the surplus
+    pushed the history over the budget, so whole turns were discarded.
+
+    What the instructions cost on this request is measured once, from the
+    parameters (`src.engine.context.overhead`), and travels in `ContextBudget`.
+    """
+    return sum(estimate_tokens(part_text(part)) for part in getattr(message, 'parts', ()))
 
 
 def estimate_messages_tokens(messages: Sequence[ModelMessage]) -> int:

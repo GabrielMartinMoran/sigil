@@ -101,6 +101,97 @@ def test_projected_tokens_estimates_when_no_response():
     assert projected is not None and projected > 0
 
 
+# --- instructions are not part of the history ------------------------------
+
+
+def _with_instructions(text: str, instructions: str) -> ModelRequest:
+    """A request that carries the rendered instructions, as every saved one does."""
+    return ModelRequest(parts=[UserPromptPart(content=text)], instructions=instructions)
+
+
+def test_estimate_ignores_replayed_instructions():
+    """A saved request keeps its instructions, but they are not resent with the history.
+
+    pydantic-ai sends the instructions of the request being made
+    (`model_request_parameters.instruction_parts`); the ones recorded on earlier
+    messages only document what that request was made with. Counting them made a
+    three-turn conversation weigh 12x what it actually sent, and the surplus pushed
+    the history over the budget, so whole turns were discarded.
+    """
+    from src.engine.context.tokens import estimate_message_tokens
+
+    prompt = _user('hello')
+    with_instructions = _with_instructions('hello', 'x' * 40_000)
+
+    assert estimate_message_tokens(with_instructions) == estimate_message_tokens(prompt)
+
+
+def test_estimate_history_does_not_grow_with_replayed_instructions():
+    """Ten turns weigh the same whether or not their requests recorded instructions."""
+    from src.engine.context.tokens import estimate_messages_tokens
+
+    plain = [_turn(index) for index in range(10)]
+    replayed = [
+        [
+            _with_instructions(f'request {index}', 'system prompt ' * 3_000) if position == 0 else message
+            for position, message in enumerate(turn)
+        ]
+        for index, turn in enumerate(plain)
+    ]
+
+    flat_plain: list[ModelMessage] = [message for turn in plain for message in turn]
+    flat_replayed: list[ModelMessage] = [message for turn in replayed for message in turn]
+
+    assert estimate_messages_tokens(flat_replayed) == estimate_messages_tokens(flat_plain)
+
+
+def test_turns_survive_when_only_replayed_instructions_are_oversized():
+    """The regression: a long conversation loses its old turns to phantom tokens.
+
+    The real session: 451 requests carrying 34,520 characters of instructions each
+    (8,630 tokens, replayed 451 times). The content fits in the window; the
+    recorded instructions, which are never resent, made the estimate 12x its real
+    weight at the point where the trimming ran and the strategy discarded whole
+    turns.
+    """
+    from src.engine.context.tokens import estimate_tokens, part_text
+
+    body = 'system prompt ' * 1_500  # ~22k chars of instructions per request
+    messages: list[ModelMessage] = []
+    for index in range(10):
+        messages.append(_with_instructions(f'request {index}', body))
+        messages.append(_assistant(f'done {index}'))
+
+    # What actually travels: the parts, without the replayed instructions.
+    content_tokens = sum(estimate_tokens(part_text(part)) for message in messages for part in message.parts)
+    budget = ContextBudget(window=content_tokens * 2, output_reserve=0)
+
+    result = WindowedStrategy(keep_recent_turns=3).view(messages, budget)
+
+    assert result.dropped_messages == 0
+    assert len(result.messages) == len(messages)
+
+
+def test_projected_tokens_ignores_replayed_instructions():
+    """The panel's number does not take the instructions of past requests into account."""
+    from src.engine.context.tokens import projected_tokens
+
+    body = 'system prompt ' * 1_500
+    messages: list[ModelMessage] = [
+        _with_instructions('first', body),
+        _assistant('done'),
+        _with_instructions('second', body),
+        _assistant('done'),
+        _with_instructions('third', body),
+    ]
+
+    projected = projected_tokens(messages)
+
+    assert projected is not None
+    # Only the three prompts and two answers travel: ~10 tokens, not 50k.
+    assert projected < 100
+
+
 # --- budget ----------------------------------------------------------------
 
 
