@@ -974,8 +974,9 @@ The sections, from top to bottom:
 - **Loaded skills**: the skills the agent loaded in this session, in load order.
   It is the quick diagnostic of whether it is following the protocol.
 - **MCP**: the count goes inline with the title, in parentheses. Below, each
-  server is listed: `●` in green for the ones that work, `✗` in red for the ones
-  that do not. With no configured servers, the section does not appear.
+  server is listed with the same `•` the skills above it use: green for the ones
+  that work, `✗` in red for the ones that do not. With no configured servers, the
+  section does not appear.
 - **Roadmap**: the plan of the task, one line per item, with its notes. It is the
   last section, and the one read after every message.
 
@@ -996,9 +997,9 @@ Loaded skills
  • frontend-design
 
 MCP (3, 1 ✗)
- ● github
- ● playwright
- ● filesystem
+ • github
+ • playwright
+ • filesystem
  ✗ broken
 
 Roadmap

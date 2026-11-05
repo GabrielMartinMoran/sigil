@@ -173,7 +173,7 @@ def test_panel_marks_failures_with_a_cross():
     text = panel._build().plain
     assert 'MCP (1, 1 ✗)' in text
     assert ' ✗ broken' in text
-    assert ' ● github' in text
+    assert ' • github' in text
 
 
 def test_panel_lists_only_failures_when_none_ok():
@@ -182,7 +182,23 @@ def test_panel_lists_only_failures_when_none_ok():
     panel._servers = (MCPServerState(name='broken', ok=False),)
     text = panel._build().plain
     assert 'MCP (0, 1 ✗)' in text
-    assert '●' not in text
+    assert '•' not in text
+
+
+def test_mcp_and_skills_share_the_same_bullet():
+    """Both lists are the same kind of list, so they hang off the same mark.
+
+    A wider glyph on one of them reads as a different level of the hierarchy, and
+    the two sections sit three rows apart in a 34-column panel.
+    """
+    panel = _panel()
+    panel._skills = ('clean-code',)
+    panel._mcp_known = True
+    panel._servers = (MCPServerState(name='github', ok=True),)
+    lines = panel._build().plain.splitlines()
+
+    assert ' • clean-code' in lines
+    assert ' • github' in lines
 
 
 def test_panel_colors_ok_green_and_failures_red():
