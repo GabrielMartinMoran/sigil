@@ -421,9 +421,14 @@ class SigilApp(
             self.set_activity_label(f'Running {event.tool_name}')
         elif event.phase == 'error':
             await chat.add_tool_error(event.tool_name, event.error or 'failed')
-        elif event.phase == 'success' and event.tool_name == 'load_skill':
-            # The freshly loaded skill shows up in the sidebar without waiting for the turn.
-            self.refresh_sidebar()
+        else:
+            # The result itself arrives later, on the stream. This is the tool saying
+            # how it went (`9 passed in 0.45s`) and how long it took, which the stream
+            # does not carry.
+            chat.set_tool_summary(event.tool_name, event.summary, event.duration_ms)
+            if event.tool_name == 'load_skill':
+                # The freshly loaded skill shows up in the sidebar without waiting for the turn.
+                self.refresh_sidebar()
         # A tool call is the moment the tree can change: the bar catches up now
         # instead of on the next poll.
         if event.phase != 'start':

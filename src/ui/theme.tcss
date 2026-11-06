@@ -42,6 +42,12 @@ Screen {
  * drawn per line so the block reads as one indented column, not as a list. */
 .tool-call {
     margin-top: 1;
+    /* The rows are composed to an exact width by `ui.widgets.rows`: the result is
+     * flush right and the arguments are clipped, not wrapped. A wrapped tool row
+     * puts half a call on the next line, and the transcript stops reading as a
+     * column of calls. Repainting on resize is what keeps the right edge honest. */
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
 /* Consecutive calls share no gap: a run of them is one column under the answer. */

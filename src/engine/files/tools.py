@@ -7,6 +7,7 @@ lives in ``text``; the path logic, in ``paths``.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from src.engine.files.conflicts import same_file_conflict
@@ -26,10 +27,64 @@ from src.engine.files.text import (
 from src.engine.tooling.catalog import ToolCatalog
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.permission import ResourceKind, ToolGroup, ToolPermission
+from src.engine.tooling.presentation import ToolSummary, human_bytes
 from src.engine.tooling.registrar import ToolRegistrar
 
 _READ = ToolPermission(groups=(ToolGroup.READ,), resource='path', kind=ResourceKind.PATH)
 _WRITE = ToolPermission(groups=(ToolGroup.WRITE,), resource='path', kind=ResourceKind.PATH)
+
+
+def describe_read(args: Mapping[str, Any], result: Any) -> ToolSummary | None:
+    """How much was read: `120 lines`, `1-40 of 300`, `binary · 4.2 KB`.
+
+    The interesting fact about a read is its size, and whether the range was the
+    whole file or a slice: a reader looking at a call needs to know if the model saw
+    six lines or six hundred before judging what it does next.
+    """
+    if not isinstance(result, FileContent):
+        return None
+    if result.binary:
+        return ToolSummary(f'binary · {human_bytes(result.size)}')
+    if result.total_lines:
+        shown = _line_count(result)
+        if result.start_line and result.start_line > 1 or (result.end_line and result.end_line < result.total_lines):
+            return ToolSummary(f'{shown} of {result.total_lines} lines')
+        return ToolSummary(f'{shown} lines')
+    return ToolSummary(human_bytes(result.size))
+
+
+def _line_count(result: FileContent) -> int:
+    """Lines actually returned, counted from the content and not from the range."""
+    return len(split_lines(result.content)) if result.content else 0
+
+
+def describe_write(args: Mapping[str, Any], result: Any) -> ToolSummary | None:
+    """What the write did: `created · 1.2 KB`, `appended · 240 B`, `written · 4 KB`."""
+    if not isinstance(result, WriteResult):
+        return None
+    if result.appended:
+        verb = 'appended'
+    elif result.created:
+        verb = 'created'
+    else:
+        verb = 'written'
+    return ToolSummary(f'{verb} · {human_bytes(result.bytes_written)}')
+
+
+def describe_patch(args: Mapping[str, Any], result: Any) -> ToolSummary | None:
+    """How many edits landed: `3 replacements`.
+
+    Not a line delta. `PatchResult` carries byte counts, not line counts, and counting
+    lines per call would mean diffing the file inside the tool — the repo-level
+    `DiffStat` already answers "how much did this turn change" better than a per-call
+    line count would.
+    """
+    if not isinstance(result, PatchResult):
+        return None
+    count = result.replacements
+    if count == 0:
+        return ToolSummary('no replacement')
+    return ToolSummary(f'{count} replacement' + ('s' if count != 1 else ''))
 
 
 def _read_line_range(target: Any, path: str, size: int, start_line: int | None, end_line: int | None) -> FileContent:
@@ -132,7 +187,7 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None, catalog: T
     """Registers the file tools on a pydantic-ai agent."""
     tools = ToolRegistrar(agent, logger, catalog)
 
-    @tools.tool(permission=_READ)
+    @tools.tool(permission=_READ, describe=describe_read)
     def read_file(
         path: str,
         start_line: int | None = None,
@@ -159,7 +214,7 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None, catalog: T
             return _read_line_range(target, path, size, start_line, end_line)
         return _read_whole(target, size, max_bytes)
 
-    @tools.tool(concurrency=same_file_conflict, permission=_WRITE)
+    @tools.tool(concurrency=same_file_conflict, permission=_WRITE, describe=describe_write)
     def write_file(path: str, content: str, append: bool = False) -> WriteResult:
         """Write or append to a text file in the workspace or the temporary directory.
 
@@ -183,7 +238,7 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None, catalog: T
             handle.write(data)
         return WriteResult(path=str(target), bytes_written=len(data), created=created, appended=append)
 
-    @tools.tool(concurrency=same_file_conflict, permission=_WRITE)
+    @tools.tool(concurrency=same_file_conflict, permission=_WRITE, describe=describe_patch)
     def patch_file(
         path: str,
         old_string: str | None = None,

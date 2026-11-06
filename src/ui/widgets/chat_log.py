@@ -42,9 +42,11 @@ from textual.widgets import Static
 from src.engine.attachments.content import describe_attachments, images_in
 from src.engine.attachments.image_attachment import ImageAttachment
 from src.engine.context.images import image_size
+from src.engine.tooling.presentation import ToolSummary, display_name
 from src.ui.messages import NodeOpened
 from src.ui.palette import color
 from src.ui.widgets.reading import ReadOnlyScroll
+from src.ui.widgets.rows import fit
 
 RENDER_INTERVAL = 0.08
 """Seconds between Markdown re-renders while streaming.
@@ -84,6 +86,20 @@ def preview(value: Any, limit: int = TOOL_OUTPUT_WIDTH) -> str:
     except Exception:  # noqa: BLE001 - a broken `__str__` must not break the chat
         text = object.__repr__(value)
     return text if len(text) <= limit else text[: limit - 1] + '…'
+
+
+def format_duration(duration_ms: float | None) -> str:
+    """How long a call took, in one unit and one precision.
+
+    Milliseconds below a second — that is where tools live, and `450ms` reads faster
+    than `0.45s` — and seconds with a decimal above it. No third unit: a turn is not
+    going to have a tool that takes an hour, and if it does, `3700.0s` says it.
+    """
+    if duration_ms is None:
+        return ''
+    if duration_ms < 1000:
+        return f'{duration_ms:.0f}ms'
+    return f'{duration_ms / 1000:.1f}s'
 
 
 def format_tool_args(args: Any) -> str:
@@ -317,9 +333,18 @@ class AssistantBlock(Static):
 class ToolCallBlock(Static):
     """A tool call and its result, drawn as one indented block.
 
-    The header carries the call and a state mark; the body carries the beginning of
-    the output, dimmed. The state mark is the only thing that changes while the call
-    runs, so a long turn shows which tool is the one that has not returned.
+    The header carries the call and, flush right, what came of it: how long it took
+    and the one line the tool chose to describe its result (`9 passed in 0.45s`,
+    `3 replacements`). That summary comes from the tool itself — see
+    `engine.tooling.presentation` — and not from `str(result)`, which is how a
+    Pydantic repr used to end up in the middle of a conversation.
+
+    Two things are deliberately separate. The **glyph** says whether the call itself
+    came back (`✓`) or raised (`✗`). The **color of the summary** says how it went
+    (`good`, `bad`): a test run that fails is a successful call with a bad result, and
+    painting that with `✗` would make it indistinguishable from a broken tool.
+
+    The body carries the beginning of the output, dimmed.
     """
 
     #: Fields the subclass needs before the first paint.
@@ -333,6 +358,8 @@ class ToolCallBlock(Static):
         self._ok = True
         self._error: str | None = None
         self._pending = True
+        self._summary: ToolSummary | None = None
+        self._duration_ms: float | None = None
         self._prepare()
         self._update_content()
 
@@ -359,8 +386,23 @@ class ToolCallBlock(Static):
         self._pending = False
         self._update_content()
 
+    def set_summary(self, summary: ToolSummary | None, duration_ms: float | None = None) -> None:
+        """Records what the tool said about itself, and how long it took.
+
+        It arrives from the tool event, which is emitted when the tool returns — before
+        the run streams the result back. The block can therefore say "3 replacements,
+        120 ms" while the output is still on its way to the body.
+        """
+        self._summary = summary
+        self._duration_ms = duration_ms
+        self._update_content()
+
     def repaint(self) -> None:
         """Rebuilds the block after a theme change; see `ChatLog.repaint`."""
+        self._update_content()
+
+    def on_resize(self) -> None:
+        """Rebuilds the header: the right column is aligned to the current width."""
         self._update_content()
 
     def _update_content(self) -> None:
@@ -372,15 +414,54 @@ class ToolCallBlock(Static):
         return Group(*lines)
 
     def _header(self) -> Text:
+        """The call on the left, the outcome flush right, on the block's own width.
+
+        The state mark goes **first**, right after the gutter, and not at the end of the
+        call. At the end it was the first thing a narrow row clipped — the row that most
+        needed to say "this one failed" was the one that lost its mark. Leading it also
+        matches how the call reads: the outcome of the call is what is being scanned.
+        """
         border = color(self, 'tool-border')
         text = Text()
         text.append(GUTTER, style=border)
-        text.append(f'{self._name}', style=f'bold {color(self, "tool-title")}')
+        text.append(f'{self._state_mark()} ', style=border)
+        text.append(display_name(self._name), style=f'bold {color(self, "tool-title")}')
         arguments = format_tool_args(self._args)
         if arguments:
             text.append(f' {arguments}', style=color(self, 'muted'))
-        text.append(f'  {self._state_mark()}', style=border)
+        return fit(text, self._outcome(), self.size.width)
+
+    def _outcome(self) -> Text | None:
+        """`9 passed in 0.45s · 1.2s`: the tool's summary, then how long it took.
+
+        Nothing while the call runs — the `…` mark already says that a timer would be
+        the only thing moving. Nothing after a reload either: the duration lives in the
+        event and is not persisted, and `0.0s` would be a lie.
+        """
+        if self._pending:
+            return None
+        parts: list[tuple[str, str]] = []
+        if self._summary is not None:
+            parts.append((self._summary.text, self._status_style(self._summary.status)))
+        elapsed = format_duration(self._duration_ms)
+        if elapsed:
+            parts.append((elapsed, color(self, 'muted')))
+        if not parts:
+            return None
+        text = Text(no_wrap=True, overflow='ellipsis')
+        for index, (content, style) in enumerate(parts):
+            if index:
+                text.append(' · ', style=color(self, 'muted'))
+            text.append(content, style=style)
         return text
+
+    def _status_style(self, status: str) -> str:
+        """A bad result is red, a good one green, an unknown one muted.
+
+        The color is the second axis: it says how the call went, while the glyph says
+        whether it came back at all.
+        """
+        return {'good': color(self, 'success'), 'bad': color(self, 'error')}.get(status, color(self, 'muted'))
 
     def _state_mark(self) -> str:
         """`…` while running, `✓` or `✗` after. One column, so nothing shifts."""
@@ -610,13 +691,36 @@ class ChatLog(ReadOnlyScroll):
     def __init__(self, *, reasoning_visible: bool = False, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._current: AssistantBlock | None = None
-        self._open_tool: ToolCallBlock | None = None
+        self._open_tools: dict[str, list[ToolCallBlock]] = {}
         self._last_block: Static | None = None
         self._reasoning_visible = reasoning_visible
 
     def on_mount(self) -> None:
         # Anchors the view to the bottom from the start.
         self.anchor()
+
+    # --- open calls -----------------------------------------------------------
+
+    def _claim(self, name: str) -> ToolCallBlock | None:
+        """Takes the oldest open block for ``name``, or ``None``.
+
+        A dict of lists and not a single slot, because a batch runs in parallel: the
+        model asks for three tools, all three emit `start`, and the results come back
+        in whatever order they finish. With one slot, the second start overwrote the
+        first and the first result — finding its block gone — opened a *new* one with
+        no arguments, which is how a batch used to turn into six blocks that could not
+        be matched to each other.
+
+        Oldest first: a tool called twice in the same batch gets its results in the
+        order it was asked for, which is the order a reader expects.
+        """
+        blocks = self._open_tools.get(name)
+        if not blocks:
+            return None
+        return blocks.pop(0)
+
+    def _remember(self, block: ToolCallBlock) -> None:
+        self._open_tools.setdefault(block.name, []).append(block)
 
     # --- reasoning visibility ----------------------------------------------
 
@@ -646,7 +750,7 @@ class ChatLog(ReadOnlyScroll):
     async def add_user(self, text: str, *, queued: bool = False, attachments: Sequence[ImageAttachment] = ()) -> Static:
         """One user message. `queued` marks one the running turn has not read yet."""
         self._current = None
-        self._open_tool = None
+        self._open_tools.clear()
         widget = Static(_user_renderable(text, queued=queued, attachments=attachments), classes='user-msg')
         if queued:
             # Kept so the line can be repainted when the agent picks it up.
@@ -668,7 +772,7 @@ class ChatLog(ReadOnlyScroll):
 
     async def add_notice(self, text: str, *, style: str = 'yellow') -> None:
         self._current = None
-        self._open_tool = None
+        self._open_tools.clear()
         await self._append(Static(Text(text, style=style), classes='notice'))
 
     async def add_tool_call(self, name: str, args: Any) -> None:
@@ -681,7 +785,7 @@ class ChatLog(ReadOnlyScroll):
         self._current = None
         follows_block = isinstance(self._last_block, ToolCallBlock)
         block = block_for(name, args, classes='tool-call tight' if follows_block else 'tool-call')
-        self._open_tool = block
+        self._remember(block)
         self._last_block = block
         await self._append(block)
 
@@ -692,29 +796,44 @@ class ChatLog(ReadOnlyScroll):
         wrapper runs, or a history replayed from a session saved before this block
         existed. Drawing a block with only the result keeps the transcript whole.
         """
-        block = self._open_tool
-        if block is None or block.name != name:
+        block = self._claim(name)
+        if block is None:
             block = block_for(name, {}, classes='tool-call')
             await self._append(block)
             self._last_block = block
         block.set_result(output, ok=ok)
-        self._open_tool = None
+
+    def set_tool_summary(self, name: str, summary: ToolSummary | None, duration_ms: float | None) -> bool:
+        """Adds what the tool said about itself to its open block.
+
+        It arrives from the tool event, which is emitted when the tool returns. The
+        block is matched by name and not by identity because the event and the stream
+        are two different paths into the same call; an open block that is not this
+        tool's is left alone. Returns whether a block took it.
+        """
+        blocks = self._open_tools.get(name)
+        if not blocks:
+            return False
+        # The summary belongs to the call that just finished, and it is the first one
+        # still open: taking it out of the list here would close a block that is still
+        # waiting for its own result, so it is peeked at and not claimed.
+        blocks[0].set_summary(summary, duration_ms)
+        return True
 
     async def add_tool_error(self, name: str, message: str) -> None:
         """Paints a failed call: the tool ran and raised, which is not a tool result."""
         self._current = None
-        block = self._open_tool if self._open_tool is not None and self._open_tool.name == name else None
+        block = self._claim(name)
         if block is None:
             block = block_for(name, {}, classes='tool-call')
             await self._append(block)
             self._last_block = block
         block.set_error(message)
-        self._open_tool = None
 
     async def begin_response(self) -> None:
         """Marks the start of a new model response."""
         self._current = None
-        self._open_tool = None
+        self._open_tools.clear()
 
     async def _ensure_block(self) -> None:
         if self._current is None:
@@ -757,7 +876,7 @@ class ChatLog(ReadOnlyScroll):
 
     async def clear(self) -> None:
         self._current = None
-        self._open_tool = None
+        self._open_tools.clear()
         await self.remove_children()
         # After clearing, the new history follows the bottom again.
         self.anchor()
@@ -780,7 +899,7 @@ class ChatLog(ReadOnlyScroll):
         """
         batches: list[Static] = []
         # A tool block receives its result after it is mounted, which is what
-        # `add_tool_result` does through `_open_tool`.
+        # `add_tool_result` does through the open-call registry.
         open_tool: ToolCallBlock | None = None
         current: AssistantBlock | None = None
 
@@ -838,5 +957,5 @@ class ChatLog(ReadOnlyScroll):
             for widget in batches:
                 await self.mount(widget)
         self._current = None
-        self._open_tool = None
+        self._open_tools.clear()
         self._last_block = batches[-1]

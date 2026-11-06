@@ -21,6 +21,7 @@ from src.engine.roadmap.models.todo_item import TodoItem
 from src.engine.roadmap.stores import RoadmapStores
 from src.engine.sessions.session_store import SessionStore
 from src.engine.themes import ThemeRegistry
+from src.engine.tooling.presentation import display_name
 from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
@@ -534,7 +535,9 @@ def test_a_tool_call_and_its_result_share_one_block():
                 blocks = [child for child in chat.children if isinstance(child, ToolCallBlock)]
                 assert len(blocks) == 1
                 text = render_text(blocks[0]._build())
-                assert 'read_file' in text
+                # The row shows the tool's display name, not its callable name: `read`,
+                # not `read_file`. See `engine.tooling.presentation`.
+                assert display_name('read_file') in text
                 assert 'a.py' in text
                 assert 'line one' in text
                 assert '✓' in text
