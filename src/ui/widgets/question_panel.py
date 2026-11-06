@@ -19,13 +19,13 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
-from textual.css.query import NoMatches
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from src.engine.interaction.models.question_answer import QuestionAnswer
 from src.engine.interaction.models.question_item import QuestionItem
 from src.engine.interaction.models.question_option import QuestionOption
+from src.ui.widgets.reading import SCROLL_DOWN_KEY, SCROLL_LINES, SCROLL_UP_KEY, current_pane, scroll_pane
 
 CUSTOM_ID = '__custom__'
 """Id of the free-text row of the list."""
@@ -34,11 +34,6 @@ HELP_TEXT = 'Enter answer · alt+←/→ switch · ctrl+↑/↓ chat · Esc canc
 
 _PREVIOUS_KEY = 'alt+left'
 _NEXT_KEY = 'alt+right'
-_SCROLL_UP_KEY = 'ctrl+up'
-_SCROLL_DOWN_KEY = 'ctrl+down'
-
-_SCROLL_LINES = 5
-"""Lines the conversation moves per key: enough to read back, not a full page."""
 
 _ANSWER_MARK = '✓'
 _MARKER_WIDTH = 2
@@ -70,8 +65,8 @@ class QuestionPanel(VerticalScroll):
         Binding(_PREVIOUS_KEY, 'previous_question', 'Previous question', show=False),
         Binding(_NEXT_KEY, 'next_question', 'Next question', show=False),
         Binding('tab', 'switch_field', 'List / text field', show=False),
-        Binding(_SCROLL_UP_KEY, 'scroll_conversation(-1)', 'Read up', show=False),
-        Binding(_SCROLL_DOWN_KEY, 'scroll_conversation(1)', 'Read down', show=False),
+        Binding(SCROLL_UP_KEY, 'scroll_conversation(-1)', 'Read up', show=False),
+        Binding(SCROLL_DOWN_KEY, 'scroll_conversation(1)', 'Read down', show=False),
         Binding('escape', 'cancel', 'Cancel', show=False),
     ]
 
@@ -96,6 +91,8 @@ class QuestionPanel(VerticalScroll):
         yield OptionList(id='question-options')
         yield Input(placeholder='Type your answer…', id='question-custom')
         yield Static(id='question-hint')
+        # The clipping to one line is CSS (`text-wrap: nowrap` on `#question-help`):
+        # a `no_wrap` here is ignored, because the widget re-wraps to its own width.
         yield Static(HELP_TEXT, id='question-help')
 
     def on_mount(self) -> None:
@@ -155,10 +152,35 @@ class QuestionPanel(VerticalScroll):
         custom = self.query_one('#question-custom', Input)
         custom.display = self._custom_open[self._index]
         custom.value = self._texts[self._index]
-        if custom.display:
-            custom.focus()
-        else:
-            self.query_one(OptionList).focus()
+        self.focus_field()
+
+    # --- ownership of the keyboard -----------------------------------------
+
+    def preferred_field(self) -> Input | OptionList:
+        """Where the keys belong right now: the open field, or the list.
+
+        The panel is asking and the turn is blocked on the answer, so the answer
+        is what the keyboard is for (see `holds_keys`).
+        """
+        custom = self.query_one('#question-custom', Input)
+        return custom if custom.display else self.query_one(OptionList)
+
+    def holds_keys(self, widget: object) -> bool:
+        """Whether the focus is already somewhere the panel accepts it.
+
+        Both of its fields are accepted, not only the preferred one: `Tab` moves
+        between them on purpose, and a guard that insisted on the preferred field
+        would undo it. Anything else — the transcript, the side panel, the panel's
+        own frame — is bounced back to `preferred_field`.
+        """
+        if widget is self.query_one(OptionList):
+            return True
+        custom = self.query_one('#question-custom', Input)
+        return bool(custom.display) and widget is custom
+
+    def focus_field(self) -> None:
+        """Gives the keys to the field the question is asking through."""
+        self.preferred_field().focus()
 
     def _paint_answers(self) -> None:
         """What has been answered so far: the record survives moving around.
@@ -185,16 +207,31 @@ class QuestionPanel(VerticalScroll):
         ordered = _ordered_options(item)
         answered = draft.answer if draft is not None and not draft.custom else None
         options = self.query_one(OptionList)
+        width = _row_width(options)
         options.clear_options()
         for index, option in enumerate(ordered):
-            options.add_option(Option(_option_row(option, chosen=option.label == answered), id=f'opt-{index}'))
+            row = _option_row(option, chosen=option.label == answered, width=width)
+            options.add_option(Option(row, id=f'opt-{index}'))
         if item.allow_custom:
             label = Text(' ' * _MARKER_WIDTH)
             if draft is not None and draft.custom:
                 label.append(f'{_ANSWER_MARK} ')
             label.append('Other (type your own)…', style='italic')
+            if width > 0 and label.cell_len > width:
+                label.truncate(width, overflow='ellipsis')
             options.add_option(Option(label, id=CUSTOM_ID))
         options.highlighted = _chosen_index(ordered, item, draft, custom_open=self._custom_open[self._index])
+
+    def on_resize(self) -> None:
+        """Repaints the rows at the new width, but only while asking.
+
+        The rows are clipped to the width the list has, so a resize has to redo the
+        clipping: a terminal narrowed while a question is open would otherwise keep
+        rows cut for the old width, or wrap them.
+        """
+        if self._future is None or not self._questions:
+            return
+        self._paint_options(self._questions[self._index], self._drafts[self._index])
 
     def _set_hint(self, text: str) -> None:
         hint = self.query_one('#question-hint', Static)
@@ -287,32 +324,10 @@ class QuestionPanel(VerticalScroll):
         answer usually depends on what is written above, and shrinking the panel
         to scroll the chat instead would defeat the point.
         """
-        pane = self._reading_pane()
+        pane = current_pane(self.screen)
         if pane is None:
             return
-        step = _SCROLL_LINES if direction > 0 else -_SCROLL_LINES
-        target = max(0, int(pane.scroll_offset.y) + step)
-        pane.scroll_to(y=target, animate=False)
-        # Moving away from the bottom releases the anchor, so a message that
-        # arrives while reading does not drag the view down.
-        if direction < 0:
-            pane.release_anchor()
-
-    def _reading_pane(self) -> VerticalScroll | None:
-        """What the ctrl+arrows scroll: the chat, or the debug view when it is open.
-
-        The debug view replaces the chat, so only one of them is on screen.
-        """
-        candidates = (('#chat', '#chat'), ('#debug', '#debug-scroll'))
-        for holder_selector, pane_selector in candidates:
-            try:
-                holder = self.screen.query_one(holder_selector)
-                pane = self.screen.query_one(pane_selector, VerticalScroll)
-            except NoMatches:
-                continue
-            if holder.display:
-                return pane
-        return None
+        scroll_pane(pane, direction * SCROLL_LINES)
 
     def action_cancel(self) -> None:
         """Esc: the way out of a question you do not want to answer.
@@ -362,15 +377,28 @@ class QuestionPanel(VerticalScroll):
 # --- helpers ---------------------------------------------------------------
 
 
-def _option_row(option: QuestionOption, *, chosen: bool) -> Text:
-    """One row of the list: marker, label, description and recommendation."""
-    row = Text()
+def _option_row(option: QuestionOption, *, chosen: bool, width: int = 0) -> Text:
+    """One row of the list: marker, label, recommendation, then description.
+
+    One line, always: a wrapped option row makes the list read as two lists, and at
+    the narrow sizes it puts the description on a line of its own with no label
+    above it. The clipping is done here and not left to the widget because
+    `OptionList` renders each option through its own `Visual` at the list's width,
+    which discards the `Text`'s own `no_wrap` and wraps anyway. So the row is cut
+    to the width the list actually has, and repainted when that width changes.
+
+    The order matters for the same reason: the description is the part that gets
+    clipped, never the label or the reason an option is recommended.
+    """
+    row = Text(no_wrap=True, overflow='ellipsis')
     row.append(f'{_ANSWER_MARK} ' if chosen else ' ' * _MARKER_WIDTH, style='green bold')
     row.append(option.label, style='bold' if chosen else '')
-    if option.description:
-        row.append(f'  — {option.description}', style='dim')
     if option.recommended:
         row.append('  [recommended]', style='bold cyan')
+    if option.description:
+        row.append(f'  — {option.description}', style='dim')
+    if width > 0 and row.cell_len > width:
+        row.truncate(width, overflow='ellipsis')
     return row
 
 
@@ -405,6 +433,22 @@ def _option_index(option_id: str | None) -> int:
     """``opt-<n>`` → ``n``."""
     assert option_id is not None
     return int(option_id.split('-', 1)[1])
+
+
+def _row_width(options: OptionList) -> int:
+    """Cells one row of the list can use, or ``0`` when it has not been laid out.
+
+    ``scrollable_content_region`` is what `OptionList` itself renders against, so
+    the clipping lands exactly where the widget would have wrapped. Before the first
+    layout it is empty and the rows are painted at full length; `on_resize` repaints
+    them as soon as the list has a width.
+    """
+    width = options.scrollable_content_region.width
+    if width <= 0:
+        return 0
+    # One column of slack: the vertical scrollbar appears in the same region it
+    # shrinks, and a row that ends exactly at the edge triggers it.
+    return max(1, width - 1)
 
 
 def _clip(text: str, limit: int) -> str:

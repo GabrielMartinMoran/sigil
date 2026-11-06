@@ -14,6 +14,7 @@ from src.engine.tooling.catalog import ToolCatalog
 from src.engine.tooling.concurrency import ConcurrencyGuard
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.permission import ToolPermission
+from src.engine.tooling.presentation import Describe
 from src.engine.tooling.wrapper import wrap_tool
 
 REQUIRES_METADATA_KEY = 'sigil_requires'
@@ -57,6 +58,7 @@ class ToolRegistrar:
         concurrency: ConcurrencyGuard | None = None,
         permission: ToolPermission | None = None,
         requires: str | tuple[str, ...] | None = None,
+        describe: Describe | None = None,
         **tool_kwargs: Any,
     ) -> Any:
         """Decorator equivalent to ``agent.tool_plain`` with logging.
@@ -65,6 +67,8 @@ class ToolRegistrar:
         previous ones of the same model response. ``permission`` declares what
         the tool is for the agent profile, which is what lets a profile deny a
         whole group or a specific path instead of only the tool by name.
+        ``describe`` is how the tool summarizes its own result in one line for the
+        transcript; see ``presentation``.
         """
         return self._make(
             func,
@@ -74,6 +78,7 @@ class ToolRegistrar:
             concurrency=concurrency,
             permission=permission,
             requires=requires,
+            describe=describe,
             **tool_kwargs,
         )
 
@@ -86,6 +91,7 @@ class ToolRegistrar:
         concurrency: ConcurrencyGuard | None = None,
         permission: ToolPermission | None = None,
         requires: str | tuple[str, ...] | None = None,
+        describe: Describe | None = None,
         **tool_kwargs: Any,
     ) -> Any:
         """Decorator equivalent to ``agent.tool`` (it receives a ``RunContext``)."""
@@ -97,6 +103,7 @@ class ToolRegistrar:
             concurrency=concurrency,
             permission=permission,
             requires=requires,
+            describe=describe,
             **tool_kwargs,
         )
 
@@ -110,6 +117,7 @@ class ToolRegistrar:
         concurrency: ConcurrencyGuard | None = None,
         permission: ToolPermission | None = None,
         requires: str | tuple[str, ...] | None = None,
+        describe: Describe | None = None,
         **tool_kwargs: Any,
     ) -> Callable[..., Any]:
         """Registers an already defined function and returns the wrapper."""
@@ -121,6 +129,7 @@ class ToolRegistrar:
             concurrency=concurrency,
             permission=permission,
             requires=requires,
+            describe=describe,
             **tool_kwargs,
         )
 
@@ -134,6 +143,7 @@ class ToolRegistrar:
         concurrency: ConcurrencyGuard | None = None,
         permission: ToolPermission | None = None,
         requires: str | tuple[str, ...] | None = None,
+        describe: Describe | None = None,
         **tool_kwargs: Any,
     ) -> Any:
         def decorator(target: Callable[..., Any]) -> Callable[..., Any]:
@@ -144,6 +154,7 @@ class ToolRegistrar:
                 logger=self.logger,
                 takes_ctx=use_context,
                 concurrency=concurrency,
+                describe=describe,
             )
             needed = _as_requirements(requires)
             self.catalog.declare(tool_name, permission=permission, requires=needed)

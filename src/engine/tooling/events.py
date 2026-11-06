@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from src.engine.tooling.presentation import ToolSummary
+
 ToolPhase = Literal['start', 'success', 'error']
 """Phase of a call: started, finished fine or failed."""
 
@@ -40,3 +42,10 @@ class ToolCallEvent:
     duration_ms: float | None = None
     result_preview: str | None = None
     error: str | None = None
+    summary: ToolSummary | None = None
+    """What the tool says about its result, when it declares a presenter.
+
+    It is not the same as ``result_preview``: the preview is the raw result cut to one
+    line, for anyone inspecting the log, while the summary is the sentence the tool
+    chose because it is the one worth reading. The chat shows this one.
+    """

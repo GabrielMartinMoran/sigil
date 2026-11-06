@@ -1,8 +1,13 @@
 """Escape is the abort, and it has to survive where the focus actually is.
 
 `Esc` is read by the prompt while the prompt has the focus, and by the app
-binding when something else does. Two paths, one behaviour: this file walks both
-so a change in one does not silently break the other.
+binding when nothing does. Two paths, one behaviour: this file walks both so a
+change in one does not silently break the other.
+
+There is no third place to put the focus: the transcript and the side panel are
+`ReadOnlyScroll`s, so the keyboard never leaves the composer (see
+`tests/test_focus_ownership.py`). "No focus at all" is the state that remains, and
+it is a real one — a widget that just went away leaves it behind.
 """
 
 import asyncio
@@ -77,7 +82,7 @@ def test_escape_from_the_focused_prompt_asks_then_stops():
 
 
 def test_escape_works_when_the_focus_is_not_in_the_prompt():
-    """With the keys elsewhere, the app binding is the one that answers."""
+    """With no focused widget, the app binding is the one that answers."""
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -91,8 +96,8 @@ def test_escape_works_when_the_focus_is_not_in_the_prompt():
                     if app._current_run is not None:
                         break
 
-                # The chat takes the focus: the prompt no longer sees the key.
-                app.query_one(ChatLog).focus()
+                # Nobody has the focus: the prompt no longer sees the key.
+                app.set_focus(None)
                 await pilot.pause()
                 assert app.focused is not app.query_one(PromptInput)
 
@@ -139,7 +144,7 @@ def test_any_other_key_cancels_the_abort_even_with_the_focus_elsewhere():
                     if app._current_run is not None:
                         break
 
-                app.query_one(ChatLog).focus()
+                app.set_focus(None)
                 await pilot.pause()
                 await pilot.press('escape')
                 await pilot.pause()

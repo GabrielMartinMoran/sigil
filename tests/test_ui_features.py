@@ -14,12 +14,14 @@ from pathlib import Path
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
+from textual.containers import VerticalScroll
 
 from src.engine.preferences import Preferences, PreferencesStore
 from src.engine.roadmap.models.todo_item import TodoItem
 from src.engine.roadmap.stores import RoadmapStores
 from src.engine.sessions.session_store import SessionStore
 from src.engine.themes import ThemeRegistry
+from src.engine.tooling.presentation import display_name
 from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
@@ -280,8 +282,12 @@ def test_the_sidebar_is_one_panel_with_the_roadmap_as_its_last_section():
                 await pilot.pause()
                 sidebar = app.query_one('#sidebar')
                 assert type(sidebar).__name__ == 'SidebarPanel'
-                # One box: the scroll and the body inside it, and nothing else.
-                assert [type(child).__name__ for child in sidebar.children] == ['VerticalScroll']
+                # One box: the scroll and the body inside it, and nothing else. The
+                # scroll is a `ReadOnlyScroll` — the panel is read, never typed
+                # into — which is a `VerticalScroll` all the same.
+                children = list(sidebar.children)
+                assert len(children) == 1
+                assert isinstance(children[0], VerticalScroll)
 
                 panel = app.query_one(SidebarPanel)
                 text = panel.text
@@ -514,6 +520,8 @@ def test_an_unknown_argument_reports_the_usage():
 
 
 def test_a_tool_call_and_its_result_share_one_block():
+    """The result lands inside the call, and `expanded` is what makes it visible."""
+
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
@@ -528,8 +536,11 @@ def test_a_tool_call_and_its_result_share_one_block():
 
                 blocks = [child for child in chat.children if isinstance(child, ToolCallBlock)]
                 assert len(blocks) == 1
+                blocks[0].set_expanded(True)
                 text = render_text(blocks[0]._build())
-                assert 'read_file' in text
+                # The row shows the tool's display name, not its callable name: `read`,
+                # not `read_file`. See `engine.tooling.presentation`.
+                assert display_name('read_file') in text
                 assert 'a.py' in text
                 assert 'line one' in text
                 assert '✓' in text
@@ -571,6 +582,9 @@ def test_long_output_is_truncated_with_a_count():
                 from src.ui.widgets.chat_log import ToolCallBlock
 
                 block = next(child for child in chat.children if isinstance(child, ToolCallBlock))
+                # Collapsed, the row already says how much output there is.
+                assert '… 40 lines' in render_text(block._build())
+                block.set_expanded(True)
                 text = render_text(block._build())
                 assert '… +34 more' in text
                 assert '39' not in text
@@ -612,6 +626,7 @@ def test_indentation_of_the_output_is_kept():
                 from src.ui.widgets.chat_log import ToolCallBlock
 
                 block = next(child for child in chat.children if isinstance(child, ToolCallBlock))
+                block.set_expanded(True)
                 assert '  │     return 1' in render_text(block._build())
 
     asyncio.run(inner())

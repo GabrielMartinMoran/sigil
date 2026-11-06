@@ -1,9 +1,10 @@
 /* Sigil stylesheet.
  *
  * Every color here is a theme variable. The roles (`$primary`, `$panel`, …) come
- * from the theme's palette; the rest (`$tool-border`, `$reasoning`, …) are declared
- * by each theme file and defaulted in `ThemeMixin.theme_variable_defaults`, so a
- * theme that only sets `primary` still parses and still looks intentional.
+ * from the theme's palette; the rest (`$tool-border`, `$reasoning`, `$muted`, …)
+ * are declared by each theme file and defaulted in
+ * `ThemeMixin.get_theme_variable_defaults`, so a theme that only sets `primary`
+ * still parses and still looks intentional.
  */
 
 Screen {
@@ -41,6 +42,22 @@ Screen {
  * drawn per line so the block reads as one indented column, not as a list. */
 .tool-call {
     margin-top: 1;
+    /* The rows are composed to an exact width by `ui.widgets.rows`: the result is
+     * flush right and the arguments are clipped, not wrapped. A wrapped tool row
+     * puts half a call on the next line, and the transcript stops reading as a
+     * column of calls. Repainting on resize is what keeps the right edge honest. */
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* A batch of calls: the header describes the step, the rows are the calls. The gap
+ * above the batch belongs to the header and every row of the batch is `tight`, so
+ * spacing is decided in one place instead of being fought over by a header that may
+ * be hidden (a batch of one call) and the row under it. */
+.tool-group {
+    margin-top: 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
 /* Consecutive calls share no gap: a run of them is one column under the answer. */
@@ -63,14 +80,27 @@ Screen {
 #prompt {
     height: auto;
     max-height: 10;
-    border: round $accent;
-    border-title-color: $text-muted;
+    /* The resting border is muted on purpose, and it is the same width and style
+     * as the focused one: an unfocused composer still looks like a composer, so
+     * the only way to know it is not listening is to say so, and gaining the focus
+     * must not move a single cell. `$muted` is Sigil's own variable, defaulted by
+     * `ThemeMixin.get_theme_variable_defaults` so the sheet parses before any
+     * theme is registered. */
+    border: round $muted;
     padding: 0 1;
     scrollbar-size-vertical: 1;
 }
 
 #prompt:focus {
     border: round $accent;
+}
+
+/* The composer while a subagent is on screen: read-only, and it says so. Textual
+ * already fades a disabled focusable widget, which dims the resting border
+ * further; the text opacity is what makes it read as "not for you right now"
+ * rather than as a slightly dimmer version of the same thing. */
+#prompt:disabled {
+    text-opacity: 60%;
 }
 
 /* --- menu ---------------------------------------------------------------- */
@@ -196,11 +226,18 @@ ThemePickerScreen {
     height: 1fr;
 }
 
-/* Not a modal: it borrows height from the chat and lets the conversation stay
- * readable while the question is answered. */
+/* The questions take the composer's place: same width as the screen, same accent
+ * border, same padding, right above the status bar. That is the whole point of the
+ * layout — the box that owns the keyboard is the box that looks like it does, and
+ * the composer is not on screen pretending to be editable while a question is open.
+ *
+ * It is not a modal and it does not cover the conversation: it borrows height from
+ * `#main` and gives it back when it closes. A representative question — a long
+ * title and three described options — needs about eight lines at this width, so the
+ * cap below is generous; longer ones scroll, which is why the panel is a scroll. */
 QuestionPanel {
     height: auto;
-    max-height: 60%;
+    max-height: 75%;
     border: round $accent;
     background: $panel;
     padding: 0 1;
@@ -226,6 +263,18 @@ QuestionPanel {
     height: auto;
     max-height: 12;
     margin-top: 1;
+    /* Textual's `OptionList` is a box: `border: tall` plus `padding: 0 1`, which
+     * inside a bordered panel is a box in a box eating four columns. On a full-width
+     * panel those columns are the difference between a one-line option and a wrapped
+     * one, and a wrapped row drags the list's scrollbar into the middle of the text.
+     * The list is a list here, not a box. */
+    border: none;
+    padding: 0;
+    background: transparent;
+}
+
+#question-options > .option-list--option {
+    padding: 0;
 }
 
 #question-custom {
@@ -237,6 +286,23 @@ QuestionPanel {
     height: auto;
     margin-top: 1;
     color: $text-muted;
+}
+
+/* The help line is the only legend while the composer is out of the way, so it
+ * stays where it is instead of scrolling off the bottom of a panel that had to
+ * shrink. `dock` takes it out of the scroll flow: the question and its options
+ * scroll above it, the keys never do.
+ *
+ * One line, clipped: a wrapped legend at 60 columns costs three rows and pushes
+ * the third option out of a panel that has no room to spare. The choices win.
+ * `text-wrap` and `text-overflow` are the widget-level rules; a `no_wrap` on the
+ * `Text` is ignored, because the widget re-wraps its renderable to its own width. */
+#question-help {
+    dock: bottom;
+    margin-top: 0;
+    padding-top: 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
 /* The hint is the abort warning (`Esc` cancels the run): it earns the color. */

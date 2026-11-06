@@ -19,6 +19,7 @@ COMMANDS: tuple[Command, ...] = (
     Command('/model', 'Pick the model for the active account'),
     Command('/effort', 'Show or set the reasoning effort'),
     Command('/reasoning-visibility', 'Show or collapse the reasoning in the chat (on/off)'),
+    Command('/tools', 'Show or collapse the tool output in the chat (expanded/collapsed)'),
     Command('/theme', 'Pick a theme with a live preview; --list shows the installed ones'),
     Command('/sidebar', 'Show or hide the sidebar (on/off)'),
     Command('/mcp', 'Show MCP server status'),

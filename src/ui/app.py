@@ -230,14 +230,22 @@ class SigilApp(
             Horizontal(
                 SidebarPanel(self._roadmap_store, id='sidebar'),
                 Vertical(
-                    ChatLog(id='chat', reasoning_visible=self._preferences.reasoning_visible),
+                    ChatLog(
+                        id='chat',
+                        reasoning_visible=self._preferences.reasoning_visible,
+                        tools_expanded=self._preferences.tools_expanded,
+                    ),
                     AgentDebugView(id='debug'),
                     AgentView(id='agent'),
-                    QuestionPanel(id='questions'),
                     id='conversation',
                 ),
                 id='main',
             ),
+            # The questions take the place of the composer, not a slot inside the
+            # conversation column: they span the whole width and sit exactly where
+            # the user expects to act (see `ask_question`). While one is open the
+            # composer and the side panel step aside.
+            QuestionPanel(id='questions'),
             CommandMenu(id='menu'),
             PromptInput(placeholder='Message…  Enter sends, Shift+Enter adds a line', id='prompt'),
             StatusBar(id='status'),
@@ -417,9 +425,14 @@ class SigilApp(
             self.set_activity_label(f'Running {event.tool_name}')
         elif event.phase == 'error':
             await chat.add_tool_error(event.tool_name, event.error or 'failed')
-        elif event.phase == 'success' and event.tool_name == 'load_skill':
-            # The freshly loaded skill shows up in the sidebar without waiting for the turn.
-            self.refresh_sidebar()
+        else:
+            # The result itself arrives later, on the stream. This is the tool saying
+            # how it went (`9 passed in 0.45s`) and how long it took, which the stream
+            # does not carry.
+            chat.set_tool_summary(event.tool_name, event.summary, event.duration_ms)
+            if event.tool_name == 'load_skill':
+                # The freshly loaded skill shows up in the sidebar without waiting for the turn.
+                self.refresh_sidebar()
         # A tool call is the moment the tree can change: the bar catches up now
         # instead of on the next poll.
         if event.phase != 'start':
@@ -456,11 +469,21 @@ class SigilApp(
         panel handles it while a question is open, and this is the fallback: with
         the focus on the chat or anywhere else, the abort still reaches you.
 
+        A question outranks the abort. While one is open the panel owns `Esc`, and
+        this path is the case where the key did not reach the panel's binding —
+        nothing is focused, or a widget in between ate it. Aborting the turn there
+        kills the run and leaves the question on screen waiting for an answer that
+        can never come; cancelling the question is what the user meant.
+
         It is a `key_escape` method and not a binding on purpose: a non-priority
         binding would show up in the help as a second way to do the same thing,
         and a priority one would run before the question panel and swallow the
         `Esc` that cancels a question.
         """
+        panel = self._pending_question()
+        if panel is not None:
+            panel.action_cancel()
+            return
         if self.request_abort():
             self.abort_turn()
             return
@@ -506,27 +529,95 @@ class SigilApp(
     # --- interactive questions --------------------------------------------
 
     async def ask_question(self, questions: list[QuestionItem]) -> list[QuestionAnswer] | None:
-        """Shows the questions under the chat and waits for the answers.
+        """Shows the questions where the composer is, and waits for the answers.
 
-        It is not a modal screen: the questions are usually about what is in the
-        conversation, and that has to stay readable while answering. The panel
-        only borrows part of the chat's height, and the turn waits on the future
-        the panel resolves.
+        It is not a modal screen: the questions usually refer to what is in the
+        conversation, and that has to stay readable while answering. What it does
+        instead is take the composer's place — the panel spans the whole width,
+        right where the user expects to act — so the thing that owns the keyboard
+        is the thing on screen, and there is no dead input sitting below it.
+
+        The composer is hidden rather than emptied: a half-typed message survives
+        and comes back with the focus when the question closes.
+
+        The columns above give up **height**, not their place. The panel is a sibling
+        of `#main`, so it takes its room from that whole row: the transcript and the
+        side panel shrink together and both stay where they were. The side panel
+        scrolls, so a shorter one is still usable, and its roadmap is often what the
+        question is about.
+
+        The turn waits on the future the panel resolves.
         """
-        answers = await self.query_one(QuestionPanel).ask(questions)
-        self._restore_prompt_focus()
+        if not questions:
+            return []
+        self._hide_composer()
+        try:
+            answers = await self.query_one(QuestionPanel).ask(questions)
+        finally:
+            self._show_composer()
         return answers
+
+    def _hide_composer(self) -> None:
+        """Takes the composer off screen: the question is what the keys are for."""
+        with suppress(NoMatches):
+            self.query_one(PromptInput).display = False
+
+    def _show_composer(self) -> None:
+        """Restores it, in the order the focus needs: visible first, then focused."""
+        with suppress(NoMatches):
+            self.query_one(PromptInput).display = True
+        self._restore_prompt_focus()
 
     def _restore_prompt_focus(self) -> None:
         """Gives the keys back to the prompt when the panel releases them.
 
         While a turn runs the prompt is disabled and the turn itself takes care
         of the focus when it ends, so this only applies when it can be focused.
+
+        It tolerates the composer being gone: this runs from the `finally` of
+        `ask_question`, and a question answered — or cancelled — by the app going
+        away unmounts the panel and the composer in the same breath.
         """
-        prompt = self.query_one(PromptInput)
-        if prompt.disabled:
+        with suppress(NoMatches):
+            prompt = self.query_one(PromptInput)
+            if prompt.disabled:
+                return
+            prompt.focus()
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        """Keeps the question panel's keys on the panel while a question is open.
+
+        Reading the conversation or clicking the panel's frame is not an answer,
+        and it used to be a silent one: the list stayed on screen with its
+        highlight while the arrows scrolled the panel and `Enter` did nothing.
+
+        One redirect, not a fight: the second event lands on the field the panel
+        asked for, and `holds_keys` accepts it. With no question open this costs
+        two queries and returns.
+        """
+        panel = self._pending_question()
+        if panel is None:
             return
-        prompt.focus()
+        if panel.holds_keys(event.widget):
+            return
+        panel.focus_field()
+
+    def _pending_question(self) -> QuestionPanel | None:
+        """The panel asking for an answer right now, or `None`.
+
+        A panel on a screen that is not the current one is not asking: a modal
+        opened on top of it is, and it owns the keys until it closes.
+        """
+        panel = self._question_panel()
+        if panel is None or not panel.display or panel.screen is not self.screen:
+            return None
+        return panel
+
+    def _question_panel(self) -> QuestionPanel | None:
+        """The panel, or `None` in an app composed without one (the tests build some)."""
+        with suppress(NoMatches):
+            return self.query_one(QuestionPanel)
+        return None
 
     # --- model information -------------------------------------------------
 

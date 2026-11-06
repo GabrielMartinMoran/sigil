@@ -67,6 +67,14 @@ from src.engine.attachments.tokens import (
     remap,
     renumber,
 )
+from src.ui.widgets.reading import (
+    SCROLL_DOWN_KEY,
+    SCROLL_LINES,
+    SCROLL_UP_KEY,
+    current_pane,
+    page_lines,
+    scroll_pane,
+)
 
 CTRL_MODELS = 'ctrl+m'
 """Ctrl+M. Same byte as Enter on a legacy terminal; see the module docstring."""
@@ -83,6 +91,9 @@ CTRL_PASTE = 'ctrl+v'
 
 NEWLINE_KEYS = frozenset({'shift+enter'})
 """Keys that insert a line break instead of sending. See the module docstring."""
+
+SCROLL_KEYS = {SCROLL_UP_KEY: -1, SCROLL_DOWN_KEY: 1}
+"""The pair that reads the conversation: the same one the question panel binds."""
 
 DELETE_KEYS = frozenset({'backspace', 'delete', 'ctrl+h', 'ctrl+w'})
 """Keys whose deletion may have to take a whole `[Image #n]` with it."""
@@ -115,6 +126,11 @@ class PromptInput(TextArea):
         Binding('down', 'menu_down', show=False, priority=True),
         Binding('tab', 'menu_complete', show=False, priority=True),
         Binding('escape', 'menu_escape', show=False, priority=True),
+        # `TextArea` already binds both of these to its own cursor movement, and a
+        # priority binding is the only way to see them first. The transcript is what
+        # a reader of this app pages through; the cursor is one message away.
+        Binding('pageup', 'transcript_page(-1)', show=False, priority=True),
+        Binding('pagedown', 'transcript_page(1)', show=False, priority=True),
     ]
 
     class Submitted(Message):
@@ -320,6 +336,15 @@ class PromptInput(TextArea):
             event.prevent_default()
             return
 
+        # The conversation is read with the same two keys the question panel binds,
+        # so muscle memory survives whichever of the two owns the keyboard.
+        step = SCROLL_KEYS.get(event.key)
+        if step is not None:
+            event.stop()
+            event.prevent_default()
+            self.action_transcript_scroll(step)
+            return
+
         await super()._on_key(event)
 
     def _delete_block(self, key: str) -> bool:
@@ -453,6 +478,25 @@ class PromptInput(TextArea):
         self.app.menu_hide()
         if self.app.request_abort():
             self.app.abort_turn()
+
+    def action_transcript_page(self, direction: int) -> None:
+        """`pgup` / `pgdn`: a page of the conversation, keyboard still here.
+
+        A page is the visible height of the pane, so the reader lands where the
+        screen suggests instead of on a number of lines chosen by a constant.
+        """
+        pane = current_pane(self.screen)
+        if pane is None:
+            return
+        self.app.cancel_abort()
+        scroll_pane(pane, direction * page_lines(pane))
+
+    def action_transcript_scroll(self, direction: int) -> None:
+        """`ctrl+↑` / `ctrl+↓`: a few lines of the conversation."""
+        pane = current_pane(self.screen)
+        if pane is None:
+            return
+        scroll_pane(pane, direction * SCROLL_LINES)
 
     # --- edits --------------------------------------------------------------
 
