@@ -23,6 +23,10 @@ COMMANDS: tuple[Command, ...] = (
     Command('/sidebar', 'Show or hide the sidebar (on/off)'),
     Command('/mcp', 'Show MCP server status'),
     Command('/context', 'Show the context usage breakdown'),
+    Command(
+        '/rollback',
+        'Go back to before a message: roll back (files included) or fork the conversation',
+    ),
     Command('/debug', 'Toggle the agent debug view (alt+d); --text dumps the report'),
     Command('/help', 'Show command help'),
     Command('/quit', 'Quit Sigil'),

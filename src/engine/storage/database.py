@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from collections import OrderedDict
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -34,8 +35,14 @@ _PRAGMAS = (
     'PRAGMA temp_store = MEMORY',
 )
 
-_instances: dict[str, Database] = {}
+_instances: OrderedDict[str, Database] = OrderedDict()
 _instances_lock = threading.Lock()
+MAX_INSTANCES = 8
+"""How many databases stay open.
+
+One is the app. Eight leaves room for a test that works on a few at once, and evicting
+the oldest is what keeps a long run from exhausting the process's descriptors.
+"""
 
 
 class Database:
@@ -126,14 +133,24 @@ class Database:
 
     @classmethod
     def at(cls, path: str | Path) -> Database:
-        """The shared instance for ``path``, opened on first use."""
+        """The shared instance for ``path``, opened on first use.
+
+        The cache is bounded: the least recently used connection is closed when a new
+        one arrives. It is safe because callers ask for the instance again instead of
+        holding one across calls — the store, the roadmap and the provider accounts
+        each resolve it from their own path when they need it.
+        """
         key = str(Path(path).expanduser().resolve())
         with _instances_lock:
             existing = _instances.get(key)
             if existing is not None:
+                _instances.move_to_end(key)
                 return existing
             created = cls(key)
             _instances[key] = created
+            while len(_instances) > MAX_INSTANCES:
+                _oldest, evicted = _instances.popitem(last=False)
+                evicted.close()
             return created
 
     @classmethod
@@ -154,4 +171,4 @@ def database_path(base_dir: str | Path | None = None) -> Path:
     return base / DEFAULT_DATABASE_NAME
 
 
-__all__ = ['DEFAULT_DATABASE_NAME', 'Database', 'database_path']
+__all__ = ['DEFAULT_DATABASE_NAME', 'MAX_INSTANCES', 'Database', 'database_path']

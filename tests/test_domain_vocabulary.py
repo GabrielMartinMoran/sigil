@@ -51,33 +51,33 @@ def test_the_retired_names_are_gone():
     assert offenders == [], 'retired vocabulary came back:\n' + '\n'.join(offenders)
 
 
-def test_the_turn_map_keeps_its_promise():
-    """Deriving a turn is deterministic, which is what makes a resumed write safe."""
-    from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart
-
-    from src.engine.agents.turn_map import turns_of
-
-    history = [
-        ModelRequest(parts=[UserPromptPart(content='a')], run_id='run-1'),
-        ModelResponse(parts=[], run_id='run-1'),
-        ModelRequest(parts=[UserPromptPart(content='b')], run_id='run-2'),
-        ModelResponse(parts=[], run_id='run-2'),
-    ]
-    spans = turns_of(history)
-
-    assert [span.index for span in spans] == [0, 2]
-    assert [span.library_run_id for span in spans] == ['run-1', 'run-2']
-    assert turns_of(history) == spans  # same input, same ids
-    assert len({span.turn_id for span in spans}) == 2
-
-
-def test_a_message_without_an_identifier_is_its_own_turn():
+def test_a_turn_id_is_deterministic_and_scoped_by_the_execution():
+    """The scope is what lets a fork exist: two transcripts of one prefix, no clash."""
     from pydantic_ai.messages import ModelRequest, ModelResponse
 
-    from src.engine.agents.turn_map import turns_of
+    from src.engine.agents.turn_map import turn_id_of
+
+    history = [
+        ModelRequest(parts=[], run_id='run-1'),
+        ModelResponse(parts=[], run_id='run-1'),
+        ModelRequest(parts=[], run_id='run-2'),
+    ]
+
+    first = turn_id_of(history, 0, scope='exec-a')
+    assert turn_id_of(history, 1, scope='exec-a') == first  # same turn
+    assert turn_id_of(history, 0, scope='exec-b') != first  # another execution
+    assert turn_id_of(history, 2, scope='exec-a') != first  # another turn
+    assert turn_id_of(history, 0, scope='exec-a') == first  # stable across calls
+
+
+def test_a_message_without_an_identifier_gets_its_own_turn():
+    """Two messages of one run are one turn; two runs are two."""
+    from pydantic_ai.messages import ModelRequest, ModelResponse
+
+    from src.engine.agents.turn_map import turn_id_of
 
     history = [ModelRequest(parts=[]), ModelResponse(parts=[]), ModelRequest(parts=[])]
-    spans = turns_of(history)
+    ids = {turn_id_of(history, index, scope='exec') for index in range(3)}
 
-    assert len(spans) == 3
-    assert len({span.turn_id for span in spans}) == 3
+    # No identifiers at all: each message is its own turn, and the ids are distinct.
+    assert len(ids) == 3

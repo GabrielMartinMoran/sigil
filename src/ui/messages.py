@@ -57,3 +57,11 @@ class TreeChanged(Message):
     def __init__(self, node: AgentNode) -> None:
         super().__init__()
         self.node = node
+
+
+class RollbackRequested(Message):
+    """A user message was clicked: which instant, by its seq in the transcript."""
+
+    def __init__(self, seq: int) -> None:
+        super().__init__()
+        self.seq = seq

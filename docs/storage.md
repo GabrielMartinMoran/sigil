@@ -782,6 +782,11 @@ they are one-off or rare and can take tens of milliseconds: creating the schema
 and the first full read of a large session. The file snapshot of
 [rollback](rollback.md) is a third, and the most clearly worth a thread.
 
+The cache of connections is **bounded**: `Database.at()` keeps the last eight
+and closes the rest. The app has one database, so the bound costs nothing, and
+it is the difference between a long run and `Too many open files` a thousand
+connections later, in a part of the code that has nothing to do with the cause.
+
 ## Starting empty
 
 There is **no import from the JSON files**. The database starts empty and the

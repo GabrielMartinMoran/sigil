@@ -60,6 +60,7 @@ from src.ui.menu_mixin import MenuMixin
 from src.ui.messages import ChatNotice, ModelRetryNotice, RoadmapChanged
 from src.ui.model_view_mixin import ModelViewMixin
 from src.ui.provider_mixin import ProviderMixin
+from src.ui.rollback_mixin import RollbackMixin
 from src.ui.sidebar_mixin import SidebarMixin
 from src.ui.theme_mixin import ThemeMixin
 from src.ui.title_mixin import TitleMixin
@@ -89,6 +90,7 @@ class SigilApp(
     ActivityMixin,
     DebugMixin,
     TreeMixin,
+    RollbackMixin,
     TurnMixin,
     TitleMixin,
     App,

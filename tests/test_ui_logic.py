@@ -28,6 +28,7 @@ def test_match_commands_filters_by_prefix():
         '/sidebar',
         '/mcp',
         '/context',
+        '/rollback',
         '/debug',
         '/help',
         '/quit',

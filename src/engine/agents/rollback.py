@@ -82,6 +82,16 @@ class RollbackOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class ForkOutcome:
+    """What a fork produced."""
+
+    session_id: str
+    turns_copied: int
+    messages_copied: int
+    executions_copied: int
+
+
+@dataclass(frozen=True, slots=True)
 class RollbackError(Exception):
     """A rollback that could not start, with the reason said plainly."""
 
@@ -308,6 +318,111 @@ class Rollback:
             undo_checkpoint=undo.id,
         )
 
+    def fork_to(self, session_id: str, turn_id: str, *, title: str | None = None) -> ForkOutcome:
+        """Branches a new session at the instant before ``turn_id``.
+
+        The same instant a rollback restores, with one difference that decides
+        everything else: **nothing is destroyed and the workspace is not touched.** A
+        rollback puts the world back; a fork lets you try something else and keeps both
+        answers.
+
+        The prefix is copied, not linked: a new session needs its own executions,
+        turns and messages, or the first write to either one would move the other.
+        """
+        target = self._db.one(
+            'SELECT id, execution_id, origin, started_at FROM turns WHERE id = ? AND execution_id = ?',
+            (turn_id, root_id_for(session_id)),
+        )
+        if target is None:
+            raise RollbackError(f'No turn {turn_id!r} in the root execution of this session.')
+        if str(target['origin']) != 'user':
+            raise RollbackError('Only a turn the user started can be a fork point.')
+
+        source = self._db.one('SELECT * FROM sessions WHERE id = ?', (session_id,))
+        if source is None:
+            raise RollbackError(f'No session {session_id!r}.')
+
+        started_at = str(target['started_at'])
+        new_id = _new_id()
+        new_root = root_id_for(new_id)
+        checkpoint = self._checkpoints.of_turn(turn_id)
+        plan = None if checkpoint is None else self._plan_of(checkpoint)
+
+        turns_copied = messages_copied = executions_copied = 0
+        with self._db.transaction() as conn:
+            conn.execute(
+                'INSERT INTO sessions (id, workspace_id, title, preview, account_id, model, thinking, '
+                'window, efforts, images, created_at, updated_at) '
+                'SELECT ?, workspace_id, ?, preview, account_id, model, thinking, window, efforts, '
+                'images, created_at, ? FROM sessions WHERE id = ?',
+                (new_id, title or _fork_title(source['title']), _now(), session_id),
+            )
+
+            # Every execution that existed before the boundary: the root, and the
+            # subagents whose summoning turn is part of the prefix.
+            executions = self._db.query(
+                'SELECT * FROM agent_executions WHERE session_id = ? ORDER BY depth, started_at',
+                (session_id,),
+            )
+            for execution in executions:
+                created_by = execution['created_by_turn']
+                if created_by is not None and not self._turn_before(str(created_by), started_at):
+                    continue
+                new_execution = new_root if execution['parent_id'] is None else _new_id()
+                parent = None if execution['parent_id'] is None else str(execution['parent_id'])
+                mapped_parent = new_root if parent == root_id_for(session_id) else parent
+                conn.execute(
+                    'INSERT INTO agent_executions '
+                    '(id, session_id, parent_id, created_by_turn, name, role, profile, depth, brief, '
+                    'status, mode, model, result, error, started_at, finished_at, turns, delivered, '
+                    'channel, max_steps, budget_exhausted) '
+                    'VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    (
+                        new_execution,
+                        new_id,
+                        mapped_parent,
+                        execution['name'],
+                        execution['role'],
+                        execution['profile'],
+                        execution['depth'],
+                        execution['brief'],
+                        execution['status'],
+                        execution['mode'],
+                        execution['model'],
+                        execution['result'],
+                        execution['error'],
+                        execution['started_at'],
+                        execution['finished_at'],
+                        execution['turns'],
+                        execution['delivered'],
+                        execution['channel'],
+                        execution['max_steps'],
+                        execution['budget_exhausted'],
+                    ),
+                )
+                executions_copied += 1
+                turns_copied += self._copy_turns(
+                    conn,
+                    str(execution['id']),
+                    new_execution,
+                    before=started_at,
+                    messages=messages_copied,
+                )
+                messages_copied += self._copy_messages(conn, str(execution['id']), new_execution, before=started_at)
+
+            # The plan of the fork is the plan at the boundary, not the current one.
+            if plan is not None:
+                self._blobs.put(plan, kind=ROADMAP, media_type='application/json', conn=conn)
+
+        if plan is not None:
+            self._write_plan(new_root, plan)
+        return ForkOutcome(
+            session_id=new_id,
+            turns_copied=turns_copied,
+            messages_copied=messages_copied,
+            executions_copied=executions_copied,
+        )
+
     def undo(self, session_id: str, undo_checkpoint: str) -> RollbackOutcome:
         """Puts back what a rollback dropped, using its `before_rollback` checkpoint.
 
@@ -390,6 +505,80 @@ class Rollback:
             # The plan of the root is restored from the checkpoint, not derived.
             conn.execute('DELETE FROM roadmap_items WHERE execution_id = ?', (root,))
         return int(turns or 0), int(executions or 0), int(messages_before or 0)
+
+    def _turn_before(self, turn_id: str, started_at: str) -> bool:
+        row = self._db.one('SELECT started_at FROM turns WHERE id = ?', (turn_id,))
+        return row is not None and str(row['started_at']) < started_at
+
+    def _copy_turns(
+        self,
+        conn: sqlite3.Connection,
+        source_execution: str,
+        destination_execution: str,
+        *,
+        before: str,
+        messages: int,
+    ) -> int:
+        """Copies the turns of one execution that started before the boundary."""
+        rows = self._db.query(
+            'SELECT * FROM turns WHERE execution_id = ? AND started_at < ? ORDER BY started_at',
+            (source_execution, before),
+        )
+        for row in rows:
+            conn.execute(
+                'INSERT INTO turns '
+                '(id, execution_id, origin, started_at, finished_at, outcome, steps, cost, library_run_id) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                (
+                    _forked_id(str(row['id']), destination_execution),
+                    destination_execution,
+                    row['origin'],
+                    row['started_at'],
+                    row['finished_at'],
+                    row['outcome'],
+                    row['steps'],
+                    row['cost'],
+                    row['library_run_id'],
+                ),
+            )
+        return len(rows)
+
+    def _copy_messages(
+        self,
+        conn: sqlite3.Connection,
+        source_execution: str,
+        destination_execution: str,
+        *,
+        before: str,
+    ) -> int:
+        """Copies the messages that belong to the turns of the prefix."""
+        rows = self._db.query(
+            'SELECT m.* FROM messages m JOIN turns t ON t.id = m.turn_id '
+            'WHERE m.execution_id = ? AND t.started_at < ? ORDER BY m.seq',
+            (source_execution, before),
+        )
+        for row in rows:
+            conn.execute(
+                'INSERT OR IGNORE INTO messages '
+                '(execution_id, turn_id, seq, kind, payload, instructions_id, input_tokens, '
+                'cache_read, cache_write, output_tokens, cost, timestamp) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                (
+                    destination_execution,
+                    _forked_id(str(row['turn_id']), destination_execution),
+                    row['seq'],
+                    row['kind'],
+                    row['payload'],
+                    row['instructions_id'],
+                    row['input_tokens'],
+                    row['cache_read'],
+                    row['cache_write'],
+                    row['output_tokens'],
+                    row['cost'],
+                    row['timestamp'],
+                ),
+            )
+        return len(rows)
 
     def _plan_of(self, checkpoint: Checkpoint) -> str | None:
         """The plan a checkpoint recorded, read while its row still exists."""
@@ -510,6 +699,17 @@ class Rollback:
                 )
 
 
+def _forked_id(turn_id: str, execution_id: str) -> str:
+    """A turn id for the copy. Same turn, different execution, so no clash."""
+    import hashlib
+
+    return hashlib.sha256(f'fork:{execution_id}:{turn_id}'.encode()).hexdigest()[:32]
+
+
+def _fork_title(title: object) -> str:
+    return f'{title} (fork)' if isinstance(title, str) and title else 'fork'
+
+
 def _checkpoint_from(row) -> Checkpoint:
     return Checkpoint(
         id=str(row['id']),
@@ -529,6 +729,7 @@ __all__ = [
     'REASON_PROMPT',
     'Checkpoint',
     'Checkpoints',
+    'ForkOutcome',
     'Rollback',
     'RollbackError',
     'RollbackOutcome',

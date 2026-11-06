@@ -1,39 +1,20 @@
-"""The only module that names pydantic-ai's `run_id`.
+"""Turn ids are scoped by execution, which is what makes a fork possible.
 
-A turn is the span between the user sending a message and the agent finishing, and
-steering stays inside it: `start_turn` with a turn already open defers to `steer`,
-and `steer` calls `run.enqueue(...)` on the run that is open, so no new loop
-starts. The library calls that span a run and stamps its `run_id` on every message
-it produces — 1:1 with a turn.
+A turn id used to be derived from the library's identifier alone. Two sessions that
+share a transcript prefix — which is exactly what a fork is — would then mint the
+same ids, and `turns.id` is a primary key: the fork would collide with the original.
 
-That identifier is foreign vocabulary. It is contained here so the rest of the code
-asks the domain, and the containment is verifiable:
-
-    grep -rn 'run_id' src/engine --include='*.py' | grep -v 'agents/turn_map.py'
-
-which must print nothing.
+The scope is the execution, not the session, because that is where the determinism
+matters: "a resumed write must not mint a second turn for a run it already stored" is
+a statement about one transcript, and two executions are two transcripts.
 """
 
 from __future__ import annotations
 
 import hashlib
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 from pydantic_ai.messages import ModelMessage
-
-
-@dataclass(frozen=True, slots=True)
-class TurnSpan:
-    """One turn, as found in a history: where it starts and how it is keyed."""
-
-    index: int
-    """Position of the turn's first message in the history."""
-    turn_id: str
-    """Deterministic id. A resumed write must not mint a second turn for a run it
-    already stored, so the id is derived and not random."""
-    library_run_id: str | None
-    """pydantic-ai's identifier, or ``None`` for a message saved before it existed."""
 
 
 def library_run_id(message: ModelMessage) -> str | None:
@@ -42,34 +23,16 @@ def library_run_id(message: ModelMessage) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _turn_id(library_id: str | None, index: int) -> str:
-    seed = f'turn:{library_id}' if library_id else f'turn:orphan:{index}'
+def turn_id_of(messages: Sequence[ModelMessage], index: int, *, scope: str = '') -> str:
+    """The turn id of the message at ``index``, inside ``scope``.
+
+    ``scope`` is the execution id. Empty is allowed for a history that is being read
+    without an execution yet — a test, or a preview — and it is stable as long as the
+    caller is.
+    """
+    current = library_run_id(messages[index])
+    seed = f'turn:{scope}:{current}' if current else f'turn:{scope}:orphan:{index}'
     return hashlib.sha256(seed.encode('utf-8')).hexdigest()[:32]
 
 
-def turns_of(messages: Sequence[ModelMessage]) -> list[TurnSpan]:
-    """The turns of a history, in order.
-
-    A message with no identifier is **its own turn**, which is what the image cache
-    already assumes for sessions saved before the library stamped one: ageing it
-    with its neighbours would silently extend a window whose boundary is unknown.
-    """
-    spans: list[TurnSpan] = []
-    seen: dict[str, int] = {}
-    for index, message in enumerate(messages):
-        current = library_run_id(message)
-        key = current if current else f'orphan:{index}'
-        if key in seen:
-            continue
-        seen[key] = index
-        spans.append(TurnSpan(index=index, turn_id=_turn_id(current, index), library_run_id=current))
-    return spans
-
-
-def turn_id_of(messages: Sequence[ModelMessage], index: int) -> str:
-    """The turn id of the message at ``index``."""
-    current = library_run_id(messages[index])
-    return _turn_id(current, index)
-
-
-__all__ = ['TurnSpan', 'library_run_id', 'turn_id_of', 'turns_of']
+__all__ = ['library_run_id', 'turn_id_of']

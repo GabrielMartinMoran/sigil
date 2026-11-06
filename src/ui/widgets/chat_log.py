@@ -43,7 +43,7 @@ from textual.widgets import Static
 from src.engine.attachments.content import describe_attachments, images_in
 from src.engine.attachments.image_attachment import ImageAttachment
 from src.engine.context.images import image_size
-from src.ui.messages import NodeOpened
+from src.ui.messages import NodeOpened, RollbackRequested
 from src.ui.palette import color
 
 RENDER_INTERVAL = 0.08
@@ -173,7 +173,29 @@ def _describe_parts(images: Sequence[BinaryContent]) -> tuple[ImageAttachment, .
     return tuple(described)
 
 
-def _user_widget(content: str | list[Any]) -> Static:
+class UserMessage(Static):
+    """One user message, clickable when its place in the conversation is known.
+
+    A click does not decide anything: it opens the screen that asks what to do with
+    the instant *before* this message — roll back to it, or fork from it. Deciding
+    here would be deciding for the user on the one gesture that can destroy a turn.
+
+    ``seq`` is the position of the prompt in the root transcript, which is what maps
+    it to its turn. It is ``None`` for a message that has not reached a checkpoint yet,
+    and the click is honest about that: it does nothing instead of guessing.
+    """
+
+    def __init__(self, renderable: Any, *, seq: int | None = None, **kwargs: Any) -> None:
+        super().__init__(renderable, **kwargs)
+        self.seq = seq
+
+    def on_click(self) -> None:
+        if self.seq is None:
+            return
+        self.post_message(RollbackRequested(self.seq))
+
+
+def _user_widget(content: str | list[Any], *, seq: int | None = None) -> Static:
     """One user line, from a plain prompt or from text plus images.
 
     Both shapes reach `render_history`: a turn typed before images existed saved
@@ -182,10 +204,10 @@ def _user_widget(content: str | list[Any]) -> Static:
     the images only have to be summarised back into the line under it.
     """
     if isinstance(content, str):
-        return Static(_user_renderable(content, queued=False), classes='user-msg')
+        return UserMessage(_user_renderable(content, queued=False), seq=seq, classes='user-msg')
     text = ' '.join(item for item in content if isinstance(item, str))
     described = _describe_parts(images_in(content))
-    return Static(_user_renderable(text, queued=False, attachments=described), classes='user-msg')
+    return UserMessage(_user_renderable(text, queued=False, attachments=described), seq=seq, classes='user-msg')
 
 
 class AssistantBlock(Static):
@@ -639,11 +661,25 @@ class ChatLog(VerticalScroll):
         self._last_block = widget
         await self.mount(widget)
 
-    async def add_user(self, text: str, *, queued: bool = False, attachments: Sequence[ImageAttachment] = ()) -> Static:
-        """One user message. `queued` marks one the running turn has not read yet."""
+    async def add_user(
+        self,
+        text: str,
+        *,
+        queued: bool = False,
+        attachments: Sequence[ImageAttachment] = (),
+        seq: int | None = None,
+    ) -> Static:
+        """One user message. `queued` marks one the running turn has not read yet.
+
+        ``seq`` is where the prompt will land in the root transcript. The app knows it
+        when it submits — the prompt is the next message — and passes it so the line can
+        be clicked before the turn even finishes.
+        """
         self._current = None
         self._open_tool = None
-        widget = Static(_user_renderable(text, queued=queued, attachments=attachments), classes='user-msg')
+        widget = UserMessage(
+            _user_renderable(text, queued=queued, attachments=attachments), seq=seq, classes='user-msg'
+        )
         if queued:
             # Kept so the line can be repainted when the agent picks it up.
             widget._queued_text = text  # type: ignore[attr-defined]
@@ -793,13 +829,16 @@ class ChatLog(VerticalScroll):
             open_tool = block
             return block
 
-        for message in messages:
+        for position, message in enumerate(messages):
             if isinstance(message, ModelRequest):
                 for part in message.parts:
                     if isinstance(part, UserPromptPart):
                         current = None
                         open_tool = None
-                        batches.append(_user_widget(part.content))
+                        # The transcript is read ordered by `seq`, so the position in
+                        # this list *is* the seq. That is what makes the click map to
+                        # a turn without a side channel.
+                        batches.append(_user_widget(part.content, seq=position))
                     elif isinstance(part, ToolReturnPart):
                         ok = getattr(part, 'outcome', 'success') == 'success'
                         block = open_tool if open_tool is not None and open_tool.name == part.tool_name else None

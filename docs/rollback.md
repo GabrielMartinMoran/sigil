@@ -50,6 +50,46 @@ Two consequences, both deliberate:
   but rewound the files would leave a conversation talking about edits that no
   longer exist. One instant, two halves, or the state is a lie.
 
+## Two actions, and why they are not one
+
+Going back to a message can mean two different things, and the difference is
+whether anything is destroyed:
+
+| | Rollback | Fork |
+| --- | --- | --- |
+| The turns after the point | dropped | kept, in the original session |
+| The workspace | restored to that instant | **untouched** |
+| The original conversation | gone | whole, and still open |
+| Needs a copy to be recoverable | yes, always | no: nothing is lost |
+
+A fork is a rollback that keeps the original. It copies the prefix — the session
+row, the executions that existed, their turns, their messages and the plan as it
+was — into a **new session**, and leaves the one you were in untouched. It does
+not touch the workspace, and that is not an oversight: nothing is being undone,
+so there is nothing to rewind. It is for exploring an alternative from where you
+are.
+
+Blobs are shared, because they are content-addressed: forking a conversation
+does not duplicate a single instruction block or image.
+
+### The way in: `/rollback`, and a click that only asks
+
+Both actions are reachable in two ways, and they converge on one screen:
+
+- **`/rollback`** lists the points. `/rollback 3` goes straight to the actions
+  of the third.
+- **Clicking a user message** opens the same screen with that point highlighted.
+
+The click deliberately does **not** decide. It is the gesture that is one
+keystroke away from any reading of the transcript, and the rollback is the only
+command in Sigil that destroys a turn — so the click opens the choice and the
+choice is made once, in a screen that shows how many files would change and
+which of the three actions can delete something.
+
+The screen has two stages for the same reason: first the point, then what
+happens to it. A single list of "rollback to here / fork here" pairs would put a
+destructive action next to a harmless one on the same key.
+
 ## Two halves, one command
 
 | Half | What it does | Is it reversible? |
@@ -348,9 +388,10 @@ few of those as possible.
    thread.
 4. **The restore.** ✅ The diff against `before_rollback`, and its failure
    matrix.
-5. **The UI.** ⏳ Not wired: what is missing is the screen that lists the points,
-   shows the file diff before confirming, and reports the outcome — including
-   when the files could not be restored. The command exists and is tested.
+5. **The UI.** ✅ `/rollback`, the two-stage screen and the click on a user
+   message. The screen counts the files with the same diff the restore would
+   apply, so the confirmation has substance: a rollback that says "3 files"
+   touches three.
 6. **Retention.** ✅ `storage.maintenance.drop_old_checkpoints`, which keeps the
    undo checkpoints whatever their age.
 
@@ -368,3 +409,10 @@ repository still gets conversation rollback, and the outcome says
 - **A restored plan is rows, so the store that paints it has to be told to
   re-read them.** Hence `on_plan_changed`: without it the panel keeps painting a
   plan that no longer exists, which is worse than showing nothing.
+- **A turn id derived only from the library's identifier collides in a fork.**
+  The prefix is the same transcript, so the same ids; `turns.id` is a primary
+  key and the fork would collide with the original. The id is scoped by
+  execution now, which is where the determinism actually mattered.
+- **A click handler is not a worker.** `push_screen_wait` raises
+  `NoActiveWorker` in the message pump, so the click opens the screen from
+  `run_worker`, like every other screen in the app.

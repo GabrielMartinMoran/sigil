@@ -212,9 +212,10 @@ Each phase ends with the app working and the tests passing.
    another execution.
 4. **The UI as a client.** `turn_mixin`, `tree_mixin` and `commands_mixin`
    shrink to: receive event, paint; receive input, call command.
-5. **Rollback**, in the phases of [rollback](rollback.md). ✅ The command and the
-   git half are in `src/engine/agents/`; what is left is the screen that lists
-   the points and shows the file diff.
+5. **Rollback and fork**, in the phases of [rollback](rollback.md). ✅ The
+   commands, the git half, the `/rollback` screen and the click on a user
+   message. The screen and the commands live in the UI for now: moving them
+   behind the core is phase 2's work, like everything else.
 6. **Transport**, if and when a second client exists: JSON-RPC over a pipe or
    HTTP+SSE over a socket, serializing the same commands and events. No second
    design; the interface already exists in process.

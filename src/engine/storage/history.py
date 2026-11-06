@@ -16,7 +16,7 @@ import sqlite3
 
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 
-from src.engine.agents.turn_map import turn_id_of, turns_of
+from src.engine.agents.turn_map import library_run_id, turn_id_of
 from src.engine.storage.blobs import INSTRUCTIONS, Blobs
 from src.engine.storage.database import Database
 
@@ -88,7 +88,7 @@ def write_history(
         seq = start + offset
         instructions = payload.pop('instructions', None)
         usage = _usage(payload)
-        turn_id = turn_id_of(messages, seq)
+        turn_id = turn_id_of(messages, seq, scope=execution_id)
         _ensure_turn(conn, execution_id, turn_id, messages, seq, touched)
         row = (
             execution_id,
@@ -139,12 +139,16 @@ def _ensure_turn(
     """
     if turn_id in touched:
         return
-    span = next((item for item in turns_of(messages) if item.turn_id == turn_id), None)
-    started = _timestamp_of(messages, span.index if span else seq)
+    # The turn opens at the message that starts it: the first one of its run, or the
+    # message itself when it has no identifier of its own.
+    index = seq
+    while index > 0 and library_run_id(messages[index - 1]) == library_run_id(messages[seq]):
+        index -= 1
+    started = _timestamp_of(messages, index)
     conn.execute(
         'INSERT OR IGNORE INTO turns (id, execution_id, origin, started_at, finished_at, outcome, library_run_id) '
         "VALUES (?, ?, 'user', ?, ?, 'done', ?)",
-        (turn_id, execution_id, started, started, span.library_run_id if span else None),
+        (turn_id, execution_id, started, started, library_run_id(messages[seq])),
     )
 
 
