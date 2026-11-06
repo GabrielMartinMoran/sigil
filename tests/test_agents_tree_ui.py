@@ -1,4 +1,4 @@
-"""The tree in the UI: `alt+t`, opening a subagent, going back, and the messages.
+"""The tree in the UI: `ctrl+t`, opening a subagent, going back, and the messages.
 
 What is pinned here is the part a user can see: the list of agents, the view of one
 node with the composer locked, the way back to the parent, and the message an async
@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic_ai import Agent
+from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from rich.text import Text
 from textual.widgets import OptionList
@@ -71,7 +72,7 @@ def _fill(app: SigilApp, *, running: str = '') -> Any:
 # --- the node view -----------------------------------------------------------
 
 
-def test_the_header_says_where_the_node_is_and_what_it_was_asked():
+def test_the_header_says_where_the_node_is_and_how_it_went():
     tree = AgentTreeStore().active
     root = tree.ensure_root('wizard')
     node = tree.add(parent_id=root.id, name='deep-researcher', role=AgentRole.SUBAGENT, task='read\n  the  tree')
@@ -83,8 +84,9 @@ def test_the_header_says_where_the_node_is_and_what_it_was_asked():
     assert 'Deep Researcher' in text
     assert 'done' in text
     assert 'sync' in text
-    # The task is collapsed to one line: the header is a header.
-    assert 'Task: read the tree' in text
+    # The task is *not* repeated: it is the first message of the transcript below,
+    # and the header stays fixed while that transcript scrolls.
+    assert 'read the tree' not in text
 
 
 def test_a_failed_node_shows_why():
@@ -150,7 +152,7 @@ def test_alt_t_opens_the_tree_and_choosing_a_node_opens_it():
             first = _fill(app)
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
-                await pilot.press('alt+t')
+                await pilot.press('ctrl+t')
                 for _ in range(30):
                     await pilot.pause()
                     if isinstance(app.screen, AgentTreeScreen):
@@ -216,7 +218,19 @@ def test_the_node_view_paints_the_transcript_of_the_node():
                 view = app.query_one(AgentView)
                 header = render_text(view.query_one('#agent-header').render())
                 assert 'Researcher' in header
-                assert 'read the tree' in header
+                # The task lives in the transcript, not pinned above it: the header
+                # stays fixed while the transcript scrolls, so carrying it twice
+                # would push the work down the screen for good.
+                assert 'read the tree' not in header
+
+                # A real node keeps its own transcript, starting with the task.
+                first.messages = [ModelRequest(parts=[UserPromptPart(content='read the tree')])]
+                await view.refresh_node(first)
+                for _ in range(20):
+                    await pilot.pause()
+                rendered = '\n'.join(render_text(child.render()) for child in view.transcript.children)
+                assert 'read the tree' in rendered
+                assert 'read the tree' not in render_text(view.query_one('#agent-header').render())
 
     asyncio.run(inner())
 

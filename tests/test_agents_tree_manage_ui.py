@@ -192,7 +192,7 @@ def test_alt_t_then_b_backgrounds_without_opening_the_node():
             node = _running_node(app, mode='sync')
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
-                await pilot.press('alt+t')
+                await pilot.press('ctrl+t')
                 for _ in range(30):
                     await pilot.pause()
                     if isinstance(app.screen, AgentTreeScreen):

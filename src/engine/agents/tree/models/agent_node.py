@@ -87,6 +87,15 @@ class AgentNode:
     runs: int = 0
     """How many times this node has been started or resumed. Shown in the tree."""
 
+    delivered: bool = True
+    """Whether the parent has already read this node's answer.
+
+    ``False`` on a finished node means the message is waiting: nobody was in a turn
+    when it arrived. It is written to disk with the rest of the tree, so a message
+    that arrives while the app is closing is retaken on the next open instead of
+    disappearing with the process.
+    """
+
     channel: ChannelPolicy = UNIDIRECTIONAL
     """Which way messages may travel for this node. Copied from its profile."""
 
@@ -169,6 +178,7 @@ class AgentNode:
             'started_at': self.started_at,
             'finished_at': self.finished_at,
             'runs': self.runs,
+            'delivered': self.delivered,
             'channel': {
                 'mode': str(self.channel.mode),
                 'parent': self.channel.to_parent,
@@ -209,6 +219,7 @@ class AgentNode:
                 started_at=float(data.get('started_at') or time.time()),
                 finished_at=None if data.get('finished_at') is None else float(data['finished_at']),
                 runs=int(data.get('runs') or 0),
+                delivered=bool(data.get('delivered', True)),
                 channel=_channel(data.get('channel')),
                 max_steps=None if data.get('max_steps') is None else int(data['max_steps']),
                 budget_exhausted=bool(data.get('budget_exhausted')),

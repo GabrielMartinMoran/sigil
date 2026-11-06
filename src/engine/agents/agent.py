@@ -46,7 +46,7 @@ def create_agent(
     model_retry: RetryTransientModelErrors | None = None,
     workspace: WorkspaceInstructions | None = None,
     scope: ScopeTracker | None = None,
-    loaded_skills: LoadedSkills | None = None,
+    loaded_skills: Callable[[str | None], LoadedSkills] | LoadedSkills | None = None,
     agent_registry: AgentRegistry | None = None,
     profile: ProfileSource | None = None,
     extra_capabilities: Sequence[AbstractCapability] | None = None,
@@ -152,9 +152,18 @@ def create_agent(
         # budget. `rewrite` (the default) and not `append`: loading a skill is
         # rare and the body is large, so duplicating it in the history costs
         # more than the one-time cache miss.
+        #
+        # The names come from the node's own registry: a subagent does not inherit
+        # the skills its parent loaded, because a body is instructions, and the
+        # instructions of a different task do not belong in this one.
         @agent.instructions(name='loaded-skills')
-        def _loaded_skills() -> str:
-            return render_loaded_skills(skill_registry, loaded_skills.names())
+        def _loaded_skills(ctx: RunContext[SigilDeps]) -> str:
+            names = (
+                loaded_skills(ctx.deps.node_id if ctx.deps is not None else None).names()
+                if callable(loaded_skills)
+                else loaded_skills.names()
+            )
+            return render_loaded_skills(skill_registry, names)
 
     if skill_registry is not None:
         # Progressive disclosure, level 1: the metadata (name + description)

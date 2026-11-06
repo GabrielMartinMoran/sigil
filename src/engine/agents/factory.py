@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from src.engine.agents.retry import RetryTransientModelErrors
     from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
     from src.engine.context.scope import ScopeTracker
-    from src.engine.skills.loaded import LoadedSkills
+    from src.engine.skills.loads import SkillLoads
     from src.engine.skills.registry import SkillRegistry
 
 ToolRegistrarCallable = Callable[['Agent[Any, Any]'], None]
@@ -55,7 +55,8 @@ class AgentSpec:
     model_retry: RetryTransientModelErrors | None = None
     workspace: WorkspaceInstructions | None = None
     scope: ScopeTracker | None = None
-    loaded_skills: LoadedSkills | None = None
+    loaded_skills: SkillLoads | None = None
+    """The loaded skills, per node: one registry for the root, one per subagent."""
     agent_registry: AgentRegistry | None = None
     extra_capabilities: Sequence[AbstractCapability] = ()
     """Capabilities of the session, shared by every agent of the tree.
@@ -113,7 +114,7 @@ class AgentFactory:
             model_retry=self.spec.model_retry,
             workspace=self.spec.workspace,
             scope=self.spec.scope,
-            loaded_skills=self.spec.loaded_skills,
+            loaded_skills=None if self.spec.loaded_skills is None else self.spec.loaded_skills.for_node,
             agent_registry=self.spec.agent_registry,
             profile=None if profile is None else ProfileSource.fixed(profile),
             extra_capabilities=self.spec.extra_capabilities,

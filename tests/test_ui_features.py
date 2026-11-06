@@ -17,7 +17,7 @@ from pydantic_ai.models.test import TestModel
 
 from src.engine.preferences import Preferences, PreferencesStore
 from src.engine.roadmap.models.todo_item import TodoItem
-from src.engine.roadmap.store import RoadmapStore
+from src.engine.roadmap.stores import RoadmapStores
 from src.engine.sessions.session_store import SessionStore
 from src.engine.themes import ThemeRegistry
 from src.ui.app import SigilApp
@@ -273,8 +273,8 @@ def test_the_sidebar_is_one_panel_with_the_roadmap_as_its_last_section():
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
-            roadmap = RoadmapStore(directory=Path(tmp), session_id=None)
-            roadmap.set_items([TodoItem(title='Ship it', status='in_progress')])
+            roadmap = RoadmapStores(directory=Path(tmp), session_id=None)
+            roadmap.root.set_items([TodoItem(title='Ship it', status='in_progress')])
             app = _app(tmp, roadmap_store=roadmap)
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
@@ -304,8 +304,8 @@ def test_the_panel_scrolls_when_a_long_plan_does_not_fit():
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
-            roadmap = RoadmapStore(directory=Path(tmp), session_id=None)
-            roadmap.set_items([TodoItem(title=f'Task {index}') for index in range(20)])
+            roadmap = RoadmapStores(directory=Path(tmp), session_id=None)
+            roadmap.root.set_items([TodoItem(title=f'Task {index}') for index in range(20)])
             app = _app(tmp, roadmap_store=roadmap)
             async with app.run_test(size=(100, 24)) as pilot:
                 await pilot.pause()
@@ -332,8 +332,8 @@ def test_the_panel_scrolls_when_there_are_more_skills_than_rows():
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
-            roadmap = RoadmapStore(directory=Path(tmp), session_id=None)
-            roadmap.set_items([TodoItem(title='The only task')])
+            roadmap = RoadmapStores(directory=Path(tmp), session_id=None)
+            roadmap.root.set_items([TodoItem(title='The only task')])
             app = _app(tmp, roadmap_store=roadmap)
             async with app.run_test(size=(100, 26)) as pilot:
                 await pilot.pause()
@@ -355,7 +355,7 @@ def test_the_panel_scrolls_when_there_are_more_skills_than_rows():
 def test_the_roadmap_still_updates_live():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
-            roadmap = RoadmapStore(directory=Path(tmp), session_id=None)
+            roadmap = RoadmapStores(directory=Path(tmp), session_id=None)
             app = _app(tmp, roadmap_store=roadmap)
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
@@ -363,7 +363,7 @@ def test_the_roadmap_still_updates_live():
                 assert 'No tasks yet' in panel.text
                 assert 'Roadmap' in panel.text
 
-                roadmap.set_items([TodoItem(title='First task', status='pending')])
+                roadmap.root.set_items([TodoItem(title='First task', status='pending')])
                 await pilot.pause()
                 assert 'First task' in panel.text
 

@@ -41,12 +41,24 @@ def write_skill(
     return skill_dir
 
 
+class _Ctx:
+    """The minimum of a `RunContext` the skills tools read: their node."""
+
+    deps = None
+
+
 class DummyAgent:
     def __init__(self) -> None:
         self.registered = {}
         self.options: dict[str, dict[str, object]] = {}
 
     def tool_plain(self, func, **options):
+        self.registered[func.__name__] = func
+        self.options[func.__name__] = options
+        return func
+
+    def tool(self, func, **options):
+        """The context flavour: `load_skill` reads the run to find its node."""
         self.registered[func.__name__] = func
         self.options[func.__name__] = options
         return func
@@ -254,7 +266,7 @@ def test_load_skill_tool_returns_ack_and_registers(tmp_path):
     agent = DummyAgent()
     register_skill_tools(agent, registry, loaded=loaded_skills)
 
-    loaded = agent.registered['load_skill']('demo')
+    loaded = agent.registered['load_skill'](_Ctx(), 'demo')
     assert loaded.name == 'demo'
     assert not hasattr(loaded, 'body')
     assert 'Loaded skills' in loaded.note
@@ -276,8 +288,8 @@ def test_load_skill_is_idempotent_in_the_registry(tmp_path):
     agent = DummyAgent()
     register_skill_tools(agent, registry, loaded=loaded_skills)
 
-    agent.registered['load_skill']('demo')
-    agent.registered['load_skill']('demo')
+    agent.registered['load_skill'](_Ctx(), 'demo')
+    agent.registered['load_skill'](_Ctx(), 'demo')
     assert loaded_skills.names() == ('demo',)
 
 

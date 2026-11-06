@@ -51,7 +51,16 @@ def elapsed_text(seconds: float) -> str:
 
 
 def build_agent_header(node: AgentNode, *, parent_label: str, has_parent: bool) -> Text:
-    """The fixed header: where this node is, what it was asked, how it went."""
+    """The fixed header: where this node is, and how it went.
+
+    The task is **not** repeated here. It is the first message of the transcript
+    right below, so a header that also carried it said the same thing twice and
+    pushed the actual work down the screen — and the header stays fixed while the
+    transcript scrolls, which made the duplication permanent.
+
+    What the header knows and the transcript does not is the rest: who summoned it,
+    how to leave, the state it ended in, and how long it took.
+    """
     mark, style, word = STATUS_STYLE.get(node.status, ('·', '', str(node.status)))
     if node.budget_exhausted and node.status is NodeStatus.DONE:
         # It answered, so it is done — but the reason it stopped is what a reader
@@ -63,8 +72,7 @@ def build_agent_header(node: AgentNode, *, parent_label: str, has_parent: bool) 
         header.append(f'Esc returns to {parent_label}', style='dim')
         header.append('   ')
     header.append(node.label, style='bold')
-    header.append(f' {node.name} ', style='dim')
-    header.append(f'#{node.short_id}', style='dim')
+    header.append(f'  #{node.short_id}', style='dim')
     header.append('  ')
     header.append(f'{mark} {word}', style=style)
     header.append(f' · {node.mode} · {elapsed_text(node.elapsed)}', style='dim')
@@ -74,10 +82,6 @@ def build_agent_header(node: AgentNode, *, parent_label: str, has_parent: bool) 
         header.append(f' · {node.model}', style='dim')
     if node.channel.bidirectional:
         header.append(f' · {node.channel.describe()}', style='dim')
-    if node.task:
-        header.append('\n')
-        header.append('Task: ', style='bold')
-        header.append(' '.join(node.task.split()))
     if node.status is NodeStatus.FAILED and node.error:
         header.append('\n')
         header.append('Error: ', style='bold red')

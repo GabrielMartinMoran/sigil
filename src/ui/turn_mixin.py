@@ -381,10 +381,20 @@ class TurnMixin:
         pending = self._take_subagent_messages()
         if pending:
             text = '\n\n'.join([*pending, text])
-            await chat.add_notice(
-                f'{len(pending)} message(s) from subagents arrived while the session was idle; they go with this turn.',
-                style='dim',
-            )
+            if self._wake_pending:
+                # The turn exists because of these reports: the agent should not
+                # read them as something the user typed.
+                self._wake_pending = False
+                await chat.add_notice(
+                    f'↩ Woken by {len(pending)} subagent report(s). They go with this turn.',
+                    style='cyan',
+                )
+            else:
+                await chat.add_notice(
+                    f'{len(pending)} message(s) from subagents arrived while the session was idle; '
+                    'they go with this turn.',
+                    style='dim',
+                )
         # The turn's budget, in the same shape a subagent gets one: when the steps
         # run out, the tools are taken away and the model is asked for a last answer
         # instead of the turn dying with nothing to show. The user keeps a complete

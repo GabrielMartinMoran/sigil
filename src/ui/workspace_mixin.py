@@ -55,8 +55,11 @@ class WorkspaceMixin:
         if self._loaded_skills is not None:
             self._loaded_skills.reset()
         self.refresh_sidebar()
-        # A new tree is a new first half of the window title.
+        # A new tree is a new first half of the window title, and a new line in the
+        # status bar. The bar is painted on mount and on a turn: without this, a
+        # worktree created mid-session keeps the label of the tree it came from.
         self.paint_window_title()
+        self.refresh_workspace_badge()
 
     async def announce_switch(self, switch: WorkspaceSwitch, chat: ChatLog) -> None:
         """Paints what changed, including what the new workspace does *not* have."""

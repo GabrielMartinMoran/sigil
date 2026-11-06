@@ -28,16 +28,29 @@ class SidebarMixin:
     _history: list[ModelMessage]
 
     def refresh_sidebar(self) -> None:
-        """Model, context budget, skills and MCP: every section above the roadmap."""
+        """Model, context budget, skills and MCP: every section above the roadmap.
+
+        Everything here belongs to the agent on screen, not to the session: a
+        subagent has its own loaded skills, its own context and its own bill, and
+        the panel shows the one the user is reading. That is also why the panel
+        carries the name of the agent: two columns that look alike for a parent and
+        its child would be unreadable.
+        """
         try:
             panel = self.query_one(SidebarPanel)
         except NoMatches, ScreenStackError:
             return
-        names = self._loaded_skills.names() if self._loaded_skills is not None else ()
         state = getattr(self, 'model_state', None)
         panel.update_model(state() if callable(state) else None)
         panel.update_context(self.context_state())
+        viewer = getattr(self, 'viewed_skills', None)
+        names = (
+            viewer() if callable(viewer) else (self._loaded_skills.names() if self._loaded_skills is not None else ())
+        )
         panel.update_skills(names)
+        agent_label = getattr(self, 'viewed_agent_label', None)
+        if callable(agent_label):
+            panel.update_agent(agent_label())
 
     def refresh_context(self, messages: Sequence[ModelMessage] | None = None) -> None:
         """Repaints only the context section.
@@ -64,7 +77,7 @@ class SidebarMixin:
         the same history and travels with it: a zero there means nothing was sent
         yet, which is a fact, not a gap.
         """
-        history = self._history if messages is None else messages
+        history = self.viewed_history() if messages is None else messages
         snapshot = self._meter.snapshot(history)
         cost = session_cost(history)
         if snapshot.projected is None and snapshot.window:
