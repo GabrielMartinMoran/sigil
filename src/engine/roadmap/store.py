@@ -1,78 +1,73 @@
-"""Roadmap of a session, with persistence and UI notification."""
+"""Roadmap of one execution, with persistence and UI notification.
+
+The plan is rows keyed by execution. That removed two things the file version
+needed: there is no directory to hash and no file per workspace, so switching
+workspace no longer moves or reloads anything, and the root's plan is keyed by the
+root's execution id instead of a sentinel.
+
+Persistence is still best-effort: if it fails, the in-memory state keeps working and
+the reason stays in ``persistence_error``. The one failure worth naming is a plan
+written for an execution the database has not seen yet — a subagent whose node was
+added to the tree but not saved. ``flush`` is the way out: the app passes a callable
+that persists the session, which is what creates the execution row.
+"""
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 from collections.abc import Callable
 from pathlib import Path
 
 from src.engine.roadmap.models.todo_item import TodoItem, now_iso
 from src.engine.roadmap.models.todo_status import TODO_STATUSES, TodoStatus
-from src.engine.roadmap.persistence import default_directory, directory_for, load_items, path_for, save_items
+from src.engine.storage.database import Database, database_path
+from src.engine.storage.roadmap import delete_items, read_items, replace_items
 
 
 class RoadmapStore:
-    """Roadmap of a session, with persistence and UI notification.
+    """Roadmap of one execution, with persistence and UI notification.
 
-    Each session has its own file: the roadmap is born empty with the session,
-    advances with it and is recovered when loading it. ``bind_session`` re-points the
-    store to another session's roadmap without recreating the object, so the
-    agent's tool always writes to the active session.
-
-    Persistence is best-effort: if it fails, the in-memory state keeps
-    working and the error stays in ``persistence_error``.
+    ``bind`` re-points the store to another execution without recreating the object,
+    so the agent's tool always writes to the one in effect.
     """
 
-    def __init__(self, directory: str | Path | None = None, session_id: str | None = None) -> None:
+    def __init__(
+        self,
+        execution_id: str | None = None,
+        *,
+        base_dir: str | Path | None = None,
+        flush: Callable[[], None] | None = None,
+    ) -> None:
         self._lock = threading.RLock()
         self._listeners: list[Callable[[], None]] = []
         self._items: list[TodoItem] = []
         self.persistence_error: str | None = None
-        self._directory = Path(directory) if directory is not None else default_directory()
-        self._session_id = session_id
-        self._path = path_for(self._directory, session_id)
+        self._database = Database.at(database_path(base_dir))
+        self._execution_id = execution_id
+        self._flush = flush
         self._load()
 
     @property
-    def session_id(self) -> str | None:
-        return self._session_id
+    def execution_id(self) -> str | None:
+        return self._execution_id
 
     @property
-    def path(self) -> Path | None:
-        return self._path
+    def database(self) -> Database:
+        return self._database
 
-    def bind_session(self, session_id: str | None) -> None:
-        """Re-points the store to the roadmap of ``session_id`` and reloads it."""
+    def bind(self, execution_id: str | None) -> None:
+        """Re-points the store to the plan of ``execution_id`` and reloads it."""
         with self._lock:
-            if session_id == self._session_id:
+            if execution_id == self._execution_id:
                 return
-            self._session_id = session_id
-            self._path = path_for(self._directory, session_id)
+            self._execution_id = execution_id
             self._items = []
             self.persistence_error = None
             self._load()
         self._notify()
 
-    def rebind_root(self, root: str | Path) -> None:
-        """Moves the store to the roadmap directory of another workspace.
-
-        Switching workspace changes the directory but not the session: the items
-        are reloaded from the new directory, which is empty until a session of
-        that workspace writes to it.
-        """
-        directory = directory_for(root)
-        with self._lock:
-            # The file is the identity of the roadmap: if the session resolves to the
-            # same one, there is nothing to reload and the items must survive.
-            new_path = path_for(directory, self._session_id)
-            if new_path == self._path:
-                return
-            self._directory = directory
-            self._path = new_path
-            self._items = []
-            self.persistence_error = None
-            self._load()
-        self._notify()
+    # --- reading -------------------------------------------------------------
 
     def snapshot(self) -> list[TodoItem]:
         with self._lock:
@@ -84,6 +79,8 @@ class RoadmapStore:
             for item in self._items:
                 counts[item.status] += 1
             return counts
+
+    # --- writing -------------------------------------------------------------
 
     def set_items(self, items: list[TodoItem]) -> list[TodoItem]:
         with self._lock:
@@ -146,6 +143,18 @@ class RoadmapStore:
             self._save_locked()
         self._notify()
 
+    def reload(self) -> None:
+        """Re-reads the plan from its rows and notifies.
+
+        A rollback rewrites the rows behind the store's back; without this the panel
+        would keep painting a plan that no longer exists.
+        """
+        with self._lock:
+            self._load()
+        self._notify()
+
+    # --- listeners -----------------------------------------------------------
+
     def add_listener(self, listener: Callable[[], None]) -> None:
         with self._lock:
             if listener not in self._listeners:
@@ -163,10 +172,55 @@ class RoadmapStore:
             except Exception:  # noqa: BLE001, S110 - the UI must not break the state
                 pass
 
+    # --- persistence ---------------------------------------------------------
+
     def _load(self) -> None:
-        items, error = load_items(self._path)
-        self._items = items
-        self.persistence_error = error
+        if not self._execution_id:
+            self._items = []
+            return
+        try:
+            self._items = read_items(self._database, self._execution_id)
+            self.persistence_error = None
+        except sqlite3.Error as exc:
+            self._items = []
+            self.persistence_error = str(exc)
 
     def _save_locked(self) -> None:
-        self.persistence_error = save_items(self._path, self._items)
+        if not self._execution_id:
+            self.persistence_error = None
+            return
+        try:
+            replace_items(self._database, self._execution_id, self._items)
+            self.persistence_error = None
+        except sqlite3.IntegrityError as exc:
+            # The execution is not a row yet: a subagent whose node lives only in
+            # the tree. Ask the app to persist the session, which creates it, and
+            # try once more. The list is written whole, so nothing is lost either
+            # way.
+            self.persistence_error = str(exc)
+            if self._flush is None:
+                return
+            try:
+                self._flush()
+                replace_items(self._database, self._execution_id, self._items)
+                self.persistence_error = None
+            except Exception as retry:  # noqa: BLE001 - reported, not raised
+                self.persistence_error = str(retry)
+        except sqlite3.Error as exc:
+            self.persistence_error = str(exc)
+
+    # --- maintenance ---------------------------------------------------------
+
+    def forget(self) -> None:
+        """Deletes the plan of this execution. Called when the execution is gone."""
+        if not self._execution_id:
+            return
+        with self._lock:
+            self._items = []
+        try:
+            delete_items(self._database, self._execution_id)
+        except sqlite3.Error as exc:
+            self.persistence_error = str(exc)
+
+
+__all__ = ['RoadmapStore']

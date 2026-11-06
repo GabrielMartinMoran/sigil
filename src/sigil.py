@@ -11,6 +11,7 @@ from src.engine.agents.factory import AgentFactory, AgentSpec
 from src.engine.agents.model_features import IMAGE_INPUT, ModelFeatureGate
 from src.engine.agents.profile.registry import AgentRegistry
 from src.engine.agents.retry import RetryTransientModelErrors
+from src.engine.agents.rollback import Rollback
 from src.engine.agents.tree.rendering import SUMMON_TOOL, render_peers, summonable
 from src.engine.agents.tree.store import AgentTreeStore
 from src.engine.agents.tree.summoner import SubagentSummoner
@@ -38,13 +39,12 @@ from src.engine.providers.factory.unconfigured import UnconfiguredModel
 from src.engine.providers.login.chatgpt_flow import ChatGPTLoginFlow
 from src.engine.providers.login.credential_source import chatgpt_provider_factory
 from src.engine.providers.store.secret_store import FileSecretStore
-from src.engine.providers.store.state_store import FileStateStore
+from src.engine.providers.store.state_store import SqliteStateStore
 from src.engine.roadmap.stores import RoadmapStores
 from src.engine.roadmap.tools import register_roadmap_tools
 from src.engine.sessions.session_store import SessionStore
 from src.engine.settings import SigilSettings, load_settings
 from src.engine.shell.tools import register_shell_tools
-from src.engine.skills.loads import SkillLoads
 from src.engine.skills.registry import SkillRegistry
 from src.engine.skills.tools import register_skill_tools
 from src.engine.themes import ThemeRegistry
@@ -91,21 +91,21 @@ def _build_strategy(settings: SigilSettings):
         return PassthroughStrategy()
     if settings.context_strategy == 'compacting':
         return CompactingStrategy(
-            keep_recent_turns=settings.keep_recent_turns,
+            keep_recent_prompts=settings.keep_recent_prompts,
             max_tool_result_chars=settings.max_tool_result_chars,
             reasoning=settings.reasoning,
             reasoning_steps=settings.reasoning_steps,
             reasoning_max_percent=settings.reasoning_max_percent,
-            image_rounds=settings.image_rounds,
+            image_turns=settings.image_turns,
             image_max_percent=settings.image_max_percent,
         )
     return WindowedStrategy(
-        keep_recent_turns=settings.keep_recent_turns,
+        keep_recent_prompts=settings.keep_recent_prompts,
         max_tool_result_chars=settings.max_tool_result_chars,
         reasoning=settings.reasoning,
         reasoning_steps=settings.reasoning_steps,
         reasoning_max_percent=settings.reasoning_max_percent,
-        image_rounds=settings.image_rounds,
+        image_turns=settings.image_turns,
         image_max_percent=settings.image_max_percent,
     )
 
@@ -136,13 +136,6 @@ def run() -> None:
     # A single skill registry shared by the agent instructions
     # (metadata) and by the tools (load, resources and scripts).
     skill_registry = SkillRegistry()
-
-    # Skills loaded in the session: the `load_skill` tool registers them and the
-    # instructions function injects them as a block on every request.
-    # One registry per agent of the tree: a subagent does not inherit the skills its
-    # parent loaded, because a skill body is instructions and they belong to the task
-    # that asked for them.
-    loaded_skills = SkillLoads()
 
     # Tool logging hub: the engine emits, the UI adds its sink on mount.
     tool_logger = ToolLoggerHub()
@@ -177,7 +170,7 @@ def run() -> None:
     # so the app opens and `/provider` is reachable from a cold start.
     provider_paths = ProviderPaths(providers_dir())
     secrets = FileSecretStore(provider_paths.credentials)
-    state = FileStateStore(provider_paths.state)
+    state = SqliteStateStore(provider_paths.home)
     model_service = build_service(
         provider_paths,
         session_id=session.id,
@@ -204,11 +197,25 @@ def run() -> None:
     )
 
     # Bridge for interactive questions and roadmap state: the engine
-    # updates, the UI consumes them. The roadmap is per agent, not per session: the
-    # root keeps the session's plan and a subagent plans in its own file, because a
-    # plan belongs to whoever is executing it.
+    # updates, the UI consumes them. The roadmap is per execution, not per session:
+    # the root keeps the session's plan and a subagent plans in its own rows, because
+    # a plan belongs to whoever is executing it. `flush` is how a plan written for an
+    # execution the database has not seen yet (a node that only lives in the tree)
+    # gets its row: persist the session, then write again.
     question_hub = QuestionHub()
-    roadmap_store = RoadmapStores(session_id=session.id)
+    roadmap_store = RoadmapStores(
+        session_id=session.id,
+        flush=lambda: store.save(session) if session.messages else None,
+    )
+
+    # Rollback: the conversation, the plan and the workspace, back to the instant
+    # before a turn started. The registry is told when a restored plan is written,
+    # because the panel paints from it and would otherwise keep the old list.
+    rollback = Rollback(
+        store,
+        workspace=workspace_root,
+        on_plan_changed=roadmap_store.reload_all,
+    )
 
     # Workspace: the directory Sigil works in, which can be a linked git worktree.
     # Switching re-points the components that cached the old root; the agent is
@@ -216,7 +223,6 @@ def run() -> None:
     workspace_manager = WorkspaceManager(
         workspace_root,
         session_store=store,
-        roadmap_store=roadmap_store,
         rebindables=[scope, workspace, skill_registry],
     )
 
@@ -305,7 +311,7 @@ def run() -> None:
     def install_tools(target: Any) -> None:
         """Every tool every agent of the session gets. The root included."""
         register_shell_tools(target, logger=tool_logger, catalog=tool_catalog)
-        register_skill_tools(target, skill_registry, logger=tool_logger, loaded=loaded_skills, catalog=tool_catalog)
+        register_skill_tools(target, skill_registry, logger=tool_logger, catalog=tool_catalog)
         register_mcp_tools(target, mcp, logger=tool_logger, catalog=tool_catalog)
         register_web_tools(target, logger=tool_logger, catalog=tool_catalog)
         register_file_tools(target, logger=tool_logger, catalog=tool_catalog)
@@ -325,7 +331,6 @@ def run() -> None:
             model_retry=model_retry,
             workspace=workspace,
             scope=scope,
-            loaded_skills=loaded_skills,
             agent_registry=agent_registry,
             extra_capabilities=[context_capability, feature_gate],
             tool_registrars=[install_tools],
@@ -349,12 +354,12 @@ def run() -> None:
         mcp_loader=_mcp_loader(config, tool_logger, mcp_shutdown_timeout),
         question_hub=question_hub,
         roadmap_store=roadmap_store,
+        rollback=rollback,
         model_retry=model_retry,
         meter=meter,
         context_capability=context_capability,
         scope=scope,
         workspace=workspace,
-        loaded_skills=loaded_skills,
         workspace_manager=workspace_manager,
         # UI preferences live outside the session: they are the user's, not the
         # conversation's, and they have to be read before the first paint.

@@ -9,6 +9,7 @@ from pydantic_ai.models.test import TestModel
 
 import src.ui.app as appmod
 import src.ui.turn_mixin as turnmod
+from src.engine.commands import COMMANDS
 from src.engine.sessions.session_store import SessionStore
 from src.engine.tooling.logging import ToolLoggerHub
 from src.engine.tooling.registrar import ToolRegistrar
@@ -65,7 +66,9 @@ def test_command_menu_filters_and_selects(monkeypatch):
 
                 menu = app.query_one(CommandMenu)
                 assert menu.display is True
-                assert menu.option_count == 15
+                # Derived from the catalogue and not a number: the palette gained a
+                # command in two branches at once, and a hard count breaks on both.
+                assert menu.option_count == len(COMMANDS)
 
                 await pilot.press('n')
                 await pilot.pause()

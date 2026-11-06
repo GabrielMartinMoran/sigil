@@ -28,7 +28,6 @@ from pydantic_ai.models.test import TestModel
 from src.engine.roadmap.models.todo_item import TodoItem
 from src.engine.roadmap.stores import RoadmapStores
 from src.engine.sessions.session_store import SessionStore
-from src.engine.skills.loaded import LoadedSkills
 from src.engine.workspace.manager import WorkspaceManager
 from src.ui.app import SigilApp
 from src.ui.widgets.sidebar_panel import SidebarPanel
@@ -62,12 +61,11 @@ def _app(repo: Path, tmp_path: Path, *, session_messages: tuple[str, ...] = ()) 
     if session_messages:
         session.messages = [ModelRequest(parts=[UserPromptPart(content=text)]) for text in session_messages]
         store.save(session)
-    roadmaps = RoadmapStores(directory=tmp_path / 'roadmaps', session_id=session.id)
+    roadmaps = RoadmapStores(session_id=session.id, base_dir=tmp_path / 'sessions')
     manager = WorkspaceManager(
         repo,
         worktrees_dir=tmp_path / 'worktrees',
         session_store=store,
-        roadmap_store=roadmaps,
         rebindables=[],
     )
     return SigilApp(
@@ -75,7 +73,6 @@ def _app(repo: Path, tmp_path: Path, *, session_messages: tuple[str, ...] = ()) 
         store=store,
         session=session,
         roadmap_store=roadmaps,
-        loaded_skills=LoadedSkills(),
         workspace_manager=manager,
     )
 
@@ -172,7 +169,7 @@ def test_a_rebound_session_does_not_lose_what_was_written_to_it(tmp_path, repo):
     It happens on every mount and on every view change. Recreating the stores there
     would drop live listeners and the items of a plan that is still open.
     """
-    stores = RoadmapStores(directory=tmp_path / 'roadmaps', session_id='session1')
+    stores = RoadmapStores(session_id='session1', base_dir=tmp_path / 'roadmaps')
     stores.root.set_items([TodoItem(title='Still here')])
 
     stores.bind_session('session1')

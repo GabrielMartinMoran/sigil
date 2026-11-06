@@ -275,7 +275,7 @@ def test_the_sidebar_is_one_panel_with_the_roadmap_as_its_last_section():
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
-            roadmap = RoadmapStores(directory=Path(tmp), session_id=None)
+            roadmap = RoadmapStores(session_id=None, base_dir=Path(tmp))
             roadmap.root.set_items([TodoItem(title='Ship it', status='in_progress')])
             app = _app(tmp, roadmap_store=roadmap)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -310,7 +310,7 @@ def test_the_panel_scrolls_when_a_long_plan_does_not_fit():
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
-            roadmap = RoadmapStores(directory=Path(tmp), session_id=None)
+            roadmap = RoadmapStores(session_id=None, base_dir=Path(tmp))
             roadmap.root.set_items([TodoItem(title=f'Task {index}') for index in range(20)])
             app = _app(tmp, roadmap_store=roadmap)
             async with app.run_test(size=(100, 24)) as pilot:
@@ -338,7 +338,7 @@ def test_the_panel_scrolls_when_there_are_more_skills_than_rows():
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
-            roadmap = RoadmapStores(directory=Path(tmp), session_id=None)
+            roadmap = RoadmapStores(session_id=None, base_dir=Path(tmp))
             roadmap.root.set_items([TodoItem(title='The only task')])
             app = _app(tmp, roadmap_store=roadmap)
             async with app.run_test(size=(100, 26)) as pilot:
@@ -361,7 +361,7 @@ def test_the_panel_scrolls_when_there_are_more_skills_than_rows():
 def test_the_roadmap_still_updates_live():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
-            roadmap = RoadmapStores(directory=Path(tmp), session_id=None)
+            roadmap = RoadmapStores(session_id=None, base_dir=Path(tmp))
             app = _app(tmp, roadmap_store=roadmap)
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -135,12 +134,11 @@ def test_catalog_lists_newest_first_across_workspaces(repo, tmp_path):
     assert entries[0].session.id == newest
 
 
-def test_the_same_session_in_two_workspaces_is_listed_once(repo, tmp_path):
-    """A session id is one row, even when two workspaces have a copy of the file.
+def test_a_session_belongs_to_the_workspace_it_was_created_in(repo, tmp_path):
+    """One row, one workspace: the catalog lists it once and labels it.
 
-    The parent picker cannot hold two options with the same id —`OptionList`
-    raises— so the catalog is where the id has to be unique: the newest copy wins
-    and the rest are the same conversation by another name.
+    The duplicate the file store could produce across two folders — and had to
+    filter — cannot exist now: a session row names its workspace.
     """
     base = tmp_path / 'sessions'
     repository = GitRepository.discover(repo)
@@ -148,13 +146,13 @@ def test_the_same_session_in_two_workspaces_is_listed_once(repo, tmp_path):
     created = repository.create_worktree('fix-login', base_dir=tmp_path / 'worktrees')
 
     main_store = SessionStore(cwd=repo, base_dir=base)
-    session_id = _session(main_store, 'copied over')
+    session_id = _session(main_store, 'belongs here')
     worktree_store = SessionStore(cwd=created.path, base_dir=base)
-    shutil.copy(main_store.directory / f'{session_id}.json', worktree_store.directory / f'{session_id}.json')
 
     entries = catalog(repo, base_dir=base)
     listed = [entry.session.id for entry in entries]
     assert listed.count(session_id) == 1
+    assert worktree_store.list_sessions() == []
 
 
 def test_sessions_of_another_repository_are_not_listed(repo, tmp_path):

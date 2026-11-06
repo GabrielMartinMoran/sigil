@@ -11,7 +11,6 @@ from pydantic_ai.models.test import TestModel
 from src.engine.agents.agent import create_agent
 from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
 from src.engine.context.scope import ScopeTracker
-from src.engine.skills.loaded import LoadedSkills
 from src.engine.skills.registry import SkillRegistry
 
 
@@ -41,12 +40,10 @@ def test_agent_registers_workspace_and_loaded_skill_blocks():
         _write_skill(root, 'demo', '# Demo body')
 
         registry = SkillRegistry([('project', root)])
-        loaded = LoadedSkills()
         agent = create_agent(
             registry,
             workspace=WorkspaceInstructions(root),
             scope=ScopeTracker(root),
-            loaded_skills=loaded,
         )
 
         names = _instruction_names(agent)
@@ -55,27 +52,72 @@ def test_agent_registers_workspace_and_loaded_skill_blocks():
         assert 'skills' in names
 
 
+def _last_request_instructions(result) -> str:
+    """The instructions the newest request was sent with.
+
+    `all_messages()` includes the history it was given, and the instructions live on
+    the request, not on the response.
+    """
+    from pydantic_ai.messages import ModelRequest
+
+    requests = [message for message in result.all_messages() if isinstance(message, ModelRequest)]
+    return (requests[-1].instructions or '') if requests else ''
+
+
+def _loaded(name: str, *, outcome: str = 'success', call_id: str = 'call-1') -> list:
+    """A history whose last turn loaded ``name``."""
+    from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
+
+    return [
+        ModelResponse(parts=[ToolCallPart(tool_name='load_skill', args={'name': name}, tool_call_id=call_id)]),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='load_skill', content='ok', tool_call_id=call_id, outcome=outcome)]
+        ),
+    ]
+
+
 def test_loaded_skill_body_reaches_the_instructions():
+    """The block is derived from the history of the run, not from a registry.
+
+    That is what makes a resumed session keep the skills it was following: the
+    history came back, so the set came back with it.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         _write_skill(root, 'demo', '# Demo body\nFollow these steps.')
 
         registry = SkillRegistry([('project', root)])
-        loaded = LoadedSkills()
-        agent = create_agent(registry, loaded_skills=loaded)
+        agent = create_agent(registry)
 
-        # Before loading, the block contributes nothing.
+        # No history: nothing was loaded in this run, so the block is empty.
         with agent.override(model=TEST_MODEL):
             result = asyncio.run(agent.run('hello'))
-        first = result.all_messages()[0]
-        assert 'Demo body' not in (first.instructions or '')
+        assert 'Demo body' not in (result.all_messages()[0].instructions or '')
 
-        loaded.add('demo')
+        # A history that loaded the skill: the body is injected again.
         with agent.override(model=TEST_MODEL):
-            result = asyncio.run(agent.run('hello again'))
-        first = result.all_messages()[0]
-        assert 'Demo body' in (first.instructions or '')
-        assert 'Follow these steps.' in (first.instructions or '')
+            result = asyncio.run(agent.run('hello again', message_history=_loaded('demo')))
+        instructions = _last_request_instructions(result)
+        assert 'Demo body' in instructions
+        assert 'Follow these steps.' in instructions
+
+
+def test_a_failed_load_does_not_reach_the_instructions():
+    """`ToolErrorRecovery` returns failures as `ToolReturnPart`s.
+
+    A `load_skill` with an unknown name therefore looks successful to anyone who
+    only checks that a return part exists; the filter is `outcome`.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _write_skill(root, 'demo', '# Demo body')
+
+        registry = SkillRegistry([('project', root)])
+        agent = create_agent(registry)
+
+        with agent.override(model=TEST_MODEL):
+            result = asyncio.run(agent.run('hello', message_history=_loaded('demo', outcome='failed')))
+        assert 'Demo body' not in _last_request_instructions(result)
 
 
 def test_workspace_block_uses_append_policy():
@@ -94,7 +136,7 @@ def test_workspace_block_uses_append_policy():
         assert '# Rules' in parts
 
 
-def test_agent_without_loaded_skills_has_no_block():
+def test_agent_without_a_skill_registry_has_no_block():
     agent = create_agent(None)
     assert 'loaded-skills' not in _instruction_names(agent)
 
@@ -105,13 +147,11 @@ def test_loaded_skills_block_is_rewritten_not_appended():
         root = Path(tmp)
         _write_skill(root, 'demo', '# Demo body')
         registry = SkillRegistry([('project', root)])
-        loaded = LoadedSkills()
-        agent = create_agent(registry, loaded_skills=loaded)
+        agent = create_agent(registry)
 
-        loaded.add('demo')
         with agent.override(model=TEST_MODEL):
-            result = asyncio.run(agent.run('hello'))
-        request = result.all_messages()[0]
+            result = asyncio.run(agent.run('hello', message_history=_loaded('demo')))
         # `rewrite` leaves the block in the instruction prefix, without deltas.
-        assert 'Demo body' in (request.instructions or '')
+        assert 'Demo body' in _last_request_instructions(result)
+        request = [m for m in result.all_messages() if type(m).__name__ == 'ModelRequest'][-1]
         assert not any(type(part).__name__ == 'InstructionDeltaPart' for part in request.parts)

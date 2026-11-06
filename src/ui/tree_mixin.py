@@ -27,6 +27,7 @@ from textual.app import ScreenStackError
 from textual.css.query import NoMatches
 
 from src.engine.agents.tree.models.agent_node import AgentNode
+from src.engine.skills.loaded import loaded_skills
 from src.ui.messages import NodeOpened, TreeChanged
 from src.ui.widgets.agent_tree_screen import AgentTreeScreen, TreeAction
 from src.ui.widgets.agent_view import AgentView
@@ -349,16 +350,13 @@ class TreeMixin:
         return f'{node.label} #{node.short_id}'
 
     def viewed_skills(self) -> tuple[str, ...]:
-        """The skills loaded by whoever is on screen."""
-        loads = getattr(self, '_loaded_skills', None)
-        if loads is None:
-            return ()
-        # `SkillLoads` is the real thing; a plain `LoadedSkills` is what an app built
-        # for one agent (an embedding, an older test) still passes.
-        if not hasattr(loads, 'for_node'):
-            return loads.names()
-        node_id = self.viewed_node_id() if self.subagent_open else None
-        return loads.names(node_id)
+        """The skills loaded by whoever is on screen, derived from its transcript.
+
+        Nothing is kept on the side: a `load_skill` call is in the history of the
+        execution that made it, and that is the whole record. It is what makes a
+        resumed session keep the skills it was following.
+        """
+        return loaded_skills(self.viewed_history())
 
     def viewed_history(self) -> list[Any]:
         """The messages of whoever is on screen: a subagent's own transcript."""

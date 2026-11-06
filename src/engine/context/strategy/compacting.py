@@ -10,7 +10,7 @@ from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest, Mod
 from src.engine.context.budget import ContextBudget
 from src.engine.context.strategy.constants import (
     DEFAULT_IMAGE_MAX_PERCENT,
-    DEFAULT_IMAGE_ROUNDS,
+    DEFAULT_IMAGE_TURNS,
     DEFAULT_MAX_TOOL_RESULT_CHARS,
     DEFAULT_REASONING,
     DEFAULT_REASONING_MAX_PERCENT,
@@ -32,7 +32,7 @@ from src.engine.context.strategy.rewriting import (
     truncate_old_tool_results,
 )
 from src.engine.context.strategy.turn_summary import summarize_turn
-from src.engine.context.strategy.turns import has_pinned_result, split_turns
+from src.engine.context.strategy.turns import has_pinned_result, split_prompts
 from src.engine.context.strategy.view_result import ViewResult
 from src.engine.context.tokens import estimate_messages_tokens
 from src.engine.context.working_set import DEFAULT_WORKING_SET_LIMIT, render_working_set, touched_files
@@ -56,16 +56,16 @@ class CompactingStrategy:
     The log is not touched: compaction is a projection, just like the window.
     """
 
-    keep_recent_turns: int = 2
+    keep_recent_prompts: int = 2
     max_tool_result_chars: int = DEFAULT_MAX_TOOL_RESULT_CHARS
     tool_result_head_chars: int = DEFAULT_TOOL_RESULT_HEAD_CHARS
     reasoning: ReasoningPolicy = DEFAULT_REASONING
     """Same policy as `WindowedStrategy`: ``off``, ``recent`` or ``all``."""
     reasoning_steps: int = DEFAULT_REASONING_STEPS
-    """Steps of the round in progress that keep their reasoning under ``recent``."""
+    """Steps of the turn in progress that keep their reasoning under ``recent``."""
     reasoning_max_percent: int = DEFAULT_REASONING_MAX_PERCENT
     """Ceiling for the reasoning kept, as a percentage of the model's window."""
-    image_rounds: int = DEFAULT_IMAGE_ROUNDS
+    image_turns: int = DEFAULT_IMAGE_TURNS
     """Rounds an image stays loaded, counting its own. Older ones leave their id behind."""
     image_max_percent: int = DEFAULT_IMAGE_MAX_PERCENT
     """Ceiling for the pixels that stay, as a percentage of the model's window."""
@@ -93,19 +93,20 @@ class CompactingStrategy:
                 max_tokens=reasoning_token_cap(budget.window, budget.available_for_history, self.reasoning_max_percent),
             )
 
-        turns = split_turns(working)
+        prompts = split_prompts(working)
         # Images have their own window: one may outlive the turn's text. Dropping
         # them first means a compacted turn has no pixels left to count twice, and a
         # recent turn still keeps the pictures its own window allows.
         working, dropped_images = drop_stale_images(
             working,
-            rounds=self.image_rounds,
+            turn_window=self.image_turns,
             max_tokens=image_token_cap(budget.window, budget.available_for_history, self.image_max_percent),
         )
-        turns = split_turns(working)
-        recent_start = max(0, len(turns) - self.keep_recent_turns)
-        old_turns = turns[:recent_start]
-        recent_turns = turns[recent_start:]
+        # Recomputed on purpose: dropping images rewrote the parts.
+        prompts = split_prompts(working)
+        recent_start = max(0, len(prompts) - self.keep_recent_prompts)
+        old_prompts = prompts[:recent_start]
+        recent_prompts = prompts[recent_start:]
 
         compacted = 0
         result: list[ModelMessage] = []
@@ -116,19 +117,19 @@ class CompactingStrategy:
                 result.append(ModelRequest(parts=[CompactionPart(content='\n\n'.join(pending))]))
                 pending.clear()
 
-        for turn in old_turns:
-            if has_pinned_result(turn, self.pinned_tools):
+        for prompt in old_prompts:
+            if has_pinned_result(prompt, self.pinned_tools):
                 # Loaded instructions: kept whole and in place.
                 flush()
-                result.extend(turn)
+                result.extend(prompt)
                 continue
-            text = summarize_turn(turn, max_chars=self.max_summary_chars)
+            text = summarize_turn(prompt, max_chars=self.max_summary_chars)
             if text:
                 pending.append(text)
                 compacted += 1
                 # The summary keeps the intent, not the pixels: an image of a
                 # compacted turn is gone, and saying so is part of the report.
-                dropped_images += count_images(turn)
+                dropped_images += count_images(prompt)
 
         if compacted and self.include_working_set:
             # The working set comes from the full log, not from the old turns: what
@@ -141,18 +142,18 @@ class CompactingStrategy:
         flush()
 
         truncated = 0
-        for index, turn in enumerate(recent_turns):
-            # Recent turns are truncated only if they are old inside the window.
-            if index < len(recent_turns) - 1:
-                turn, count = truncate_old_tool_results(
-                    [turn],
+        for index, prompt in enumerate(recent_prompts):
+            # Recent prompts are truncated only if they are old inside the window.
+            if index < len(recent_prompts) - 1:
+                prompt, count = truncate_old_tool_results(
+                    [prompt],
                     recent_start=1,
                     max_chars=self.max_tool_result_chars,
                     head_chars=self.tool_result_head_chars,
                     pinned_tools=self.pinned_tools,
                 )
                 truncated += count
-            result.extend(turn)
+            result.extend(prompt)
 
         dropped = 0
         available = budget.available_for_history
@@ -165,7 +166,7 @@ class CompactingStrategy:
             dropped_messages=dropped,
             dropped_thinking=dropped_thinking,
             truncated_results=truncated,
-            compacted_turns=compacted,
+            compacted_prompts=compacted,
             dropped_images=dropped_images,
         )
 

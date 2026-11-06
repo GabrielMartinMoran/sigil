@@ -44,9 +44,9 @@ from src.engine.providers.domain.selection import Selection
 from src.engine.providers.domain.thinking import EFFORT_LEVELS, ThinkingChoice, parse_choice
 from src.engine.providers.factory.registry import BuilderRegistry, ModelRouter
 from src.engine.providers.snapshot import EMPTY_SNAPSHOT, AccountView, ModelSnapshot
-from src.engine.providers.store.account_store import FileAccountStore
+from src.engine.providers.store.account_store import SqliteAccountStore
 from src.engine.providers.store.secret_store import SecretStore
-from src.engine.providers.store.state_store import FileStateStore
+from src.engine.providers.store.state_store import StateStore
 
 CredentialProbe = Callable[[ProviderAccount, str], Awaitable[ProbeResult]]
 """Checks a key. Injected so tests never touch the network."""
@@ -71,9 +71,9 @@ class LoginFlow(Protocol):
 class ModelService:
     """Configured accounts and the model the agent uses."""
 
-    accounts: FileAccountStore
+    accounts: SqliteAccountStore
     secrets: SecretStore
-    state: FileStateStore
+    state: StateStore
     catalog: ModelCatalogService
     registry: BuilderRegistry
     router: ModelRouter

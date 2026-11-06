@@ -8,7 +8,14 @@ from decimal import Decimal
 from pathlib import Path
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
 
@@ -18,7 +25,6 @@ from src.engine.mcp.manager.manager import MCPManager
 from src.engine.roadmap.models.todo_item import TodoItem
 from src.engine.roadmap.store import RoadmapStore
 from src.engine.sessions.session_store import SessionStore
-from src.engine.skills.loaded import LoadedSkills
 from src.ui.app import SigilApp
 from src.ui.sidebar_mixin import SidebarMixin
 from src.ui.widgets.sidebar_panel import ContextState, MCPServerState, ModelState, SidebarPanel
@@ -188,7 +194,8 @@ def test_the_cost_is_hidden_until_a_model_is_configured():
 
 def test_the_roadmap_is_the_last_section_of_the_panel(tmp_path):
     """One panel: the plan closes the same list the model, skills and MCP are in."""
-    store = RoadmapStore(directory=tmp_path, session_id=None)
+    # No execution: a memory-only store, which is all the panel needs to paint.
+    store = RoadmapStore(base_dir=tmp_path)
     store.set_items([TodoItem(title='Ship it', status='in_progress')])
     panel = SidebarPanel(store)
     panel._skills = ('clean-code',)
@@ -358,20 +365,27 @@ def test_the_panel_reads_the_bill_from_the_session_history():
 
 
 def test_sidebar_reflects_loaded_skills():
+    """The panel reads the set from the transcript on screen, not from a registry."""
+
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             session = store.create_session()
-            loaded = LoadedSkills()
             agent = Agent(TestModel(custom_output_text='ok'), instructions='x')
-            app = SigilApp(agent=agent, store=store, session=session, loaded_skills=loaded)
+            app = SigilApp(agent=agent, store=store, session=session)
 
             async with app.run_test() as pilot:
                 await pilot.pause()
                 panel = app.query_one(SidebarPanel)
                 assert 'none yet' in panel._build().plain
 
-                loaded.add('clean-code')
+                # A load in the history of the execution on screen.
+                app._history = [
+                    ModelResponse(
+                        parts=[ToolCallPart(tool_name='load_skill', args={'name': 'clean-code'}, tool_call_id='c1')]
+                    ),
+                    ModelRequest(parts=[ToolReturnPart(tool_name='load_skill', content='ok', tool_call_id='c1')]),
+                ]
                 app.refresh_sidebar()
                 await pilot.pause()
                 assert 'clean-code' in panel._build().plain

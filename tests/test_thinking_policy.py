@@ -1,9 +1,9 @@
-"""Tests for keeping the reasoning of the round in progress.
+"""Tests for keeping the reasoning of the turn in progress.
 
-A round is everything between handing control back to the user: one run id, one
-or more prompts if the user steered mid-round. While the agent is inside a round
+A turn is everything between handing control back to the user: one run id, one
+or more prompts if the user steered mid-turn. While the agent is inside a turn
 it re-reads its own reasoning step after step; that is where a loop of
-re-litigating a decision shows up. Past rounds are not working memory.
+re-litigating a decision shows up. Past turns are not working memory.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, Thinking
 from src.engine.context.budget import ContextBudget
 from src.engine.context.strategy.compacting import CompactingStrategy
 from src.engine.context.strategy.rewriting import keep_recent_steps, thinking_labels
-from src.engine.context.strategy.turns import split_turns
+from src.engine.context.strategy.turns import split_prompts
 from src.engine.context.strategy.windowed import WindowedStrategy
 from src.engine.context.tokens import estimate_tokens
 
@@ -35,8 +35,8 @@ def _thinking(content: str, *, signature: str | None = None, provider: str | Non
 
 
 def _round(run: str, steps: int, *, signature_of: str | None = None, provider: str | None = None) -> list:
-    """One round: a prompt and `steps` responses, each carrying reasoning."""
-    messages: list = [_request(f'round {run}', run=run)]
+    """One turn: a prompt and `steps` responses, each carrying reasoning."""
+    messages: list = [_request(f'turn {run}', run=run)]
     for step in range(steps):
         signature = f'sig-{run}-{step}' if signature_of else None
         messages.append(
@@ -59,7 +59,7 @@ def _runs_of_thinking(messages: list) -> list[str | None]:
     ]
 
 
-# --- current round ---------------------------------------------------------
+# --- current turn ---------------------------------------------------------
 
 
 def test_keeps_reasoning_of_the_round_in_progress():
@@ -85,10 +85,10 @@ def test_past_rounds_lose_their_reasoning():
 
 
 def test_keeps_only_the_last_steps_of_a_long_round():
-    """The window is linear: a round with 200 steps does not resend 200 steps' worth.
+    """The window is linear: a turn with 200 steps does not resend 200 steps' worth.
 
-    Resending the whole round costs a sum of sums —44M billed tokens on a measured
-    317-step round— while the loop it fixes is local to a few steps.
+    Resending the whole turn costs a sum of sums —44M billed tokens on a measured
+    317-step turn— while the loop it fixes is local to a few steps.
     """
     messages = [*_round('r1', 200)]
 
@@ -110,7 +110,7 @@ def test_zero_steps_drops_everything():
 
 
 def test_steps_needed_does_not_cross_a_round_boundary():
-    """A short round keeps its own reasoning and does not borrow the previous one."""
+    """A short turn keeps its own reasoning and does not borrow the previous one."""
     messages = [*_round('r1', 5), *_round('r2', 2)]
 
     result, kept, _ = keep_recent_steps(messages, steps=4)
@@ -136,11 +136,11 @@ def test_messages_without_run_id_are_their_own_round():
 def test_turns_stay_whole():
     """Reasoning may go, but a turn never loses its structure."""
     messages = [*_round('r1', 2), *_round('r2', 2)]
-    before = len(split_turns(messages))
+    before = len(split_prompts(messages))
 
     result, _, _ = keep_recent_steps(messages, steps=1)
 
-    assert len(split_turns(result)) == before
+    assert len(split_prompts(result)) == before
     assert len(result) == len(messages)
 
 
@@ -173,7 +173,7 @@ def test_signed_reasoning_from_the_same_provider_is_kept():
 
 
 def _round_r1_provider() -> list:
-    messages: list = [_request('round r1')]
+    messages: list = [_request('turn r1')]
     for step in range(2):
         messages.append(
             _response(step, thinking=_thinking(f'why {step}', signature=f'sig-{step}', provider='anthropic'))
@@ -191,7 +191,7 @@ def test_unsigned_reasoning_survives_a_provider_change():
 
 
 def test_labels_find_the_round_by_skipping_other_runs():
-    """`thinking_labels` reports which steps carry reasoning, per round."""
+    """`thinking_labels` reports which steps carry reasoning, per turn."""
     messages = [*_round('r1', 2), *_round('r2', 3), *_round('r3', 1)]
 
     labels = thinking_labels(messages)
@@ -253,7 +253,7 @@ def _thinking_of(step: int, chars: int) -> str:
 
 
 def _round_with_sized_reasoning(run: str, steps: int, chars: int) -> list:
-    messages: list = [_request(f'round {run}', run=run)]
+    messages: list = [_request(f'turn {run}', run=run)]
     for step in range(steps):
         messages.append(_response(step, run, thinking=_thinking(_thinking_of(step, chars))))
     return messages
@@ -266,10 +266,10 @@ def _reasoning_tokens(messages: list) -> int:
 
 
 def test_the_first_request_of_a_round_keeps_the_handoff():
-    """A new round has no response yet, so the rule keeps the previous round's tail.
+    """A new turn has no response yet, so the rule keeps the previous turn's tail.
 
     That is the moment the agent starts working with what it concluded before it
-    handed control back. As soon as the new round answers, its own steps take over.
+    handed control back. As soon as the new turn answers, its own steps take over.
     """
     handoff = [*_round('r1', 6), _request('a new prompt', run='r2')]
 
@@ -278,7 +278,7 @@ def test_the_first_request_of_a_round_keeps_the_handoff():
     assert kept == 2
     assert _thinking_contents(result) == ['why r1/4', 'why r1/5']
 
-    # once the new round answers, the previous round is a record again.
+    # once the new turn answers, the previous turn is a record again.
     answered = [*handoff, _response(0, 'r2', thinking=_thinking('why r2/0'))]
 
     result, kept, _ = keep_recent_steps(answered, steps=2)
@@ -331,7 +331,7 @@ def test_thinking_window_never_breaks_the_budget():
     from src.engine.context.tokens import estimate_messages_tokens
 
     def round_with_long_reasoning(run: str, steps: int) -> list:
-        messages: list = [_request(f'round {run}', run=run)]
+        messages: list = [_request(f'turn {run}', run=run)]
         for step in range(steps):
             messages.append(_response(step, run, thinking=_thinking(f'why {run}/{step} ' + 'y' * 2_000)))
         return messages

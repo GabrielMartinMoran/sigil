@@ -21,32 +21,32 @@ from src.engine.providers.factory.opencode_builder import OpenCodeBuilder
 from src.engine.providers.factory.openrouter_builder import OpenRouterBuilder
 from src.engine.providers.factory.registry import BuilderRegistry, ModelRouter
 from src.engine.providers.service import CredentialProbe, IsBusy, ModelService
-from src.engine.providers.store.account_store import FileAccountStore
+from src.engine.providers.store.account_store import SqliteAccountStore
 from src.engine.providers.store.secret_store import FileSecretStore
-from src.engine.providers.store.state_store import FileStateStore
+from src.engine.providers.store.state_store import SqliteStateStore
 
-ACCOUNTS_FILE = 'accounts.json'
 CREDENTIALS_FILE = 'credentials.json'
-STATE_FILE = 'state.json'
 
 
 @dataclass(frozen=True, slots=True)
 class ProviderPaths:
-    """Where the provider layer keeps its three files."""
+    """Where the provider layer keeps what is still a file.
+
+    The accounts and the preferences are rows in the database at `home`; the
+    credentials stay a `0600` JSON file, because secrets do not share permissions
+    with data that must be world-readable.
+    """
 
     directory: Path
 
     @property
-    def accounts(self) -> Path:
-        return self.directory / ACCOUNTS_FILE
+    def home(self) -> Path:
+        """The directory the database lives in: `<SIGIL_HOME>`, one level above."""
+        return self.directory.parent
 
     @property
     def credentials(self) -> Path:
         return self.directory / CREDENTIALS_FILE
-
-    @property
-    def state(self) -> Path:
-        return self.directory / STATE_FILE
 
 
 def build_registry(session_id: str, oauth_provider_factory=None) -> BuilderRegistry:
@@ -91,9 +91,9 @@ def build_service(
         catalog: Catalogue service. Defaults to the real one.
     """
     return ModelService(
-        accounts=FileAccountStore(paths.accounts),
+        accounts=SqliteAccountStore(paths.home),
         secrets=FileSecretStore(paths.credentials),
-        state=FileStateStore(paths.state),
+        state=SqliteStateStore(paths.home),
         catalog=catalog or ModelCatalogService(),
         registry=build_registry(session_id, oauth_provider_factory),
         router=ModelRouter(initial_model),

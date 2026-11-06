@@ -1,7 +1,7 @@
-"""Tests for the image cache: rounds, the window and the pixel cap.
+"""Tests for the image cache: turns, the window and the pixel cap.
 
-The rule is one line: an image is loaded in the round it arrived in and stays
-loaded for a few rounds after that. Everything else here exists to make that
+The rule is one line: an image is loaded in the turn it arrived in and stays
+loaded for a few turns after that. Everything else here exists to make that
 sentence safe.
 """
 
@@ -35,8 +35,8 @@ def _image(identifier: str, size: int = 64) -> BinaryImage:
 
 
 def _round(run: str, *content: object) -> list:
-    """A round: a prompt and the response that closes it."""
-    prompt = list(content) if content else f'round {run}'
+    """A turn: a prompt and the response that closes it."""
+    prompt = list(content) if content else f'turn {run}'
     return [
         ModelRequest(parts=[UserPromptPart(content=prompt)], run_id=run),
         ModelResponse(parts=[], run_id=run),
@@ -44,7 +44,7 @@ def _round(run: str, *content: object) -> list:
 
 
 def _viewed(run: str, identifier: str, size: int = 64) -> list:
-    """A round where a tool handed one image back."""
+    """A turn where a tool handed one image back."""
     return [
         ModelRequest(parts=[UserPromptPart(content=f'look at {identifier}')], run_id=run),
         ModelResponse(
@@ -87,7 +87,7 @@ def test_an_image_is_stamped_with_the_round_that_carried_it():
 
     assert len(found) == 1
     assert found[0].identifier == 'img_aaaaaaaa'
-    assert found[0].round == 'r1'
+    assert found[0].turn == 'r1'
 
 
 def test_a_message_without_run_id_ages_by_turn():
@@ -100,17 +100,17 @@ def test_a_message_without_run_id_ages_by_turn():
 
     found = occurrences(messages)
 
-    assert found[0].round is None
-    assert found[0].round_index == 0
+    assert found[0].turn is None
+    assert found[0].turn_index == 0
 
 
-# --- the round window ------------------------------------------------------
+# --- the turn window ------------------------------------------------------
 
 
 def test_the_round_in_progress_always_travels():
     messages = _flat(_round('r1', 'aca esta', _image('img_aaaaaaaa')))
 
-    verdicts = decide(messages, rounds=1, max_tokens=None)
+    verdicts = decide(messages, turn_window=1, max_tokens=None)
 
     assert set(verdicts.values()) == {ImageVerdict.KEEP}
 
@@ -122,7 +122,7 @@ def test_an_image_older_than_the_window_is_expired():
         _round('r3'),
     )
 
-    verdicts = decide(messages, rounds=2, max_tokens=None)
+    verdicts = decide(messages, turn_window=2, max_tokens=None)
 
     assert set(verdicts.values()) == {ImageVerdict.EXPIRED}
 
@@ -136,16 +136,16 @@ def test_the_window_counts_from_the_newest_copy():
         _viewed('r4', 'img_aaaaaaaa'),
     )
 
-    verdicts = decide(messages, rounds=2, max_tokens=None)
+    verdicts = decide(messages, turn_window=2, max_tokens=None)
 
     assert verdicts[_position_of_viewed(messages)] is ImageVerdict.KEEP
 
 
 def test_a_short_window_still_keeps_the_round_in_progress():
-    """`rounds=0` is not a way to keep nothing: the current round always travels."""
+    """`turn_window=0` is not a way to keep nothing: the current turn always travels."""
     messages = _flat(_round('r1', 'aca esta', _image('img_aaaaaaaa')))
 
-    verdicts = decide(messages, rounds=0, max_tokens=None)
+    verdicts = decide(messages, turn_window=0, max_tokens=None)
 
     assert set(verdicts.values()) == {ImageVerdict.KEEP}
 
@@ -159,7 +159,7 @@ def test_two_copies_of_one_picture_charge_once():
         _viewed('r2', 'img_aaaaaaaa'),
     )
 
-    verdicts = decide(messages, rounds=5, max_tokens=None)
+    verdicts = decide(messages, turn_window=5, max_tokens=None)
 
     assert list(verdicts.values()).count(ImageVerdict.KEEP) == 1
     assert list(verdicts.values()).count(ImageVerdict.SUPERSEDED) == 1
@@ -171,7 +171,7 @@ def test_the_superseded_one_is_the_oldest():
         _viewed('r2', 'img_aaaaaaaa'),
     )
 
-    verdicts = decide(messages, rounds=5, max_tokens=None)
+    verdicts = decide(messages, turn_window=5, max_tokens=None)
 
     assert verdicts[min(verdicts)] is ImageVerdict.SUPERSEDED
 
@@ -187,7 +187,7 @@ def test_the_cap_drops_the_oldest_until_the_pixels_fit():
         _round('r3', 'tres', _image('img_cccccccc', 1000)),
     )
 
-    verdicts = decide(messages, rounds=10, max_tokens=3_000)
+    verdicts = decide(messages, turn_window=10, max_tokens=3_000)
 
     assert list(verdicts.values()).count(ImageVerdict.KEEP) == 2
     assert list(verdicts.values()).count(ImageVerdict.OVER_BUDGET) == 1
@@ -196,10 +196,10 @@ def test_the_cap_drops_the_oldest_until_the_pixels_fit():
 def test_without_a_cap_the_window_is_the_only_limit():
     turns = [_round(f'r{n}', f'turno {n}', _image(f'img_{n:08x}', 1000)) for n in range(3)]
 
-    verdicts = decide(_flat(*turns), rounds=10, max_tokens=None)
+    verdicts = decide(_flat(*turns), turn_window=10, max_tokens=None)
 
     assert set(verdicts.values()) == {ImageVerdict.KEEP}
 
 
 def test_no_images_means_no_work():
-    assert decide(_flat(_round('r1')), rounds=3, max_tokens=None) == {}
+    assert decide(_flat(_round('r1')), turn_window=3, max_tokens=None) == {}

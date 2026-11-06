@@ -268,17 +268,21 @@ def test_the_tree_travels_with_the_session(tmp_path):
     assert loaded.tree.node(node.id).result == 'read it'
 
 
-def test_a_session_saved_before_trees_existed_gets_a_root(tmp_path):
+def test_a_session_with_no_tree_gets_a_root_when_it_is_bound(tmp_path):
+    """A conversation always has a root, minted the first time it is bound.
+
+    The id is derived from the session, so the tree and the database name the same
+    root from the first write.
+    """
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'sessions')
     session = store.create_session()
-    data = store._serialize(session)
-    data.pop('tree')
     session.agent = 'wizard'
-    restored = store._deserialize(data)
 
-    assert restored.tree is None
-    tree = AgentTreeStore().bind(restored, root_name='wizard')
+    assert session.tree is None
+    tree = AgentTreeStore().bind(session, root_name='wizard')
+
     assert tree.root is not None and tree.root.name == 'wizard'
+    assert tree.root.id == session.root_id
 
 
 # --- summoning ---------------------------------------------------------------

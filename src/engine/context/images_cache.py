@@ -2,10 +2,11 @@
 
 An image costs what its pixels cost, and it costs it on every request while it
 travels. The rule that keeps that bounded is one line: **an image is loaded in the
-round it arrived in, and it stays loaded for a while after that**.
+turn it arrived in, and it stays loaded for a while after that**.
 
-The round is `run_id`, the same unit the reasoning window uses: everything until
-control goes back to the user, with steering in the same round. So an image loaded
+The turn is the identifier pydantic-ai stamps on one run, the same unit the
+reasoning window uses: everything until
+control goes back to the user, with steering in the same turn. So an image loaded
 by a prompt, by `view_image` or by anything else is stamped by the message that
 carries it — there is no second store and nothing to keep in sync.
 
@@ -13,8 +14,8 @@ Three reasons to unload one, and each leaves a note with the id:
 
 1. **A newer copy is attached.** The same picture pasted and then fetched again
    would otherwise be paid twice and read as two different pictures.
-2. **Its round is older than the window.** A picture matters while it is being
-   discussed; after a few rounds it is a record, not working memory.
+2. **Its turn is older than the window.** A picture matters while it is being
+   discussed; after a few turns it is a record, not working memory.
 3. **The pixels are past the cap.** Three screenshots of a dense table can cost more
    than the whole conversation around them.
 
@@ -31,6 +32,7 @@ from enum import StrEnum
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart
 
+from src.engine.agents.turn_map import library_run_id
 from src.engine.context.images import image_part_tokens, is_image_part
 
 
@@ -41,7 +43,7 @@ class ImageVerdict(StrEnum):
     SUPERSEDED = 'superseded'
     """A newer copy of the same picture is attached further on."""
     EXPIRED = 'expired'
-    """Its round is older than the window."""
+    """Its turn is older than the window."""
     OVER_BUDGET = 'over_budget'
     """The pixel cap was spent before reaching it."""
 
@@ -55,8 +57,8 @@ class ImageOccurrence:
     """One image part, where it lives and when it was loaded."""
 
     identifier: str
-    round: str | None
-    round_index: int
+    turn: str | None
+    turn_index: int
     tokens: int
     message_index: int
     item_index: int
@@ -67,39 +69,46 @@ class ImageOccurrence:
 
 
 def occurrences(messages: Sequence[ModelMessage]) -> list[ImageOccurrence]:
-    """Every image part in the history, oldest first, with its round resolved.
+    """Every image part in the history, oldest first, with its turn resolved.
 
-    A message without `run_id` —a session saved before it existed— counts as its own
-    round by turn, so it ages like anything else instead of living forever.
+    A message with no turn of its own —one saved before the library stamped an
+    identifier— counts as its own, so it ages like anything else instead of living
+    forever.
     """
     return _scan(messages)[0]
 
 
-def current_round(messages: Sequence[ModelMessage]) -> int:
-    """Index of the round the latest message belongs to.
+def current_turn(messages: Sequence[ModelMessage]) -> int:
+    """Index of the turn the latest message belongs to.
 
     It is read from the whole history, not from the images: an old picture must be
-    able to expire even when the last few rounds carried none.
+    able to expire even when the last few turns carried none.
     """
     return _scan(messages)[1]
 
 
 def _scan(messages: Sequence[ModelMessage]) -> tuple[list[ImageOccurrence], int]:
-    """Images and the last round index, in one pass over the history."""
+    """Images and the last turn index, in one pass over the history.
+
+    Three counters, three names, because they are three things: `turn_keys` is the
+    turn a message belongs to, `prompt_index` counts how many user prompts have been
+    seen (the fallback for a turn with no identifier), and `turn_index` is the
+    position of the current turn among the turns of the history.
+    """
     found: list[ImageOccurrence] = []
-    rounds: list[str] = []
-    turn = -1
-    round_index = 0
+    turn_keys: list[str] = []
+    prompt_index = -1
+    turn_index = 0
     for message_index, message in enumerate(messages):
         if not isinstance(message, ModelRequest):
             continue
-        starts_turn = any(isinstance(part, UserPromptPart) for part in message.parts)
-        if starts_turn or not rounds:
-            turn += 1
-        key = message.run_id or f'turn-{turn}'
-        if key not in rounds:
-            rounds.append(key)
-        round_index = rounds.index(key)
+        starts_prompt = any(isinstance(part, UserPromptPart) for part in message.parts)
+        if starts_prompt or not turn_keys:
+            prompt_index += 1
+        key = library_run_id(message) or f'prompt-{prompt_index}'
+        if key not in turn_keys:
+            turn_keys.append(key)
+        turn_index = turn_keys.index(key)
         for part in message.parts:
             if not isinstance(part, (UserPromptPart, ToolReturnPart)):
                 continue
@@ -111,14 +120,14 @@ def _scan(messages: Sequence[ModelMessage]) -> tuple[list[ImageOccurrence], int]
                 found.append(
                     ImageOccurrence(
                         identifier=_identifier_of(item),
-                        round=message.run_id,
-                        round_index=round_index,
+                        turn=library_run_id(message),
+                        turn_index=turn_index,
                         tokens=image_part_tokens(item),
                         message_index=message_index,
                         item_index=item_index,
                     )
                 )
-    return found, round_index
+    return found, turn_index
 
 
 def _identifier_of(item: object) -> str:
@@ -130,19 +139,19 @@ def _identifier_of(item: object) -> str:
 def decide(
     messages: Sequence[ModelMessage],
     *,
-    rounds: int,
+    turn_window: int,
     max_tokens: int | None,
 ) -> dict[tuple[int, int], ImageVerdict]:
     """The verdict for every image occurrence, keyed by its position.
 
     Args:
         messages: The history.
-        rounds: Rounds an image stays loaded, counting its own. ``1`` keeps only the
-            round in progress.
+        turn_window: Turns an image stays loaded, counting its own. ``1`` keeps
+            only the turn in progress.
         max_tokens: Ceiling for the pixels that travel, in tokens. ``None`` leaves the
-            round window as the only limit.
+            turn window as the only limit.
     """
-    found, last_round = _scan(messages)
+    found, last_turn = _scan(messages)
     if not found:
         return {}
 
@@ -156,8 +165,8 @@ def decide(
 
     spent = 0
     for occurrence in live.values():
-        age = last_round - occurrence.round_index
-        if age >= max(1, rounds):
+        age = last_turn - occurrence.turn_index
+        if age >= max(1, turn_window):
             verdicts[occurrence.position] = ImageVerdict.EXPIRED
         elif max_tokens is not None and spent + occurrence.tokens > max_tokens:
             verdicts[occurrence.position] = ImageVerdict.OVER_BUDGET

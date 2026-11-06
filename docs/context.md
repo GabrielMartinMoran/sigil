@@ -4,6 +4,11 @@ This page explains what Sigil sends to the model on every request, what it
 leaves out, and how it measures the difference. Read it before changing a
 context strategy or debugging a turn that "forgot" what the agent did.
 
+Three words carry the whole page, and they are [the domain](domain.md)'s: a
+**turn** is the span from the user's message to the agent finishing, a
+**prompt** is a slice of a turn that can be dropped whole, and a **step** is one
+model request.
+
 The short version: **the session log keeps everything, but the model only ever
 sees a projection of it.** Keeping the log intact is what makes the session
 resumable; projecting it is what keeps the request inside the window.
@@ -147,12 +152,12 @@ flowchart TD
     IN["Full history"] --> L1
 
     L1{"Lever 1<br/>Trim reasoning"}
-    L1 -->|"keeps the last N steps<br/>of the round in progress"| A1["Past rounds: dropped<br/>Current round: last N kept<br/>Signed by another provider: dropped"]
+    L1 -->|"keeps the last N steps<br/>of the turn in progress"| A1["Past turns: dropped<br/>Current turn: last N kept<br/>Signed by another provider: dropped"]
 
     A1 --> L2{"Lever 2<br/>Truncate old tool results"}
-    L2 -->|"turns older than keep_recent_turns"| A2["Each result clipped to<br/>max_tool_result_chars,<br/>head kept so the signal survives.<br/>Pinned tools are exempt"]
-    A2 --> L3{"Lever 3<br/>Discard whole turns"}
-    L3 -->|"oldest first, never the last turn"| A3["Turn gone.<br/>Prefers turns without pinned results"]
+    L2 -->|"prompts older than keep_recent_prompts"| A2["Each result clipped to<br/>max_tool_result_chars,<br/>head kept so the signal survives.<br/>Pinned tools are exempt"]
+    A2 --> L3{"Lever 3<br/>Discard whole prompts"}
+    L3 -->|"oldest first, never the last prompt"| A3["Prompt gone.<br/>Prefers prompts without pinned results"]
 
     A3 --> OUT["View"]
 
@@ -164,15 +169,15 @@ Reasoning is the first lever because it is the cheapest thing to lose. It is als
 the one that is not all-or-nothing: see
 [Reasoning: a window of steps](#reasoning-a-window-of-steps).
 
-### Why whole turns
+### Why whole prompts
 
-A turn is self-contained by construction: `prompt → responses → tool calls →
+A prompt is self-contained by construction: `prompt → responses → tool calls →
 tool returns`. Discarding it whole is the only way to avoid leaving an orphan
 `ToolReturnPart`, which providers reject with a 400.
 
 ```mermaid
 flowchart LR
-    subgraph turn["One turn — indivisible"]
+    subgraph prompt["One prompt — indivisible"]
         P["user prompt"] --> R1["response<br/>+ tool calls"]
         R1 --> TR["tool returns"]
         TR --> R2["response"]
@@ -186,17 +191,17 @@ flowchart LR
     style broken fill:#da363322,stroke:#da3633
 ```
 
-`split_turns` puts `keep_recent_turns` turns aside before trimming starts, and
-`fit_to_budget` stops when only one turn is left. The current turn is never
-discarded while the agent is working in it.
+`split_prompts` puts `keep_recent_prompts` prompts aside before trimming starts,
+and `fit_to_budget` stops when only one prompt is left. The current prompt is
+never discarded while the agent is working in it.
 
 ### Why some tool results are pinned
 
 `PINNED_TOOLS` (`load_skill`, `read_skill_resource`) hold **instructions, not
 data**. A skill body is what the agent must keep complying with; truncating it
 to a stub or collapsing it into `load_skill -> ok` removes the instructions
-mid-task. They are never truncated and never compacted, and when turns have to
-be discarded, turns without pinned results go first.
+mid-task. They are never truncated and never compacted, and when prompts have
+to be discarded, prompts without pinned results go first.
 
 ## Tokens: measured versus projected
 
@@ -252,7 +257,7 @@ messages only document what that request was made with.
 
 Counting them per message made a measured session estimate at **12× its real
 weight** at the point where the trimming ran (5.1M against 425k). The surplus
-pushed the history over the budget and `fit_to_budget` discarded a whole turn
+pushed the history over the budget and `fit_to_budget` discarded a whole prompt
 —the model then reported "my context has no prior conversation" and re-explored
 the workspace from scratch while the log still held everything.
 
@@ -274,7 +279,7 @@ flowchart LR
     subgraph wrong["The bug — instructions replayed per request"]
         W1["451 requests × 8,630"] --> W2["~5.1M estimated"]
         W3["parts ~380k"] --> W2
-        W2 --> W4["history 'does not fit'<br/>turns discarded"]
+        W2 --> W4["history 'does not fit'<br/>prompts discarded"]
     end
 
     style wrong fill:#da363322,stroke:#da3633
@@ -291,7 +296,7 @@ resent and which are recorded is what makes the estimate correct.
 | `UserPromptPart`, `TextPart` | yes | yes |
 | `ToolCallPart` (name + args) | yes | yes |
 | `ToolReturnPart` | yes, unless truncated or discarded | yes |
-| `ThinkingPart` | the last N steps of the round in progress | only what is sent |
+| `ThinkingPart` | the last N steps of the turn in progress | only what is sent |
 | `instructions` of past requests | **no** | **no** (bug fixed) |
 | `instructions` of the current request | yes | via `ContextBudget` |
 | Tool schemas | yes, on every request | via `ContextBudget` |
@@ -300,33 +305,34 @@ resent and which are recorded is what makes the estimate correct.
 ## Reasoning: a window of steps
 
 Reasoning is not resent to the model by default, and that blanket rule had a
-measurable cost. While the agent is **inside** a round, it re-reads its own
+measurable cost. While the agent is **inside** a turn, it re-reads its own
 reasoning step after step. In a measured session, 38 of the 77 reasoning blocks of
-one round —76% of its volume— were the model re-deciding the same ambiguity:
+one turn —76% of its volume— were the model re-deciding the same ambiguity:
 whether "I uploaded those changes" meant it had, or that it should. It could not
 see that it had already answered, so it asked itself again for 110 steps.
 
 What fixes that is the reasoning of the steps next to the work in progress. What a
-round's reasoning is not, is a record worth its price: it is resent on every
+turn's reasoning is not, is a record worth its price: it is resent on every
 request.
 
-### A round, a step, a window
+### A turn, a step, a window
 
 | Term | Meaning |
 | --- | --- |
-| **Round** | Everything until control goes back to the user: one `run_id`. A prompt typed while the agent works is enqueued into the same run, so steering does not open a new round. |
-| **Step** | One model request and its response, inside a round. |
-| **Window** | How many steps of the round in progress keep their reasoning. `SIGIL_CONTEXT_REASONING_STEPS`, default 10. |
+| **Turn** | Everything until control goes back to the user: one `agent.iter()`, one `library_run_id`. A prompt typed while the agent works is enqueued into the same turn, so steering does not open a second one. |
+| **Step** | One model request and its response, inside a turn. |
+| **Prompt** | A slice of a turn, from one user prompt to the next. It is the unit that can be dropped whole. |
+| **Window** | How many steps of the turn in progress keep their reasoning. `SIGIL_CONTEXT_REASONING_STEPS`, default 10. |
 | **Cap** | The most reasoning that window may cost, in tokens: the smaller of a share of the model window (`SIGIL_CONTEXT_REASONING_MAX_PERCENT`, default 5%) and the room the history has left. |
 
 ```mermaid
 flowchart LR
-    subgraph done["Finished rounds — reasoning dropped"]
-        R1["round 1<br/>317 steps"]
-        R2["round 2<br/>110 steps"]
+    subgraph done["Finished turns — reasoning dropped"]
+        R1["turn 1<br/>317 steps"]
+        R2["turn 2<br/>110 steps"]
     end
 
-    subgraph current["Round in progress — last N steps keep it"]
+    subgraph current["Turn in progress — last N steps keep it"]
         direction LR
         S1["step 1"] --> S2["step 2"] --> S3["step 3"] --> S4["step 4<br/>reasoning kept"]
     end
@@ -338,13 +344,13 @@ flowchart LR
     style current fill:#23863622,stroke:#238636
 ```
 
-### The handoff, and why the first request of a round is different
+### The handoff, and why the first request of a turn is different
 
-A new round has no response yet, so the most recent round *in the history* is the
-previous one. The window therefore lands on the last steps of the round that just
+A new turn has no response yet, so the most recent turn *in the history* is the
+previous one. The window therefore lands on the last steps of the turn that just
 ended — which is the handoff: what the agent concluded before it handed control
-back. As soon as the new round answers, its own steps take over and the previous
-round becomes a record again.
+back. As soon as the new turn answers, its own steps take over and the previous
+turn becomes a record again.
 
 ```mermaid
 sequenceDiagram
@@ -352,19 +358,19 @@ sequenceDiagram
     participant A as Agent
     participant V as View
 
-    U->>A: prompt (round 2 starts)
-    Note over V: no response from round 2 yet<br/>→ keeps the tail of round 1
-    A->>V: response 1 of round 2
-    Note over V: round 2 is now the current one<br/>→ keeps round 2's steps, round 1 dropped
-    A->>V: response 2 of round 2
-    Note over V: window slides: the last N steps of round 2
-    A-->>U: control back (round 2 ends)
+    U->>A: prompt (turn 2 starts)
+    Note over V: no response from turn 2 yet<br/>→ keeps the tail of turn 1
+    A->>V: response 1 of turn 2
+    Note over V: turn 2 is now the current one<br/>→ keeps turn 2's steps, turn 1 dropped
+    A->>V: response 2 of turn 2
+    Note over V: window slides: the last N steps of turn 2
+    A-->>U: control back (turn 2 ends)
 ```
 
-The window is on steps and not on the whole round because resending a round is
+The window is on steps and not on the whole turn because resending a turn is
 quadratic: each request carries every reasoning block produced so far in it.
 
-| Round | Steps | Reasoning blocks | Extra billed if the whole round is resent |
+| Turn | Steps | Reasoning blocks | Extra billed if the whole turn is resent |
 | --- | --- | --- | --- |
 | 1 | 317 | 198,525 tokens | **44.1M tokens** |
 | 2 | 110 | 128,577 tokens | **9.1M tokens** |
@@ -405,7 +411,7 @@ fine.
 
 Keeping it never costs a turn. If the reasoning the policy kept does not fit the
 budget, the window shrinks step by step until it does; tool results are truncated
-and turns discarded only after all reasoning is gone.
+and prompts discarded only after all reasoning is gone.
 
 ```mermaid
 flowchart TD
@@ -415,7 +421,7 @@ flowchart TD
     C --> D{"fits?"}
     D -->|no, and steps left| C
     D -->|yes| SEND
-    D -->|no steps left| E["Truncate old tool results,<br/>then discard turns"]
+    D -->|no steps left| E["Truncate old tool results,<br/>then discard prompts"]
 
     style SEND fill:#23863622,stroke:#238636
     style E fill:#bf870022,stroke:#bf8700
@@ -441,7 +447,7 @@ flowchart TD
 ```
 
 - **The share** stops reasoning from becoming a standing tax: on a 1M window it can
-  never exceed 50k, however long the round gets.
+  never exceed 50k, however long the turn gets.
 - **The room** stops it from starving the turn it is meant to help: with 8k left,
   the cap is 8k, not 50k.
 
@@ -474,9 +480,9 @@ Images are **not** kept forever, and dropping one does not cost the information:
 
 | Where the image is | What happens |
 | --- | --- |
-| In a round within `image_rounds` (default 3) and inside the pixel cap | Sent as is |
+| In a turn within `image_turns` (default 3) and inside the pixel cap | Sent as is |
 | In an older turn, or past the pixel cap | Replaced by its id: `[image img_a1b2c3d4 from an earlier turn: not attached here, use view_image to look at it]` |
-| In a compacted turn | Gone with the turn; the summary keeps the intent, not the pixels |
+| In a compacted prompt | Gone with the prompt; the summary keeps the intent, not the pixels |
 
 ### Ids, and getting a picture back
 
@@ -510,18 +516,19 @@ The library is the session log itself. Images were already persisted, so an id
 resolves by walking the history; nothing else needs storage, and a resumed session
 keeps working.
 
-### The cache: rounds, and nothing forever
+### The cache: turns, and nothing forever
 
-An image is **loaded in the round it arrived in, and stays loaded for a few rounds
-after that**. The round is `run_id`, the same unit the reasoning window uses, so an
+An image is **loaded in the turn it arrived in, and stays loaded for a few turns
+after that**. The turn is the `library_run_id`, the same unit the reasoning window
+uses, so an
 image is stamped by the message that carries it — by a paste, by `view_image`, by
 anything — and there is no second store to keep in sync.
 
 ```mermaid
 flowchart TD
-    A["image loaded in round N<br/>stamped by its message"] --> B{"age = last round − N"}
-    B -->|"age < image_rounds"| KEEP["travels"]
-    B -->|"age ≥ image_rounds"| DROP["note with its id"]
+    A["image loaded in turn N<br/>stamped by its message"] --> B{"age = last turn − N"}
+    B -->|"age < image_turns"| KEEP["travels"]
+    B -->|"age ≥ image_turns"| DROP["note with its id"]
     KEEP --> C{"pixels over the cap?"}
     C -->|yes| DROP2["note: left out to stay<br/>inside the image budget"]
     C -->|no| OK["travels"]
@@ -535,7 +542,7 @@ flowchart TD
 
 Loading a picture again **restarts its window**: that is why a `view_image` call is
 not a way to keep the context growing forever, but also not a one-shot. The same
-source cannot be loaded twice in one round — the answer says it is already attached —
+source cannot be loaded twice in one turn — the answer says it is already attached —
 which is what stops a model from fetching the same screenshot on every step.
 
 Old copies are not kept either: when a picture appears twice, only the newest travels
@@ -578,7 +585,6 @@ otherwise kept whole — the text stays, the id stays, the pixels wait for
 A legacy image whose identifier is still `[Image #1]` keeps working: the note names
 it, and `view_image` resolves the newest match for that identifier rather than
 failing.
-```
 
 Two properties matter: the session log keeps every image (dropping is a projection,
 like everything else here), and the model is told an image existed — so it knows the
@@ -647,14 +653,14 @@ flowchart TD
     S{"SIGIL_CONTEXT_STRATEGY"}
 
     S -->|"passthrough"| P["PassthroughStrategy<br/>sends the history as is.<br/>Diagnostics only"]
-    S -->|"windowed (default)"| W["WindowedStrategy<br/>thinking → truncate → discard turns"]
-    S -->|"compacting"| C["CompactingStrategy<br/>same levers, plus old turns<br/>collapsed into a deterministic summary<br/>that closes with the working set"]
+    S -->|"windowed (default)"| W["WindowedStrategy<br/>thinking → truncate → discard prompts"]
+    S -->|"compacting"| C["CompactingStrategy<br/>same levers, plus old prompts<br/>collapsed into a deterministic summary<br/>that closes with the working set"]
 
     C --> WS["Working set:<br/>files touched, derived from the full log.<br/>Without it, compaction erases<br/>the trail of what was being edited"]
 ```
 
-`CompactingStrategy` does not discard old turns: it replaces each one with a
-`CompactionPart` holding the intent and the tool trail, without payloads. Turns
+`CompactingStrategy` does not discard old prompts: it replaces each one with a
+`CompactionPart` holding the intent and the tool trail, without payloads. Prompts
 carrying a pinned result are left intact. This is still a projection —the log is
 not touched.
 
@@ -663,13 +669,13 @@ not touched.
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `SIGIL_CONTEXT_STRATEGY` | `windowed` | `windowed`, `compacting` or `passthrough` |
-| `SIGIL_CONTEXT_KEEP_RECENT_TURNS` | `3` | Turns kept intact before trimming starts |
+| `SIGIL_CONTEXT_KEEP_RECENT_TURNS` | `3` | Prompts kept intact before trimming starts |
 | `SIGIL_CONTEXT_MAX_TOOL_RESULT_CHARS` | `4000` | Cap of an old tool result |
 | `SIGIL_CONTEXT_OUTPUT_RESERVE` | `8000` | Tokens reserved for the answer |
 | `SIGIL_CONTEXT_REASONING` | `recent` | What travels back of the model's reasoning: `recent`, `off` or `all` |
-| `SIGIL_CONTEXT_REASONING_STEPS` | `10` | Steps of the round in progress kept under `recent` |
+| `SIGIL_CONTEXT_REASONING_STEPS` | `10` | Steps of the turn in progress kept under `recent` |
 | `SIGIL_CONTEXT_REASONING_MAX_PERCENT` | `5` | Ceiling for that reasoning, as a percentage of the model window |
-| `SIGIL_CONTEXT_IMAGE_ROUNDS` | `3` | Rounds an image stays loaded, counting its own |
+| `SIGIL_CONTEXT_IMAGE_ROUNDS` | `3` | Turns an image stays loaded, counting its own. The field it sets is `image_turns`; the variable keeps its old name because it is a published interface |
 | `SIGIL_CONTEXT_IMAGE_MAX_PERCENT` | `10` | Ceiling for the pixels that stay, as a percentage of the model window |
 | ~~`SIGIL_CONTEXT_KEEP_THINKING`~~ | — | Deprecated by `SIGIL_CONTEXT_REASONING`; truthy still means `all` |
 
@@ -737,7 +743,7 @@ import json
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 
 from src.engine.context.budget import ContextBudget
-from src.engine.context.strategy.turns import split_turns
+from src.engine.context.strategy.turns import split_prompts
 from src.engine.context.strategy.windowed import WindowedStrategy
 from src.engine.context.tokens import estimate_messages_tokens
 
@@ -747,7 +753,7 @@ messages = ModelMessagesTypeAdapter.validate_python(json.load(open(path))['messa
 budget = ContextBudget(window=1_000_000, tools=12_000, instructions=8_000, output_reserve=8_000)
 result = WindowedStrategy().view(messages, budget)
 
-print(f'turns: {len(split_turns(messages))}')
+print(f'prompts: {len(split_prompts(messages))}')
 print(f'estimated: {estimate_messages_tokens(messages):,} of {budget.available_for_history:,}')
 print(f'dropped messages: {result.dropped_messages}')
 ```
@@ -764,11 +770,11 @@ one of them is a regression, not a trade-off.
 1. **The log is never mutated.** The strategy only reassigns
    `request_context.messages`. `run.all_messages()` and the session file keep
    the full conversation.
-2. **The current turn is never discarded.** Trimming stops at one turn, and
-   `keep_recent_turns` keeps the last ones intact.
-3. **A `ToolCallPart` never loses its `ToolReturnPart`.** Turns are the unit of
+2. **The current prompt is never discarded.** Trimming stops at one prompt, and
+   `keep_recent_prompts` keeps the last ones intact.
+3. **A `ToolCallPart` never loses its `ToolReturnPart`.** Prompts are the unit of
    discard for exactly this reason.
-4. **Reasoning of past rounds is not resent, and reasoning of the round in
+4. **Reasoning of past turns is not resent, and reasoning of the turn in
    progress never costs a turn.** The window shrinks before anything else does.
 5. **Pinned tool results are never truncated or compacted.** They are
    instructions, not data.
@@ -790,7 +796,7 @@ one of them is a regression, not a trade-off.
 | `src/engine/context/tokens.py` | Measurement and estimation |
 | `src/engine/context/overhead.py` | Measures instruction parts and tool schemas |
 | `src/engine/context/strategy/` | `windowed`, `compacting`, `passthrough` |
-| `src/engine/context/strategy/turns.py` | Turn grouping, pinned-result detection |
+| `src/engine/context/strategy/turns.py` | Prompt grouping, pinned-result detection |
 | `src/engine/context/meter/` | The `/context` report and the debug view |
 | `src/engine/context/meter/cost.py` | What the session cost, and where each amount came from |
 | `src/engine/attachments/library.py` | Image ids, and resolving one against the log |

@@ -11,18 +11,17 @@ from textual.css.query import NoMatches
 
 from src.engine.context.meter.context_meter import ContextMeter
 from src.engine.context.meter.cost import session_cost
-from src.engine.skills.loaded import LoadedSkills
+from src.engine.skills.loaded import loaded_skills
 from src.ui.widgets.sidebar_panel import ContextState, MCPServerState, SidebarPanel
 
 
 class SidebarMixin:
     """Keeps the side panel up to date.
 
-    It expects the app to define ``_loaded_skills``, ``_mcp_manager``, ``_meter``
+    It expects the app to define ``viewed_skills``, ``_mcp_manager``, ``_meter``
     and ``_history``.
     """
 
-    _loaded_skills: LoadedSkills | None
     _mcp_manager: object | None
     _meter: ContextMeter
     _history: list[ModelMessage]
@@ -44,13 +43,30 @@ class SidebarMixin:
         panel.update_model(state() if callable(state) else None)
         panel.update_context(self.context_state())
         viewer = getattr(self, 'viewed_skills', None)
-        names = (
-            viewer() if callable(viewer) else (self._loaded_skills.names() if self._loaded_skills is not None else ())
-        )
+        names = viewer() if callable(viewer) else loaded_skills(self._history)
         panel.update_skills(names)
         agent_label = getattr(self, 'viewed_agent_label', None)
         if callable(agent_label):
             panel.update_agent(agent_label())
+
+    def refresh_skills(self) -> None:
+        """Repaints the skills section only when the set on screen changed.
+
+        It is called after every finished tool call, so it has to be cheap and quiet:
+        the set is derived from the transcript, and comparing it to the one painted is
+        the whole check. A client that instead watched for a particular tool name would
+        know a detail of the domain it has no business knowing.
+        """
+        try:
+            panel = self.query_one(SidebarPanel)
+        except NoMatches, ScreenStackError:
+            return
+        viewer = getattr(self, 'viewed_skills', None)
+        names = viewer() if callable(viewer) else loaded_skills(self._history)
+        if names == getattr(self, '_painted_skills', None):
+            return
+        self._painted_skills = names
+        panel.update_skills(names)
 
     def refresh_context(self, messages: Sequence[ModelMessage] | None = None) -> None:
         """Repaints only the context section.

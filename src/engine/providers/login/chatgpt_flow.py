@@ -26,7 +26,7 @@ from pydantic_ai.exceptions import UserError
 from src.engine.providers.domain.provider_account import ProviderAccount
 from src.engine.providers.domain.provider_error import LoginError
 from src.engine.providers.domain.secret import OAuthSecret
-from src.engine.providers.store.state_store import FileStateStore
+from src.engine.providers.store.state_store import StateStore
 
 APP_NAME = 'Sigil'
 
@@ -38,7 +38,7 @@ OpenBrowser = Callable[[str], bool]
 class ChatGPTLoginFlow:
     """``LoginFlow`` over ``OpenAIChatGPTOAuthFlow``."""
 
-    state: FileStateStore
+    state: StateStore
     on_url: Callable[[str], None] = lambda _url: None
     """Called with the authorization URL as soon as it exists, so the UI can show
     it even when the browser did not open."""

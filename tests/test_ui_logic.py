@@ -15,20 +15,29 @@ def test_match_commands_requires_slash():
 
 
 def test_match_commands_filters_by_prefix():
+    """Everything matches `/`; the order groups session commands before client ones.
+
+    The palette is one list, but it is two kinds of thing: what the domain answers and
+    what only this window can. Listing them together in catalogue order keeps the
+    session commands where a user looks for them.
+    """
     names = [command.name for command in match_commands('/')]
     assert names == [
+        # the domain answers these
         '/new',
         '/load',
         '/agent',
         '/provider',
         '/model',
         '/effort',
+        '/mcp',
+        '/context',
+        '/rollback',
+        # only this client can
         '/reasoning-visibility',
         '/tools',
         '/theme',
         '/sidebar',
-        '/mcp',
-        '/context',
         '/debug',
         '/help',
         '/quit',

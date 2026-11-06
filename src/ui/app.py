@@ -11,7 +11,7 @@ each responsibility to a mixin with its own state.
 - `MenuMixin`      : command menu that appears when typing `/`.
 - `CommandsMixin`  : slash commands and session switching.
 - `ProviderMixin`  : `/provider`, `/model`, `/effort` and their screens.
-- `ThemeMixin`     : `/theme` and `/reasoning-visibility`.
+- `PreferencesMixin` : this client's preferences: theme, reasoning, tool output.
 - `ActivityMixin`  : the status bar: spinner, workspace and diff counters.
 - `DebugMixin`     : agent debug view (`alt+d`), which replaces the chat.
 - `TurnMixin`      : turn execution and on-disk checkpoints.
@@ -49,7 +49,6 @@ from src.engine.providers.service import ModelService
 from src.engine.roadmap.stores import RoadmapStores
 from src.engine.sessions.session_store import Session, SessionStore
 from src.engine.settings import SigilSettings, load_settings
-from src.engine.skills.loaded import LoadedSkills
 from src.engine.themes import ThemeRegistry
 from src.engine.tooling.logging import ToolLoggerHub
 from src.engine.workspace.manager import WorkspaceManager
@@ -60,9 +59,10 @@ from src.ui.debug_mixin import DebugMixin
 from src.ui.menu_mixin import MenuMixin
 from src.ui.messages import ChatNotice, ModelRetryNotice, RoadmapChanged
 from src.ui.model_view_mixin import ModelViewMixin
+from src.ui.preferences_mixin import PreferencesMixin
 from src.ui.provider_mixin import ProviderMixin
+from src.ui.rollback_mixin import RollbackMixin
 from src.ui.sidebar_mixin import SidebarMixin
-from src.ui.theme_mixin import ThemeMixin
 from src.ui.title_mixin import TitleMixin
 from src.ui.tool_logging import ChatToolLogSink, ToolLogMessage
 from src.ui.tree_mixin import TreeMixin
@@ -85,11 +85,12 @@ class SigilApp(
     MenuMixin,
     CommandsMixin,
     ProviderMixin,
-    ThemeMixin,
+    PreferencesMixin,
     WorkspaceMixin,
     ActivityMixin,
     DebugMixin,
     TreeMixin,
+    RollbackMixin,
     TurnMixin,
     TitleMixin,
     App,
@@ -131,12 +132,12 @@ class SigilApp(
         mcp_loader: Callable[[], MCPManager] | None = None,
         question_hub: QuestionHub | None = None,
         roadmap_store: RoadmapStores | None = None,
+        rollback: object | None = None,
         model_retry: RetryTransientModelErrors | None = None,
         meter: ContextMeter | None = None,
         context_capability: ContextViewCapability | None = None,
         scope: ScopeTracker | None = None,
         workspace: WorkspaceInstructions | None = None,
-        loaded_skills: LoadedSkills | None = None,
         workspace_manager: WorkspaceManager | None = None,
         preferences: Preferences | None = None,
         preferences_store: PreferencesStore | None = None,
@@ -158,12 +159,12 @@ class SigilApp(
         self._startup_notices = tuple(startup_notices)
         self._question_hub = question_hub
         self._roadmap_store = roadmap_store
+        self._rollback = rollback
         self._model_retry = model_retry
         self._meter = meter or ContextMeter(output_reserve=self._settings.output_reserve)
         self._context_capability = context_capability
         self._scope = scope
         self._workspace = workspace
-        self._loaded_skills = loaded_skills
         self._workspace_manager = workspace_manager
         # Preferences are read here, not in `on_mount`: the reasoning preference
         # decides how the first painted transcript looks.
@@ -430,9 +431,10 @@ class SigilApp(
             # how it went (`9 passed in 0.45s`) and how long it took, which the stream
             # does not carry.
             chat.set_tool_summary(event.tool_name, event.summary, event.duration_ms)
-            if event.tool_name == 'load_skill':
-                # The freshly loaded skill shows up in the sidebar without waiting for the turn.
-                self.refresh_sidebar()
+            # A call may have loaded a skill, and the sidebar repaints when the derived
+            # set changed. No name of a tool is needed here: what is loaded is a fact of
+            # the transcript, and `load_skill` is only how it got there.
+            self.refresh_skills()
         # A tool call is the moment the tree can change: the bar catches up now
         # instead of on the next poll.
         if event.phase != 'start':

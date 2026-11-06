@@ -28,7 +28,7 @@ from src.engine.context.meter.render import render_report
 from src.engine.context.scope import ScopeSink, ScopeTracker
 from src.engine.context.strategy.compacting import CompactingStrategy
 from src.engine.context.strategy.passthrough import PassthroughStrategy
-from src.engine.context.strategy.turns import split_turns
+from src.engine.context.strategy.turns import split_prompts
 from src.engine.context.strategy.windowed import WindowedStrategy
 from src.engine.context.tokens import estimate_tokens, measured_tokens, projected_tokens
 from src.engine.context.working_set import render_working_set, touched_files
@@ -167,7 +167,7 @@ def test_turns_survive_when_only_replayed_instructions_are_oversized():
     content_tokens = sum(estimate_tokens(part_text(part)) for message in messages for part in message.parts)
     budget = ContextBudget(window=content_tokens * 2, output_reserve=0)
 
-    result = WindowedStrategy(keep_recent_turns=3).view(messages, budget)
+    result = WindowedStrategy(keep_recent_prompts=3).view(messages, budget)
 
     assert result.dropped_messages == 0
     assert len(result.messages) == len(messages)
@@ -218,16 +218,16 @@ def test_budget_never_negative():
 # --- turns -----------------------------------------------------------------
 
 
-def test_split_turns_groups_by_user_prompt():
+def test_split_prompts_groups_by_user_prompt():
     messages = [*_turn(1), *_turn(2), *_turn(3)]
-    turns = split_turns(messages)
+    turns = split_prompts(messages)
     assert len(turns) == 3
     assert all(len(turn) == 4 for turn in turns)
 
 
-def test_split_turns_keeps_leading_messages_without_prompt():
+def test_split_prompts_keeps_leading_messages_without_prompt():
     messages = [_assistant('loose'), *_turn(1)]
-    turns = split_turns(messages)
+    turns = split_prompts(messages)
     assert len(turns) == 2
     assert turns[0] == [messages[0]]
 
@@ -243,7 +243,7 @@ def test_passthrough_returns_everything():
 
 
 def test_windowed_drops_thinking():
-    """Past rounds' reasoning is a record, not working memory: it goes."""
+    """Past turns' reasoning is a record, not working memory: it goes."""
     messages = [*_turn(1, thinking='long reasoning'), *_turn(2, thinking='more reasoning')]
     result = WindowedStrategy(reasoning='off').view(messages, ContextBudget(window=None))
     assert result.dropped_thinking == 2
@@ -251,13 +251,13 @@ def test_windowed_drops_thinking():
 
 
 def test_windowed_keeps_the_reasoning_of_the_round_in_progress():
-    """Only the current round's reasoning is kept, and only its last steps."""
-    messages = [*_turn(1, thinking='from a finished round'), *_turn(2, thinking='current round')]
+    """Only the current turn's reasoning is kept, and only its last steps."""
+    messages = [*_turn(1, thinking='from a finished turn'), *_turn(2, thinking='current turn')]
 
     result = WindowedStrategy(reasoning='recent', reasoning_steps=1).view(messages, ContextBudget(window=None))
 
     contents = [part.content for message in result.messages for part in message.parts if isinstance(part, ThinkingPart)]
-    assert contents == ['current round']
+    assert contents == ['current turn']
     assert result.dropped_thinking == 1
 
 
@@ -270,7 +270,7 @@ def test_windowed_keeps_thinking_when_asked():
 
 def test_windowed_truncates_only_old_tool_results():
     messages = [*_turn(1, result_chars=20_000), *_turn(2, result_chars=20_000), *_turn(3, result_chars=20_000)]
-    result = WindowedStrategy(keep_recent_turns=1, max_tool_result_chars=1_000).view(
+    result = WindowedStrategy(keep_recent_prompts=1, max_tool_result_chars=1_000).view(
         messages, ContextBudget(window=None)
     )
     assert result.truncated_results == 2
@@ -290,7 +290,9 @@ def test_windowed_truncates_only_old_tool_results():
 def test_windowed_keeps_tool_call_and_return_paired():
     """Un `ToolReturnPart` sin su `ToolCallPart` es un 400 del provider."""
     messages = [*_turn(1, result_chars=20_000), *_turn(2), *_turn(3)]
-    result = WindowedStrategy(keep_recent_turns=1, max_tool_result_chars=100).view(messages, ContextBudget(window=None))
+    result = WindowedStrategy(keep_recent_prompts=1, max_tool_result_chars=100).view(
+        messages, ContextBudget(window=None)
+    )
     call_ids = {
         part.tool_call_id
         for message in result.messages
@@ -310,7 +312,7 @@ def test_windowed_keeps_tool_call_and_return_paired():
 
 def test_windowed_drops_oldest_turns_to_fit_budget():
     messages = [*_turn(1), *_turn(2), *_turn(3), *_turn(4)]
-    result = WindowedStrategy(keep_recent_turns=4).view(messages, ContextBudget(window=100, output_reserve=0))
+    result = WindowedStrategy(keep_recent_prompts=4).view(messages, ContextBudget(window=100, output_reserve=0))
     assert result.dropped_messages > 0
     assert len(result.messages) < len(messages)
     # There is always at least one turn left.
@@ -319,15 +321,15 @@ def test_windowed_drops_oldest_turns_to_fit_budget():
 
 def test_windowed_never_drops_the_last_turn():
     messages = [*_turn(1, result_chars=50_000)]
-    result = WindowedStrategy(keep_recent_turns=1).view(messages, ContextBudget(window=10, output_reserve=0))
+    result = WindowedStrategy(keep_recent_prompts=1).view(messages, ContextBudget(window=10, output_reserve=0))
     assert result.messages
 
 
 def test_compacting_collapses_old_turns_into_summary():
     messages = [*_turn(1), *_turn(2), *_turn(3), *_turn(4)]
-    result = CompactingStrategy(keep_recent_turns=2).view(messages, ContextBudget(window=None))
+    result = CompactingStrategy(keep_recent_prompts=2).view(messages, ContextBudget(window=None))
 
-    assert result.compacted_turns == 2
+    assert result.compacted_prompts == 2
     first = result.messages[0]
     assert isinstance(first, ModelRequest)
     compaction = [part for part in first.parts if isinstance(part, CompactionPart)]
@@ -340,15 +342,15 @@ def test_compacting_collapses_old_turns_into_summary():
 
 def test_compacting_keeps_summary_when_over_budget():
     messages = [*_turn(1), *_turn(2), *_turn(3), *_turn(4)]
-    result = CompactingStrategy(keep_recent_turns=2).view(messages, ContextBudget(window=50, output_reserve=0))
+    result = CompactingStrategy(keep_recent_prompts=2).view(messages, ContextBudget(window=50, output_reserve=0))
     assert isinstance(result.messages[0], ModelRequest)
     assert any(isinstance(part, CompactionPart) for part in result.messages[0].parts)
 
 
 def test_compacting_without_old_turns_is_passthrough():
     messages = [*_turn(1), *_turn(2)]
-    result = CompactingStrategy(keep_recent_turns=5).view(messages, ContextBudget(window=None))
-    assert result.compacted_turns == 0
+    result = CompactingStrategy(keep_recent_prompts=5).view(messages, ContextBudget(window=None))
+    assert result.compacted_prompts == 0
     assert len(result.messages) == len(messages)
 
 
@@ -661,7 +663,7 @@ def test_tool_return_text_uses_model_response_str():
 def test_windowed_truncates_pydantic_tool_results():
     """Regression: comparing against `isinstance(content, str)` left the truncation without effect."""
     messages = [*_pydantic_turn(1), *_pydantic_turn(2), *_pydantic_turn(3)]
-    result = WindowedStrategy(keep_recent_turns=1, max_tool_result_chars=1_000).view(
+    result = WindowedStrategy(keep_recent_prompts=1, max_tool_result_chars=1_000).view(
         messages, ContextBudget(window=None)
     )
     assert result.truncated_results == 2
@@ -689,7 +691,7 @@ def test_windowed_never_truncates_pinned_tools():
         *_turn(2),
         *_turn(3),
     ]
-    result = WindowedStrategy(keep_recent_turns=1, max_tool_result_chars=1_000).view(
+    result = WindowedStrategy(keep_recent_prompts=1, max_tool_result_chars=1_000).view(
         messages, ContextBudget(window=None)
     )
     skill_return = next(
@@ -713,7 +715,7 @@ def test_compacting_keeps_pinned_turns_intact():
         *_turn(3),
         *_turn(4),
     ]
-    result = CompactingStrategy(keep_recent_turns=1).view(messages, ContextBudget(window=None))
+    result = CompactingStrategy(keep_recent_prompts=1).view(messages, ContextBudget(window=None))
 
     # The skill turn survives whole; the other old turns get compacted.
     assert any(
@@ -722,7 +724,7 @@ def test_compacting_keeps_pinned_turns_intact():
         if isinstance(message, ModelRequest)
         for part in message.parts
     )
-    assert result.compacted_turns == 2
+    assert result.compacted_prompts == 2
 
 
 def test_fit_to_budget_prefers_dropping_unpinned_turns():
@@ -743,7 +745,7 @@ def test_fit_to_budget_prefers_dropping_unpinned_turns():
     unpinned = estimate_messages_tokens(_turn(2, result_chars=4_000))
     window = total - unpinned + 50
 
-    result = WindowedStrategy(keep_recent_turns=1).view(messages, ContextBudget(window=window, output_reserve=0))
+    result = WindowedStrategy(keep_recent_prompts=1).view(messages, ContextBudget(window=window, output_reserve=0))
 
     assert result.dropped_messages == len(_turn(2, result_chars=4_000))
     assert any(
@@ -846,7 +848,7 @@ def test_render_working_set_is_empty_without_files():
 
 def test_compacting_summary_includes_working_set():
     messages = [*_turn(1), *_turn(2), *_turn(3), *_turn(4)]
-    result = CompactingStrategy(keep_recent_turns=2).view(messages, ContextBudget(window=None))
+    result = CompactingStrategy(keep_recent_prompts=2).view(messages, ContextBudget(window=None))
 
     summary = next(part.content for part in result.messages[0].parts if isinstance(part, CompactionPart))
     assert 'Files touched so far' in summary
@@ -857,7 +859,7 @@ def test_compacting_summary_includes_working_set():
 
 def test_compacting_working_set_can_be_disabled():
     messages = [*_turn(1), *_turn(2), *_turn(3), *_turn(4)]
-    result = CompactingStrategy(keep_recent_turns=2, include_working_set=False).view(
+    result = CompactingStrategy(keep_recent_prompts=2, include_working_set=False).view(
         messages, ContextBudget(window=None)
     )
     summary = next(part.content for part in result.messages[0].parts if isinstance(part, CompactionPart))
@@ -867,5 +869,5 @@ def test_compacting_working_set_can_be_disabled():
 def test_compacting_without_compaction_has_no_working_set():
     """With no old turns there is no summary, and therefore no working set either."""
     messages = [*_turn(1), *_turn(2)]
-    result = CompactingStrategy(keep_recent_turns=5).view(messages, ContextBudget(window=None))
+    result = CompactingStrategy(keep_recent_prompts=5).view(messages, ContextBudget(window=None))
     assert not any(isinstance(part, CompactionPart) for message in result.messages for part in message.parts)

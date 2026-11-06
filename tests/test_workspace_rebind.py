@@ -6,8 +6,7 @@ import pytest
 
 from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
 from src.engine.context.scope import ScopeTracker
-from src.engine.roadmap.persistence import directory_for
-from src.engine.roadmap.store import RoadmapStore
+from src.engine.roadmap.stores import RoadmapStores
 from src.engine.sessions.session_store import SessionStore
 from src.engine.skills.registry import SkillRegistry
 
@@ -77,16 +76,18 @@ def test_instructions_rebind_clears_the_file_cache(tmp_path):
 # --- SessionStore -------------------------------------------------------------
 
 
-def test_session_store_rebind_moves_the_directory(tmp_path):
+def test_session_store_rebind_moves_the_workspace_row(tmp_path):
+    """One database, one workspace row per directory: switching re-points the row."""
     store = SessionStore(cwd=tmp_path / 'a', base_dir=tmp_path / 'store')
-    old_directory = store.directory
+    old_workspace = store.workspace_id
 
     store.rebind(tmp_path / 'b')
 
     assert store.cwd == str(tmp_path / 'b')
-    assert store.directory != old_directory
-    assert store.directory.is_dir()
-    assert store.directory == store.directory_for(tmp_path / 'b')
+    assert store.workspace_id != old_workspace
+    assert store.database.value('SELECT path FROM workspaces WHERE id = ?', (store.workspace_id,)) == str(
+        tmp_path / 'b'
+    )
 
 
 def test_session_store_rebind_isolates_the_sessions(tmp_path):
@@ -103,35 +104,41 @@ def test_session_store_rebind_isolates_the_sessions(tmp_path):
 # --- RoadmapStore -------------------------------------------------------------
 
 
-def test_roadmap_rebind_root_moves_the_directory_and_keeps_the_session(tmp_path):
-    first = tmp_path / 'first'
-    second = tmp_path / 'second'
-    store = RoadmapStore(directory=first, session_id='session-1')
+def test_a_plan_belongs_to_an_execution_and_survives_a_workspace_switch(tmp_path):
+    """There is no directory to move: the plan is keyed by the execution.
+
+    Switching workspace changes the session's workspace row, not the identity of the
+    plan, so a plan that was open keeps its items.
+    """
+    store = SessionStore(cwd=tmp_path / 'first', base_dir=tmp_path / 'home')
+    session = store.create_session()
+    plans = RoadmapStores(session_id=session.id, base_dir=tmp_path / 'home')
     from src.engine.roadmap.models.todo_item import TodoItem
 
-    store.set_items([TodoItem(title='old task')])
-    original_session = store.session_id
+    plans.root.set_items([TodoItem(title='kept across the switch')])
 
-    store.rebind_root(second)
+    store.rebind(tmp_path / 'second')
 
-    assert store.session_id == original_session
-    assert store.path is not None
-    assert store.path.parent == directory_for(second)
-    # Different directory, different file: the roadmap of the new workspace is empty.
-    assert store.snapshot() == []
-
-    store.set_items([TodoItem(title='new task')])
-    assert [item.title for item in store.snapshot()] == ['new task']
+    # The same session, the same execution, the same plan.
+    assert session.root_id == plans.root.execution_id
+    assert [item.title for item in plans.root.snapshot()] == ['kept across the switch']
 
 
-def test_roadmap_rebind_to_the_same_root_keeps_the_items(tmp_path):
-    """Rebinding to the root already in use must not drop what the session has."""
-    store = RoadmapStore(directory=directory_for(tmp_path), session_id='session-1')
+def test_a_plan_does_not_leak_between_workspaces(tmp_path):
+    """Two workspaces are two sessions, and each one has its own plan."""
     from src.engine.roadmap.models.todo_item import TodoItem
 
-    store.set_items([TodoItem(title='kept')])
-    store.rebind_root(tmp_path)
-    assert [item.title for item in store.snapshot()] == ['kept']
+    home = tmp_path / 'home'
+    first = SessionStore(cwd=tmp_path / 'first', base_dir=home)
+    first_session = first.create_session()
+    RoadmapStores(session_id=first_session.id, base_dir=home).root.set_items([TodoItem(title='of the first')])
+
+    second = SessionStore(cwd=tmp_path / 'second', base_dir=home)
+    second_session = second.create_session()
+    plans = RoadmapStores(session_id=second_session.id, base_dir=home)
+
+    assert plans.root.snapshot() == []
+    assert first.list_sessions()[0].id != second.list_sessions()[0].id
 
 
 # --- SkillRegistry ------------------------------------------------------------

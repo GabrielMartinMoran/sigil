@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from src.engine.context.meter.cost import SessionCost
 from src.engine.context.meter.snapshot import ContextSnapshot
-from src.engine.context.meter.usage import ToolResultUsage, TurnUsage
+from src.engine.context.meter.usage import PromptUsage, ToolResultUsage
 from src.engine.context.strategy.view_result import ViewResult
 
 
@@ -19,6 +19,6 @@ class ContextReport:
     tools: int
     history: int
     cost: SessionCost = field(default_factory=SessionCost)
-    turns: list[TurnUsage] = field(default_factory=list)
+    turns: list[PromptUsage] = field(default_factory=list)
     heaviest_tool_results: list[ToolResultUsage] = field(default_factory=list)
     view: ViewResult | None = None

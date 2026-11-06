@@ -239,7 +239,7 @@ def build_debug_report(
         strategies_note = (
             f'dropped thinking: {view_result.dropped_thinking} · '
             f'truncated results: {view_result.truncated_results} · '
-            f'compacted turns: {view_result.compacted_turns} · '
+            f'compacted prompts: {view_result.compacted_prompts} · '
             f'dropped messages: {view_result.dropped_messages}'
         )
     else:

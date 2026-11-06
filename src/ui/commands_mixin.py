@@ -42,7 +42,7 @@ class CommandsMixin:
     """Dispatches the slash commands and manages session switching.
 
     It expects the app to define ``_store``, ``_session``, ``_history``,
-    ``_scope``, ``_loaded_skills``, ``_mcp_manager``, ``_meter``,
+    ``_scope``, ``_mcp_manager``, ``_meter``,
     ``_context_capability``, ``_workspace``, ``_roadmap_store``, ``_turn_active``,
     ``_workspace_manager`` and ``start_turn``.
     """
@@ -75,14 +75,19 @@ class CommandsMixin:
             self.run_worker(self.handle_command(name, args))
             return
 
+        # The prompt lands at the end of the transcript, so its position there is how
+        # many messages the session has *now*. Knowing it up front is what makes the
+        # line clickable before the turn has finished.
+        seq = len(self._session.messages) if self._session is not None else None
+
         if self._turn_active:
             # Queued for the run in flight: it lands before the agent decides
             # what to do next, not as a second turn competing with it.
-            widget = await chat.add_user(text, queued=True, attachments=attachments)
+            widget = await chat.add_user(text, queued=True, attachments=attachments, seq=seq)
             self.steer(text, widget, attachments=attachments)
             return
 
-        await chat.add_user(text, attachments=attachments)
+        await chat.add_user(text, attachments=attachments, seq=seq)
         self.start_turn(text, attachments=attachments)
 
     def is_refused_while_busy(self, name: str) -> bool:
@@ -137,6 +142,7 @@ class CommandsMixin:
             '/sidebar': lambda: self.handle_sidebar(args, chat),
             '/mcp': lambda: self.show_mcp(chat),
             '/context': lambda: self.show_context(chat),
+            '/rollback': lambda: self.show_rollback(chat, args),
             '/debug': lambda: self.handle_debug(args, chat),
             '/help': lambda: self.show_help(chat),
             '/quit': lambda: self.action_quit(),
@@ -223,8 +229,6 @@ class CommandsMixin:
         self.bind_session(session)
         if self._scope is not None:
             self._scope.reset()
-        if self._loaded_skills is not None:
-            self._loaded_skills.reset()
         self.refresh_sidebar()
         await chat.clear()
         if switch is not None:
@@ -267,8 +271,6 @@ class CommandsMixin:
         self.bind_session(loaded)
         if self._scope is not None:
             self._scope.reset()
-        if self._loaded_skills is not None:
-            self._loaded_skills.reset()
         self._restore_session_model(loaded)
         self.refresh_sidebar()
         await chat.clear()

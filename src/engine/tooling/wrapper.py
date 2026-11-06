@@ -230,7 +230,13 @@ def wrap_tool(
                 raise
             await emit_tool_event(
                 logger,
-                _end_event(tool_name, started, result, describe=describe, args=_summary_args(func, forwarded, kwargs, takes_ctx)),
+                _end_event(
+                    tool_name,
+                    started,
+                    result,
+                    describe=describe,
+                    args=_summary_args(func, forwarded, kwargs, takes_ctx),
+                ),
             )
             return result
 
@@ -250,7 +256,9 @@ def wrap_tool(
             raise
         emit_tool_event_sync(
             logger,
-            _end_event(tool_name, started, result, describe=describe, args=_summary_args(func, forwarded, kwargs, takes_ctx)),
+            _end_event(
+                tool_name, started, result, describe=describe, args=_summary_args(func, forwarded, kwargs, takes_ctx)
+            ),
         )
         return result
 

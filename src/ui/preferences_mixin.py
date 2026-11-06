@@ -1,9 +1,20 @@
-"""`/theme` and `/reasoning-visibility`: the two preferences the user changes live.
+"""This client's preferences: what the window shows and how it looks.
 
-Both share a shape: a value that the whole UI has to agree on, that survives the
-session, and that has a command with a modal in front of it. They are here rather
-than in `CommandsMixin` because they own state — the loaded themes and the current
-preference — and a command table is no place to keep state.
+`/theme`, `/reasoning-visibility` and `/tools` share a shape: a value the whole window
+has to agree on, that survives the session, and that has a command — sometimes with a
+modal — in front of it. They are here rather than in `CommandsMixin` because they own
+state: the loaded themes and the current preferences, and a command table is no place
+to keep state.
+
+**They are client preferences, and that is what the name says.** The theme, whether the
+reasoning is collapsed and whether the tool output is expanded all describe how *this*
+window paints a conversation; none of them travels in the session, and a web client
+would bring its own. What the domain owns is the content they paint: the reasoning and
+the tool results are in the transcript either way, and `/tools expanded` is one command
+away from reading them.
+
+They live in `engine/preferences.py` (`ui.json`) and not in the database for the same
+reason: configuration, not data.
 """
 
 from __future__ import annotations
@@ -15,8 +26,8 @@ from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.theme_picker_screen import ThemePickerScreen
 
 
-class ThemeMixin:
-    """Applies themes and the reasoning preference.
+class PreferencesMixin:
+    """Applies this client's preferences to what is on screen.
 
     It expects the app to define ``_preferences``, ``_preferences_store`` and
     ``_themes``.

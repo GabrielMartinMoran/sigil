@@ -356,15 +356,13 @@ def test_the_agent_survives_being_saved(tmp_path):
     assert store.load(session.id).agent == 'reviewer'
 
 
-def test_a_session_saved_without_an_agent_reads_back_empty(tmp_path):
-    """The key did not exist before this feature: old files must still load."""
+def test_a_session_without_a_profile_reads_back_empty(tmp_path):
+    """An empty profile means "no choice recorded": the registry's default applies."""
     store = SessionStore(cwd=str(tmp_path), base_dir=tmp_path / 'sessions')
     session = store.create_session()
-    path = store._session_path(session.id)
-    path.write_text(
-        f'{{"id": "{session.id}", "cwd": "/tmp", "messages": [], "created_at": null, '
-        f'"updated_at": null, "title": null}}',
-        encoding='utf-8',
+    store.database.execute(
+        "UPDATE agent_executions SET profile = '', name = '' WHERE session_id = ?",
+        (session.id,),
     )
 
     assert store.load(session.id).agent == ''
