@@ -64,6 +64,11 @@ COMMANDS: tuple[Command, ...] = (
         CommandOwner.CLIENT,
     ),
     Command(
+        '/tools',
+        'Show or collapse the tool output in the chat (expanded/collapsed)',
+        CommandOwner.CLIENT,
+    ),
+    Command(
         '/theme',
         'Pick a theme with a live preview; --list shows the installed ones',
         CommandOwner.CLIENT,

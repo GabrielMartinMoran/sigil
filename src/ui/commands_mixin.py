@@ -137,6 +137,7 @@ class CommandsMixin:
             '/model': lambda: self.show_models(chat, args),
             '/effort': lambda: self.show_effort(chat, args),
             '/reasoning-visibility': lambda: self.handle_reasoning_visibility(args, chat),
+            '/tools': lambda: self.handle_tools(args, chat),
             '/theme': lambda: self.handle_theme_command(args, chat),
             '/sidebar': lambda: self.handle_sidebar(args, chat),
             '/mcp': lambda: self.show_mcp(chat),

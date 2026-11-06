@@ -825,11 +825,24 @@ come back in base64.
 marked— plus a free field to type another answer. The agent uses it when the
 requirements are ambiguous or an action needs explicit authorization.
 
-The questions appear **in a panel under the chat**, not in a modal: the answer
-usually lives in the conversation, and covering it is exactly what makes the
-question hard to answer. The chat gives up part of its height while the panel is
-open and takes it back when it closes; the sidebar and the prompt stay where
-they are, so you can keep reading the conversation and scrolling it.
+The questions appear **in place of the composer**, across the whole width, right
+above the status bar: not in a modal, and not in a box inside the conversation.
+The box that owns the keyboard is the box on screen — a visible composer that
+cannot be typed into is a lie, and it was the most prominent thing on the screen.
+
+While a question is open the conversation stays readable above it, and **both
+columns give up height, not their place**: the panel is a sibling of the row that
+holds the transcript and the side panel, so it takes its room from that whole row.
+The side panel keeps its width and scrolls, so a shorter one is still usable — and
+its roadmap is often exactly what the question is about. A half-typed message
+survives too: the composer is hidden, not emptied, and it returns focused with your
+text.
+
+While a question is open **the panel owns the keyboard**. Clicking the
+conversation or the panel's own frame to read something does not take the keys
+away: the arrows keep moving the highlight and `Enter` keeps answering.
+Answering is the only thing the turn is waiting on, so it is what the keyboard is
+for; the composer takes the keys back the moment the question closes.
 
 Each question keeps its own answer. Moving between them never loses anything:
 
@@ -848,6 +861,12 @@ what was already answered. The questions close once all of them have an answer,
 and if you try to finish early, the panel takes you to the one that is still
 missing.
 
+Each option is one line, clipped with `…` when the terminal is narrow, and the
+clipped part is always the description: the label and the `[recommended]` tag are
+never the part that goes. If the panel runs out of height it scrolls, but the key
+legend underneath stays pinned and visible — a question you cannot finish reading
+is a question you cannot answer.
+
 `Esc` is the way out of a question you do not want to answer, so it ends the
 turn instead of picking something for you: the agent stops where it is, the chat
 shows `Turn cancelled.` and control goes back to you. Nothing is lost: the
@@ -857,6 +876,13 @@ out, and the next message starts from a valid history.
 Here `Esc` is a single press, not the two-press confirmation that stops a plain
 turn: the panel is already asking you something, and adding a confirmation would
 mean answering one question in order to decline another.
+
+That single press works from anywhere while the question is open. If the key
+does not reach the panel — nothing is focused, or a widget in between took it —
+the app asks the panel first, so `Esc` cancels the question instead of arming the
+abort. The two are very different outcomes: cancelling closes the question and
+stops the turn cleanly, while the abort leaves the question on screen with a run
+that is no longer there to read the answer.
 
 Cancelling is not an error and not an answer. The run stops, so the model never
 gets to react to the cancellation and never decides what to do next on its own.
@@ -959,6 +985,20 @@ The agent does not take the keyboard hostage. While a turn runs you can keep
 typing: a plain message is **queued** for that turn and injected into it, and
 only the commands that would pull the session out from under the running agent
 are refused.
+
+The keyboard has exactly one owner, and reading the interface does not cost it:
+clicking the transcript, the side panel or the debug view scrolls and selects
+but leaves the keys in the composer. The conversation is read from the composer
+with the keyboard:
+
+| Key | What it does |
+| --- | --- |
+| Mouse wheel | Scrolls whatever is under the pointer |
+| `pgup` / `pgdn` | Moves the conversation one page |
+| `ctrl+↑` / `ctrl+↓` | Moves it a few lines |
+
+The same `ctrl+↑` / `ctrl+↓` pair reads the conversation while a question panel
+is open, so the keys do not change meaning between the two surfaces.
 
 ### Sending a message mid-turn
 
@@ -1252,6 +1292,7 @@ type.
 | `/model` | Picks the model for the active account |
 | `/effort [level]` | Opens the effort picker; with a level, sets it directly |
 | `/reasoning-visibility [on\|off]` | Shows or collapses the reasoning in the chat; without an argument, toggles |
+| `/tools [expanded\|collapsed]` | Shows or collapses the tool output in the chat; without an argument, toggles |
 | `/theme [name\|--list]` | Opens the theme picker with a live preview; with a name, applies it; `--list` lists the installed ones |
 | `/sidebar [on\|off]` | Shows or hides the sidebar; without an argument, toggles |
 | `/mcp` | Queries the state of the MCP servers |
@@ -1501,29 +1542,56 @@ screen is not rebuilt, so a turn in flight keeps its pending deltas — and
 
 ### Tool calls
 
-A tool call and its result are one block, with the output indented under a gutter
-on the left:
+A tool call and its result are one row, and the row is the summary:
 
 ```
-  │ read_file src/parser.py  ✓
-  │ def parse(x):
-  │     return x.split(",")
-  │ … +34 more
+  │ 4 tools · 610ms
+  │ ✓ patch tests/test_roadmap.py  3 replacements · 24ms
+  │ ✓ run ['pytest tests/test_roadmap.py -q']  9 passed in 0.45s · 450ms
+  │ ✓ run ['pytest tests/test_per_…  1 failed, 8 passed in 0.61s · 610ms
+  │ ↳ 1 failed
+  │ ✓ read tests/test_roadmap.py  2 of 30 lines · 3ms
 ```
 
 The gutter is what groups them: a run of calls reads as one column hanging under
 the answer that caused it, instead of a list of unrelated lines that all start at
 the left margin. Consecutive calls share no gap, so the column is continuous.
 
-- The header carries the name, the arguments and a state mark: `…` while it runs,
-  `✓` or `✗` after. One column, so nothing shifts when the call ends.
+- **Two axes, deliberately apart.** The glyph says whether the *call* came back:
+  `…` while it runs, `✓` when it returned, `✗` when it raised. The color of the
+  summary says how it *went*, and a failing test run is a successful call with a
+  red result — not a broken tool. Painting both with `✗` would make a red test
+  look like a crash.
+- **The right-hand side is the tool's own sentence**, not `str(result)`. Each tool
+  declares how to summarize itself, because only the tool knows that
+  `3 replacements` is the interesting fact about a patch and `bytes_before` is
+  not. A tool that declares nothing shows nothing there; the row is still honest.
+- The header over a run of two or more calls says what the step is and how far
+  along it is: `⋯ 3 tools [1/3]` while it runs, `4 tools · 1 error · 610ms` when
+  it is over. A batch of one call needs no header and does not get one.
+- **The output is collapsed by default**, like the reasoning, and for the same
+  reason: the row already says what came back. `… 12 lines` under a row that reads
+  `9 passed in 0.45s` is a second line for nothing.
+- **A failure is never collapsed.** A tool that raised shows its error, and a call
+  whose result came back bad shows the first lines that explain it (`↳ 1 failed`).
+  Hiding a failure behind a preference nobody has set yet would hide the one thing
+  there is to act on.
+- `/tools expanded` shows the output of every call, on screen and in the ones to
+  come; `/tools collapsed` puts it back. The choice is stored in
+  `~/.sigil/ui.json` and survives the next session.
 - A dict of arguments is rendered as `key=value` pairs; a single argument is shown
   on its own, which is what makes `run(command='ls')` read as `run ls`.
-- The output keeps its leading whitespace, because a diff, a stack trace or a
-  snippet of code is unreadable without it. Trailing whitespace is dropped.
-- Past six lines the block truncates with `… +N more`, and past 160 characters a
-  long line truncates with an ellipsis. Enough to recognize the result, never
-  enough to take over the screen.
+- The row is composed to the width it has: the result sits flush right, the
+  arguments are clipped with `…`, and when there is no room for both the result is
+  dropped before the call is squeezed into an unreadable stub.
+- A name shorter than the callable's: `write`, `patch`, `read`, `run`, `search`.
+  An MCP tool keeps its full name, which is also what makes an unfamiliar tool
+  look unfamiliar.
+- Expanding keeps the output's leading whitespace, because a diff, a stack trace
+  or a snippet of code is unreadable without it. Past six lines the block
+  truncates with `… +N more`, and past 160 characters a long line truncates with
+  an ellipsis. Enough to recognize the result, never enough to take over the
+  screen.
 
 ## Themes
 

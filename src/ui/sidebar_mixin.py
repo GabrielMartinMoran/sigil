@@ -49,6 +49,25 @@ class SidebarMixin:
         if callable(agent_label):
             panel.update_agent(agent_label())
 
+    def refresh_skills(self) -> None:
+        """Repaints the skills section only when the set on screen changed.
+
+        It is called after every finished tool call, so it has to be cheap and quiet:
+        the set is derived from the transcript, and comparing it to the one painted is
+        the whole check. A client that instead watched for a particular tool name would
+        know a detail of the domain it has no business knowing.
+        """
+        try:
+            panel = self.query_one(SidebarPanel)
+        except NoMatches, ScreenStackError:
+            return
+        viewer = getattr(self, 'viewed_skills', None)
+        names = viewer() if callable(viewer) else loaded_skills(self._history)
+        if names == getattr(self, '_painted_skills', None):
+            return
+        self._painted_skills = names
+        panel.update_skills(names)
+
     def refresh_context(self, messages: Sequence[ModelMessage] | None = None) -> None:
         """Repaints only the context section.
 

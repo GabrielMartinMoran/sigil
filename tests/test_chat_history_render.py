@@ -18,7 +18,7 @@ import time
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from textual.app import App, ComposeResult
 
-from src.ui.widgets.chat_log import ChatLog, ToolCallBlock
+from src.ui.widgets.chat_log import ChatLog, ToolCallBlock, ToolGroupHeader
 
 
 def history(turns: int) -> list:
@@ -123,9 +123,12 @@ def test_a_run_of_tool_calls_is_spaced_the_same_live_and_restored():
             live = [child.classes for child in chat.children if isinstance(child, ToolCallBlock)]
 
             assert restored == live
-            # The first call keeps its margin, the one that follows the gutter does not.
-            assert 'tight' not in restored[0]
-            assert 'tight' in restored[1]
+            # The batch header owns the gap above the run, and every row of the run is
+            # `tight`: spacing is decided in one place, live and restored alike.
+            headers = [child for child in chat.children if isinstance(child, ToolGroupHeader)]
+            assert len(headers) == 1
+            assert {header.display for header in headers} == {True}
+            assert all('tight' in classes for classes in restored)
 
     asyncio.run(inner())
 

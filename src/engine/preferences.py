@@ -23,12 +23,21 @@ FILE_NAME = 'ui.json'
 
 THEME_KEY = 'theme'
 REASONING_KEY = 'reasoning_visible'
+TOOLS_KEY = 'tools_expanded'
 
 DEFAULT_THEME = 'dark'
 """Theme applied on a cold start. It is a builtin, so it always exists."""
 
 DEFAULT_REASONING_VISIBLE = False
 """Reasoning is collapsed until the user asks to read it."""
+
+DEFAULT_TOOLS_EXPANDED = False
+"""Tool output is collapsed too: the row already summarizes what came back.
+
+Three parallel calls used to print a dozen lines of `returncode=0 stdout=...`
+between a question and its answer. What a reader needs is on the row; the output is
+one command away (`/tools expanded`), and a failure shows its detail regardless.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +46,7 @@ class Preferences:
 
     theme: str = DEFAULT_THEME
     reasoning_visible: bool = DEFAULT_REASONING_VISIBLE
+    tools_expanded: bool = DEFAULT_TOOLS_EXPANDED
 
     def with_theme(self, theme: str) -> Preferences:
         return replace(self, theme=theme)
@@ -44,8 +54,11 @@ class Preferences:
     def with_reasoning_visible(self, visible: bool) -> Preferences:
         return replace(self, reasoning_visible=visible)
 
+    def with_tools_expanded(self, expanded: bool) -> Preferences:
+        return replace(self, tools_expanded=expanded)
+
     def to_dict(self) -> dict[str, object]:
-        return {THEME_KEY: self.theme, REASONING_KEY: self.reasoning_visible}
+        return {THEME_KEY: self.theme, REASONING_KEY: self.reasoning_visible, TOOLS_KEY: self.tools_expanded}
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> Preferences:
@@ -56,9 +69,11 @@ class Preferences:
         """
         theme = data.get(THEME_KEY)
         reasoning = data.get(REASONING_KEY)
+        tools = data.get(TOOLS_KEY)
         return cls(
             theme=theme if isinstance(theme, str) and theme.strip() else DEFAULT_THEME,
             reasoning_visible=reasoning if isinstance(reasoning, bool) else DEFAULT_REASONING_VISIBLE,
+            tools_expanded=tools if isinstance(tools, bool) else DEFAULT_TOOLS_EXPANDED,
         )
 
 

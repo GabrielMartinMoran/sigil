@@ -20,6 +20,7 @@ HANDLERS = Path(__file__).resolve().parent.parent / 'src' / 'ui' / 'commands_mix
 CLIENT_COMMANDS = frozenset(
     {
         '/reasoning-visibility',
+        '/tools',
         '/theme',
         '/sidebar',
         '/debug',

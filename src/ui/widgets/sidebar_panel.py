@@ -31,7 +31,7 @@ from typing import Any
 
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Vertical
 from textual.widgets import Static
 
 from src.engine.context.meter.cost import SessionCost
@@ -39,6 +39,7 @@ from src.engine.roadmap.store import RoadmapStore
 from src.ui.money_format import compact_usd
 from src.ui.palette import color
 from src.ui.token_format import compact_tokens
+from src.ui.widgets.reading import ReadOnlyScroll
 
 LIST_MARK = '•'
 """The mark of a list entry, shared by the skills and the MCP servers.
@@ -119,7 +120,7 @@ class SidebarPanel(Vertical):
         # reports its own size as its virtual size, so overflow would be clipped
         # silently instead of becoming a scrollbar, and a clipped list of MCP
         # servers looks exactly like a short one.
-        with VerticalScroll(id='sidebar-scroll'):
+        with ReadOnlyScroll(id='sidebar-scroll'):
             yield Static(Text(''), id='sidebar-body')
 
     def on_mount(self) -> None:
@@ -155,7 +156,7 @@ class SidebarPanel(Vertical):
         user hid.
         """
         self.display = self._shown
-        if self._shown:
+        if self.display:
             self._repaint()
 
     # --- state --------------------------------------------------------------

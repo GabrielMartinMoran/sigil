@@ -76,6 +76,15 @@ keeps what it must delegate and brings its own for the rest. Without that field
 the two were one flat list, and the difference was invisible until someone tried
 to serve a command from outside the terminal. See [the domain](domain.md).
 
+A second case is worth naming because it looks like a boundary violation and is
+not: **a tool says what it did, in one line**
+(`engine/tooling/presentation.py`). Only `patch_file` knows that "3
+replacements" is the interesting fact and that `bytes_before` is not, so the
+summary is declared next to the tool — the same reasoning `permission.py` gives
+for its group vocabulary. What crosses the line is data: a short string and a
+`good`/`bad`/`neutral`, never a color, a width or a glyph. The row that draws it
+decides those.
+
 The test has a second half, learned from the snapshot of
 [rollback](rollback.md): **if it must happen even when nobody is looking, it is
 core.** A checkpoint, a turn row, a tree snapshot and a rollback exist so that a

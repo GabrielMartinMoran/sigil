@@ -564,6 +564,13 @@ core; if it shows, it is client.** `/effort` looks like a setting and is a core
 command, because it changes the reasoning level a turn runs with and the choice
 travels in the session; `/debug` shows domain state but is a client command,
 because the widget, its timer and its layout belong to whoever is drawing.
+`/tools` is the same shape as `/reasoning-visibility`: the tool results are in
+the transcript either way — that is the domain's — and whether they are printed
+in full is how this window reads them.
+
+The three of them live in `PreferencesMixin` (`ui.json`), which is *the client's
+preference surface* and not a theme feature: the name says which side of the
+boundary it is on.
 
 The catalogue lives in `engine/commands.py` because it is shared vocabulary and
 carries no widget. A client reads it, keeps every command, and knows which ones

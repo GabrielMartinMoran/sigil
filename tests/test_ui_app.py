@@ -66,6 +66,8 @@ def test_command_menu_filters_and_selects(monkeypatch):
 
                 menu = app.query_one(CommandMenu)
                 assert menu.display is True
+                # Derived from the catalogue and not a number: the palette gained a
+                # command in two branches at once, and a hard count breaks on both.
                 assert menu.option_count == len(COMMANDS)
 
                 await pilot.press('n')
@@ -155,6 +157,10 @@ def test_tool_call_and_result_are_rendered(monkeypatch):
                 # of its own. That is the whole point of the block.
                 assert len(blocks) == 1
                 assert blocks[0].name == 'ping'
+                # The block starts collapsed: the row is the summary. Expanding is what
+                # shows the result, which is the point of the block.
+                assert 'pong' not in _block_text(blocks[0])
+                blocks[0].set_expanded(True)
                 text = _block_text(blocks[0])
                 assert 'ping' in text
                 assert 'pong' in text

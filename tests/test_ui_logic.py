@@ -35,6 +35,7 @@ def test_match_commands_filters_by_prefix():
         '/rollback',
         # only this client can
         '/reasoning-visibility',
+        '/tools',
         '/theme',
         '/sidebar',
         '/debug',

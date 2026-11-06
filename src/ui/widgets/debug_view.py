@@ -17,10 +17,11 @@ from rich.console import Group, RenderableType
 from rich.table import Table
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Vertical
 from textual.widgets import Static
 
 from src.engine.context.meter.debug import DebugMessage, DebugReport
+from src.ui.widgets.reading import ReadOnlyScroll
 
 _ROLE_STYLE = {'request': 'cyan', 'response': 'green', 'other': 'dim'}
 _KIND_STYLE = {
@@ -260,11 +261,11 @@ class AgentDebugView(Vertical):
 
     def compose(self) -> ComposeResult:
         yield self._header
-        with VerticalScroll(id='debug-scroll'):
+        with ReadOnlyScroll(id='debug-scroll'):
             yield self._body
 
     def on_mount(self) -> None:
-        self.query_one('#debug-scroll', VerticalScroll).scroll_home(animate=False)
+        self.query_one('#debug-scroll', ReadOnlyScroll).scroll_home(animate=False)
 
     @property
     def last_report(self) -> DebugReport | None:

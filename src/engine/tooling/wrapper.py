@@ -11,7 +11,7 @@ from __future__ import annotations
 import functools
 import inspect
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, get_type_hints
 
 from pydantic_ai import RunContext
@@ -24,6 +24,7 @@ from src.engine.tooling.concurrency import (
 )
 from src.engine.tooling.events import ToolCallEvent, preview
 from src.engine.tooling.logging import ToolLogger, emit_tool_event, emit_tool_event_sync
+from src.engine.tooling.presentation import Describe, summary_of
 
 
 def _bind_args(
@@ -79,6 +80,20 @@ def _prepare_wrapper(wrapper: Callable[..., Any], func: Callable[..., Any], *, p
         wrapper.__signature__ = signature  # type: ignore[attr-defined]
 
 
+def _summary_args(
+    func: Callable[..., Any],
+    forwarded: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    drop_first: bool,
+) -> dict[str, Any]:
+    """The args a presenter sees: the effective ones, defaults included.
+
+    Bound at the end of the call and not at the start, because a tool without a
+    presenter must not pay for a signature bind it will never use.
+    """
+    return _bind_args(func, forwarded, kwargs, drop_first=drop_first)
+
+
 def _start_event(
     tool_name: str,
     func: Callable[..., Any],
@@ -94,12 +109,20 @@ def _start_event(
     )
 
 
-def _end_event(tool_name: str, started: float, result: Any) -> ToolCallEvent:
+def _end_event(
+    tool_name: str,
+    started: float,
+    result: Any,
+    *,
+    describe: Describe | None = None,
+    args: Mapping[str, Any] | None = None,
+) -> ToolCallEvent:
     return ToolCallEvent(
         tool_name=tool_name,
         phase='success',
         duration_ms=round((time.perf_counter() - started) * 1000, 2),
         result_preview=preview(result),
+        summary=summary_of(describe, args or {}, result),
     )
 
 
@@ -149,12 +172,17 @@ def wrap_tool(
     logger: ToolLogger | None = None,
     takes_ctx: bool = False,
     concurrency: ConcurrencyGuard | None = None,
+    describe: Describe | None = None,
 ) -> Callable[..., Any]:
     """Wraps ``func`` to log start, success and error.
 
     ``takes_ctx`` indicates that ``func`` receives a ``RunContext`` as its first
     argument. With ``concurrency`` the wrapper receives the context even if ``func``
     does not ask for it, so the guard can be evaluated before running.
+
+    ``describe`` is the tool's own one-line summary of its result, declared next to
+    the tool like its ``permission``. It is resolved only when the call succeeds, and
+    its args are bound only when a presenter exists: a tool without one pays nothing.
     """
     wrapper_takes_ctx = takes_ctx or concurrency is not None
     prepend_ctx = concurrency is not None and not takes_ctx
@@ -200,7 +228,16 @@ def wrap_tool(
             except Exception as exc:
                 await emit_tool_event(logger, _error_event(tool_name, started, exc))
                 raise
-            await emit_tool_event(logger, _end_event(tool_name, started, result))
+            await emit_tool_event(
+                logger,
+                _end_event(
+                    tool_name,
+                    started,
+                    result,
+                    describe=describe,
+                    args=_summary_args(func, forwarded, kwargs, takes_ctx),
+                ),
+            )
             return result
 
         _prepare_wrapper(async_wrapper, func, prepend_ctx=prepend_ctx)
@@ -217,7 +254,12 @@ def wrap_tool(
         except Exception as exc:
             emit_tool_event_sync(logger, _error_event(tool_name, started, exc))
             raise
-        emit_tool_event_sync(logger, _end_event(tool_name, started, result))
+        emit_tool_event_sync(
+            logger,
+            _end_event(
+                tool_name, started, result, describe=describe, args=_summary_args(func, forwarded, kwargs, takes_ctx)
+            ),
+        )
         return result
 
     _prepare_wrapper(sync_wrapper, func, prepend_ctx=prepend_ctx)

@@ -49,6 +49,19 @@ def test_builtins_define_every_variable_the_stylesheet_uses():
         assert set(defaults) <= set(theme.colors), f'{name} is missing variables'
 
 
+def test_the_app_offers_those_defaults_under_textuals_own_name():
+    """`get_theme_variable_defaults`, not `theme_variable_defaults`.
+
+    The sheet is parsed while the app is being built, before any Sigil theme is
+    registered, and Textual looks for the name with the `get_` prefix. A method
+    called anything else is never called, and a `$muted` only Sigil knows fails
+    to parse — at startup, on the whole app.
+    """
+    from src.ui.preferences_mixin import PreferencesMixin
+
+    assert 'muted' in PreferencesMixin.get_theme_variable_defaults(object.__new__(PreferencesMixin))
+
+
 def test_builtins_define_the_core_roles():
     registry = ThemeRegistry.load()
     for name in BUILTIN_NAMES:

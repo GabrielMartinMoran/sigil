@@ -1,9 +1,20 @@
-"""`/theme` and `/reasoning-visibility`: the two preferences the user changes live.
+"""This client's preferences: what the window shows and how it looks.
 
-Both share a shape: a value that the whole UI has to agree on, that survives the
-session, and that has a command with a modal in front of it. They are here rather
-than in `CommandsMixin` because they own state — the loaded themes and the current
-preference — and a command table is no place to keep state.
+`/theme`, `/reasoning-visibility` and `/tools` share a shape: a value the whole window
+has to agree on, that survives the session, and that has a command — sometimes with a
+modal — in front of it. They are here rather than in `CommandsMixin` because they own
+state: the loaded themes and the current preferences, and a command table is no place
+to keep state.
+
+**They are client preferences, and that is what the name says.** The theme, whether the
+reasoning is collapsed and whether the tool output is expanded all describe how *this*
+window paints a conversation; none of them travels in the session, and a web client
+would bring its own. What the domain owns is the content they paint: the reasoning and
+the tool results are in the transcript either way, and `/tools expanded` is one command
+away from reading them.
+
+They live in `engine/preferences.py` (`ui.json`) and not in the database for the same
+reason: configuration, not data.
 """
 
 from __future__ import annotations
@@ -15,8 +26,8 @@ from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.theme_picker_screen import ThemePickerScreen
 
 
-class ThemeMixin:
-    """Applies themes and the reasoning preference.
+class PreferencesMixin:
+    """Applies this client's preferences to what is on screen.
 
     It expects the app to define ``_preferences``, ``_preferences_store`` and
     ``_themes``.
@@ -41,11 +52,16 @@ class ThemeMixin:
                 self.register_theme(theme.to_textual())
         self.theme = self._themes.resolve(self._preferences.theme).name
 
-    def theme_variable_defaults(self) -> dict[str, str]:
+    def get_theme_variable_defaults(self) -> dict[str, str]:
         """Fallbacks for the `$variables` in `theme.tcss`.
 
         Without them a theme that only sets ``primary`` fails to parse the
         stylesheet, because `$tool-border` and friends would be undefined.
+
+        The name is Textual's hook, not ours: `App.get_theme_variable_defaults`
+        is what the stylesheet reads while the app is being built, which is before
+        any Sigil theme is registered. A method called anything else is never
+        called, and the sheet fails to parse on a variable only Sigil knows.
         """
         return theme_variable_defaults()
 
@@ -62,6 +78,34 @@ class ThemeMixin:
     def save_preferences(self) -> None:
         """Persists the current preferences. A failed write is not worth a dialog."""
         self._preferences_store.save(self._preferences)
+
+    def apply_tools_expanded(self, expanded: bool) -> None:
+        """Expands or collapses the tool output already on screen."""
+        try:
+            chat = self.query_one(ChatLog)
+        except Exception:  # noqa: BLE001 - the chat is not mounted yet
+            return
+        chat.set_tools_expanded(expanded)
+
+    def set_tools_expanded(self, expanded: bool) -> None:
+        self._preferences = self._preferences.with_tools_expanded(expanded)
+        self.apply_tools_expanded(expanded)
+        self.save_preferences()
+
+    async def handle_tools(self, args: str, chat: ChatLog) -> None:
+        """`/tools` toggles; `expanded|collapsed` sets it."""
+        value = args.strip().lower()
+        if value in {'', 'toggle'}:
+            expanded = not self._preferences.tools_expanded
+        elif value in {'expanded', 'on', 'show', 'expand'}:
+            expanded = True
+        elif value in {'collapsed', 'off', 'hide', 'collapse'}:
+            expanded = False
+        else:
+            await chat.add_notice('Usage: /tools [expanded|collapsed]', style='yellow')
+            return
+        self.set_tools_expanded(expanded)
+        await chat.add_notice(f'Tool output: {"expanded" if expanded else "collapsed"}.', style='dim')
 
     def set_reasoning_visible(self, visible: bool) -> None:
         self._preferences = self._preferences.with_reasoning_visible(visible)
