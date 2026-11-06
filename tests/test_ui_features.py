@@ -520,6 +520,8 @@ def test_an_unknown_argument_reports_the_usage():
 
 
 def test_a_tool_call_and_its_result_share_one_block():
+    """The result lands inside the call, and `expanded` is what makes it visible."""
+
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
@@ -534,6 +536,7 @@ def test_a_tool_call_and_its_result_share_one_block():
 
                 blocks = [child for child in chat.children if isinstance(child, ToolCallBlock)]
                 assert len(blocks) == 1
+                blocks[0].set_expanded(True)
                 text = render_text(blocks[0]._build())
                 # The row shows the tool's display name, not its callable name: `read`,
                 # not `read_file`. See `engine.tooling.presentation`.
@@ -579,6 +582,9 @@ def test_long_output_is_truncated_with_a_count():
                 from src.ui.widgets.chat_log import ToolCallBlock
 
                 block = next(child for child in chat.children if isinstance(child, ToolCallBlock))
+                # Collapsed, the row already says how much output there is.
+                assert '… 40 lines' in render_text(block._build())
+                block.set_expanded(True)
                 text = render_text(block._build())
                 assert '… +34 more' in text
                 assert '39' not in text
@@ -620,6 +626,7 @@ def test_indentation_of_the_output_is_kept():
                 from src.ui.widgets.chat_log import ToolCallBlock
 
                 block = next(child for child in chat.children if isinstance(child, ToolCallBlock))
+                block.set_expanded(True)
                 assert '  │     return 1' in render_text(block._build())
 
     asyncio.run(inner())

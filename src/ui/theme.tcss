@@ -50,6 +50,16 @@ Screen {
     text-overflow: ellipsis;
 }
 
+/* A batch of calls: the header describes the step, the rows are the calls. The gap
+ * above the batch belongs to the header and every row of the batch is `tight`, so
+ * spacing is decided in one place instead of being fought over by a header that may
+ * be hidden (a batch of one call) and the row under it. */
+.tool-group {
+    margin-top: 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
 /* Consecutive calls share no gap: a run of them is one column under the answer. */
 .tool-call.tight {
     margin-top: 0;

@@ -230,7 +230,11 @@ class SigilApp(
             Horizontal(
                 SidebarPanel(self._roadmap_store, id='sidebar'),
                 Vertical(
-                    ChatLog(id='chat', reasoning_visible=self._preferences.reasoning_visible),
+                    ChatLog(
+                        id='chat',
+                        reasoning_visible=self._preferences.reasoning_visible,
+                        tools_expanded=self._preferences.tools_expanded,
+                    ),
                     AgentDebugView(id='debug'),
                     AgentView(id='agent'),
                     id='conversation',

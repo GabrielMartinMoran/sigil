@@ -1285,6 +1285,7 @@ type.
 | `/model` | Picks the model for the active account |
 | `/effort [level]` | Opens the effort picker; with a level, sets it directly |
 | `/reasoning-visibility [on\|off]` | Shows or collapses the reasoning in the chat; without an argument, toggles |
+| `/tools [expanded\|collapsed]` | Shows or collapses the tool output in the chat; without an argument, toggles |
 | `/theme [name\|--list]` | Opens the theme picker with a live preview; with a name, applies it; `--list` lists the installed ones |
 | `/sidebar [on\|off]` | Shows or hides the sidebar; without an argument, toggles |
 | `/mcp` | Queries the state of the MCP servers |
@@ -1534,29 +1535,56 @@ screen is not rebuilt, so a turn in flight keeps its pending deltas — and
 
 ### Tool calls
 
-A tool call and its result are one block, with the output indented under a gutter
-on the left:
+A tool call and its result are one row, and the row is the summary:
 
 ```
-  │ read_file src/parser.py  ✓
-  │ def parse(x):
-  │     return x.split(",")
-  │ … +34 more
+  │ 4 tools · 610ms
+  │ ✓ patch tests/test_roadmap.py  3 replacements · 24ms
+  │ ✓ run ['pytest tests/test_roadmap.py -q']  9 passed in 0.45s · 450ms
+  │ ✓ run ['pytest tests/test_per_…  1 failed, 8 passed in 0.61s · 610ms
+  │ ↳ 1 failed
+  │ ✓ read tests/test_roadmap.py  2 of 30 lines · 3ms
 ```
 
 The gutter is what groups them: a run of calls reads as one column hanging under
 the answer that caused it, instead of a list of unrelated lines that all start at
 the left margin. Consecutive calls share no gap, so the column is continuous.
 
-- The header carries the name, the arguments and a state mark: `…` while it runs,
-  `✓` or `✗` after. One column, so nothing shifts when the call ends.
+- **Two axes, deliberately apart.** The glyph says whether the *call* came back:
+  `…` while it runs, `✓` when it returned, `✗` when it raised. The color of the
+  summary says how it *went*, and a failing test run is a successful call with a
+  red result — not a broken tool. Painting both with `✗` would make a red test
+  look like a crash.
+- **The right-hand side is the tool's own sentence**, not `str(result)`. Each tool
+  declares how to summarize itself, because only the tool knows that
+  `3 replacements` is the interesting fact about a patch and `bytes_before` is
+  not. A tool that declares nothing shows nothing there; the row is still honest.
+- The header over a run of two or more calls says what the step is and how far
+  along it is: `⋯ 3 tools [1/3]` while it runs, `4 tools · 1 error · 610ms` when
+  it is over. A batch of one call needs no header and does not get one.
+- **The output is collapsed by default**, like the reasoning, and for the same
+  reason: the row already says what came back. `… 12 lines` under a row that reads
+  `9 passed in 0.45s` is a second line for nothing.
+- **A failure is never collapsed.** A tool that raised shows its error, and a call
+  whose result came back bad shows the first lines that explain it (`↳ 1 failed`).
+  Hiding a failure behind a preference nobody has set yet would hide the one thing
+  there is to act on.
+- `/tools expanded` shows the output of every call, on screen and in the ones to
+  come; `/tools collapsed` puts it back. The choice is stored in
+  `~/.sigil/ui.json` and survives the next session.
 - A dict of arguments is rendered as `key=value` pairs; a single argument is shown
   on its own, which is what makes `run(command='ls')` read as `run ls`.
-- The output keeps its leading whitespace, because a diff, a stack trace or a
-  snippet of code is unreadable without it. Trailing whitespace is dropped.
-- Past six lines the block truncates with `… +N more`, and past 160 characters a
-  long line truncates with an ellipsis. Enough to recognize the result, never
-  enough to take over the screen.
+- The row is composed to the width it has: the result sits flush right, the
+  arguments are clipped with `…`, and when there is no room for both the result is
+  dropped before the call is squeezed into an unreadable stub.
+- A name shorter than the callable's: `write`, `patch`, `read`, `run`, `search`.
+  An MCP tool keeps its full name, which is also what makes an unfamiliar tool
+  look unfamiliar.
+- Expanding keeps the output's leading whitespace, because a diff, a stack trace
+  or a snippet of code is unreadable without it. Past six lines the block
+  truncates with `… +N more`, and past 160 characters a long line truncates with
+  an ellipsis. Enough to recognize the result, never enough to take over the
+  screen.
 
 ## Themes
 

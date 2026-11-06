@@ -24,6 +24,7 @@ def test_match_commands_filters_by_prefix():
         '/model',
         '/effort',
         '/reasoning-visibility',
+        '/tools',
         '/theme',
         '/sidebar',
         '/mcp',

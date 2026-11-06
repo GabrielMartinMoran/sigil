@@ -68,6 +68,34 @@ class ThemeMixin:
         """Persists the current preferences. A failed write is not worth a dialog."""
         self._preferences_store.save(self._preferences)
 
+    def apply_tools_expanded(self, expanded: bool) -> None:
+        """Expands or collapses the tool output already on screen."""
+        try:
+            chat = self.query_one(ChatLog)
+        except Exception:  # noqa: BLE001 - the chat is not mounted yet
+            return
+        chat.set_tools_expanded(expanded)
+
+    def set_tools_expanded(self, expanded: bool) -> None:
+        self._preferences = self._preferences.with_tools_expanded(expanded)
+        self.apply_tools_expanded(expanded)
+        self.save_preferences()
+
+    async def handle_tools(self, args: str, chat: ChatLog) -> None:
+        """`/tools` toggles; `expanded|collapsed` sets it."""
+        value = args.strip().lower()
+        if value in {'', 'toggle'}:
+            expanded = not self._preferences.tools_expanded
+        elif value in {'expanded', 'on', 'show', 'expand'}:
+            expanded = True
+        elif value in {'collapsed', 'off', 'hide', 'collapse'}:
+            expanded = False
+        else:
+            await chat.add_notice('Usage: /tools [expanded|collapsed]', style='yellow')
+            return
+        self.set_tools_expanded(expanded)
+        await chat.add_notice(f'Tool output: {"expanded" if expanded else "collapsed"}.', style='dim')
+
     def set_reasoning_visible(self, visible: bool) -> None:
         self._preferences = self._preferences.with_reasoning_visible(visible)
         self.apply_reasoning_visibility(visible)
