@@ -67,10 +67,17 @@ class RoadmapStores:
         A session swap invalidates the node ids, so the stores for the ones that
         were open are discarded: keeping them would leave the next session reading
         a roadmap that belongs to a conversation the user is no longer in.
+
+        Re-binding the same session is a no-op. It happens on every mount and on
+        every view change, and recreating the stores there would throw away live
+        listeners — and the items of a plan that is still open.
         """
+        target = None if directory is None else Path(directory)
+        if session_id == self._session_id and (target is None or target == self._directory):
+            return
         self._session_id = session_id
-        if directory is not None:
-            self._directory = Path(directory)
+        if target is not None:
+            self._directory = target
         for store in self._by_node.values():
             store.remove_listener(self._notify)
         self._by_node.clear()
@@ -79,9 +86,8 @@ class RoadmapStores:
     def rebind_root(self, root: str | Path) -> None:
         """Moves every roadmap to another workspace."""
         self._directory = directory_for(root)
-        for node_id, store in self._by_node.items():
+        for store in self._by_node.values():
             store.rebind_root(root)
-            del node_id
         self._notify()
 
     def discard(self, node_id: str) -> None:

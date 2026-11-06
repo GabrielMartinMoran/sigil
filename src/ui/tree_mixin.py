@@ -281,17 +281,19 @@ class TreeMixin:
         The panel is one column for one agent: showing the root's plan while the
         screen shows a subagent would put two different conversations in the same
         frame. Costs and context follow the same rule, further down.
+
+        It runs on a session change as well as on a view change: a session brings its
+        own roadmaps with it, and the panel has to be handed the new store instead of
+        the object it was holding when the previous conversation was on screen.
         """
-        if self._agent_tree is None:
-            return
         try:
             panel = self.query_one(SidebarPanel)
         except NoMatches:
             return
-        node_id = self.viewed_node_id()
         stores = getattr(self, '_roadmap_store', None)
-        if stores is not None:
-            panel.set_store(stores.for_node(node_id))
+        if stores is None:
+            return
+        panel.set_store(stores.for_node(self.viewed_node_id()))
 
     def viewed_agent(self) -> AgentNode | None:
         """The node on screen: the subagent being read, or ``None`` for the root."""

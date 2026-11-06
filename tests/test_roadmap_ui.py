@@ -8,7 +8,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
 from src.engine.roadmap.models.todo_item import TodoItem
-from src.engine.roadmap.store import RoadmapStore
+from src.engine.roadmap.stores import RoadmapStores
 from src.engine.sessions.session_store import SessionStore
 from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
@@ -22,8 +22,8 @@ def test_roadmap_panel_shows_and_updates(monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             session = store.create_session()
-            roadmap = RoadmapStore(directory=Path(tmp), session_id=session.id)
-            roadmap.set_items([TodoItem(title='Task A', status='in_progress')])
+            roadmap = RoadmapStores(directory=Path(tmp), session_id=session.id)
+            roadmap.root.set_items([TodoItem(title='Task A', status='in_progress')])
 
             app = SigilApp(
                 agent=Agent(TestModel(), instructions='x'),
@@ -37,7 +37,7 @@ def test_roadmap_panel_shows_and_updates(monkeypatch):
                 assert panel.display is True
                 assert 'Task A' in panel.text
 
-                roadmap.set_items([TodoItem(title='Task B', status='done')])
+                roadmap.root.set_items([TodoItem(title='Task B', status='done')])
                 await pilot.pause()
                 assert 'Task B' in panel.text
 
@@ -50,8 +50,8 @@ def test_new_session_gets_its_own_empty_roadmap(monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             session = store.create_session()
-            roadmap = RoadmapStore(directory=Path(tmp), session_id=session.id)
-            roadmap.set_items([TodoItem(title='Old task', status='done')])
+            roadmap = RoadmapStores(directory=Path(tmp), session_id=session.id)
+            roadmap.root.set_items([TodoItem(title='Old task', status='done')])
 
             app = SigilApp(
                 agent=Agent(TestModel(), instructions='x'),
@@ -67,8 +67,8 @@ def test_new_session_gets_its_own_empty_roadmap(monkeypatch):
                 await app.handle_command('/new')
                 await pilot.pause()
 
-                assert roadmap.session_id == app._session.id
-                assert roadmap.snapshot() == []
+                assert roadmap.root.session_id == app._session.id
+                assert roadmap.root.snapshot() == []
                 assert 'Old task' not in panel.text
 
     asyncio.run(inner())
@@ -80,12 +80,12 @@ def test_loading_a_session_restores_its_roadmap(monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             first = store.create_session()
-            roadmap = RoadmapStore(directory=Path(tmp), session_id=first.id)
-            roadmap.set_items([TodoItem(title='Task from the first', status='in_progress')])
+            roadmap = RoadmapStores(directory=Path(tmp), session_id=first.id)
+            roadmap.root.set_items([TodoItem(title='Task from the first', status='in_progress')])
 
             second = store.create_session()
             roadmap.bind_session(second.id)
-            roadmap.set_items([TodoItem(title='Task from the second', status='pending')])
+            roadmap.root.set_items([TodoItem(title='Task from the second', status='pending')])
 
             app = SigilApp(
                 agent=Agent(TestModel(), instructions='x'),
@@ -122,7 +122,7 @@ def _chat_texts(app) -> list[str]:
     return texts
 
 
-def _sidebar_app(tmp: str, roadmap: RoadmapStore, session) -> SigilApp:
+def _sidebar_app(tmp: str, roadmap: RoadmapStores, session) -> SigilApp:
     store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
     return SigilApp(
         agent=Agent(TestModel(), instructions='x'),
@@ -138,8 +138,8 @@ def test_sidebar_command_hides_and_shows_the_panel(monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             session = store.create_session()
-            roadmap = RoadmapStore(directory=Path(tmp), session_id=session.id)
-            roadmap.set_items([TodoItem(title='Task A')])
+            roadmap = RoadmapStores(directory=Path(tmp), session_id=session.id)
+            roadmap.root.set_items([TodoItem(title='Task A')])
 
             app = _sidebar_app(tmp, roadmap, session)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -166,7 +166,7 @@ def test_sidebar_command_without_argument_toggles(monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             session = store.create_session()
-            roadmap = RoadmapStore(directory=Path(tmp), session_id=session.id)
+            roadmap = RoadmapStores(directory=Path(tmp), session_id=session.id)
 
             app = _sidebar_app(tmp, roadmap, session)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -190,7 +190,7 @@ def test_hidden_sidebar_stays_hidden_when_the_roadmap_changes(monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             session = store.create_session()
-            roadmap = RoadmapStore(directory=Path(tmp), session_id=session.id)
+            roadmap = RoadmapStores(directory=Path(tmp), session_id=session.id)
 
             app = _sidebar_app(tmp, roadmap, session)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -200,7 +200,7 @@ def test_hidden_sidebar_stays_hidden_when_the_roadmap_changes(monkeypatch):
                 await app.handle_command('/sidebar', 'off')
                 await pilot.pause()
 
-                roadmap.set_items([TodoItem(title='New task', status='in_progress')])
+                roadmap.root.set_items([TodoItem(title='New task', status='in_progress')])
                 await pilot.pause()
 
                 assert panel.display is False
@@ -214,7 +214,7 @@ def test_sidebar_command_rejects_unknown_arguments(monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             session = store.create_session()
-            roadmap = RoadmapStore(directory=Path(tmp), session_id=session.id)
+            roadmap = RoadmapStores(directory=Path(tmp), session_id=session.id)
 
             app = _sidebar_app(tmp, roadmap, session)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -237,7 +237,7 @@ def test_sidebar_command_typed_in_the_prompt(monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             session = store.create_session()
-            roadmap = RoadmapStore(directory=Path(tmp), session_id=session.id)
+            roadmap = RoadmapStores(directory=Path(tmp), session_id=session.id)
 
             app = _sidebar_app(tmp, roadmap, session)
             async with app.run_test(size=(120, 40)) as pilot:

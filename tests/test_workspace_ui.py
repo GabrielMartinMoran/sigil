@@ -13,7 +13,7 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from textual.widgets import OptionList
 
-from src.engine.roadmap.store import RoadmapStore
+from src.engine.roadmap.stores import RoadmapStores
 from src.engine.sessions.session_store import SessionStore
 from src.engine.skills.loaded import LoadedSkills
 from src.engine.workspace.manager import WorkspaceManager
@@ -55,7 +55,7 @@ def _app(
         session.messages = [ModelRequest(parts=[UserPromptPart(content=text)]) for text in sessions]
         store.save(session)
 
-    roadmap = RoadmapStore(directory=tmp_path / 'roadmaps', session_id=session.id)
+    roadmap = RoadmapStores(directory=tmp_path / 'roadmaps', session_id=session.id)
     manager = WorkspaceManager(
         repo,
         worktrees_dir=tmp_path / 'worktrees',

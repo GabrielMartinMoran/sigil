@@ -310,9 +310,17 @@ class CommandsMixin:
         self.refresh_sidebar()
 
     def bind_roadmap(self) -> None:
-        """The roadmap follows the active session: each session has its own."""
+        """The roadmap follows the active session: each session has its own.
+
+        Re-pointing the store is not enough: the panel holds the store it painted
+        last, and a registry that swaps its stores underneath leaves that reference
+        aimed at a roadmap nobody owns anymore. That is what made a new session show
+        the plan of the one before it — the store was emptied, the panel was still
+        reading the old object.
+        """
         if self._roadmap_store is not None:
             self._roadmap_store.bind_session(self._session.id)
+        self._point_roadmap_at_view()
 
     def persist(self) -> None:
         """Saves the current session if it has messages."""
