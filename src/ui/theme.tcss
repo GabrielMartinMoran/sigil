@@ -210,11 +210,18 @@ ThemePickerScreen {
     height: 1fr;
 }
 
-/* Not a modal: it borrows height from the chat and lets the conversation stay
- * readable while the question is answered. */
+/* The questions take the composer's place: same width as the screen, same accent
+ * border, same padding, right above the status bar. That is the whole point of the
+ * layout — the box that owns the keyboard is the box that looks like it does, and
+ * the composer is not on screen pretending to be editable while a question is open.
+ *
+ * It is not a modal and it does not cover the conversation: it borrows height from
+ * `#main` and gives it back when it closes. A representative question — a long
+ * title and three described options — needs about eight lines at this width, so the
+ * cap below is generous; longer ones scroll, which is why the panel is a scroll. */
 QuestionPanel {
     height: auto;
-    max-height: 60%;
+    max-height: 75%;
     border: round $accent;
     background: $panel;
     padding: 0 1;
@@ -240,6 +247,18 @@ QuestionPanel {
     height: auto;
     max-height: 12;
     margin-top: 1;
+    /* Textual's `OptionList` is a box: `border: tall` plus `padding: 0 1`, which
+     * inside a bordered panel is a box in a box eating four columns. On a full-width
+     * panel those columns are the difference between a one-line option and a wrapped
+     * one, and a wrapped row drags the list's scrollbar into the middle of the text.
+     * The list is a list here, not a box. */
+    border: none;
+    padding: 0;
+    background: transparent;
+}
+
+#question-options > .option-list--option {
+    padding: 0;
 }
 
 #question-custom {
@@ -251,6 +270,23 @@ QuestionPanel {
     height: auto;
     margin-top: 1;
     color: $text-muted;
+}
+
+/* The help line is the only legend while the composer is out of the way, so it
+ * stays where it is instead of scrolling off the bottom of a panel that had to
+ * shrink. `dock` takes it out of the scroll flow: the question and its options
+ * scroll above it, the keys never do.
+ *
+ * One line, clipped: a wrapped legend at 60 columns costs three rows and pushes
+ * the third option out of a panel that has no room to spare. The choices win.
+ * `text-wrap` and `text-overflow` are the widget-level rules; a `no_wrap` on the
+ * `Text` is ignored, because the widget re-wraps its renderable to its own width. */
+#question-help {
+    dock: bottom;
+    margin-top: 0;
+    padding-top: 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
 /* The hint is the abort warning (`Esc` cancels the run): it earns the color. */

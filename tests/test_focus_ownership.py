@@ -18,7 +18,7 @@ from pathlib import Path
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from textual import events
-from textual.widgets import OptionList
+from textual.widgets import OptionList, Static
 
 from src.engine.interaction.hub import QuestionHub
 from src.engine.interaction.models.question_item import QuestionItem, QuestionOption
@@ -27,6 +27,7 @@ from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.question_panel import QuestionPanel
+from src.ui.widgets.sidebar_panel import SidebarPanel
 from src.ui.widgets.status_bar import StatusBar
 
 CTRL_LINES = 5
@@ -198,6 +199,188 @@ def test_ctrl_arrows_scroll_the_transcript_from_the_composer():
     asyncio.run(inner())
 
 
+def test_every_option_is_one_line_at_any_width():
+    """A wrapped row makes the list read as two lists, so the row is clipped.
+
+    `OptionList` renders each option through its own `Visual` at the list width, so
+    a `no_wrap` on the `Text` is discarded and the row wraps anyway. The panel cuts
+    the row to the width the list actually has. This checks the render, not the
+    attribute: what matters is that the painted strip is one line.
+
+    Also pinned: the clipped part is the description. The label and the
+    `[recommended]` tag survive, because they are what the decision is made on.
+    """
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            hub = QuestionHub()
+            app = _app(tmp, hub)
+            async with app.run_test(size=(60, 20)) as pilot:
+                await pilot.pause()
+                question = QuestionItem(
+                    question='Which one?',
+                    options=[
+                        QuestionOption(
+                            label='Finish the parser refactor first',
+                            description='Touches parser.py only and leaves the writer for later.',
+                            recommended=True,
+                        ),
+                        QuestionOption(
+                            label='Close the writer coverage first',
+                            description='Three tests, and the refactor waits its turn.',
+                        ),
+                    ],
+                )
+                task = asyncio.create_task(app.ask_question([question]))
+                await pilot.pause()
+                await pilot.pause()
+
+                options = app.query_one(QuestionPanel).query_one(OptionList)
+                for index in range(options.option_count):
+                    prompt = options.get_option_at_index(index).prompt
+                    assert '\n' not in prompt.plain
+                    # Clipped to the list's own width, never past it.
+                    assert prompt.cell_len <= options.scrollable_content_region.width
+
+                first = options.get_option_at_index(0).prompt.plain
+                assert 'Finish the parser refactor first' in first
+                assert '[recommended]' in first
+                assert '…' in first
+
+                await pilot.press('escape')
+                await asyncio.wait_for(task, timeout=5)
+
+    asyncio.run(inner())
+
+
+def test_the_help_line_never_scrolls_away():
+    """It is the only legend while the composer is out of the way."""
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            hub = QuestionHub()
+            app = _app(tmp, hub)
+            async with app.run_test(size=(60, 18)) as pilot:
+                await pilot.pause()
+                task = asyncio.create_task(app.ask_question([_question()]))
+                await pilot.pause()
+                await pilot.pause()
+
+                panel = app.query_one(QuestionPanel)
+                help_line = panel.query_one('#question-help', Static)
+                # Docked, so it is on screen and at the bottom of the panel.
+                assert help_line.display is True
+                assert help_line.region.height == 2  # the padding and the line
+                assert help_line.region.bottom <= panel.region.bottom
+                # And the options are still on screen: the legend does not win rows
+                # from the choices.
+                options = panel.query_one(OptionList)
+                assert options.region.height >= 2
+
+                await pilot.press('escape')
+                await asyncio.wait_for(task, timeout=5)
+
+    asyncio.run(inner())
+
+
+def test_the_composer_steps_aside_for_the_question():
+    """The box that owns the keyboard is the box on screen.
+
+    A composer that is visible and cannot be typed into is a lie, and it was the
+    most prominent thing on the screen. While a question is open the composer is
+    gone and the question takes its place, across the full width.
+    """
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            hub = QuestionHub()
+            app = _app(tmp, hub)
+            async with app.run_test(size=(100, 40)) as pilot:
+                await pilot.pause()
+                prompt = app.query_one(PromptInput)
+                prompt.value = 'half a thought'
+                await pilot.pause()
+
+                task = asyncio.create_task(app.ask_question([_question()]))
+                await pilot.pause()
+                await pilot.pause()
+
+                panel = app.query_one(QuestionPanel)
+                assert prompt.display is False
+                assert panel.display is True
+                # Full width, and right where the composer was.
+                assert panel.region.width == app.screen.size.width
+                assert panel.region.y < app.query_one(StatusBar).region.y
+
+                await pilot.press('enter')
+                await asyncio.wait_for(task, timeout=5)
+                await pilot.pause()
+
+                # The composer is back with what was typed, and with the keys.
+                assert prompt.display is True
+                assert prompt.value == 'half a thought'
+                assert app.focused is prompt
+
+    asyncio.run(inner())
+
+
+def test_the_question_does_not_turn_the_side_panel_back_on():
+    """`/sidebar off` is the user's decision; a question is not a reason to undo it."""
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            hub = QuestionHub()
+            app = _app(tmp, hub)
+            async with app.run_test(size=(100, 40)) as pilot:
+                await pilot.pause()
+                sidebar = app.query_one(SidebarPanel)
+                sidebar.set_shown(False)
+                await pilot.pause()
+
+                task = asyncio.create_task(app.ask_question([_question()]))
+                await pilot.pause()
+                await pilot.pause()
+                assert sidebar.display is False
+
+                await pilot.press('enter')
+                await asyncio.wait_for(task, timeout=5)
+                await pilot.pause()
+                assert sidebar.display is False
+                assert sidebar.shown is False
+
+    asyncio.run(inner())
+
+
+def test_the_side_panel_hands_its_columns_to_the_transcript():
+    """Reading is what a question is about, so the transcript gets the width."""
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            hub = QuestionHub()
+            app = _app(tmp, hub)
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                chat = await _fill(pilot, app)
+                sidebar = app.query_one(SidebarPanel)
+                narrow = chat.size.width
+
+                task = asyncio.create_task(app.ask_question([_question()]))
+                await pilot.pause()
+                await pilot.pause()
+
+                assert sidebar.display is False
+                assert chat.size.width > narrow
+                assert chat.size.width == app.screen.size.width - 4  # the chat's border
+
+                await pilot.press('escape')
+                await asyncio.wait_for(task, timeout=5)
+                await pilot.pause()
+                assert sidebar.display is True
+                assert chat.size.width == narrow
+
+    asyncio.run(inner())
+
+
 def test_the_panel_keeps_the_keys_after_a_click_outside_it():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -214,9 +397,9 @@ def test_the_panel_keeps_the_keys_after_a_click_outside_it():
                 options = panel.query_one(OptionList)
                 assert app.focused is options
 
-                # Reading the conversation, or the panel's own title, is not a way
+                # Reading the conversation, or the panel's own frame, is not a way
                 # out of the question: the keys stay where the answer is.
-                for selector in ('#chat', '#sidebar-scroll', '#question-title'):
+                for selector in ('#chat', '#question-title', '#question-progress'):
                     await pilot.click(selector)
                     await pilot.pause()
                     assert app.focused is options

@@ -233,11 +233,15 @@ class SigilApp(
                     ChatLog(id='chat', reasoning_visible=self._preferences.reasoning_visible),
                     AgentDebugView(id='debug'),
                     AgentView(id='agent'),
-                    QuestionPanel(id='questions'),
                     id='conversation',
                 ),
                 id='main',
             ),
+            # The questions take the place of the composer, not a slot inside the
+            # conversation column: they span the whole width and sit exactly where
+            # the user expects to act (see `ask_question`). While one is open the
+            # composer and the side panel step aside.
+            QuestionPanel(id='questions'),
             CommandMenu(id='menu'),
             PromptInput(placeholder='Message…  Enter sends, Shift+Enter adds a line', id='prompt'),
             StatusBar(id='status'),
@@ -516,30 +520,61 @@ class SigilApp(
     # --- interactive questions --------------------------------------------
 
     async def ask_question(self, questions: list[QuestionItem]) -> list[QuestionAnswer] | None:
-        """Shows the questions under the chat and waits for the answers.
+        """Shows the questions where the composer is, and waits for the answers.
 
-        It is not a modal screen: the questions are usually about what is in the
-        conversation, and that has to stay readable while answering. The panel
-        only borrows part of the chat's height, and the turn waits on the future
-        the panel resolves.
+        It is not a modal screen: the questions usually refer to what is in the
+        conversation, and that has to stay readable while answering. What it does
+        instead is take the composer's place — the panel spans the whole width,
+        right where the user expects to act — so the thing that owns the keyboard
+        is the thing on screen, and there is no dead input sitting below it.
 
-        While it is open the panel owns the keyboard, wherever a click lands: see
-        `on_descendant_focus` and `key_escape`.
+        The composer is hidden rather than emptied: a half-typed message survives
+        and comes back with the focus when the question closes. The side panel is
+        suspended for the same reason (see `SidebarPanel.suspend`), which hands its
+        columns to the transcript — the conversation is what the answer is usually
+        read from, and the side panel scrolls when it comes back.
+
+        The turn waits on the future the panel resolves.
         """
-        answers = await self.query_one(QuestionPanel).ask(questions)
-        self._restore_prompt_focus()
+        if not questions:
+            return []
+        self._clear_the_way_for_questions()
+        try:
+            answers = await self.query_one(QuestionPanel).ask(questions)
+        finally:
+            self._give_the_way_back()
         return answers
+
+    def _clear_the_way_for_questions(self) -> None:
+        """Hides the composer and suspends the side panel for the question."""
+        with suppress(NoMatches):
+            self.query_one(PromptInput).display = False
+        with suppress(NoMatches):
+            self.query_one(SidebarPanel).suspend()
+
+    def _give_the_way_back(self) -> None:
+        """Restores both, in the order the focus needs: visible first, then focused."""
+        with suppress(NoMatches):
+            self.query_one(SidebarPanel).resume()
+        with suppress(NoMatches):
+            self.query_one(PromptInput).display = True
+        self._restore_prompt_focus()
 
     def _restore_prompt_focus(self) -> None:
         """Gives the keys back to the prompt when the panel releases them.
 
         While a turn runs the prompt is disabled and the turn itself takes care
         of the focus when it ends, so this only applies when it can be focused.
+
+        It tolerates the composer being gone: this runs from the `finally` of
+        `ask_question`, and a question answered — or cancelled — by the app going
+        away unmounts the panel and the composer in the same breath.
         """
-        prompt = self.query_one(PromptInput)
-        if prompt.disabled:
-            return
-        prompt.focus()
+        with suppress(NoMatches):
+            prompt = self.query_one(PromptInput)
+            if prompt.disabled:
+                return
+            prompt.focus()
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         """Keeps the question panel's keys on the panel while a question is open.

@@ -825,17 +825,22 @@ come back in base64.
 marked— plus a free field to type another answer. The agent uses it when the
 requirements are ambiguous or an action needs explicit authorization.
 
-The questions appear **in a panel under the chat**, not in a modal: the answer
-usually lives in the conversation, and covering it is exactly what makes the
-question hard to answer. The chat gives up part of its height while the panel is
-open and takes it back when it closes; the sidebar and the prompt stay where
-they are, so you can keep reading the conversation and scrolling it.
+The questions appear **in place of the composer**, across the whole width, right
+above the status bar: not in a modal, and not in a box inside the conversation.
+The box that owns the keyboard is the box on screen — a visible composer that
+cannot be typed into is a lie, and it was the most prominent thing on the screen.
+
+While a question is open the conversation stays readable above it and the side
+panel steps aside, handing its columns to the transcript, which is what the answer
+is usually read from. It comes back as it was — including collapsed, if that is
+how you had it. A half-typed message survives too: the composer is hidden, not
+emptied, and it returns focused with your text.
 
 While a question is open **the panel owns the keyboard**. Clicking the
-conversation, the sidebar or the panel's own frame to read something does not
-take the keys away: the arrows keep moving the highlight and `Enter` keeps
-answering. Answering is the only thing the turn is waiting on, so it is what the
-keyboard is for; the composer takes the keys back the moment the question closes.
+conversation or the panel's own frame to read something does not take the keys
+away: the arrows keep moving the highlight and `Enter` keeps answering.
+Answering is the only thing the turn is waiting on, so it is what the keyboard is
+for; the composer takes the keys back the moment the question closes.
 
 Each question keeps its own answer. Moving between them never loses anything:
 
@@ -853,6 +858,12 @@ text you typed is still in the field, and the panel keeps a short summary of
 what was already answered. The questions close once all of them have an answer,
 and if you try to finish early, the panel takes you to the one that is still
 missing.
+
+Each option is one line, clipped with `…` when the terminal is narrow, and the
+clipped part is always the description: the label and the `[recommended]` tag are
+never the part that goes. If the panel runs out of height it scrolls, but the key
+legend underneath stays pinned and visible — a question you cannot finish reading
+is a question you cannot answer.
 
 `Esc` is the way out of a question you do not want to answer, so it ends the
 turn instead of picking something for you: the agent stops where it is, the chat

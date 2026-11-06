@@ -91,6 +91,8 @@ class QuestionPanel(VerticalScroll):
         yield OptionList(id='question-options')
         yield Input(placeholder='Type your answer…', id='question-custom')
         yield Static(id='question-hint')
+        # The clipping to one line is CSS (`text-wrap: nowrap` on `#question-help`):
+        # a `no_wrap` here is ignored, because the widget re-wraps to its own width.
         yield Static(HELP_TEXT, id='question-help')
 
     def on_mount(self) -> None:
@@ -205,16 +207,31 @@ class QuestionPanel(VerticalScroll):
         ordered = _ordered_options(item)
         answered = draft.answer if draft is not None and not draft.custom else None
         options = self.query_one(OptionList)
+        width = _row_width(options)
         options.clear_options()
         for index, option in enumerate(ordered):
-            options.add_option(Option(_option_row(option, chosen=option.label == answered), id=f'opt-{index}'))
+            row = _option_row(option, chosen=option.label == answered, width=width)
+            options.add_option(Option(row, id=f'opt-{index}'))
         if item.allow_custom:
             label = Text(' ' * _MARKER_WIDTH)
             if draft is not None and draft.custom:
                 label.append(f'{_ANSWER_MARK} ')
             label.append('Other (type your own)…', style='italic')
+            if width > 0 and label.cell_len > width:
+                label.truncate(width, overflow='ellipsis')
             options.add_option(Option(label, id=CUSTOM_ID))
         options.highlighted = _chosen_index(ordered, item, draft, custom_open=self._custom_open[self._index])
+
+    def on_resize(self) -> None:
+        """Repaints the rows at the new width, but only while asking.
+
+        The rows are clipped to the width the list has, so a resize has to redo the
+        clipping: a terminal narrowed while a question is open would otherwise keep
+        rows cut for the old width, or wrap them.
+        """
+        if self._future is None or not self._questions:
+            return
+        self._paint_options(self._questions[self._index], self._drafts[self._index])
 
     def _set_hint(self, text: str) -> None:
         hint = self.query_one('#question-hint', Static)
@@ -360,15 +377,28 @@ class QuestionPanel(VerticalScroll):
 # --- helpers ---------------------------------------------------------------
 
 
-def _option_row(option: QuestionOption, *, chosen: bool) -> Text:
-    """One row of the list: marker, label, description and recommendation."""
-    row = Text()
+def _option_row(option: QuestionOption, *, chosen: bool, width: int = 0) -> Text:
+    """One row of the list: marker, label, recommendation, then description.
+
+    One line, always: a wrapped option row makes the list read as two lists, and at
+    the narrow sizes it puts the description on a line of its own with no label
+    above it. The clipping is done here and not left to the widget because
+    `OptionList` renders each option through its own `Visual` at the list's width,
+    which discards the `Text`'s own `no_wrap` and wraps anyway. So the row is cut
+    to the width the list actually has, and repainted when that width changes.
+
+    The order matters for the same reason: the description is the part that gets
+    clipped, never the label or the reason an option is recommended.
+    """
+    row = Text(no_wrap=True, overflow='ellipsis')
     row.append(f'{_ANSWER_MARK} ' if chosen else ' ' * _MARKER_WIDTH, style='green bold')
     row.append(option.label, style='bold' if chosen else '')
-    if option.description:
-        row.append(f'  — {option.description}', style='dim')
     if option.recommended:
         row.append('  [recommended]', style='bold cyan')
+    if option.description:
+        row.append(f'  — {option.description}', style='dim')
+    if width > 0 and row.cell_len > width:
+        row.truncate(width, overflow='ellipsis')
     return row
 
 
@@ -403,6 +433,22 @@ def _option_index(option_id: str | None) -> int:
     """``opt-<n>`` → ``n``."""
     assert option_id is not None
     return int(option_id.split('-', 1)[1])
+
+
+def _row_width(options: OptionList) -> int:
+    """Cells one row of the list can use, or ``0`` when it has not been laid out.
+
+    ``scrollable_content_region`` is what `OptionList` itself renders against, so
+    the clipping lands exactly where the widget would have wrapped. Before the first
+    layout it is empty and the rows are painted at full length; `on_resize` repaints
+    them as soon as the list has a width.
+    """
+    width = options.scrollable_content_region.width
+    if width <= 0:
+        return 0
+    # One column of slack: the vertical scrollbar appears in the same region it
+    # shrinks, and a row that ends exactly at the edge triggers it.
+    return max(1, width - 1)
 
 
 def _clip(text: str, limit: int) -> str:
