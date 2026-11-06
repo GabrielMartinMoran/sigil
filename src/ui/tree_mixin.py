@@ -410,8 +410,10 @@ class TreeMixin:
             return
         if self.subagent_open:
             # The user is reading a subagent. Starting a turn would rewire the
-            # conversation under the panel they are looking at.
-            self.run_worker(self.show_chat())
+            # conversation under the panel they are looking at, so the chat comes
+            # back first — synchronously, because `show_chat` is a view toggle and
+            # handing its result to `run_worker` would put a `bool` in a worker.
+            self.show_chat()
         self._wake_pending = True
         self.start_turn(WAKE_PROMPT)
 
