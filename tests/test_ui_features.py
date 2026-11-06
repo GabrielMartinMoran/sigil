@@ -14,6 +14,7 @@ from pathlib import Path
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
+from textual.containers import VerticalScroll
 
 from src.engine.preferences import Preferences, PreferencesStore
 from src.engine.roadmap.models.todo_item import TodoItem
@@ -280,8 +281,12 @@ def test_the_sidebar_is_one_panel_with_the_roadmap_as_its_last_section():
                 await pilot.pause()
                 sidebar = app.query_one('#sidebar')
                 assert type(sidebar).__name__ == 'SidebarPanel'
-                # One box: the scroll and the body inside it, and nothing else.
-                assert [type(child).__name__ for child in sidebar.children] == ['VerticalScroll']
+                # One box: the scroll and the body inside it, and nothing else. The
+                # scroll is a `ReadOnlyScroll` — the panel is read, never typed
+                # into — which is a `VerticalScroll` all the same.
+                children = list(sidebar.children)
+                assert len(children) == 1
+                assert isinstance(children[0], VerticalScroll)
 
                 panel = app.query_one(SidebarPanel)
                 text = panel.text

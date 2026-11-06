@@ -37,7 +37,6 @@ from pydantic_ai.messages import (
 from rich.console import Group
 from rich.markdown import Markdown
 from rich.text import Text
-from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 from src.engine.attachments.content import describe_attachments, images_in
@@ -45,6 +44,7 @@ from src.engine.attachments.image_attachment import ImageAttachment
 from src.engine.context.images import image_size
 from src.ui.messages import NodeOpened
 from src.ui.palette import color
+from src.ui.widgets.reading import ReadOnlyScroll
 
 RENDER_INTERVAL = 0.08
 """Seconds between Markdown re-renders while streaming.
@@ -591,8 +591,12 @@ def block_for(name: str, args: Any, *, classes: str) -> ToolCallBlock:
     return ToolCallBlock(name, args, classes=classes)
 
 
-class ChatLog(VerticalScroll):
+class ChatLog(ReadOnlyScroll):
     """Chat history with auto-scroll anchored to the bottom.
+
+    It is a `ReadOnlyScroll`: the transcript is read, never typed into, so it does
+    not take the keyboard (see `src.ui.widgets.reading`). The keys that scroll it
+    live in the composer.
 
     It uses Textual's anchoring API (`anchor`): while the widget is anchored,
     the compositor keeps the view at the bottom on every layout, so the

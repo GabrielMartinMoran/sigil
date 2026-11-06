@@ -831,6 +831,12 @@ question hard to answer. The chat gives up part of its height while the panel is
 open and takes it back when it closes; the sidebar and the prompt stay where
 they are, so you can keep reading the conversation and scrolling it.
 
+While a question is open **the panel owns the keyboard**. Clicking the
+conversation, the sidebar or the panel's own frame to read something does not
+take the keys away: the arrows keep moving the highlight and `Enter` keeps
+answering. Answering is the only thing the turn is waiting on, so it is what the
+keyboard is for; the composer takes the keys back the moment the question closes.
+
 Each question keeps its own answer. Moving between them never loses anything:
 
 | Key | What it does |
@@ -857,6 +863,13 @@ out, and the next message starts from a valid history.
 Here `Esc` is a single press, not the two-press confirmation that stops a plain
 turn: the panel is already asking you something, and adding a confirmation would
 mean answering one question in order to decline another.
+
+That single press works from anywhere while the question is open. If the key
+does not reach the panel — nothing is focused, or a widget in between took it —
+the app asks the panel first, so `Esc` cancels the question instead of arming the
+abort. The two are very different outcomes: cancelling closes the question and
+stops the turn cleanly, while the abort leaves the question on screen with a run
+that is no longer there to read the answer.
 
 Cancelling is not an error and not an answer. The run stops, so the model never
 gets to react to the cancellation and never decides what to do next on its own.
@@ -960,6 +973,20 @@ The agent does not take the keyboard hostage. While a turn runs you can keep
 typing: a plain message is **queued** for that turn and injected into it, and
 only the commands that would pull the session out from under the running agent
 are refused.
+
+The keyboard has exactly one owner, and reading the interface does not cost it:
+clicking the transcript, the side panel or the debug view scrolls and selects
+but leaves the keys in the composer. The conversation is read from the composer
+with the keyboard:
+
+| Key | What it does |
+| --- | --- |
+| Mouse wheel | Scrolls whatever is under the pointer |
+| `pgup` / `pgdn` | Moves the conversation one page |
+| `ctrl+↑` / `ctrl+↓` | Moves it a few lines |
+
+The same `ctrl+↑` / `ctrl+↓` pair reads the conversation while a question panel
+is open, so the keys do not change meaning between the two surfaces.
 
 ### Sending a message mid-turn
 

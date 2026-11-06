@@ -41,11 +41,16 @@ class ThemeMixin:
                 self.register_theme(theme.to_textual())
         self.theme = self._themes.resolve(self._preferences.theme).name
 
-    def theme_variable_defaults(self) -> dict[str, str]:
+    def get_theme_variable_defaults(self) -> dict[str, str]:
         """Fallbacks for the `$variables` in `theme.tcss`.
 
         Without them a theme that only sets ``primary`` fails to parse the
         stylesheet, because `$tool-border` and friends would be undefined.
+
+        The name is Textual's hook, not ours: `App.get_theme_variable_defaults`
+        is what the stylesheet reads while the app is being built, which is before
+        any Sigil theme is registered. A method called anything else is never
+        called, and the sheet fails to parse on a variable only Sigil knows.
         """
         return theme_variable_defaults()
 
