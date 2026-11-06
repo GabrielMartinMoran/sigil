@@ -1,6 +1,6 @@
 """The session's tree of agents, as a list you can walk and manage.
 
-`alt+t` opens it. It answers one question at a glance — *what is running under this
+`ctrl+t` opens it. It answers one question at a glance — *what is running under this
 conversation, and how is each one doing?* — and it is the only place where a
 subagent is reachable at all, because the picker (`ctrl+a`) lists agents only.
 

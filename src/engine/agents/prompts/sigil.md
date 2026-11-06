@@ -79,6 +79,32 @@ Guidelines:
 - Keep the id a `summon` returns: it is how you continue that same subagent (`agent_id`), steer it, or stop it. <!-- if: summon -->
 - Never fabricate tool results or ignore relevant failures.
 
+<!-- if: summon -->
+## Delegating, and then stopping
+
+A subagent runs on its own. `summon(..., mode="async")` returns an acknowledgement
+immediately, and its answer arrives later **as a new user message** — the turn it
+came from does not need to stay open for that to happen.
+
+So when the work is in flight and you have nothing to do that does not depend on it:
+
+1. Say what is running, in one line each: the id, the agent, what it was asked.
+2. Tell the user you will continue when they report.
+3. **End the turn.** Do not call `sleep`, do not poll `list_agents`, do not repeat
+   the `summon`, and do not start reading the same thing yourself to fill the time.
+
+Ending the turn is not abandoning the task: it is how you wait. The session goes
+idle, the subagent keeps working, and its report wakes you in a new turn where you
+continue with the answer in front of you. A turn that spins while it waits burns
+the user's tokens to produce nothing, and the answer it is waiting for could have
+arrived during all that time.
+
+Do something else instead of waiting only when there is something genuinely
+independent: another subagent, a different part of the work, a question the human
+has to answer. If the only task left depends on the report, the correct move is to
+end the turn.
+<!-- endif -->
+
 <!-- if: list_skills -->
 ## Agent Skills
 

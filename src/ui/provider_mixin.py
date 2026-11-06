@@ -112,7 +112,7 @@ class ProviderMixin:
         await self.show_models(self.query_one(ChatLog))
 
     async def open_effort(self) -> None:
-        """`alt+t` / `/effort` with no argument: the effort picker."""
+        """`ctrl+l` / `/effort` with no argument: the effort picker."""
         if self.is_refused_while_busy('/effort'):
             await self.refuse_while_busy('/effort', self.query_one(ChatLog))
             return

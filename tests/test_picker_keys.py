@@ -267,20 +267,21 @@ def test_tab_without_the_menu_does_not_steal_the_focus():
 def test_the_app_binds_what_can_actually_reach_it():
     """Only the two view toggles are app bindings, and only because they have to be.
 
-    The pickers read `ctrl+m` / `ctrl+t` in `PromptInput.on_key`: a global binding
+    The pickers read `ctrl+m` / `ctrl+l` in `PromptInput.on_key`: a global binding
     for `ctrl+m` would claim Enter on a terminal without the kitty protocol.
-    `alt+t` joined `alt+d` when the tree of agents arrived: it is the same kind of
-    key — a view toggle, read before the focused widget — and the user asked for it.
+    `ctrl+t` joined `alt+d` when the tree of agents arrived: it is the same kind of
+    key — a view toggle, read before the focused widget — and it took the place the
+    effort picker had, which moved to `ctrl+l`.
     """
     bindings = {binding.key for binding in SigilApp.BINDINGS}
-    assert bindings == {'alt+d', 'alt+t'}
+    assert bindings == {'alt+d', 'ctrl+t'}
 
 
 def test_the_pickers_are_reached_through_the_prompt_input():
     from src.ui.widgets.prompt_input import CTRL_EFFORT, CTRL_MODELS
 
     assert CTRL_MODELS == 'ctrl+m'
-    assert CTRL_EFFORT == 'ctrl+t'
+    assert CTRL_EFFORT == 'ctrl+l'
 
 
 def test_ctrl_m_is_not_bound_because_it_is_enter():
@@ -291,7 +292,8 @@ def test_ctrl_m_is_not_bound_because_it_is_enter():
     """
     bindings = {binding.key for binding in SigilApp.BINDINGS}
     assert 'ctrl+m' not in bindings
-    assert 'ctrl+t' not in bindings
+    # The effort picker is read by the prompt, not bound here: same reason.
+    assert 'ctrl+l' not in bindings
 
 
 # --- command menu: an argument closes it ------------------------------------

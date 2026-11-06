@@ -17,6 +17,7 @@ Three kinds of block live here, and each one answers a different reading mode:
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Sequence
 from typing import Any
@@ -319,6 +320,9 @@ class ToolCallBlock(Static):
     runs, so a long turn shows which tool is the one that has not returned.
     """
 
+    #: Fields the subclass needs before the first paint.
+    _pending_state: bool = True
+
     def __init__(self, name: str, args: Any, **kwargs: Any) -> None:
         super().__init__(Text(''), **kwargs)
         self._name = name
@@ -327,7 +331,15 @@ class ToolCallBlock(Static):
         self._ok = True
         self._error: str | None = None
         self._pending = True
+        self._prepare()
         self._update_content()
+
+    def _prepare(self) -> None:
+        """Hook for a subclass that needs its own state before the first paint.
+
+        `__init__` paints once at the end, and a subclass that set its fields after
+        `super().__init__` would be painted with none of them.
+        """
 
     @property
     def name(self) -> str:
@@ -393,6 +405,135 @@ class ToolCallBlock(Static):
         text.append(GUTTER, style=color(self, 'tool-border'))
         text.append(content, style=style)
         return text
+
+
+class SummonBlock(ToolCallBlock):
+    """A subagent being started, drawn as a hand-off and not as a tool call.
+
+    `summon` is a tool, and for a moment it looked like one: a name, a JSON blob and
+    a state mark. But what the user is watching is not a call — it is another agent
+    beginning to work, and the id in the result is the handle they will use for the
+    rest of the session. So the block reads as a spawn:
+
+        ▶ Scout · pulsar-researcher
+          read the tree end to end and report the call path…
+          async · #1a2b3c · working
+
+    The state comes from the result text, which is what a replayed transcript has:
+    the block has to be rebuildable from the history alone, with no side channel.
+    """
+
+    def _prepare(self) -> None:
+        """Reads the call before the base class paints for the first time."""
+        self._spawn = self._read_args(self._args)
+        self._status = 'starting'
+        self._node_id = ''
+
+    @staticmethod
+    def _read_args(args: Any) -> dict[str, str]:
+        """The four fields of a spawn, from the call arguments."""
+        if not isinstance(args, dict):
+            return {'agent': '', 'task': '', 'mode': 'sync', 'agent_id': ''}
+        return {
+            'agent': str(args.get('agent') or ''),
+            'task': str(args.get('task') or ''),
+            'mode': str(args.get('mode') or 'sync'),
+            'agent_id': str(args.get('agent_id') or ''),
+        }
+
+    def set_result(self, output: Any, *, ok: bool = True) -> None:
+        super().set_result(output, ok=ok)
+        text = str(output)
+        found = re.search(r'#([0-9a-f]{8,})', text)
+        if found:
+            self._node_id = found.group(1)
+        self._status = self._read_status(text, ok=ok)
+
+    def set_error(self, message: str) -> None:
+        super().set_error(message)
+        self._status = 'refused'
+
+    @staticmethod
+    def _read_status(text: str, *, ok: bool) -> str:
+        """What the result says happened, in the words of the block."""
+        lowered = text.lower()
+        if not ok:
+            return 'refused'
+        if 'out of steps' in lowered:
+            return 'out of steps'
+        if 'was stopped' in lowered or 'stopped, along' in lowered:
+            return 'stopped'
+        if 'is working in the background' in lowered or 'working on it now' in lowered:
+            return 'working'
+        if 'finished' in lowered:
+            return 'finished'
+        if 'already finished' in lowered or 'had already' in lowered:
+            return 'finished'
+        return 'started'
+
+    def _build(self) -> Group:
+        lines: list[Text] = [self._spawn_header()]
+        detail = self._detail_line()
+        if detail is not None:
+            lines.append(detail)
+        lines.append(self._meta_line())
+        return Group(*lines)
+
+    def _spawn_header(self) -> Text:
+        border = color(self, 'tool-border')
+        name = self._spawn['agent'] or 'subagent'
+        resumed = bool(self._spawn['agent_id'])
+        text = Text()
+        text.append(GUTTER, style=border)
+        text.append('↻ ' if resumed else '▶ ', style=f'bold {color(self, "success")}')
+        text.append(name.replace('-', ' ').title(), style=f'bold {color(self, "tool-title")}')
+        text.append(f'  {name}', style=color(self, 'muted'))
+        if resumed:
+            text.append(f'  resume #{self._spawn["agent_id"][:8]}', style=color(self, 'muted'))
+        return text
+
+    def _detail_line(self) -> Text | None:
+        """The task, one line, clipped: a block is not a briefing."""
+        task = ' '.join(self._spawn['task'].split())
+        if not task:
+            return None
+        limit = TOOL_OUTPUT_WIDTH
+        if len(task) > limit:
+            task = task[: limit - 1].rstrip() + '…'
+        text = Text()
+        text.append(GUTTER, style=color(self, 'tool-border'))
+        text.append(task, style=color(self, 'tool-output'))
+        return text
+
+    def _meta_line(self) -> Text:
+        """Mode, id and state: the three facts the user acts on."""
+        border = color(self, 'tool-border')
+        text = Text()
+        text.append(GUTTER, style=border)
+        text.append(self._spawn['mode'], style=color(self, 'muted'))
+        if self._node_id:
+            text.append(' · ', style=color(self, 'muted'))
+            text.append(f'#{self._node_id[:8]}', style=f'bold {color(self, "muted")}')
+        text.append(' · ', style=color(self, 'muted'))
+        text.append(self._status, style=self._status_style())
+        return text
+
+    def _status_style(self) -> str:
+        style = {
+            'working': 'bold yellow',
+            'finished': color(self, 'success'),
+            'out of steps': 'yellow',
+            'refused': color(self, 'diff-removed'),
+            'stopped': color(self, 'muted'),
+        }.get(self._status, color(self, 'muted'))
+        return style
+
+
+def block_for(name: str, args: Any, *, classes: str) -> ToolCallBlock:
+    """The block a tool call gets. Only `summon` reads as a spawn."""
+    if name == 'summon':
+        return SummonBlock(name, args, classes=classes)
+    return ToolCallBlock(name, args, classes=classes)
 
 
 class ChatLog(VerticalScroll):
@@ -480,7 +621,7 @@ class ChatLog(VerticalScroll):
         """
         self._current = None
         follows_block = isinstance(self._last_block, ToolCallBlock)
-        block = ToolCallBlock(name, args, classes='tool-call tight' if follows_block else 'tool-call')
+        block = block_for(name, args, classes='tool-call tight' if follows_block else 'tool-call')
         self._open_tool = block
         self._last_block = block
         await self._append(block)
@@ -494,7 +635,7 @@ class ChatLog(VerticalScroll):
         """
         block = self._open_tool
         if block is None or block.name != name:
-            block = ToolCallBlock(name, {}, classes='tool-call')
+            block = block_for(name, {}, classes='tool-call')
             await self._append(block)
             self._last_block = block
         block.set_result(output, ok=ok)
@@ -505,7 +646,7 @@ class ChatLog(VerticalScroll):
         self._current = None
         block = self._open_tool if self._open_tool is not None and self._open_tool.name == name else None
         if block is None:
-            block = ToolCallBlock(name, {}, classes='tool-call')
+            block = block_for(name, {}, classes='tool-call')
             await self._append(block)
             self._last_block = block
         block.set_error(message)
@@ -592,7 +733,7 @@ class ChatLog(VerticalScroll):
 
         def block_for_tool(name: str, args: Any) -> ToolCallBlock:
             nonlocal open_tool
-            block = ToolCallBlock(name, args, classes='tool-call tight' if follows_a_tool_block() else 'tool-call')
+            block = block_for(name, args, classes='tool-call tight' if follows_a_tool_block() else 'tool-call')
             batches.append(block)
             open_tool = block
             return block

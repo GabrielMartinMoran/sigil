@@ -5,10 +5,12 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+from pydantic_ai import RunContext
 
 from src.engine.roadmap.models.todo_item import TodoItem
 from src.engine.roadmap.models.todo_status import TodoStatus
 from src.engine.roadmap.store import RoadmapStore
+from src.engine.roadmap.stores import RoadmapStores
 from src.engine.tooling.catalog import ToolCatalog
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.permission import ToolGroup, ToolPermission
@@ -85,15 +87,28 @@ def _apply_remove(store: RoadmapStore, item_id: str | None) -> None:
 
 def register_roadmap_tools(
     agent: Any,
-    store: RoadmapStore,
+    store: RoadmapStore | RoadmapStores,
     logger: ToolLogger | None = None,
     catalog: ToolCatalog | None = None,
 ) -> None:
-    """Registers the roadmap tool on a pydantic-ai agent."""
+    """Registers the roadmap tool on a pydantic-ai agent.
+
+    With a ``RoadmapStores`` the store is resolved per run: a subagent plans in its
+    own roadmap and not in its parent's, because the two plans answer different
+    questions.
+    """
     tools = ToolRegistrar(agent, logger, catalog)
 
-    @tools.tool(permission=_ROADMAP)
+    def store_for(ctx: Any) -> RoadmapStore:
+        """The roadmap of the node this run belongs to."""
+        if isinstance(store, RoadmapStores):
+            deps = getattr(ctx, 'deps', None)
+            return store.for_node(getattr(deps, 'node_id', None))
+        return store
+
+    @tools.context_tool(permission=_ROADMAP)
     def update_roadmap(
+        ctx: RunContext[Any],
         action: Literal['set', 'add', 'update', 'remove', 'clear'],
         items: list[RoadmapItemInput] | None = None,
         item_id: str | None = None,
@@ -126,6 +141,7 @@ def register_roadmap_tools(
             status: New status for `update`.
             notes: New notes for `update`.
         """
+        store = store_for(ctx)
         if action == 'set':
             _apply_set(store, items)
         elif action == 'add':

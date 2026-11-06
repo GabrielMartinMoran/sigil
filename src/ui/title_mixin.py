@@ -75,8 +75,20 @@ class TitleMixin:
         return repository.name
 
     def window_title_text(self) -> str:
-        """What the terminal window should say right now."""
-        return window_title.compose(self.repository_label(), self._session.display_title)
+        """What the terminal window should say right now.
+
+        A subagent on screen is part of the answer: the window is the one place
+        that says *which* conversation is open when the terminal is not focused, and
+        `#1a2b3c · Researcher` there is what stops a reader from typing into the
+        wrong one.
+        """
+        base = window_title.compose(self.repository_label(), self._session.display_title)
+        node = getattr(self, 'viewed_agent', None)
+        if callable(node):
+            viewing = node()
+            if viewing is not None:
+                return f'{viewing.label} #{viewing.short_id} · {base}'
+        return base
 
     def paint_window_title(self) -> str:
         """Writes the title to the terminal and returns it.

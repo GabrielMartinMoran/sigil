@@ -1,4 +1,4 @@
-"""The tree in the UI: `alt+t`, opening a subagent, going back, and the messages.
+"""The tree in the UI: `ctrl+t`, opening a subagent, going back, and the messages.
 
 What is pinned here is the part a user can see: the list of agents, the view of one
 node with the composer locked, the way back to the parent, and the message an async
@@ -150,7 +150,7 @@ def test_alt_t_opens_the_tree_and_choosing_a_node_opens_it():
             first = _fill(app)
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
-                await pilot.press('alt+t')
+                await pilot.press('ctrl+t')
                 for _ in range(30):
                     await pilot.pause()
                     if isinstance(app.screen, AgentTreeScreen):

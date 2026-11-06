@@ -16,9 +16,12 @@ import os
 import shlex
 from typing import Any
 
+from pydantic_ai import RunContext
+
 from src.engine.shell.runner import execute_command
 from src.engine.skills.discovery import DEFAULT_MAX_READ_BYTES
 from src.engine.skills.loaded import LoadedSkills
+from src.engine.skills.loads import SkillLoads
 from src.engine.skills.models.skill_metadata import SkillMetadata
 from src.engine.skills.models.skill_resource_error import SkillResourceError
 from src.engine.skills.registry import SkillRegistry
@@ -81,15 +84,23 @@ def register_skill_tools(
     agent: Any,
     registry: SkillRegistry,
     logger: ToolLogger | None = None,
-    loaded: LoadedSkills | None = None,
+    loaded: LoadedSkills | SkillLoads | None = None,
     catalog: ToolCatalog | None = None,
 ) -> None:
     """Registers the skills tools on a pydantic-ai agent.
 
-    With ``loaded``, ``load_skill`` registers the skill so its body is
-    injected as an instruction block on the next request.
+    With ``loaded``, ``load_skill`` registers the skill so its body is injected as
+    an instruction block on the next request. A ``SkillLoads`` is resolved per run,
+    so a subagent loads into its own registry and not into its parent's.
     """
     tools = ToolRegistrar(agent, logger, catalog)
+
+    def registry_for(ctx: Any) -> LoadedSkills | None:
+        """The registry of the node the run belongs to."""
+        if isinstance(loaded, SkillLoads):
+            deps = getattr(ctx, 'deps', None)
+            return loaded.for_node(getattr(deps, 'node_id', None))
+        return loaded
 
     @tools.tool(permission=_SKILLS)
     def list_skills(query: str | None = None) -> list[SkillSummary]:
@@ -111,8 +122,8 @@ def register_skill_tools(
             skills = [skill for skill in skills if _matches(skill, needle)]
         return [_summary(skill) for skill in skills]
 
-    @tools.tool(permission=_SKILL_RESOURCE)
-    def load_skill(name: str) -> LoadedSkill:
+    @tools.context_tool(permission=_SKILL_RESOURCE)
+    def load_skill(ctx: RunContext[Any], name: str) -> LoadedSkill:
         """Load a skill and list its bundled resources.
 
         Call this when a task matches a skill description or the user names a
@@ -128,8 +139,9 @@ def register_skill_tools(
         if registry.get(name) is None:
             registry.refresh()
         skill = registry.load(name)
-        if loaded is not None:
-            loaded.add(skill.metadata.name)
+        target = registry_for(ctx)
+        if target is not None:
+            target.add(skill.metadata.name)
         return LoadedSkill(
             name=skill.metadata.name,
             description=skill.metadata.description,

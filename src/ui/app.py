@@ -5,7 +5,7 @@ each responsibility to a mixin with its own state.
 
 - `ModelViewMixin` : the active model and effort in effect, read by the chrome.
 - `AgentMixin`     : `/agent`, the `ctrl+a` picker and the agent in the status bar.
-- `TreeMixin`      : the session's tree of agents: `alt+t`, the subagent view and
+- `TreeMixin`      : the session's tree of agents: `ctrl+t`, the subagent view and
                      the messages a finished subagent sends back.
 - `SidebarMixin`   : side panel: active model, context budget, skills, MCP servers.
 - `MenuMixin`      : command menu that appears when typing `/`.
@@ -46,7 +46,7 @@ from src.engine.interaction.models.question_item import QuestionItem
 from src.engine.mcp.manager.manager import MCPManager
 from src.engine.preferences import Preferences, PreferencesStore
 from src.engine.providers.service import ModelService
-from src.engine.roadmap.store import RoadmapStore
+from src.engine.roadmap.stores import RoadmapStores
 from src.engine.sessions.session_store import Session, SessionStore
 from src.engine.settings import SigilSettings, load_settings
 from src.engine.skills.loaded import LoadedSkills
@@ -100,19 +100,21 @@ class SigilApp(
     TITLE = 'Sigil'
 
     # Focus lives in the input, which swallows the keys. The pickers therefore
-    # read `ctrl+m` / `ctrl+t` in `PromptInput._on_key` instead of here: a global
+    # read `ctrl+m` / `ctrl+l` in `PromptInput._on_key` instead of here: a global
     # binding would claim Enter on terminals that cannot tell it from Ctrl+M.
     #
     # The two that are bound here open a *view* over the chat — the debug view and
     # the tree of agents — and have to be reachable with the focus anywhere,
-    # including the composer while it is disabled.
+    # including the composer while it is disabled. The tree sits on `ctrl+t`, which
+    # used to open the effort picker: reading the squad is the more frequent act, and
+    # `ctrl+l` was free.
     #
     # There is no global `escape` binding on purpose: the focused widget sees the
     # key first, and the abort has to coexist with the `escape` that cancels a
     # question panel. The prompt handles it (see `PromptInput`).
     BINDINGS: ClassVar[list[Binding]] = [
         Binding('alt+d', 'toggle_debug', 'Debug view', priority=True, show=False),
-        Binding('alt+t', 'toggle_tree', 'Agents', priority=True, show=False),
+        Binding('ctrl+t', 'toggle_tree', 'Agents', priority=True, show=False),
     ]
 
     def __init__(
@@ -128,7 +130,7 @@ class SigilApp(
         startup_notices: Sequence[str] = (),
         mcp_loader: Callable[[], MCPManager] | None = None,
         question_hub: QuestionHub | None = None,
-        roadmap_store: RoadmapStore | None = None,
+        roadmap_store: RoadmapStores | None = None,
         model_retry: RetryTransientModelErrors | None = None,
         meter: ContextMeter | None = None,
         context_capability: ContextViewCapability | None = None,
@@ -171,10 +173,13 @@ class SigilApp(
         self._agent_registry = agent_registry
         # The tree of the session and the object that summons subagents into it.
         # Both are optional: an app built without them still runs the conversation,
-        # and `alt+t` says there is no tree instead of failing.
+        # and the tree shortcut says there is no tree instead of failing.
         self._agent_tree = agent_tree
         self._summoner = summoner
         self._viewed_node: str | None = None
+        # The timer that turns a finished subagent into a turn nobody asked for.
+        self._wake_timer: Any = None
+        self._wake_pending: bool = False
         self._tool_log_sink: ChatToolLogSink | None = None
         self._history: list[Any] = list(session.messages)
         self.menu_visible = False
@@ -254,7 +259,7 @@ class SigilApp(
             self._model_retry.on_retry = self.notify_model_retry
         if self._roadmap_store is not None:
             self._roadmap_store.add_listener(self.handle_roadmap_store_change)
-            self.query_one(SidebarPanel).set_store(self._roadmap_store)
+            self._point_roadmap_at_view()
         self.query_one(CommandMenu).display = False
         self.query_one(AgentView).display = False
         # The listeners of the tree belong to the app: it is what paints a node and
@@ -264,6 +269,7 @@ class SigilApp(
                 on_change=self.announce_tree_change,
                 root_run=self.root_run,
                 on_delivered=self.announce_subagent_message,
+                on_idle=self.subagents_idle,
             )
         # The session carries the agent it runs with from the first paint, so a
         # conversation saved before any switch still remembers it.
@@ -292,6 +298,9 @@ class SigilApp(
 
     async def on_unmount(self) -> None:
         self._stop_diff_polling()
+        if self._wake_timer is not None:
+            self._wake_timer.stop()
+            self._wake_timer = None
         if self._summoner is not None:
             self._summoner.listen()
         self.theme_changed_signal.unsubscribe(self)
@@ -430,7 +439,7 @@ class SigilApp(
         self.toggle_debug()
 
     def action_toggle_tree(self) -> None:
-        """`alt+t`: the agents of the session, and the way into any subagent."""
+        """`ctrl+t`: the agents of the session, and the way into any subagent."""
         self.run_worker(self.open_tree())
 
     def action_tab_noop(self) -> None:

@@ -107,6 +107,14 @@ the next real turn.
 OnDelivered = Callable[[AgentNode], None]
 """A message was handed to a live run. The UI says so in the chat."""
 
+OnIdle = Callable[[], None]
+"""An answer is waiting and no turn is running to read it.
+
+The app decides what that means: it may start a turn on its own, or leave the
+answer for the next one. The engine does not start turns; it only says that there
+is something to read, because a turn is a user-facing act and the app owns it.
+"""
+
 Builder = Callable[['AgentProfile'], 'Agent[Any]']
 """Builds the agent object of one profile. The tree node is not its concern."""
 
@@ -127,6 +135,7 @@ class SubagentSummoner:
         on_change: OnChange | None = None,
         root_run: RootRun | None = None,
         on_delivered: OnDelivered | None = None,
+        on_idle: OnIdle | None = None,
     ) -> None:
         self._trees = trees
         self._registry = registry
@@ -141,9 +150,9 @@ class SubagentSummoner:
         self._on_change = on_change
         self._root_run = root_run
         self._on_delivered = on_delivered
+        self._on_idle = on_idle
         self._tasks: dict[str, asyncio.Task[Any]] = {}
         self._detached: dict[str, asyncio.Event] = {}
-        self._pending: list[str] = []
 
     # --- who listens -------------------------------------------------------
 
@@ -153,6 +162,7 @@ class SubagentSummoner:
         on_change: OnChange | None = None,
         root_run: RootRun | None = None,
         on_delivered: OnDelivered | None = None,
+        on_idle: OnIdle | None = None,
     ) -> None:
         """Attaches the listeners of the UI, once it exists.
 
@@ -163,6 +173,7 @@ class SubagentSummoner:
         self._on_change = on_change
         self._root_run = root_run
         self._on_delivered = on_delivered
+        self._on_idle = on_idle
 
     # --- what the tools ask for --------------------------------------------
 
@@ -596,9 +607,24 @@ class SubagentSummoner:
             'it can resume it. Put this in your final message instead.'
         )
 
+    def waiting(self) -> list[AgentNode]:
+        """Finished nodes whose answer nobody has read yet, in tree order."""
+        return [node for node in self._trees.active.nodes() if not node.delivered]
+
     def take_messages(self) -> list[str]:
-        """What arrived while nobody was listening. The next turn sends it."""
-        messages, self._pending = self._pending, []
+        """The answers waiting for a turn, and marks them read.
+
+        It reads the tree and not a list held in memory: the flag travels with the
+        session, so closing the app between an answer and the next turn loses
+        nothing.
+        """
+        waiting = self.waiting()
+        messages: list[str] = []
+        for node in waiting:
+            node.delivered = True
+            messages.append(_envelope(node, node.result or ''))
+        if waiting:
+            self._notify(waiting[-1])
         return messages
 
     def drain_pending(self) -> list[str]:
@@ -607,7 +633,17 @@ class SubagentSummoner:
 
     @property
     def pending(self) -> tuple[str, ...]:
-        return tuple(self._pending)
+        """The answers waiting, without consuming them."""
+        return tuple(_envelope(node, node.result or '') for node in self.waiting())
+
+    def _wake(self) -> None:
+        """Tells the app an answer is waiting with nobody to read it. Never raises."""
+        if self._on_idle is None:
+            return
+        try:
+            self._on_idle()
+        except Exception:  # noqa: BLE001, S110 - the wake is not the delivery
+            pass
 
     # --- the way back ------------------------------------------------------
 
@@ -618,10 +654,16 @@ class SubagentSummoner:
         finished, the message climbs to the nearest ancestor still able to read it
         and, failing all of them, to the root.
         """
+        node.delivered = False
         text = _envelope(node, message)
         if self._hand(node, text):
+            node.delivered = True
+            self._notify(node)
             return
-        self._pending.append(text)
+        # Nobody took it. The flag is what makes the message survive the process:
+        # the tree is saved with the session, and the next open finds it waiting.
+        self._notify(node)
+        self._wake()
 
     def _hand(self, node: AgentNode, text: str) -> bool:
         """Offers the message to the nearest live run. ``False`` when none took it."""

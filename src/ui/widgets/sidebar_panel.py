@@ -108,6 +108,7 @@ class SidebarPanel(Vertical):
         self._store = store
         self._shown = True
         self._skills: tuple[str, ...] = ()
+        self._agent: str | None = None
         self._servers: tuple[MCPServerState, ...] = ()
         self._mcp_known = False
         self._model: ModelState | None = None
@@ -173,6 +174,16 @@ class SidebarPanel(Vertical):
         self._skills = tuple(names)
         self._repaint()
 
+    def update_agent(self, label: str | None) -> None:
+        """Who the panel is describing: the session's agent, or a subagent.
+
+        It is the first line of the column on purpose. The rest of the panel looks
+        the same for a parent and its child — same model, same window shape — so
+        without this line a reader cannot tell whose context they are looking at.
+        """
+        self._agent = label
+        self._repaint()
+
     def update_mcp(self, servers: Sequence[MCPServerState]) -> None:
         """MCP server state. With no servers, the section does not appear."""
         self._servers = tuple(servers)
@@ -203,6 +214,7 @@ class SidebarPanel(Vertical):
 
     def _build(self) -> Text:
         text = Text()
+        self._append_agent(text)
         self._append_model(text)
         self._append_skills(text)
         self._append_mcp(text)
@@ -220,13 +232,22 @@ class SidebarPanel(Vertical):
             text.append('\n')
         text.append(f'{title}\n', style=f'bold {color(self, "sidebar-section")}')
 
+    def _append_agent(self, text: Text) -> None:
+        """The agent the rest of the column describes."""
+        label = self._agent
+        if not label:
+            return
+        text.append('● ', style='bold yellow')
+        text.append(f'{label}\n', style='bold yellow')
+        text.append(' viewing a subagent · Esc returns\n', style='dim')
+
     def _append_model(self, text: Text) -> None:
         """The model, its reasoning effort, the budget of its window and the bill.
 
         The context line lives here rather than in a section of its own because it
         is the same fact as the model: which window, and how much of it is gone.
         """
-        self._section(text, 'Model', first=True)
+        self._section(text, 'Model', first=not self._agent)
         state = self._model
         if state is None or not state.alias:
             text.append(' not configured — /provider\n', style='dim')

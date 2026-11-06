@@ -2,7 +2,7 @@
 
 Three responsibilities, all of them about the same object — the session's tree:
 
-- **Navigation.** `alt+t` opens the tree; choosing a node opens that subagent in
+- **Navigation.** `ctrl+t` opens the tree; choosing a node opens that subagent in
   place of the chat, and `Esc` returns to the parent. The composer is disabled
   while a node is open: a subagent's conversation is driven by the task it was
   given, and a message typed there would be a message nobody reads.
@@ -32,9 +32,25 @@ from src.ui.widgets.agent_tree_screen import AgentTreeScreen, TreeAction
 from src.ui.widgets.agent_view import AgentView
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
+from src.ui.widgets.sidebar_panel import SidebarPanel
 
 NO_TREE_NOTICE = 'This session has no agents yet: send a message and the tree starts with it.'
-"""What `alt+t` says when the app was built without a tree (headless runs)."""
+"""What the tree shortcut says when the app was built without a tree."""
+
+WAKE_DELAY = 0.6
+"""Seconds to wait before waking the agent for answers nobody read.
+
+It is a debounce, not a delay for its own sake: a squad of three reports within a
+second, and one turn that reads all three is cheaper and easier to follow than
+three turns racing each other.
+"""
+
+WAKE_PROMPT = 'A subagent finished while the session was idle. Read its report and continue.'
+"""What the agent is told when a turn starts on its own.
+
+The reports themselves are prepended by the turn machinery: this line only says
+why the turn exists, so the agent does not read the message as something the user
+typed."""
 
 
 class TreeMixin:
@@ -47,6 +63,8 @@ class TreeMixin:
     _summoner: Any
     _agent_tree: Any
     _turn_active: bool
+    _wake_timer: Any = None
+    _wake_pending: bool = False
 
     # --- the tree ----------------------------------------------------------
 
@@ -63,7 +81,7 @@ class TreeMixin:
         return None if tree is None or not node_id else tree.active.node(node_id)
 
     async def open_tree(self) -> None:
-        """`alt+t`: the list of agents of the session, and what to do with one."""
+        """`ctrl+t`: the list of agents of the session, and what to do with one."""
         chat = self.query_one(ChatLog)
         tree = self.agent_tree()
         if tree is None:
@@ -144,6 +162,13 @@ class TreeMixin:
         prompt = self.query_one(PromptInput)
         prompt.disabled = True
         self._release_prompt_focus()
+        # The panel follows the node: its plan, its skills, its context and its
+        # bill. One column for one agent, the one on screen.
+        self._point_roadmap_at_view()
+        self.refresh_sidebar()
+        # The window says which conversation is open: it is the only surface that
+        # answers that when the terminal is not focused.
+        self._repaint_title()
 
     async def open_parent(self) -> None:
         """`Esc` inside a node: back to whoever summoned it."""
@@ -182,6 +207,9 @@ class TreeMixin:
         chat.display = True
         prompt.disabled = False
         prompt.focus()
+        self._point_roadmap_at_view()
+        self.refresh_sidebar()
+        self._repaint_title()
         return True
 
     def _release_prompt_focus(self) -> None:
@@ -239,6 +267,62 @@ class TreeMixin:
             return
         await view.repaint()
 
+    # --- what the sidebar shows --------------------------------------------
+
+    def _repaint_title(self) -> None:
+        """Tells the terminal which conversation is on screen."""
+        paint = getattr(self, 'paint_window_title', None)
+        if callable(paint):
+            paint()
+
+    def _point_roadmap_at_view(self) -> None:
+        """Points the sidebar's roadmap at whoever the user is looking at.
+
+        The panel is one column for one agent: showing the root's plan while the
+        screen shows a subagent would put two different conversations in the same
+        frame. Costs and context follow the same rule, further down.
+        """
+        if self._agent_tree is None:
+            return
+        try:
+            panel = self.query_one(SidebarPanel)
+        except NoMatches:
+            return
+        node_id = self.viewed_node_id()
+        stores = getattr(self, '_roadmap_store', None)
+        if stores is not None:
+            panel.set_store(stores.for_node(node_id))
+
+    def viewed_agent(self) -> AgentNode | None:
+        """The node on screen: the subagent being read, or ``None`` for the root."""
+        return self.node(self.viewed_node_id())
+
+    def viewed_agent_label(self) -> str | None:
+        """The name of the subagent on screen, or ``None`` when the chat is the root's."""
+        node = self.viewed_agent()
+        if node is None or not self.subagent_open:
+            return None
+        return f'{node.label} #{node.short_id}'
+
+    def viewed_skills(self) -> tuple[str, ...]:
+        """The skills loaded by whoever is on screen."""
+        loads = getattr(self, '_loaded_skills', None)
+        if loads is None:
+            return ()
+        # `SkillLoads` is the real thing; a plain `LoadedSkills` is what an app built
+        # for one agent (an embedding, an older test) still passes.
+        if not hasattr(loads, 'for_node'):
+            return loads.names()
+        node_id = self.viewed_node_id() if self.subagent_open else None
+        return loads.names(node_id)
+
+    def viewed_history(self) -> list[Any]:
+        """The messages of whoever is on screen: a subagent's own transcript."""
+        node = self.viewed_agent()
+        if node is not None and self.subagent_open:
+            return list(node.messages)
+        return self._history
+
     # --- the way back for async subagents ----------------------------------
 
     def root_run(self) -> Any:
@@ -251,6 +335,41 @@ class TreeMixin:
         if not self._turn_active:
             return None
         return getattr(self, '_current_run', None)
+
+    def subagents_idle(self) -> None:
+        """An answer is waiting and no turn is running to read it.
+
+        The turn that spawned the subagents ended — the user read its answer and the
+        app went back to idle — and the subagent's result arrives afterwards. Waiting
+        for the user to type something would leave the squad's work unread, so a turn
+        starts on its own with those answers.
+
+        It is debounced: three researchers finishing within a second are three
+        messages and **one** turn, because three turns would be three model requests
+        to read three paragraphs that belong together.
+        """
+        if self._wake_timer is not None:
+            return
+        self._wake_timer = self.set_timer(WAKE_DELAY, self._wake_from_subagents)
+
+    def _wake_from_subagents(self) -> None:
+        """Starts the turn the answers are owed, if there is still nobody to read them."""
+        self._wake_timer = None
+        if self._summoner is None or self._session is None:
+            return
+        if self._turn_active:
+            # A turn started in the meantime (the user typed): it drains the same
+            # answers at the top of its own prompt, so nothing is lost.
+            return
+        waiting = self._summoner.waiting()
+        if not waiting:
+            return
+        if self.subagent_open:
+            # The user is reading a subagent. Starting a turn would rewire the
+            # conversation under the panel they are looking at.
+            self.run_worker(self.show_chat())
+        self._wake_pending = True
+        self.start_turn(WAKE_PROMPT)
 
     async def notify_subagent_message(self, node: AgentNode) -> None:
         """One line in the chat: a subagent answered and the turn will read it."""

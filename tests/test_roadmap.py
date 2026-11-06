@@ -23,10 +23,21 @@ class DummyAgent:
         return self._register(func, kwargs)
 
 
+class _Ctx:
+    """The minimum of a `RunContext` the roadmap tool reads: the node it belongs to."""
+
+    deps = None
+
+
 def _tool(store):
     agent = DummyAgent()
     register_roadmap_tools(agent, store)
-    return agent.tools['update_roadmap']
+    raw = agent.tools['update_roadmap']
+
+    def call(**kwargs):
+        return raw(_Ctx(), **kwargs)
+
+    return call
 
 
 def test_set_add_update_remove_clear(tmp_path):

@@ -2,7 +2,7 @@
 
 Two things are pinned here:
 
-- `ctrl+m` / `ctrl+t` open the pickers **without** breaking Enter. They are read
+- `ctrl+m` / `ctrl+l` open the pickers **without** breaking Enter. They are read
   in `PromptInput.on_key`, not bound globally, because on a legacy terminal Ctrl+M
   and Enter are the same byte (CR, `0x0D`) and a global binding swallows Enter.
 - The effort levels of a model reach the picker. They used to be lost because the
@@ -115,7 +115,7 @@ def test_ctrl_m_opens_the_model_picker():
     asyncio.run(inner())
 
 
-def test_ctrl_t_opens_the_effort_picker():
+def test_ctrl_l_opens_the_effort_picker():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             service = await _prepared(Path(tmp), ProviderKind.OPENCODE, 'ds')
@@ -123,7 +123,7 @@ def test_ctrl_t_opens_the_effort_picker():
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
                 app.query_one(PromptInput).focus()
-                await pilot.press('ctrl+t')
+                await pilot.press('ctrl+l')
                 for _ in range(8):
                     await pilot.pause()
                 assert isinstance(app.screen, EffortScreen)
@@ -176,21 +176,22 @@ def test_ctrl_m_does_not_swallow_the_typed_text():
 def test_the_app_no_longer_binds_the_broken_alt_shortcuts():
     """The pickers that used to live on `alt+p` / `alt+m` stayed on `ctrl+…`.
 
-    `alt+t` came back with the tree of agents, as a view toggle next to `alt+d`:
+    `ctrl+t` belongs to the tree of agents now, as a view toggle next to `alt+d`:
     the two open a panel over the chat instead of a picker the user has to work
-    through, and the shortcut is what was asked for.
+    through, and the effort picker moved to `ctrl+l`.
     """
     bindings = {binding.key for binding in SigilApp.BINDINGS}
     assert 'alt+p' not in bindings
     assert 'alt+m' not in bindings
-    assert 'alt+d' in bindings and 'alt+t' in bindings
+    assert 'alt+t' not in bindings
+    assert 'alt+d' in bindings and 'ctrl+t' in bindings
 
 
 def test_the_shortcuts_are_not_app_level_ctrl_bindings():
     """A global `ctrl+m` would claim Enter on a terminal without the kitty protocol."""
     bindings = {binding.key for binding in SigilApp.BINDINGS}
     assert 'ctrl+m' not in bindings
-    assert 'ctrl+t' not in bindings
+    assert 'ctrl+l' not in bindings
 
 
 # --- the effort levels ------------------------------------------------------
@@ -228,7 +229,7 @@ def test_the_effort_picker_offers_the_real_levels_of_the_model():
             app = _app(tmp, service)
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
-                await pilot.press('ctrl+t')
+                await pilot.press('ctrl+l')
                 for _ in range(8):
                     await pilot.pause()
 

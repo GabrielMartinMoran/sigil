@@ -577,10 +577,22 @@ The tool takes a `mode`:
 | `async` | An acknowledgement at once. The message arrives later, as a new user message from `[subagent Scout (scout #1a2b3c, async) finished]` |
 
 `sync` is what you want when the next step depends on the answer. `async` is what
-you want when the work is independent: the parent keeps going, and the answer
-lands mid-turn if the turn is still open, or rides along with the next message if
-it is not. It never starts a turn of its own — spending a model request nobody
-asked for is worse than a message waiting a minute.
+you want when the work is independent: the parent keeps going, and the answer lands
+mid-turn if the turn is still open, or wakes the session in a new turn if it is not.
+
+**Ending the turn is how the agent waits.** The turn that dispatched the squad
+finishes — the user reads "two researchers are running" — and the session goes idle.
+When a report arrives, the app starts the turn it is owed, with the report in front
+of it. It is debounced: three reports landing within a second are three messages and
+**one** turn, because three turns would be three model requests to read three
+paragraphs that belong together.
+
+The flag that says "nobody has read this answer" travels with the session, so a
+report that arrives while the app is closing is not lost: the next open finds it
+waiting and starts the turn there.
+
+An answer never interrupts a turn the user started: that turn drains the same queue
+at the top of its prompt, which is why a `sync` call and a woken turn share one path.
 
 Stopping the turn (`Esc` twice) stops the async subagents it started: a background
 node still spending tokens is not stopped.
@@ -680,7 +692,7 @@ being reachable the moment it does.
 
 | Key | What it does |
 | --- | --- |
-| `alt+t` | The agents of the session: every node, its state, how long it has been running |
+| `ctrl+t` | The agents of the session: every node, its state, how long it has been running |
 | `Enter` | Open the highlighted node |
 | `b` | Send it to the background: stop waiting, keep the work going |
 | `k` | Stop it, and everything it summoned |
@@ -701,6 +713,23 @@ The tree is **persisted with the session**, like the history: `/load` brings bac
 the subagents that conversation summoned, with their transcripts and how each one
 ended. A resumed session that forgot what ran under it would be a worse record
 than the chat itself.
+
+### What belongs to one agent
+
+Three things used to be session-wide and are now per node, because a tree makes the
+difference visible:
+
+| State | Why it is per agent |
+| --- | --- |
+| **Loaded skills** | A loaded skill injects its whole body into the instructions. Sharing them would put the Lead's design guidance into an engineer's prompt and spend its budget on it |
+| **The roadmap** | A plan belongs to whoever executes it: "what is the squad doing" is not "which unit am I in" |
+| **Context and cost** | The panel measures the transcript of whoever is on screen |
+
+The side panel follows the screen: opening a subagent shows its name at the top of
+the column — the rest of the panel looks the same for a parent and its child — and
+its plan, its skills, its context and its bill. The terminal window title carries the
+node too, so a reader whose terminal is not focused still knows which conversation is
+open.
 
 ## Built-in tools
 
@@ -1088,13 +1117,13 @@ and a work OpenAI org — and switch between them with `/provider`.
 | Shortcut | What it opens |
 | --- | --- |
 | `ctrl+a` | the agent picker |
-| `ctrl+t` | the reasoning-effort picker |
+| `ctrl+l` | the reasoning-effort picker |
 | `ctrl+m` | the model picker |
 | `ctrl+v` | paste an image from the clipboard (or text) |
 | `alt+d` | the agent debug view |
-| `alt+t` | the agents of the session, and the way into any subagent |
+| `ctrl+t` | the agents of the session, and the way into any subagent |
 
-`ctrl+m`, `ctrl+t` and `ctrl+a` are read by the prompt itself rather than bound
+`ctrl+m`, `ctrl+l` and `ctrl+a` are read by the prompt itself rather than bound
 globally, so Enter keeps working: on a terminal without the Kitty keyboard
 protocol, Ctrl+M and Enter are the same byte (CR, `0x0D`). Textual enables the
 protocol's "disambiguate escape codes" flag, so a capable terminal sends a

@@ -39,12 +39,12 @@ from src.engine.providers.login.chatgpt_flow import ChatGPTLoginFlow
 from src.engine.providers.login.credential_source import chatgpt_provider_factory
 from src.engine.providers.store.secret_store import FileSecretStore
 from src.engine.providers.store.state_store import FileStateStore
-from src.engine.roadmap.store import RoadmapStore
+from src.engine.roadmap.stores import RoadmapStores
 from src.engine.roadmap.tools import register_roadmap_tools
 from src.engine.sessions.session_store import SessionStore
 from src.engine.settings import SigilSettings, load_settings
 from src.engine.shell.tools import register_shell_tools
-from src.engine.skills.loaded import LoadedSkills
+from src.engine.skills.loads import SkillLoads
 from src.engine.skills.registry import SkillRegistry
 from src.engine.skills.tools import register_skill_tools
 from src.engine.themes import ThemeRegistry
@@ -139,7 +139,10 @@ def run() -> None:
 
     # Skills loaded in the session: the `load_skill` tool registers them and the
     # instructions function injects them as a block on every request.
-    loaded_skills = LoadedSkills()
+    # One registry per agent of the tree: a subagent does not inherit the skills its
+    # parent loaded, because a skill body is instructions and they belong to the task
+    # that asked for them.
+    loaded_skills = SkillLoads()
 
     # Tool logging hub: the engine emits, the UI adds its sink on mount.
     tool_logger = ToolLoggerHub()
@@ -201,10 +204,11 @@ def run() -> None:
     )
 
     # Bridge for interactive questions and roadmap state: the engine
-    # updates, the UI consumes them. The roadmap is per session: it is born empty with
-    # each session and is recovered when loading it.
+    # updates, the UI consumes them. The roadmap is per agent, not per session: the
+    # root keeps the session's plan and a subagent plans in its own file, because a
+    # plan belongs to whoever is executing it.
     question_hub = QuestionHub()
-    roadmap_store = RoadmapStore(session_id=session.id)
+    roadmap_store = RoadmapStores(session_id=session.id)
 
     # Workspace: the directory Sigil works in, which can be a linked git worktree.
     # Switching re-points the components that cached the old root; the agent is

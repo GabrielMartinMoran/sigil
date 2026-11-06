@@ -5,7 +5,7 @@ the same for all of them: **the focused widget sees the key first**.
 
 - The command menu (Up/Down/Tab/Esc) needs `priority`, because the text area
   consumes those keys for editing and cursor movement.
-- `ctrl+m`, `ctrl+t`, `ctrl+a` and `ctrl+v` are handled in `_on_key`.
+- `ctrl+m`, `ctrl+l`, `ctrl+a` and `ctrl+v` are handled in `_on_key`.
 - `Enter` sends and `Shift+Enter` inserts a newline. The text area already treats
   Enter as a newline, so the split is decided in `_on_key`, before the area turns
   the key into an edit.
@@ -71,7 +71,7 @@ from src.engine.attachments.tokens import (
 CTRL_MODELS = 'ctrl+m'
 """Ctrl+M. Same byte as Enter on a legacy terminal; see the module docstring."""
 
-CTRL_EFFORT = 'ctrl+t'
+CTRL_EFFORT = 'ctrl+l'
 """Ctrl+T. Free of ambiguity, but Ctrl+T is `transpose-chars` in readline."""
 
 CTRL_AGENT = 'ctrl+a'
