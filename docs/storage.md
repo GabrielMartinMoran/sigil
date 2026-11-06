@@ -16,13 +16,15 @@ slowness.
 
 <!-- prettier-ignore -->
 > [!IMPORTANT]
-> **Partially implemented.** The schema, the delta write, the blob table and
-> the session listing are in the code: a session is rows now, and the freeze
-> is gone. The roadmaps and the provider accounts still live in files
-> (phases 5 and 6), and `checkpoints` exists but nothing writes to it yet —
-> see [rollback](rollback.md). The numbers in "What it cost before" are the
-> *before*, measured on the JSON files; the ones at the end of the page are
-> the *after*, measured on the implementation.
+> **Implemented.** Sessions, their agents, their turns, their plans, the
+> provider accounts and the preferences are rows; the file store is gone. The
+> numbers in "What it cost before" are the *before*, measured on the JSON
+> files; the ones at the end of the page are the *after*, measured on the
+> implementation.
+>
+> What is still a file, on purpose: the credentials (a `0600` file, because
+> secrets do not share permissions with data that must be world-readable) and
+> the configuration (themes, MCP, agent profiles).
 
 ## What it cost before
 
@@ -824,15 +826,16 @@ import that never happened. That number is what later schema changes step past.
 | `src/engine/sessions/catalog.py` | one query across workspaces instead of a store and a folder scan per worktree |
 | `src/engine/sessions/recovery.py` | unchanged logic; the repaired tail is what the delta write rewrites |
 | `src/engine/agents/turn_map.py` | **new**: the only module that names `run_id`. `turn_id_of(message)` for a reader, and the turn row the writer inserts. Everything else asks the domain |
-| `src/engine/agents/checkpoints.py` | **pending**: the git snapshot and the restore of [rollback](rollback.md). The `checkpoints` table is already there and nothing writes to it |
+| `src/engine/agents/rollback.py`, `snapshots.py` | ✅ `Rollback`, `Checkpoints` and the git snapshot — see [rollback](rollback.md) |
+| `src/engine/storage/maintenance.py` | ✅ the blob collector, checkpoint retention, `PRAGMA optimize` and the one-way export |
 | `src/engine/context/strategy/rewriting.py`, `images_cache.py` | stop reading `run_id` from payloads: the turn comes from `messages.turn_id`. `the round` becomes `the turn` in the prose, `image_rounds` becomes `image_turns` |
 | `src/engine/context/strategy/turns.py` | `split_turns` becomes `split_prompts`, which is what it has always cut |
 | `src/engine/skills/loads.py` | **deleted**: `SkillLoads` stops existing. `loaded_skills(messages)` in `skills/loaded.py` becomes a function over a transcript, not a registry |
 | `src/engine/skills/tools.py` | `load_skill` stops writing to a registry; the call in the log is the record |
 | `src/ui/commands_mixin.py`, `workspace_mixin.py`, `tree_mixin.py` | the three `reset()` calls disappear; the sidebar reads `loaded_skills(execution_id)` from the core |
 | `src/engine/agents/tree/store.py` | unchanged in behaviour; `save` persists executions with the session. The root is no longer special: `Tree.root()` reads the execution with no parent |
-| `src/engine/roadmap/persistence.py`, `stores.py` | rows instead of files; the per-execution registry stays, and the root's plan is keyed by the root's id instead of a sentinel |
-| `src/engine/providers/store/` | `FileAccountStore` → `SqliteAccountStore`; `SecretStore` untouched |
+| `src/engine/roadmap/persistence.py`, `stores.py` | ✅ rows instead of files (`persistence.py` deleted); the per-execution registry stays, and the root's plan is keyed by the root's id instead of a sentinel |
+| `src/engine/providers/store/` | ✅ `FileAccountStore` → `SqliteAccountStore` and `FileStateStore` → `SqliteStateStore`, on `accounts` and `app_state`. `SecretStore` untouched: credentials stay a `0600` file |
 | `src/engine/paths.py` | unchanged: the database path is resolved by `storage.database_path()` from `sigil_home()`. The old session directories stay on disk, unread and undeleted |
 | `src/ui/commands_mixin.py` | `catalog()` returns summaries; `load_session` unchanged otherwise |
 | `src/engine/settings.py` | `keep_recent_turns` → `keep_recent_prompts` and `image_rounds` → `image_turns`, because each counted a different unit under the same sentence. The environment variables keep their published names |
@@ -909,20 +912,21 @@ Each phase leaves the app working and testable.
    ✅
 4. **Summaries and the picker.** ✅ The listing is a query; `/load` reads titles
    without touching a transcript.
-5. **Roadmaps and the tree** as rows, keyed by execution.
+5. **Roadmaps and the tree** as rows, keyed by execution. ✅
 6. **Accounts and state**, then the maintenance pass: blob GC, `PRAGMA
    optimize`, the one-way export, and the checkpoint retention of
-   [rollback](rollback.md).
-7. **Delete the old files**, in a release of its own, with the command that does
-   it.
+   [rollback](rollback.md). ✅
+7. **Delete the old files.** ⏳ The JSON tree is still on disk, unread and
+   undeleted. Removing it is a command the user runs, never something startup
+   does.
 
 Phases 2 and 3 were the ones you feel: the freeze is gone. Everything after them
 is cleanup that happens to make the design coherent.
 
-The `checkpoints` table and `agent_executions.created_by_turn` land in phase 1
-and stay unwritten until [rollback](rollback.md) arrives: they are inert
-columns, and adding them later would mean a numbered schema step over a database
-that by then has real sessions in it.
+The `checkpoints` table and `agent_executions.created_by_turn` landed in phase 1
+and stayed inert until [rollback](rollback.md) arrived. That is the shape this
+design prefers: the column exists before the feature, so the feature is a
+command and not a numbered schema step over a database with real sessions in it.
 
 Two notes for the maintenance pass, both about the blob collector:
 

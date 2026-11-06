@@ -6,15 +6,11 @@ moment.**
 
 <!-- prettier-ignore -->
 > [!IMPORTANT]
-> **Designed, not built.** The schema is already in place — `checkpoints`,
-> `agent_executions.created_by_turn` and `messages.turn_id` are columns of the
-> database — but **nothing writes to them yet**, and the git snapshot does
-> not exist. The mechanism below is measured on scratch repositories, not
-> implemented.
-
-The shape is what matters here: the tables exist so the feature is a command and
-not a migration, and the snapshot is measured so its cost is known before it is
-written.
+> **Implemented.** `src/engine/agents/rollback.py` holds the command and
+> `src/engine/agents/snapshots.py` the git half. A checkpoint is written with
+> every user turn, and the tree snapshot of the turn that just started runs in
+> a worker thread. The numbers below are measured on the implementation and on
+> scratch repositories.
 
 Read it with [the domain](domain.md), which fixes the words, and [How Sigil
 stores its state](storage.md), which owns the tables.
@@ -340,25 +336,35 @@ The pass runs with the same maintenance job that vacuums the database
 
 ## Phases
 
-The schema lands with the rest (phase 1), because a column added later means a
+The schema landed with the rest (phase 1), because a column added later means a
 schema step over real rows, and the whole point of designing first is to need as
 few of those as possible.
 
 1. **The schema knows about checkpoints.** ✅ `checkpoints`, `created_by_turn`
-   and the blob kinds are in the database. Nothing writes them yet.
-2. **Conversation rollback.** The command, the export of the abandoned tail, the
-   plan restored from its snapshot, the refusal while a turn is open. Tests:
-   truncating at each turn of a scripted session leaves exactly the expected
-   rows.
-3. **File snapshots.** The git adapter, measured above, taken at turn start in a
-   worker thread. Tests: the scratch-repository cases already verified here
-   become regression tests.
-4. **The restore**, with the diff against `before_rollback` and its failure
+   and the blob kinds are in the database, and every user turn writes one.
+2. **Conversation rollback.** ✅ The command, the export of the abandoned tail,
+   the plan restored from its snapshot, the refusal while a turn is open.
+3. **File snapshots.** ✅ The git adapter, taken at turn start in a worker
+   thread.
+4. **The restore.** ✅ The diff against `before_rollback`, and its failure
    matrix.
-5. **The UI**: the list of rollback points, the file diff before confirming, and
-   the outcome reported honestly — including when the files could not be
-   restored.
-6. **Retention**, with the maintenance pass.
+5. **The UI.** ⏳ Not wired: what is missing is the screen that lists the points,
+   shows the file diff before confirming, and reports the outcome — including
+   when the files could not be restored. The command exists and is tested.
+6. **Retention.** ✅ `storage.maintenance.drop_old_checkpoints`, which keeps the
+   undo checkpoints whatever their age.
 
 Phases 2 and 3 are independent, which is deliberate: a session outside a git
-repository still gets conversation rollback in phase 2.
+repository still gets conversation rollback, and the outcome says
+`files_unavailable` instead of failing.
+
+### Two bugs the tests found, both silent until an assertion failed
+
+- **The plan of a turn's checkpoint has to be read before the truncation.** The
+  checkpoint hangs off its own turn with `ON DELETE CASCADE`, so dropping the
+  turn destroyed the row that held the plan to restore. The files half already
+  followed the rule — read what you need before destroying anything — and the
+  plan did not.
+- **A restored plan is rows, so the store that paints it has to be told to
+  re-read them.** Hence `on_plan_changed`: without it the panel keeps painting a
+  plan that no longer exists, which is worse than showing nothing.

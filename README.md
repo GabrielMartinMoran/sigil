@@ -876,10 +876,10 @@ and the color are enough to read it at a glance:
 | `pending` | `○` | white |
 | `blocked` | `!` | yellow |
 
-The roadmap belongs to the agent that executes it, not to the directory: the
-root has the plan of the session and a subagent plans for its own task. The state
-is saved in `~/.sigil/roadmaps/<cwd-hash>/<session-id>.json`. If the write fails,
-the list keeps working in memory and the error stays in `persistence_error`.
+The roadmap belongs to the agent that executes it, not to the directory: the root has
+the plan of the session and a subagent plans for its own task. The state is rows in
+`~/.sigil/sigil.db`, keyed by execution. If the write fails, the list keeps working in
+memory and the error stays in `persistence_error`.
 
 The list scrolls with the panel, so a long plan never grows the sidebar past the
 screen. It does not scroll to follow the agent: the plan is read as a whole, and
@@ -1177,11 +1177,17 @@ empty even after the network came back.
 ### Where it is stored
 
 ```
-~/.sigil/providers/
-  accounts.json    0644  aliases, provider family, product, sign-in method
-  credentials.json 0600  the keys and OAuth tokens
-  state.json       0644  last model used, OAuth client registrations
+~/.sigil/
+  sigil.db                  0644  accounts, preferences, sessions, plans
+  providers/
+    credentials.json        0600  the keys and OAuth tokens
 ```
+
+The accounts — alias, provider family, product, sign-in method — and the
+preferences — last model, OAuth client registrations — are rows in the database,
+like everything else Sigil writes while you work. The credential is the one thing
+that stays a file, because secrets do not share permissions with data that must be
+world-readable.
 
 `credentials.json` is created owner-read-only. It is a plain file, not an OS
 keyring: anyone who can read your home directory as your user can read it, which

@@ -221,7 +221,7 @@ class SessionStore:
                 'UPDATE workspaces SET last_session_id = ?, updated_at = ? WHERE id = ?',
                 (session.id, session.updated_at, self.workspace_id),
             )
-            save_executions(
+            root_id = save_executions(
                 self.database,
                 self.blobs,
                 session.id,
@@ -230,6 +230,27 @@ class SessionStore:
                 conn=conn,
                 root_name=session.agent,
             )
+            # Every user turn becomes a rollback point, in the same transaction that
+            # creates it. It is two inserts: the row and the plan as it was at that
+            # instant. The tree snapshot is not taken here — it costs milliseconds and
+            # this runs once per second — and lands later, in a worker thread.
+            from src.engine.agents.rollback import Checkpoints
+
+            checkpoints = Checkpoints(self.database, self.blobs)
+            for row in conn.execute(
+                'SELECT t.id, t.started_at FROM turns t '
+                'LEFT JOIN checkpoints c ON c.turn_id = t.id '
+                "WHERE t.execution_id = ? AND t.origin = 'user' AND c.id IS NULL "
+                'ORDER BY t.started_at',
+                (root_id,),
+            ).fetchall():
+                checkpoints.take(
+                    session.id,
+                    root_id,
+                    turn_id=str(row['id']),
+                    carry_plan=False,
+                    conn=conn,
+                )
 
     def load(self, session_id: str) -> Session | None:
         """Loads a session by id and marks it as the last one used."""

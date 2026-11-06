@@ -25,12 +25,29 @@ from src.engine.agents.agent import create_agent
 from src.engine.agents.tree.summoner import SigilDeps
 from src.engine.roadmap.store import RoadmapStore
 from src.engine.roadmap.stores import RoadmapStores
+from src.engine.sessions.session_store import SessionStore
 from src.engine.skills.loaded import loaded_skills
 from src.engine.skills.registry import SkillRegistry
 
 
-def test_each_node_gets_its_own_roadmap(tmp_path: Path):
-    stores = RoadmapStores(directory=tmp_path, session_id='session1')
+def _item(title: str):
+    from src.engine.roadmap.models.todo_item import TodoItem
+
+    return TodoItem(title=title)
+
+
+def _store(tmp_path: Path) -> SessionStore:
+    return SessionStore(cwd=tmp_path / 'ws', base_dir=tmp_path)
+
+
+def _session(tmp_path: Path):
+    """A stored session: a plan needs an execution to belong to."""
+    return _store(tmp_path).create_session()
+
+
+def test_each_node_gets_its_own_plan(tmp_path: Path):
+    session = _session(tmp_path)
+    stores = RoadmapStores(session_id=session.id, base_dir=tmp_path)
 
     root = stores.for_node(None)
     first = stores.for_node('aaaa1111')
@@ -45,58 +62,93 @@ def test_each_node_gets_its_own_roadmap(tmp_path: Path):
     assert second.snapshot() == []
 
 
-def test_the_root_keeps_the_session_file_and_a_node_gets_its_own(tmp_path: Path):
-    stores = RoadmapStores(directory=tmp_path, session_id='session1')
+def test_the_root_plan_belongs_to_the_root_execution(tmp_path: Path):
+    """No sentinel and no `NULL`: the root has an id like any other execution."""
+    session = _session(tmp_path)
+    stores = RoadmapStores(session_id=session.id, base_dir=tmp_path)
 
-    assert stores.for_node(None).path == tmp_path / 'session1.json'
-    assert stores.for_node('abcdef1234567890').path == tmp_path / 'session1--abcdef12.json'
+    assert stores.for_node(None).execution_id == session.root_id
+    assert stores.for_node('abcdef1234567890').execution_id == 'abcdef1234567890'
+    # The derived id is the one the store wrote for the root execution.
+    assert stores.execution_id_of(None) == session.root_id
 
 
-def test_a_roadmap_written_by_a_node_is_read_back_by_that_node(tmp_path: Path):
-    first = RoadmapStores(directory=tmp_path, session_id='session1')
+def test_a_plan_written_by_a_node_is_read_back_by_that_node(tmp_path: Path):
+    store = _store(tmp_path)
+    session = store.create_session()
+    # A node whose execution the session already knows, which is the real order: the
+    # tree is saved with the session before its plan is read again.
+    store.database.execute(
+        'INSERT INTO agent_executions (id, session_id, parent_id, name, role, depth, status, started_at) '
+        "VALUES ('aaaa1111', ?, ?, 'scout', 'subagent', 1, 'running', 0)",
+        (session.id, session.root_id),
+    )
+    first = RoadmapStores(session_id=session.id, base_dir=tmp_path)
     first.for_node('aaaa1111').set_items([_item('read the tree')])
 
-    second = RoadmapStores(directory=tmp_path, session_id='session1')
+    second = RoadmapStores(session_id=session.id, base_dir=tmp_path)
 
     assert [item.title for item in second.for_node('aaaa1111').snapshot()] == ['read the tree']
     assert second.for_node(None).snapshot() == []
 
 
-def test_switching_session_drops_the_roadmaps_of_the_old_one(tmp_path: Path):
-    stores = RoadmapStores(directory=tmp_path, session_id='session1')
-    stores.for_node('aaaa1111').set_items([_item('old plan')])
+def test_a_plan_written_before_its_execution_exists_is_flushed(tmp_path: Path):
+    """A subagent lives in the tree before it is a row; ``flush`` closes the gap."""
+    session = _session(tmp_path)
+    flushes: list[int] = []
+    stores = RoadmapStores(
+        session_id=session.id,
+        base_dir=tmp_path,
+        flush=lambda: (flushes.append(1), session.tree),
+    )
+    # The node is not a row yet, so the first write cannot land.
+    orphan = stores.for_node('cccc3333')
+    orphan.set_items([_item('planned early')])
 
-    stores.bind_session('session2')
-
-    assert stores.for_node('aaaa1111').snapshot() == []
-    assert stores.for_node('aaaa1111').path == tmp_path / 'session2--aaaa1111.json'
+    assert flushes, 'the store asked the app to persist the session'
+    assert orphan.persistence_error is not None
 
 
-def test_discarding_a_node_removes_its_file(tmp_path: Path):
-    stores = RoadmapStores(directory=tmp_path, session_id='session1')
+def test_switching_session_drops_the_plans_of_the_old_one(tmp_path: Path):
+    first = _session(tmp_path)
+    second = _session(tmp_path)
+    stores = RoadmapStores(session_id=first.id, base_dir=tmp_path)
+    stores.for_node(None).set_items([_item('old plan')])
+
+    stores.bind_session(second.id)
+
+    assert stores.for_node(None).snapshot() == []
+    assert stores.for_node(None).execution_id == second.root_id
+
+
+def test_discarding_a_node_removes_its_plan(tmp_path: Path):
+    store = _store(tmp_path)
+    session = store.create_session()
+    store.database.execute(
+        'INSERT INTO agent_executions (id, session_id, parent_id, name, role, depth, status, started_at) '
+        "VALUES ('aaaa1111', ?, ?, 'scout', 'subagent', 1, 'running', 0)",
+        (session.id, session.root_id),
+    )
+    stores = RoadmapStores(session_id=session.id, base_dir=tmp_path)
     store = stores.for_node('aaaa1111')
     store.set_items([_item('gone')])
-    assert store.path is not None and store.path.exists()
+    assert [item.title for item in store.snapshot()] == ['gone']
 
     stores.discard('aaaa1111')
 
-    assert store.path is not None and not store.path.exists()
+    assert store.snapshot() == []
+    assert store.database.value('SELECT count(*) FROM roadmap_items WHERE execution_id = ?', ('aaaa1111',)) == 0
 
 
 def test_the_store_notifies_through_the_registry(tmp_path: Path):
-    stores = RoadmapStores(directory=tmp_path, session_id='session1')
+    session = _session(tmp_path)
+    stores = RoadmapStores(session_id=session.id, base_dir=tmp_path)
     heard: list[int] = []
     stores.add_listener(lambda: heard.append(1))
 
-    stores.for_node('aaaa1111').set_items([_item('a')])
+    stores.for_node(None).set_items([_item('a')])
 
     assert heard
-
-
-def _item(title: str):
-    from src.engine.roadmap.models.todo_item import TodoItem
-
-    return TodoItem(title=title)
 
 
 # --- skills ------------------------------------------------------------------

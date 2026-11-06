@@ -54,12 +54,11 @@ def _app(
         session.messages = [ModelRequest(parts=[UserPromptPart(content=text)]) for text in sessions]
         store.save(session)
 
-    roadmap = RoadmapStores(directory=tmp_path / 'roadmaps', session_id=session.id)
+    roadmap = RoadmapStores(session_id=session.id, base_dir=tmp_path / 'sessions')
     manager = WorkspaceManager(
         repo,
         worktrees_dir=tmp_path / 'worktrees',
         session_store=store,
-        roadmap_store=roadmap,
         rebindables=[scope] if scope is not None else None,
     )
     return SigilApp(

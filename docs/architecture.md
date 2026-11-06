@@ -12,10 +12,11 @@ facade, and letting the mixins become a client of it.
 
 <!-- prettier-ignore -->
 > [!IMPORTANT]
-> This page describes a target, not the current state. Its first phase is done:
-> the storage change, [storage.md](storage.md) phases 1–4. The core itself is
-> not. The numbers are measured on the tree at the time of writing, and the
-> contract below is a proposal to be refined before it is written.
+> This page describes a target, not the current state. **Phase 1 is done** — the
+> storage change, [storage.md](storage.md) — and so is rollback, its natural
+> consequence. The core itself, phases 2 to 4, is not: the orchestration still
+> lives in the Textual mixins, and the contract below is a proposal to be
+> refined before it is written.
 
 ## The evidence
 
@@ -211,10 +212,9 @@ Each phase ends with the app working and the tests passing.
    another execution.
 4. **The UI as a client.** `turn_mixin`, `tree_mixin` and `commands_mixin`
    shrink to: receive event, paint; receive input, call command.
-5. **Rollback**, in the phases of [rollback](rollback.md). The conversation half
-   needs nothing from this page; the files half is the core's job for the same
-   reason as the snapshot: a client that does not take it cannot be trusted with
-   it, and a second client gets it for free.
+5. **Rollback**, in the phases of [rollback](rollback.md). ✅ The command and the
+   git half are in `src/engine/agents/`; what is left is the screen that lists
+   the points and shows the file diff.
 6. **Transport**, if and when a second client exists: JSON-RPC over a pipe or
    HTTP+SSE over a socket, serializing the same commands and events. No second
    design; the interface already exists in process.

@@ -204,6 +204,32 @@ class TurnMixin:
             # saying that it is waiting.
             self._mark_delivered(event.enqueue_id, chat)
 
+    # --- rollback ----------------------------------------------------------
+
+    def snapshot_workspace(self) -> None:
+        """Freezes the workspace into the checkpoint of the turn that just started.
+
+        It is the only part of a checkpoint that costs milliseconds — ~7 ms on this
+        repository's 444 files, ~100 ms on a two-thousand-file tree — so it runs in a
+        worker thread and never on the checkpoint path, which fires once per second.
+        The row already exists: this fills its `tree_commit`.
+        """
+        rollback = getattr(self, '_rollback', None)
+        session = getattr(self, '_session', None)
+        if rollback is None or session is None:
+            return
+        self.run_worker(self._snapshot_workspace(rollback, session.id))
+
+    async def _snapshot_workspace(self, rollback, session_id: str) -> None:
+        import asyncio
+
+        try:
+            await asyncio.to_thread(_take_snapshot, rollback, session_id)
+        except Exception:  # noqa: BLE001, S110 - a snapshot must not break a turn
+            # Losing the snapshot costs the files half of a future rollback, not the
+            # turn the user is waiting for. The conversation half still works.
+            pass
+
     # --- steering ----------------------------------------------------------
 
     def steer(
@@ -358,6 +384,7 @@ class TurnMixin:
             self.steer(text, attachments=attachments)
             return
         self._turn_active = True
+        self.snapshot_workspace()
         # A session is named after the first thing it was asked to do. On the
         # worker, so the turn starts immediately: the title arrives when it is
         # ready, and the window title is repainted then.
@@ -553,3 +580,19 @@ class TurnMixin:
             bar.show(text, style=style)
         else:
             bar.clear()
+
+
+def _take_snapshot(rollback, session_id: str) -> None:
+    """Takes the tree snapshot of the newest checkpoint of a session, if it has none."""
+    database = rollback._db
+    row = database.one(
+        'SELECT id, turn_id FROM checkpoints WHERE session_id = ? AND tree_commit IS NULL '
+        'AND turn_id IS NOT NULL ORDER BY at DESC LIMIT 1',
+        (session_id,),
+    )
+    if row is None:
+        return
+    commit = rollback.snapshots.take(str(row['id']))
+    if commit is None:
+        return
+    database.execute('UPDATE checkpoints SET tree_commit = ? WHERE id = ?', (commit, row['id']))

@@ -1,7 +1,7 @@
 """The active workspace and the rebinding of everything that caches its root.
 
 Several components resolve their storage from the working directory when they are
-built: the session store, the roadmap, the scope, the workspace instructions and
+built: the session store, the scope, the workspace instructions and
 the project skills. Switching workspace means re-pointing them at the new root,
 not rebuilding them: the agent closes over the same instances, so their identity
 must survive the switch.
@@ -34,10 +34,6 @@ class _SessionRebindable(Protocol):
     def rebind(self, cwd: str | Path) -> None: ...
 
 
-class _RoadmapRebindable(Protocol):
-    def rebind_root(self, root: str | Path) -> None: ...
-
-
 @dataclass(frozen=True, slots=True)
 class WorkspaceSwitch:
     """Outcome of a switch, with what the UI needs to announce it."""
@@ -64,13 +60,11 @@ class WorkspaceManager:
         *,
         worktrees_dir: Path | None = None,
         session_store: _SessionRebindable | None = None,
-        roadmap_store: _RoadmapRebindable | None = None,
         rebindables: list[_Rebindable] | None = None,
     ) -> None:
         self._root = Path(os.path.realpath(str(root if root is not None else Path.cwd())))
         self._worktrees_dir = worktrees_dir
         self._session_store = session_store
-        self._roadmap_store = roadmap_store
         self._rebindables: list[_Rebindable] = list(rebindables or [])
         self.rebind_errors: list[str] = []
         """Diagnostics of the last switch: a component that could not be re-pointed."""
@@ -166,8 +160,6 @@ class WorkspaceManager:
         """
         if self._session_store is not None:
             self._session_store.rebind(self._root)
-        if self._roadmap_store is not None:
-            self._roadmap_store.rebind_root(self._root)
         for component in self._rebindables:
             try:
                 component.rebind(self._root)

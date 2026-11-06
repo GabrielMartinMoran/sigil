@@ -14,10 +14,10 @@ from src.engine.providers.domain.provider_error import AliasError, CredentialErr
 from src.engine.providers.domain.provider_kind import ProviderKind
 from src.engine.providers.domain.secret import ApiKeySecret, OAuthSecret
 from src.engine.providers.domain.selection import Selection
-from src.engine.providers.store.account_store import FileAccountStore
+from src.engine.providers.store.account_store import SqliteAccountStore
 from src.engine.providers.store.atomic import MODE_PRIVATE, read_json, write_json
 from src.engine.providers.store.secret_store import FileSecretStore
-from src.engine.providers.store.state_store import FileStateStore
+from src.engine.providers.store.state_store import SqliteStateStore
 
 
 def _mode(path: Path) -> int:
@@ -165,35 +165,45 @@ def test_secret_store_reports_a_write_failure_as_a_domain_error(tmp_path):
 
 
 def test_account_store_round_trips_and_preserves_order(tmp_path):
-    store = FileAccountStore(tmp_path / 'accounts.json')
+    store = SqliteAccountStore(tmp_path)
     first = ProviderAccount.create('one', ProviderKind.OPENROUTER)
     second = ProviderAccount.create('two', ProviderKind.OPENAI)
     store.save([first, second])
     assert store.load() == (first, second)
 
 
-def test_account_store_returns_empty_when_the_file_is_missing(tmp_path):
-    assert FileAccountStore(tmp_path / 'accounts.json').load() == ()
+def test_account_store_returns_empty_when_nothing_was_written(tmp_path):
+    assert SqliteAccountStore(tmp_path).load() == ()
 
 
-def test_account_store_skips_corrupt_entries_without_losing_the_rest(tmp_path):
-    path = tmp_path / 'accounts.json'
-    good = ProviderAccount.create('good', ProviderKind.OPENROUTER).to_dict()
-    path.write_text(
-        json.dumps({'accounts': [good, {'id': 'x'}, 'nonsense', {'kind': 'unknown'}]}),
-        encoding='utf-8',
+def test_account_store_skips_a_row_it_cannot_read_without_losing_the_rest(tmp_path):
+    """One bad value is one account lost, not the list: the alias check proves it.
+
+    The list still loads, and an account with an unknown `kind` is skipped while the
+    good one comes back.
+    """
+    store = SqliteAccountStore(tmp_path)
+    good = ProviderAccount.create('good', ProviderKind.OPENROUTER)
+    store.save([good])
+    # A row this build cannot rebuild: an unknown provider family.
+    store.database.execute(
+        'INSERT INTO accounts (id, alias, alias_key, kind, variant, auth) '
+        "VALUES ('broken', 'broken', 'broken', 'gemini', 'v', 'a')"
     )
-    assert [account.alias for account in FileAccountStore(path).load()] == ['good']
+
+    assert [account.alias for account in store.load()] == ['good']
 
 
 def test_account_store_rejects_unknown_kinds_at_load_time(tmp_path):
-    path = tmp_path / 'accounts.json'
-    path.write_text(json.dumps({'accounts': [{'id': 'x', 'alias': 'a', 'kind': 'gemini'}]}), encoding='utf-8')
-    assert FileAccountStore(path).load() == ()
+    store = SqliteAccountStore(tmp_path)
+    store.database.execute(
+        "INSERT INTO accounts (id, alias, alias_key, kind, variant, auth) \nVALUES ('x', 'a', 'a', 'gemini', 'v', 'a')"
+    )
+    assert store.load() == ()
 
 
 def test_account_store_lookup_is_case_insensitive(tmp_path):
-    store = FileAccountStore(tmp_path / 'accounts.json')
+    store = SqliteAccountStore(tmp_path)
     account = ProviderAccount.create('Work', ProviderKind.OPENROUTER)
     store.save([account])
     assert store.find_alias('work') == account
@@ -203,7 +213,7 @@ def test_account_store_lookup_is_case_insensitive(tmp_path):
 
 
 def test_account_store_alias_uniqueness_ignores_the_account_itself(tmp_path):
-    store = FileAccountStore(tmp_path / 'accounts.json')
+    store = SqliteAccountStore(tmp_path)
     account = ProviderAccount.create('work', ProviderKind.OPENROUTER)
     store.save([account])
     store.ensure_free_alias('work', ignore_id=account.id)
@@ -211,28 +221,42 @@ def test_account_store_alias_uniqueness_ignores_the_account_itself(tmp_path):
         store.ensure_free_alias('WORK')
 
 
+def test_the_alias_is_unique_in_the_database_too(tmp_path):
+    """The check in code is the message; the constraint is the guarantee."""
+    import sqlite3
+
+    store = SqliteAccountStore(tmp_path)
+    account = ProviderAccount.create('work', ProviderKind.OPENROUTER)
+    store.save([account])
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.database.execute(
+            'INSERT INTO accounts (id, alias, alias_key, kind, variant, auth) '
+            "VALUES ('other', 'WORK', 'work', 'openrouter', 'v', 'a')"
+        )
+
+
 # --- state ------------------------------------------------------------------
 
 
 def test_state_store_starts_empty_and_survives_a_restart(tmp_path):
-    path = tmp_path / 'state.json'
-    store = FileStateStore(path)
+    store = SqliteStateStore(tmp_path)
     assert store.last_selection() is None
 
     selection = Selection(account_id='a', model='m', thinking='high')
     store.set_last_selection(selection)
-    assert FileStateStore(path).last_selection() == selection
+    assert SqliteStateStore(tmp_path).last_selection() == selection
 
 
 def test_state_store_can_forget_the_selection(tmp_path):
-    store = FileStateStore(tmp_path / 'state.json')
+    store = SqliteStateStore(tmp_path)
     store.set_last_selection(Selection(account_id='a', model='m'))
     store.set_last_selection(None)
     assert store.last_selection() is None
 
 
 def test_state_store_forget_only_when_the_account_matches(tmp_path):
-    store = FileStateStore(tmp_path / 'state.json')
+    store = SqliteStateStore(tmp_path)
     store.set_last_selection(Selection(account_id='a', model='m'))
     store.forget('b')
     assert store.last_selection() is not None
@@ -241,18 +265,21 @@ def test_state_store_forget_only_when_the_account_matches(tmp_path):
 
 
 def test_state_store_installation_id_is_stable_and_well_formed(tmp_path):
-    path = tmp_path / 'state.json'
-    first = FileStateStore(path).installation_id()
-    second = FileStateStore(path).installation_id()
+    first = SqliteStateStore(tmp_path).installation_id()
+    second = SqliteStateStore(tmp_path).installation_id()
     assert first == second
     assert first.startswith('urn:uuid:')
 
 
-def test_state_store_survives_an_unwritable_location(tmp_path):
-    blocker = tmp_path / 'blocked'
-    blocker.write_text('', encoding='utf-8')
-    store = FileStateStore(blocker / 'state.json')
+def test_a_failed_write_is_reported_and_never_raised(tmp_path):
+    """Preferences are a convenience: losing one must not break a turn."""
+    store = SqliteStateStore(tmp_path)
     store.set_last_selection(Selection(account_id='a', model='m'))
+    assert store.save_error is None
+
+    # A database that cannot be written is the everyday failure: a second process
+    # holding the write lock, a disk that filled up.
+    store._state._db.close()
+    store.set_last_selection(Selection(account_id='b', model='m'))
+
     assert store.save_error is not None
-    # The in-memory value is still usable for the running process.
-    assert store.last_selection() == Selection(account_id='a', model='m')

@@ -130,6 +130,7 @@ class SigilApp(
         mcp_loader: Callable[[], MCPManager] | None = None,
         question_hub: QuestionHub | None = None,
         roadmap_store: RoadmapStores | None = None,
+        rollback: object | None = None,
         model_retry: RetryTransientModelErrors | None = None,
         meter: ContextMeter | None = None,
         context_capability: ContextViewCapability | None = None,
@@ -156,6 +157,7 @@ class SigilApp(
         self._startup_notices = tuple(startup_notices)
         self._question_hub = question_hub
         self._roadmap_store = roadmap_store
+        self._rollback = rollback
         self._model_retry = model_retry
         self._meter = meter or ContextMeter(output_reserve=self._settings.output_reserve)
         self._context_capability = context_capability

@@ -194,7 +194,8 @@ def test_the_cost_is_hidden_until_a_model_is_configured():
 
 def test_the_roadmap_is_the_last_section_of_the_panel(tmp_path):
     """One panel: the plan closes the same list the model, skills and MCP are in."""
-    store = RoadmapStore(directory=tmp_path, session_id=None)
+    # No execution: a memory-only store, which is all the panel needs to paint.
+    store = RoadmapStore(base_dir=tmp_path)
     store.set_items([TodoItem(title='Ship it', status='in_progress')])
     panel = SidebarPanel(store)
     panel._skills = ('clean-code',)
