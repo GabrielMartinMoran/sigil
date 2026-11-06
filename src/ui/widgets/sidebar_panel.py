@@ -108,9 +108,6 @@ class SidebarPanel(Vertical):
         super().__init__(**kwargs)
         self._store = store
         self._shown = True
-        # Set while a question borrows the columns. Kept apart from `_shown` so the
-        # user's own choice survives the round trip.
-        self._suspended = False
         self._skills: tuple[str, ...] = ()
         self._agent: str | None = None
         self._servers: tuple[MCPServerState, ...] = ()
@@ -145,22 +142,6 @@ class SidebarPanel(Vertical):
         self._shown = shown
         self.refresh_from_store()
 
-    def suspend(self) -> None:
-        """Steps aside without forgetting what the user asked for.
-
-        A question takes the columns the panel was using and hands them to the
-        transcript. This is not ``set_shown(False)`` on purpose: that one *is* the
-        user's preference (`/sidebar off`), and a question that came and went must
-        not turn the panel back on for someone who turned it off.
-        """
-        self._suspended = True
-        self.display = False
-
-    def resume(self) -> None:
-        """Comes back to whatever the user asked for, not to "visible"."""
-        self._suspended = False
-        self.refresh_from_store()
-
     # --- roadmap ------------------------------------------------------------
 
     def set_store(self, store: RoadmapStore | None) -> None:
@@ -172,10 +153,9 @@ class SidebarPanel(Vertical):
         """Repaints after the roadmap changed, or after a theme change.
 
         The user toggle wins: a changing roadmap does not bring back a panel the
-        user hid. A suspension outranks both, and is momentary: it lasts as long as
-        the question that asked for the columns.
+        user hid.
         """
-        self.display = self._shown and not self._suspended
+        self.display = self._shown
         if self.display:
             self._repaint()
 

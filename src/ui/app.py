@@ -538,33 +538,32 @@ class SigilApp(
         is the thing on screen, and there is no dead input sitting below it.
 
         The composer is hidden rather than emptied: a half-typed message survives
-        and comes back with the focus when the question closes. The side panel is
-        suspended for the same reason (see `SidebarPanel.suspend`), which hands its
-        columns to the transcript — the conversation is what the answer is usually
-        read from, and the side panel scrolls when it comes back.
+        and comes back with the focus when the question closes.
+
+        The columns above give up **height**, not their place. The panel is a sibling
+        of `#main`, so it takes its room from that whole row: the transcript and the
+        side panel shrink together and both stay where they were. The side panel
+        scrolls, so a shorter one is still usable, and its roadmap is often what the
+        question is about.
 
         The turn waits on the future the panel resolves.
         """
         if not questions:
             return []
-        self._clear_the_way_for_questions()
+        self._hide_composer()
         try:
             answers = await self.query_one(QuestionPanel).ask(questions)
         finally:
-            self._give_the_way_back()
+            self._show_composer()
         return answers
 
-    def _clear_the_way_for_questions(self) -> None:
-        """Hides the composer and suspends the side panel for the question."""
+    def _hide_composer(self) -> None:
+        """Takes the composer off screen: the question is what the keys are for."""
         with suppress(NoMatches):
             self.query_one(PromptInput).display = False
-        with suppress(NoMatches):
-            self.query_one(SidebarPanel).suspend()
 
-    def _give_the_way_back(self) -> None:
-        """Restores both, in the order the focus needs: visible first, then focused."""
-        with suppress(NoMatches):
-            self.query_one(SidebarPanel).resume()
+    def _show_composer(self) -> None:
+        """Restores it, in the order the focus needs: visible first, then focused."""
         with suppress(NoMatches):
             self.query_one(PromptInput).display = True
         self._restore_prompt_focus()

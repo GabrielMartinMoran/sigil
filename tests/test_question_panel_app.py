@@ -65,6 +65,8 @@ def test_panel_does_not_cover_the_chat():
                 await pilot.pause()
                 height_without_panel = chat.size.height
                 width_without_panel = chat.size.width
+                sidebar_height = sidebar.size.height
+                sidebar_width = sidebar.size.width
 
                 task = asyncio.create_task(app.ask_question([_question('First'), _question('Second')]))
                 await pilot.pause()
@@ -76,10 +78,12 @@ def test_panel_does_not_cover_the_chat():
                 assert chat.display is True
                 assert chat.size.height < height_without_panel
                 assert chat.size.height >= 5
-                # The side panel steps aside and gives its columns to the transcript:
-                # the conversation is what the answer is read from.
-                assert sidebar.display is False
-                assert chat.size.width > width_without_panel
+                # The side panel keeps its column and gives up height too: the panel
+                # takes its room from the whole row above it, not from one column.
+                assert sidebar.display is True
+                assert sidebar.size.width == sidebar_width
+                assert sidebar.size.height < sidebar_height
+                assert chat.size.width == width_without_panel
                 # And the panel takes the composer's place, across the whole width.
                 assert panel.region.width == app.screen.size.width
                 assert panel.region.y >= chat.region.bottom - 1
@@ -90,11 +94,10 @@ def test_panel_does_not_cover_the_chat():
                 assert answers is not None
                 assert [answer.answer for answer in answers] == ['Recommended', 'Recommended']
                 assert panel.display is False
-                # The chat takes its space back, and so do the panel and the composer.
+                # Everything takes its space back.
                 await pilot.pause()
                 assert chat.size.height == height_without_panel
-                assert chat.size.width == width_without_panel
-                assert sidebar.display is True
+                assert sidebar.size.height == sidebar_height
                 assert app.query_one('#prompt').display is True
 
     asyncio.run(inner())

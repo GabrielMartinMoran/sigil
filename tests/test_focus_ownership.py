@@ -324,8 +324,8 @@ def test_the_composer_steps_aside_for_the_question():
     asyncio.run(inner())
 
 
-def test_the_question_does_not_turn_the_side_panel_back_on():
-    """`/sidebar off` is the user's decision; a question is not a reason to undo it."""
+def test_a_question_leaves_the_side_panel_preference_alone():
+    """`/sidebar off` is the user's decision, and a question is not a reason to redo it."""
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -351,8 +351,14 @@ def test_the_question_does_not_turn_the_side_panel_back_on():
     asyncio.run(inner())
 
 
-def test_the_side_panel_hands_its_columns_to_the_transcript():
-    """Reading is what a question is about, so the transcript gets the width."""
+def test_the_side_panel_shrinks_with_the_transcript_instead_of_stepping_out():
+    """Both columns give up height; neither gives up its place.
+
+    The panel is a sibling of `#main`, so it takes its height from the whole row above
+    it and the two columns shrink together. The side panel used to be hidden here,
+    which was a misreading of the request: it has its own scroll, so a shorter panel is
+    still a usable one — and its roadmap is often what the question is about.
+    """
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -362,21 +368,27 @@ def test_the_side_panel_hands_its_columns_to_the_transcript():
                 await pilot.pause()
                 chat = await _fill(pilot, app)
                 sidebar = app.query_one(SidebarPanel)
-                narrow = chat.size.width
+                chat_height = chat.size.height
+                sidebar_height = sidebar.size.height
+                width = chat.size.width
 
                 task = asyncio.create_task(app.ask_question([_question()]))
                 await pilot.pause()
                 await pilot.pause()
 
-                assert sidebar.display is False
-                assert chat.size.width > narrow
-                assert chat.size.width == app.screen.size.width - 4  # the chat's border
+                # Still there, same column, same width.
+                assert sidebar.display is True
+                assert chat.size.width == width
+                # And both lost height to the question, in step.
+                assert sidebar.size.height < sidebar_height
+                assert chat.size.height < chat_height
+                assert sidebar.size.height == sidebar_height - (chat_height - chat.size.height)
 
                 await pilot.press('escape')
                 await asyncio.wait_for(task, timeout=5)
                 await pilot.pause()
-                assert sidebar.display is True
-                assert chat.size.width == narrow
+                assert sidebar.size.height == sidebar_height
+                assert chat.size.height == chat_height
 
     asyncio.run(inner())
 

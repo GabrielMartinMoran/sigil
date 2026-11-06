@@ -830,11 +830,13 @@ above the status bar: not in a modal, and not in a box inside the conversation.
 The box that owns the keyboard is the box on screen — a visible composer that
 cannot be typed into is a lie, and it was the most prominent thing on the screen.
 
-While a question is open the conversation stays readable above it and the side
-panel steps aside, handing its columns to the transcript, which is what the answer
-is usually read from. It comes back as it was — including collapsed, if that is
-how you had it. A half-typed message survives too: the composer is hidden, not
-emptied, and it returns focused with your text.
+While a question is open the conversation stays readable above it, and **both
+columns give up height, not their place**: the panel is a sibling of the row that
+holds the transcript and the side panel, so it takes its room from that whole row.
+The side panel keeps its width and scrolls, so a shorter one is still usable — and
+its roadmap is often exactly what the question is about. A half-typed message
+survives too: the composer is hidden, not emptied, and it returns focused with your
+text.
 
 While a question is open **the panel owns the keyboard**. Clicking the
 conversation or the panel's own frame to read something does not take the keys
