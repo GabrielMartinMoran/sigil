@@ -68,6 +68,14 @@ Nothing in the right column makes a decision. That is the test for a future
 argument about where a piece of code goes: **if it decides, it is core; if it
 shows, it is client.**
 
+The split has a place where it shows up first: **the command palette**. It looks
+like one list and it is two. `engine/commands.py` carries the catalogue with an
+`owner` on every entry — `core` for the ones the domain answers, `client` for
+the ones that only configure the window — so a second client reads the list,
+keeps what it must delegate and brings its own for the rest. Without that field
+the two were one flat list, and the difference was invisible until someone tried
+to serve a command from outside the terminal. See [the domain](domain.md).
+
 The test has a second half, learned from the snapshot of
 [rollback](rollback.md): **if it must happen even when nobody is looking, it is
 core.** A checkpoint, a turn row, a tree snapshot and a rollback exist so that a

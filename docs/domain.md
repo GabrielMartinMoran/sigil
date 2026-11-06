@@ -547,6 +547,28 @@ The rule that keeps the pair honest: **a command may cause events; an event
 never causes a command.** A client that reacts to an event by calling a command
 is choosing to, and that choice is visible in the client, where it belongs.
 
+### Every command has an owner
+
+The palette a user types into is one list, but a command is not one kind of
+thing. `/new` creates a session; `/theme` repaints this window. A second client
+must be able to do the first and cannot possibly do the second, so each command
+declares who serves it:
+
+| Owner | What it means | Examples |
+| --- | --- | --- |
+| `core` | the domain owns the state and the answer; a client formats it | `/new`, `/load`, `/agent`, `/provider`, `/model`, `/effort`, `/mcp`, `/context`, `/rollback` |
+| `client` | only the client in front of the user can: it configures or paints itself | `/theme`, `/sidebar`, `/reasoning-visibility`, `/debug`, `/help`, `/quit` |
+
+The test is the same one that draws the layer boundary: **if it decides, it is
+core; if it shows, it is client.** `/effort` looks like a setting and is a core
+command, because it changes the reasoning level a turn runs with and the choice
+travels in the session; `/debug` shows domain state but is a client command,
+because the widget, its timer and its layout belong to whoever is drawing.
+
+The catalogue lives in `engine/commands.py` because it is shared vocabulary and
+carries no widget. A client reads it, keeps every command, and knows which ones
+it delegates — and the ones it does not delegate are its own to replace.
+
 ## Suffixes
 
 The suffix says what kind of thing it is, and a type that does not fit gets
