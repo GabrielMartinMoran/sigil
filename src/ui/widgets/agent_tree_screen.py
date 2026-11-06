@@ -73,13 +73,16 @@ def state_of(node: AgentNode) -> str:
 
 
 def node_row(node: AgentNode, *, viewed: str = '') -> Option:
-    """One row: state, name, and the little that makes it identifiable."""
+    """One row: state, name, and the little that makes it identifiable.
+
+    The profile name is not repeated: ``label`` *is* that name with its dashes
+    opened up, so a row that painted both was saying the same thing twice.
+    """
     mark, style = MARK.get(node.status, ('·', ''))
     line = Text()
     line.append(f'{INDENT * node.depth}', style='')
     line.append('●  ' if node.id == viewed else f'{mark}  ', style=style)
     line.append(node.label, style='bold')
-    line.append(f'  {node.name}', style='dim')
     line.append(f'  #{node.short_id}', style='dim')
     line.append(f'  {state_of(node)}', style=style)
     line.append(f'  {elapsed_text(node.elapsed)}', style='dim')

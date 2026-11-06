@@ -17,6 +17,7 @@ Three kinds of block live here, and each one answers a different reading mode:
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from collections.abc import Sequence
@@ -428,10 +429,23 @@ class SummonBlock(ToolCallBlock):
         self._spawn = self._read_args(self._args)
         self._status = 'starting'
         self._node_id = ''
+        self._node_name = ''
 
     @staticmethod
     def _read_args(args: Any) -> dict[str, str]:
-        """The four fields of a spawn, from the call arguments."""
+        """The four fields of a spawn, from the call arguments.
+
+        A live turn hands them over as a ``dict``; a history read back from disk
+        hands them over as a JSON **string**, because that is how the message was
+        stored. Both are the same call, so both are understood — a block that lost
+        the name the moment the session was reopened is a block that lied about what
+        the user was looking at.
+        """
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except ValueError:
+                args = None
         if not isinstance(args, dict):
             return {'agent': '', 'task': '', 'mode': 'sync', 'agent_id': ''}
         return {
@@ -447,6 +461,11 @@ class SummonBlock(ToolCallBlock):
         found = re.search(r'#([0-9a-f]{8,})', text)
         if found:
             self._node_id = found.group(1)
+        # A resume names no profile in its arguments; its answer does, in the
+        # envelope: `[subagent Scout (scout #1a2b3c, sync) finished]`.
+        named = re.search(r'\(([a-z0-9][a-z0-9-]*)\s+#', text)
+        if named:
+            self._node_name = named.group(1)
         self._status = self._read_status(text, ok=ok)
 
     def set_error(self, message: str) -> None:
@@ -481,16 +500,28 @@ class SummonBlock(ToolCallBlock):
 
     def _spawn_header(self) -> Text:
         border = color(self, 'tool-border')
-        name = self._spawn['agent'] or 'subagent'
         resumed = bool(self._spawn['agent_id'])
         text = Text()
         text.append(GUTTER, style=border)
         text.append('↻ ' if resumed else '▶ ', style=f'bold {color(self, "success")}')
-        text.append(name.replace('-', ' ').title(), style=f'bold {color(self, "tool-title")}')
-        text.append(f'  {name}', style=color(self, 'muted'))
+        # One name, and never the word "subagent" standing in for one: the label is
+        # the profile name with its dashes opened up, so painting both would be
+        # saying the same thing twice.
+        label = self._label()
+        if label:
+            text.append(label, style=f'bold {color(self, "tool-title")}')
+        else:
+            # Nothing to go on: the block still has to say *what* this is, and the
+            # arrow already says it is a spawn. No invented agent name.
+            text.append('(unknown agent)', style=color(self, 'muted'))
         if resumed:
             text.append(f'  resume #{self._spawn["agent_id"][:8]}', style=color(self, 'muted'))
         return text
+
+    def _label(self) -> str:
+        """The agent's name, humanized: from the call, or from its own answer."""
+        name = self._spawn['agent'] or self._node_name
+        return name.replace('-', ' ').title() if name else ''
 
     def _detail_line(self) -> Text | None:
         """The task, one line, clipped: a block is not a briefing."""
