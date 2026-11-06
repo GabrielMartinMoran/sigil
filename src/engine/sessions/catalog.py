@@ -1,9 +1,14 @@
 """Sessions of every workspace of the repository, with the workspace they belong to.
 
-Sessions live one folder per working directory. With worktrees, "the repository"
-spans several directories, so the listing has to gather them together and say
-which workspace each one belongs to; otherwise a session created in a worktree is
-invisible from the main one.
+A session belongs to the workspace it was created in. With worktrees, "the
+repository" spans several directories, so the listing has to gather them together
+and say which workspace each one belongs to; otherwise a session created in a
+worktree is invisible from the main one.
+
+The sessions are rows now, so this is a query per workspace and not a parse of
+every transcript: 1,495 ms became about 0.01 ms for one workspace, because the
+list is a query on indexed columns. What remains is one query per workspace of the
+repository, not a parse.
 
 Outside a git repository there is a single workspace and the catalog degrades to
 exactly the old behaviour.
@@ -15,7 +20,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.engine.sessions.session_store import Session, SessionStore
+from src.engine.sessions.session_store import SessionStore, SessionSummary
 from src.engine.workspace.models.worktree import MAIN_NAME, Workspace
 from src.engine.workspace.repository import GitRepository
 
@@ -24,7 +29,7 @@ from src.engine.workspace.repository import GitRepository
 class CatalogEntry:
     """A session and the workspace it was created in."""
 
-    session: Session
+    session: SessionSummary
     workspace: Workspace
     is_current: bool
 

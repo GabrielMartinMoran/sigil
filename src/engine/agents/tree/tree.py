@@ -53,17 +53,21 @@ class AgentTree:
     def root(self) -> AgentNode | None:
         return self._nodes.get(self._root_id)
 
-    def ensure_root(self, name: str) -> AgentNode:
+    def ensure_root(self, name: str, node_id: str | None = None) -> AgentNode:
         """The root node, created empty on the first call.
 
         The name follows the session's agent: `/agent` changes who answers, and a
         tree that kept saying ``Wizard`` over a session run by another profile
         would be lying about the branch everything hangs from.
+
+        ``node_id`` is the id the session derived for its root execution. The
+        database and the tree have to agree on it before either has written a row,
+        or a resumed session would mint a second root for the same conversation.
         """
         root = self.root
         if root is None:
             root = AgentNode(
-                id=uuid.uuid4().hex,
+                id=node_id or uuid.uuid4().hex,
                 name=name,
                 role=AgentRole.AGENT,
                 parent_id=None,

@@ -10,8 +10,10 @@ always had, named after the session), and a subagent gets a file of its own name
 after its execution. The suffix is the node id, not the profile name: two concurrent
 researchers are two different plans even when they are the same kind of agent.
 
-The registry mirrors ``SkillLoads`` on purpose — per-node state always looks the
-same, and a reader who has understood one has understood both.
+The registry is per node for the same reason the loaded skills are: a plan belongs
+to the execution that is executing it. Unlike the skills, this one *is* stored — a
+plan cannot be derived from a transcript, because a task can be re-opened without a
+new tool call.
 """
 
 from __future__ import annotations

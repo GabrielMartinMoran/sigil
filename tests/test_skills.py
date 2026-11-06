@@ -256,41 +256,42 @@ def test_tools_are_registered_and_list_filters(tmp_path):
     assert [skill.name for skill in agent.registered['list_skills']('beta')] == ['beta']
 
 
-def test_load_skill_tool_returns_ack_and_registers(tmp_path):
-    """The body does not travel in the result: it is injected as an instruction block."""
-    from src.engine.skills.loaded import LoadedSkills
+def test_load_skill_tool_returns_ack_without_the_body(tmp_path):
+    """The body does not travel in the result: it is injected as an instruction block.
 
+    The tool registers nothing: the call itself is the record, and the set is
+    derived from the transcript when the instructions are rendered.
+    """
     write_skill(tmp_path, 'demo', body='# Demo body', files={'references/a.md': 'A'})
     registry = SkillRegistry([('project', tmp_path)])
-    loaded_skills = LoadedSkills()
     agent = DummyAgent()
-    register_skill_tools(agent, registry, loaded=loaded_skills)
+    register_skill_tools(agent, registry)
 
-    loaded = agent.registered['load_skill'](_Ctx(), 'demo')
+    loaded = agent.registered['load_skill']('demo')
     assert loaded.name == 'demo'
     assert not hasattr(loaded, 'body')
     assert 'Loaded skills' in loaded.note
     assert [resource.path for resource in loaded.resources] == ['references/a.md']
-    assert loaded_skills.names() == ('demo',)
 
     # The body appears in the instruction block, not in the tool result.
-    block = rendering.render_loaded_skills(registry, loaded_skills.names())
+    block = rendering.render_loaded_skills(registry, ('demo',))
     assert '# Demo body' in block
     assert 'references/a.md' not in block
 
 
-def test_load_skill_is_idempotent_in_the_registry(tmp_path):
-    from src.engine.skills.loaded import LoadedSkills
+def test_loading_twice_is_one_skill_in_the_projection(tmp_path):
+    """Two calls for the same skill are one entry: the set is a set of names."""
+    from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 
-    write_skill(tmp_path, 'demo', body='# Demo body')
-    registry = SkillRegistry([('project', tmp_path)])
-    loaded_skills = LoadedSkills()
-    agent = DummyAgent()
-    register_skill_tools(agent, registry, loaded=loaded_skills)
+    from src.engine.skills.loaded import loaded_skills
 
-    agent.registered['load_skill'](_Ctx(), 'demo')
-    agent.registered['load_skill'](_Ctx(), 'demo')
-    assert loaded_skills.names() == ('demo',)
+    history = [
+        ModelResponse(parts=[ToolCallPart(tool_name='load_skill', args={'name': 'demo'}, tool_call_id='c1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='load_skill', content='ok', tool_call_id='c1')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='load_skill', args={'name': 'demo'}, tool_call_id='c2')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='load_skill', content='ok', tool_call_id='c2')]),
+    ]
+    assert loaded_skills(history) == ('demo',)
 
 
 def test_render_loaded_skills_is_empty_without_names(tmp_path):

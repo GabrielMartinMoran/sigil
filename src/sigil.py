@@ -44,7 +44,6 @@ from src.engine.roadmap.tools import register_roadmap_tools
 from src.engine.sessions.session_store import SessionStore
 from src.engine.settings import SigilSettings, load_settings
 from src.engine.shell.tools import register_shell_tools
-from src.engine.skills.loads import SkillLoads
 from src.engine.skills.registry import SkillRegistry
 from src.engine.skills.tools import register_skill_tools
 from src.engine.themes import ThemeRegistry
@@ -91,21 +90,21 @@ def _build_strategy(settings: SigilSettings):
         return PassthroughStrategy()
     if settings.context_strategy == 'compacting':
         return CompactingStrategy(
-            keep_recent_turns=settings.keep_recent_turns,
+            keep_recent_prompts=settings.keep_recent_prompts,
             max_tool_result_chars=settings.max_tool_result_chars,
             reasoning=settings.reasoning,
             reasoning_steps=settings.reasoning_steps,
             reasoning_max_percent=settings.reasoning_max_percent,
-            image_rounds=settings.image_rounds,
+            image_turns=settings.image_turns,
             image_max_percent=settings.image_max_percent,
         )
     return WindowedStrategy(
-        keep_recent_turns=settings.keep_recent_turns,
+        keep_recent_prompts=settings.keep_recent_prompts,
         max_tool_result_chars=settings.max_tool_result_chars,
         reasoning=settings.reasoning,
         reasoning_steps=settings.reasoning_steps,
         reasoning_max_percent=settings.reasoning_max_percent,
-        image_rounds=settings.image_rounds,
+        image_turns=settings.image_turns,
         image_max_percent=settings.image_max_percent,
     )
 
@@ -136,13 +135,6 @@ def run() -> None:
     # A single skill registry shared by the agent instructions
     # (metadata) and by the tools (load, resources and scripts).
     skill_registry = SkillRegistry()
-
-    # Skills loaded in the session: the `load_skill` tool registers them and the
-    # instructions function injects them as a block on every request.
-    # One registry per agent of the tree: a subagent does not inherit the skills its
-    # parent loaded, because a skill body is instructions and they belong to the task
-    # that asked for them.
-    loaded_skills = SkillLoads()
 
     # Tool logging hub: the engine emits, the UI adds its sink on mount.
     tool_logger = ToolLoggerHub()
@@ -305,7 +297,7 @@ def run() -> None:
     def install_tools(target: Any) -> None:
         """Every tool every agent of the session gets. The root included."""
         register_shell_tools(target, logger=tool_logger, catalog=tool_catalog)
-        register_skill_tools(target, skill_registry, logger=tool_logger, loaded=loaded_skills, catalog=tool_catalog)
+        register_skill_tools(target, skill_registry, logger=tool_logger, catalog=tool_catalog)
         register_mcp_tools(target, mcp, logger=tool_logger, catalog=tool_catalog)
         register_web_tools(target, logger=tool_logger, catalog=tool_catalog)
         register_file_tools(target, logger=tool_logger, catalog=tool_catalog)
@@ -325,7 +317,6 @@ def run() -> None:
             model_retry=model_retry,
             workspace=workspace,
             scope=scope,
-            loaded_skills=loaded_skills,
             agent_registry=agent_registry,
             extra_capabilities=[context_capability, feature_gate],
             tool_registrars=[install_tools],
@@ -354,7 +345,6 @@ def run() -> None:
         context_capability=context_capability,
         scope=scope,
         workspace=workspace,
-        loaded_skills=loaded_skills,
         workspace_manager=workspace_manager,
         # UI preferences live outside the session: they are the user's, not the
         # conversation's, and they have to be read before the first paint.

@@ -29,7 +29,7 @@ Three places decide what Sigil sees:
 | --- | --- |
 | **The directory you run it in** | The workspace the tools read and write, `.sigil/agents`, `.agents/skills`, `.sigil/config.json` (MCP), and which sessions you get (bucketed by directory) |
 | **Sigil's own directory** | The base prompt, the built-in agents (`wizard`, `scout`), the theme defaults, and the `.env` it loads |
-| **`~/.sigil`** (`SIGIL_HOME`) | Sessions, roadmaps, provider accounts and credentials, themes, worktrees |
+| **`~/.sigil`** (`SIGIL_HOME`) | The database (`sigil.db`), roadmaps, provider credentials, themes, worktrees |
 
 A project profile shadows a global one, and both shadow a built-in of the same
 name: opening Sigil in a project without `.sigil/agents` still gives you `wizard`
@@ -876,11 +876,10 @@ and the color are enough to read it at a glance:
 | `pending` | `○` | white |
 | `blocked` | `!` | yellow |
 
-The roadmap belongs to the session, not to the directory: each session starts
-with an empty list, advances with it and recovers it when loading it with
-`/load`. The state is saved in
-`~/.sigil/roadmaps/<cwd-hash>/<session-id>.json`. If the write fails, the list
-keeps working in memory and the error stays in `persistence_error`.
+The roadmap belongs to the agent that executes it, not to the directory: the
+root has the plan of the session and a subagent plans for its own task. The state
+is saved in `~/.sigil/roadmaps/<cwd-hash>/<session-id>.json`. If the write fails,
+the list keeps working in memory and the error stays in `persistence_error`.
 
 The list scrolls with the panel, so a long plan never grows the sidebar past the
 screen. It does not scroll to follow the agent: the plan is read as a whole, and
@@ -922,9 +921,9 @@ would leave the session without MCP servers.
 
 ### Sessions and workspaces
 
-A session belongs to the workspace it was created in, and each workspace keeps its
-own session folder (`~/.sigil/sessions/<cwd-hash>/`). `/load` lists the sessions
-of **every** workspace of the repository, labelled:
+A session belongs to the workspace it was created in, and every workspace's
+sessions live in the same database (`$SIGIL_HOME/sigil.db`). `/load` lists the
+sessions of **every** workspace of the repository, labelled:
 
 | Label | Workspace |
 | --- | --- |

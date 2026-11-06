@@ -15,7 +15,6 @@ from textual.widgets import OptionList
 
 from src.engine.roadmap.stores import RoadmapStores
 from src.engine.sessions.session_store import SessionStore
-from src.engine.skills.loaded import LoadedSkills
 from src.engine.workspace.manager import WorkspaceManager
 from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
@@ -68,7 +67,6 @@ def _app(
         store=store,
         session=session,
         roadmap_store=roadmap,
-        loaded_skills=LoadedSkills(),
         workspace_manager=manager,
         scope=scope,
     )
@@ -293,12 +291,13 @@ def test_load_switches_to_the_workspace_of_the_session(monkeypatch, tmp_path, re
     asyncio.run(inner())
 
 
-def test_load_opens_the_picker_with_a_stray_copy_of_a_session_file(monkeypatch, tmp_path, repo):
-    """The crash this covers: a duplicate id made the picker explode on compose.
+def test_load_opens_the_picker_with_one_option_per_session(monkeypatch, tmp_path, repo):
+    """`OptionList` refuses two options with the same id and the crash is unrecoverable.
 
-    `OptionList` refuses two options with the same id, and the exception escaped
-    `compose`, where Textual can no longer recover: the app died instead of
-    listing. A copy left by a file manager is the everyday way to get there.
+    The file store could produce that duplicate: a copy left by a file manager in
+    another workspace's folder carried the same id. A session is one row now, so
+    the duplicate is impossible at the source — and the picker still has to hold
+    exactly one option per session, which is what this asserts.
     """
     monkeypatch.chdir(repo)
 
@@ -306,8 +305,7 @@ def test_load_opens_the_picker_with_a_stray_copy_of_a_session_file(monkeypatch, 
         app = _app(repo, tmp_path, sessions=['main task'])
         async with app.run_test(size=(140, 40)) as pilot:
             await pilot.pause()
-            original = app._store.directory / f'{app._session.id}.json'
-            (app._store.directory / f'{app._session.id} (Copy).json').write_text(original.read_text(encoding='utf-8'))
+            app._store.create_session()
 
             app.run_worker(app.handle_command('/load'))
             for _ in range(20):
@@ -316,13 +314,19 @@ def test_load_opens_the_picker_with_a_stray_copy_of_a_session_file(monkeypatch, 
                     break
 
             options = app.screen.query_one(OptionList)
-            assert options.option_count == 1
-            assert str(options.get_option_at_index(0).id) == app._session.id
+            assert options.option_count == 2
+            ids = [str(options.get_option_at_index(index).id) for index in range(options.option_count)]
+            assert len(set(ids)) == len(ids)
 
     asyncio.run(inner())
 
 
-def test_switching_clears_the_scope_and_the_loaded_skills(monkeypatch, tmp_path, repo):
+def test_switching_clears_the_scope(monkeypatch, tmp_path, repo):
+    """The scope describes the workspace that was left behind, so it resets.
+
+    The loaded skills need no reset any more: they are derived from the transcript
+    of the execution on screen, and the new session has its own (empty) one.
+    """
     monkeypatch.chdir(repo)
 
     async def inner():
@@ -333,14 +337,13 @@ def test_switching_clears_the_scope_and_the_loaded_skills(monkeypatch, tmp_path,
         async with app.run_test() as pilot:
             await pilot.pause()
             scope.observe('read_file', {'path': 'README.md'})
-            app._loaded_skills.add('clean-code')
 
             await app.handle_command('/new', '--worktree clean-scope')
             await pilot.pause()
 
             assert scope.root == tmp_path / 'worktrees' / 'project' / 'clean-scope'
             assert scope.relative_scopes() == ('.',)
-            assert app._loaded_skills.names() == ()
+            assert app.viewed_skills() == ()
 
     asyncio.run(inner())
 

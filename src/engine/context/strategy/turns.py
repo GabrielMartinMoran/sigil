@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart
 
 
-def split_turns(messages: Sequence[ModelMessage]) -> list[list[ModelMessage]]:
+def split_prompts(messages: Sequence[ModelMessage]) -> list[list[ModelMessage]]:
     """Groups the history into turns, delimited by the user prompt.
 
     A turn is self-contained: prompt -> responses -> tool calls -> tool returns.

@@ -12,7 +12,7 @@ model reads as the answer, and `content` carries the pixels beside it.
 
 Two rules keep it from becoming a way to burn the context:
 
-- **The same source is loaded once per round.** A picture the round in progress
+- **The same source is loaded once per turn.** A picture the turn in progress
   already carries is not sent again; the answer says it is already attached. That is
   what stops a model from fetching the same screenshot on every step.
 - **Ids are derived from the source**, so "the picture at this URL" is one id however
@@ -29,6 +29,7 @@ from urllib.parse import urlparse
 from pydantic_ai import RunContext, ToolReturn
 from pydantic_ai.messages import BinaryContent, BinaryImage, ModelMessage, ModelRequest
 
+from src.engine.agents.turn_map import library_run_id
 from src.engine.attachments.image_attachment import ImageAttachment
 from src.engine.attachments.images import ImageError, prepare_image
 from src.engine.attachments.library import find_image
@@ -66,15 +67,15 @@ def is_url(source: str) -> bool:
 
 
 def images_in_round(messages: Sequence[ModelMessage]) -> set[str]:
-    """The ids of every picture the round in progress already carries.
+    """The ids of every picture the turn in progress already carries.
 
     Images travel in two places, and both count: a user prompt (the paste) and a tool
     result (what a previous `view_image` returned).
     """
-    current = current_round(messages)
+    current = current_turn(messages)
     found: set[str] = set()
     for message in messages:
-        if not isinstance(message, ModelRequest) or message.run_id != current:
+        if not isinstance(message, ModelRequest) or library_run_id(message) != current:
             continue
         for part in message.parts:
             if not isinstance(part.content, list):
@@ -85,11 +86,12 @@ def images_in_round(messages: Sequence[ModelMessage]) -> set[str]:
     return found
 
 
-def current_round(messages: Sequence[ModelMessage]) -> str | None:
+def current_turn(messages: Sequence[ModelMessage]) -> str | None:
     """The round the latest message belongs to."""
     for message in reversed(messages):
-        if message.run_id is not None:
-            return message.run_id
+        identifier = library_run_id(message)
+        if identifier is not None:
+            return identifier
     return None
 
 

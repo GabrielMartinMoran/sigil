@@ -28,7 +28,6 @@ from pydantic_ai.models.test import TestModel
 from src.engine.roadmap.models.todo_item import TodoItem
 from src.engine.roadmap.stores import RoadmapStores
 from src.engine.sessions.session_store import SessionStore
-from src.engine.skills.loaded import LoadedSkills
 from src.engine.workspace.manager import WorkspaceManager
 from src.ui.app import SigilApp
 from src.ui.widgets.sidebar_panel import SidebarPanel
@@ -75,7 +74,6 @@ def _app(repo: Path, tmp_path: Path, *, session_messages: tuple[str, ...] = ()) 
         store=store,
         session=session,
         roadmap_store=roadmaps,
-        loaded_skills=LoadedSkills(),
         workspace_manager=manager,
     )
 

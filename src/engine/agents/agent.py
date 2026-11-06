@@ -16,6 +16,7 @@ from src.engine.agents.tree.rendering import render_subagents
 from src.engine.agents.tree.summoner import SigilDeps
 from src.engine.providers.factory.unconfigured import UnconfiguredModel
 from src.engine.settings import DEFAULT_MODEL_MAX_ATTEMPTS
+from src.engine.skills.loaded import loaded_skills
 from src.engine.skills.rendering import render_available_skills, render_loaded_skills
 
 if TYPE_CHECKING:
@@ -26,7 +27,6 @@ if TYPE_CHECKING:
     from src.engine.agents.profile.registry import AgentRegistry
     from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
     from src.engine.context.scope import ScopeTracker
-    from src.engine.skills.loaded import LoadedSkills
     from src.engine.skills.registry import SkillRegistry
 
 _SIGIL_PROMPT = os.path.join(os.path.dirname(__file__), 'prompts', 'sigil.md')
@@ -46,7 +46,6 @@ def create_agent(
     model_retry: RetryTransientModelErrors | None = None,
     workspace: WorkspaceInstructions | None = None,
     scope: ScopeTracker | None = None,
-    loaded_skills: Callable[[str | None], LoadedSkills] | LoadedSkills | None = None,
     agent_registry: AgentRegistry | None = None,
     profile: ProfileSource | None = None,
     extra_capabilities: Sequence[AbstractCapability] | None = None,
@@ -146,24 +145,20 @@ def create_agent(
         def _workspace_instructions() -> str:
             return workspace.render(scope.scopes())
 
-    if skill_registry is not None and loaded_skills is not None:
-        # Level 2 as a block, not as a tool result: the SKILL.md body
-        # survives compaction and does not compete for the history
-        # budget. `rewrite` (the default) and not `append`: loading a skill is
-        # rare and the body is large, so duplicating it in the history costs
-        # more than the one-time cache miss.
+    if skill_registry is not None:
+        # Level 2 as a block, not as a tool result: the SKILL.md body survives
+        # compaction and does not compete for the history budget. `rewrite` (the
+        # default) and not `append`: loading a skill is rare and the body is large,
+        # so duplicating it in the history costs more than the one-time cache miss.
         #
-        # The names come from the node's own registry: a subagent does not inherit
-        # the skills its parent loaded, because a body is instructions, and the
-        # instructions of a different task do not belong in this one.
+        # The names are derived from the history of *this* run: a subagent does not
+        # inherit the skills its parent loaded, because a body is instructions and
+        # the instructions of a different task do not belong in this one. Deriving
+        # them is what makes a resumed session keep the skills it was following —
+        # a registry in memory lost them on restart and said nothing.
         @agent.instructions(name='loaded-skills')
         def _loaded_skills(ctx: RunContext[SigilDeps]) -> str:
-            names = (
-                loaded_skills(ctx.deps.node_id if ctx.deps is not None else None).names()
-                if callable(loaded_skills)
-                else loaded_skills.names()
-            )
-            return render_loaded_skills(skill_registry, names)
+            return render_loaded_skills(skill_registry, loaded_skills(ctx.messages))
 
     if skill_registry is not None:
         # Progressive disclosure, level 1: the metadata (name + description)

@@ -15,13 +15,11 @@ from src.ui.widgets.chat_log import ChatLog
 class WorkspaceMixin:
     """Keeps the app and its components pointed at the active workspace.
 
-    It expects the app to define ``_workspace_manager``, ``_scope`` and
-    ``_loaded_skills``.
+    It expects the app to define ``_workspace_manager`` and ``_scope``.
     """
 
     _workspace_manager: WorkspaceManager | None
     _scope: object | None
-    _loaded_skills: object | None
 
     def current_workspace_label(self) -> str:
         """Label of the active workspace, or ``-`` when switching is unavailable."""
@@ -52,8 +50,6 @@ class WorkspaceMixin:
         # not apply to the files the agent is about to touch.
         if self._scope is not None:
             self._scope.reset()
-        if self._loaded_skills is not None:
-            self._loaded_skills.reset()
         self.refresh_sidebar()
         # A new tree is a new first half of the window title, and a new line in the
         # status bar. The bar is painted on mount and on a turn: without this, a

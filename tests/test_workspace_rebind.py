@@ -77,16 +77,18 @@ def test_instructions_rebind_clears_the_file_cache(tmp_path):
 # --- SessionStore -------------------------------------------------------------
 
 
-def test_session_store_rebind_moves_the_directory(tmp_path):
+def test_session_store_rebind_moves_the_workspace_row(tmp_path):
+    """One database, one workspace row per directory: switching re-points the row."""
     store = SessionStore(cwd=tmp_path / 'a', base_dir=tmp_path / 'store')
-    old_directory = store.directory
+    old_workspace = store.workspace_id
 
     store.rebind(tmp_path / 'b')
 
     assert store.cwd == str(tmp_path / 'b')
-    assert store.directory != old_directory
-    assert store.directory.is_dir()
-    assert store.directory == store.directory_for(tmp_path / 'b')
+    assert store.workspace_id != old_workspace
+    assert store.database.value('SELECT path FROM workspaces WHERE id = ?', (store.workspace_id,)) == str(
+        tmp_path / 'b'
+    )
 
 
 def test_session_store_rebind_isolates_the_sessions(tmp_path):

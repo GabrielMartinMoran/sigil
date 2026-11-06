@@ -42,7 +42,11 @@ class AgentTreeStore:
         """
         tree = session.tree if isinstance(session.tree, AgentTree) else AgentTree()
         session.tree = tree
-        tree.ensure_root(root_name)
+        # If the session was built before the database had a row for it, its tree
+        # has no root yet. The id is the one the store derived for the root
+        # execution, so both sides name the same conversation from the first write.
+        root_id = getattr(session, 'root_id', None)
+        tree.ensure_root(root_name, node_id=root_id if isinstance(root_id, str) and root_id else None)
         self._tree = tree
         return tree
 

@@ -188,9 +188,11 @@ def test_create_and_switch_moves_the_process_and_the_components(repo, tmp_path, 
     assert switch.workspace.label == 'fix-login'
     assert switch.workspace.is_worktree is True
     assert Path.cwd() == switch.workspace.root
-    # The session store followed the switch instead of staying in the old folder.
+    # The session store followed the switch instead of staying in the old workspace.
     assert sessions.cwd == str(switch.workspace.root)
-    assert sessions.directory == sessions.directory_for(switch.workspace.root)
+    assert sessions.database.value('SELECT path FROM workspaces WHERE id = ?', (sessions.workspace_id,)) == str(
+        switch.workspace.root
+    )
 
 
 def test_switching_to_another_worktree_does_not_create_anything(repo, tmp_path, monkeypatch):

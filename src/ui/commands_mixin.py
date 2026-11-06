@@ -42,7 +42,7 @@ class CommandsMixin:
     """Dispatches the slash commands and manages session switching.
 
     It expects the app to define ``_store``, ``_session``, ``_history``,
-    ``_scope``, ``_loaded_skills``, ``_mcp_manager``, ``_meter``,
+    ``_scope``, ``_mcp_manager``, ``_meter``,
     ``_context_capability``, ``_workspace``, ``_roadmap_store``, ``_turn_active``,
     ``_workspace_manager`` and ``start_turn``.
     """
@@ -222,8 +222,6 @@ class CommandsMixin:
         self.bind_session(session)
         if self._scope is not None:
             self._scope.reset()
-        if self._loaded_skills is not None:
-            self._loaded_skills.reset()
         self.refresh_sidebar()
         await chat.clear()
         if switch is not None:
@@ -266,8 +264,6 @@ class CommandsMixin:
         self.bind_session(loaded)
         if self._scope is not None:
             self._scope.reset()
-        if self._loaded_skills is not None:
-            self._loaded_skills.reset()
         self._restore_session_model(loaded)
         self.refresh_sidebar()
         await chat.clear()

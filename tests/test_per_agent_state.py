@@ -5,13 +5,12 @@ existed:
 
 - **The roadmap.** A plan belongs to whoever executes it. The Lead's "what is the
   squad doing" is not the engineer's "which unit am I in", and one list under both
-  reads wrong to at least one of them.
+  reads wrong to at least one of them. It is stored, keyed by execution, because a
+  task can be re-opened without a new tool call.
 - **The loaded skills.** A loaded skill injects its whole body into the
-  instructions. Sharing the registry would put the Lead's design guidance into an
-  engineer's prompt and spend its budget on it.
-
-Both are keyed by node here, with ``None`` for the root, and both survive a session
-swap without leaking into the next conversation.
+  instructions, and the instructions of another task do not belong in this one. It
+  is *not* stored: it is derived from the transcript of each execution, which is
+  what makes a resumed session keep the set it was following.
 """
 
 from __future__ import annotations
@@ -19,17 +18,15 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from pydantic_ai.messages import ModelResponse, TextPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import FunctionModel
 
 from src.engine.agents.agent import create_agent
 from src.engine.agents.tree.summoner import SigilDeps
 from src.engine.roadmap.store import RoadmapStore
 from src.engine.roadmap.stores import RoadmapStores
-from src.engine.skills.loaded import LoadedSkills
-from src.engine.skills.loads import SkillLoads
+from src.engine.skills.loaded import loaded_skills
 from src.engine.skills.registry import SkillRegistry
-from src.engine.skills.tools import register_skill_tools
 
 
 def test_each_node_gets_its_own_roadmap(tmp_path: Path):
@@ -105,16 +102,63 @@ def _item(title: str):
 # --- skills ------------------------------------------------------------------
 
 
-def test_each_node_has_its_own_loaded_skills():
-    loads = SkillLoads()
+def _load_call(name: str, *, call_id: str = 'call-1', outcome: str = 'success') -> list:
+    """A history whose last turn loaded ``name``."""
+    return [
+        ModelResponse(parts=[ToolCallPart(tool_name='load_skill', args={'name': name}, tool_call_id=call_id)]),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='load_skill', content='ok', tool_call_id=call_id, outcome=outcome)]
+        ),
+    ]
 
-    loads.for_node('aaaa1111').add('clean-code')
-    loads.for_node(None).add('archify')
 
-    assert loads.names('aaaa1111') == ('clean-code',)
-    assert loads.names(None) == ('archify',)
-    # A node that loaded nothing has nothing: no inheritance in either direction.
-    assert loads.names('bbbb2222') == ()
+def test_the_set_is_derived_per_execution_not_per_session():
+    """Two executions of the same session have their own sets, by construction.
+
+    There is no shared registry to keep in step: each one is a walk over its own
+    transcript, so a subagent cannot inherit what its parent loaded.
+    """
+    parent = _load_call('archify', call_id='p1') + _load_call('clean-code', call_id='p2')
+    child = _load_call('clean-md', call_id='c1')
+
+    assert loaded_skills(parent) == ('archify', 'clean-code')
+    assert loaded_skills(child) == ('clean-md',)
+    assert loaded_skills([]) == ()
+
+
+def test_the_load_order_is_the_order_of_the_calls():
+    history = _load_call('beta', call_id='b') + _load_call('alpha', call_id='a')
+    assert loaded_skills(history) == ('beta', 'alpha')
+
+
+def test_a_failed_load_is_not_in_the_set():
+    """`ToolErrorRecovery` returns a failure as a `ToolReturnPart` with `outcome`."""
+    assert loaded_skills(_load_call('ghost', outcome='failed')) == ()
+
+
+def test_a_call_without_its_return_does_not_count():
+    """An interrupted call never delivered the body, so the body is not in effect."""
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+
+    history = [ModelResponse(parts=[ToolCallPart(tool_name='load_skill', args={'name': 'demo'}, tool_call_id='x')])]
+    assert loaded_skills(history) == ()
+
+
+def test_a_resumed_history_keeps_the_skills_it_had_loaded(tmp_path: Path):
+    """The bug this design removes: a resumed session lost the set and said nothing.
+
+    The instructions used to drop from 73,892 to 29,476 characters across a restart
+    because the registry lived in memory and was never serialized. A projection
+    cannot do that: the log came back, so the set came back.
+    """
+    write_skill(tmp_path, 'alpha', body='# Alpha body')
+    registry = SkillRegistry([('project', tmp_path)])
+    agent = _agent(registry)
+
+    history = _load_call('alpha')
+    root_text = _instructions(agent, None, history)
+
+    assert '# Alpha body' in root_text
 
 
 def test_a_subagent_does_not_see_the_skills_of_its_parent(tmp_path: Path):
@@ -122,53 +166,16 @@ def test_a_subagent_does_not_see_the_skills_of_its_parent(tmp_path: Path):
     write_skill(tmp_path, 'alpha', body='# Alpha body')
     write_skill(tmp_path, 'beta', body='# Beta body')
     registry = SkillRegistry([('project', tmp_path)])
-    registry.refresh()
-    loads = SkillLoads()
-    loads.for_node(None).add('alpha')
-    loads.for_node('child1').add('beta')
 
-    agent = _agent(registry, loads)
+    agent = _agent(registry)
 
-    root_text = _instructions(agent, None)
-    child_text = _instructions(agent, 'child1')
+    root_text = _instructions(agent, None, _load_call('alpha', call_id='a'))
+    child_text = _instructions(agent, 'child1', _load_call('beta', call_id='b'))
 
     assert '# Alpha body' in root_text
     assert '# Beta body' not in root_text
     assert '# Beta body' in child_text
     assert '# Alpha body' not in child_text
-
-
-def test_loading_a_skill_registers_it_on_the_node_of_the_run(tmp_path: Path):
-    write_skill(tmp_path, 'alpha', body='# Alpha body')
-    registry = SkillRegistry([('project', tmp_path)])
-    loads = SkillLoads()
-    agent = _agent(registry, loads)
-    register_skill_tools(agent, registry, loaded=loads)
-
-    tool = _tool(agent, 'load_skill')
-    tool(_ctx('child1'), 'alpha')
-
-    assert loads.names('child1') == ('alpha',)
-    assert loads.names(None) == ()
-
-
-def test_the_loads_travel_with_the_session(tmp_path: Path):
-    loads = SkillLoads()
-    loads.for_node(None).add('archify')
-    loads.for_node('aaaa1111').add('clean-code')
-
-    restored = SkillLoads()
-    restored.restore(loads.to_dict())
-
-    assert restored.names(None) == ('archify',)
-    assert restored.names('aaaa1111') == ('clean-code',)
-
-
-def test_a_broken_stored_entry_does_not_break_the_rest():
-    loads = SkillLoads()
-    loads.restore({'': ['ok'], 'node': 'not-a-list', 123: ['x']})
-
-    assert loads.names(None) == ('ok',)
 
 
 # --- helpers ------------------------------------------------------------------
@@ -185,23 +192,22 @@ def write_skill(root: Path, name: str, *, body: str = 'Body.') -> Path:
     return path
 
 
-def _agent(registry: SkillRegistry, loads: SkillLoads):
+def _agent(registry: SkillRegistry):
     """One agent object, shared by every node: that is how the app builds them."""
 
     def model(messages, info) -> ModelResponse:
         return ModelResponse(parts=[TextPart('ok')])
 
-    return create_agent(
-        registry,
-        model=FunctionModel(model),
-        loaded_skills=loads.for_node,
-    )
+    return create_agent(registry, model=FunctionModel(model))
 
 
-def _instructions(agent, node_id: str | None) -> str:
+def _instructions(agent, node_id: str | None, history: list | None = None) -> str:
     """The instructions of one run of that agent, for the node it belongs to."""
-    result = asyncio.run(agent.run('go', deps=SigilDeps(node_id=node_id)))
-    return result.all_messages()[0].instructions or ''
+    from pydantic_ai.messages import ModelRequest
+
+    result = asyncio.run(agent.run('go', deps=SigilDeps(node_id=node_id), message_history=history))
+    requests = [message for message in result.all_messages() if isinstance(message, ModelRequest)]
+    return (requests[-1].instructions or '') if requests else ''
 
 
 class _Ctx:
@@ -222,7 +228,3 @@ def _tool(agent, name: str):
 
 def _unused(store: RoadmapStore) -> RoadmapStore:  # pragma: no cover
     return store
-
-
-def _unused_loaded(loaded: LoadedSkills) -> LoadedSkills:  # pragma: no cover
-    return loaded

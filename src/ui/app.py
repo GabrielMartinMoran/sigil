@@ -49,7 +49,6 @@ from src.engine.providers.service import ModelService
 from src.engine.roadmap.stores import RoadmapStores
 from src.engine.sessions.session_store import Session, SessionStore
 from src.engine.settings import SigilSettings, load_settings
-from src.engine.skills.loaded import LoadedSkills
 from src.engine.themes import ThemeRegistry
 from src.engine.tooling.logging import ToolLoggerHub
 from src.engine.workspace.manager import WorkspaceManager
@@ -136,7 +135,6 @@ class SigilApp(
         context_capability: ContextViewCapability | None = None,
         scope: ScopeTracker | None = None,
         workspace: WorkspaceInstructions | None = None,
-        loaded_skills: LoadedSkills | None = None,
         workspace_manager: WorkspaceManager | None = None,
         preferences: Preferences | None = None,
         preferences_store: PreferencesStore | None = None,
@@ -163,7 +161,6 @@ class SigilApp(
         self._context_capability = context_capability
         self._scope = scope
         self._workspace = workspace
-        self._loaded_skills = loaded_skills
         self._workspace_manager = workspace_manager
         # Preferences are read here, not in `on_mount`: the reasoning preference
         # decides how the first painted transcript looks.

@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 from src.engine.context.strategy.constants import (
     DEFAULT_IMAGE_MAX_PERCENT,
-    DEFAULT_IMAGE_ROUNDS,
+    DEFAULT_IMAGE_TURNS,
     DEFAULT_REASONING,
     DEFAULT_REASONING_MAX_PERCENT,
     DEFAULT_REASONING_STEPS,
@@ -58,7 +58,7 @@ DEFAULT_MODEL_MAX_ATTEMPTS = 5
 CONTEXT_STRATEGIES = ('windowed', 'compacting', 'passthrough')
 
 DEFAULT_CONTEXT_STRATEGY = 'windowed'
-DEFAULT_KEEP_RECENT_TURNS = 3
+DEFAULT_KEEP_RECENT_PROMPTS = 3
 DEFAULT_MAX_TOOL_RESULT_CHARS = 4000
 DEFAULT_OUTPUT_RESERVE = 8000
 
@@ -75,14 +75,14 @@ class SigilSettings:
     reasoning: ReasoningPolicy = DEFAULT_REASONING
     """What travels back to the model of its own reasoning: ``off``, ``recent`` or ``all``."""
     reasoning_steps: int = DEFAULT_REASONING_STEPS
-    """Steps of the round in progress that keep their reasoning under ``recent``."""
+    """Steps of the turn in progress that keep their reasoning under ``recent``."""
     reasoning_max_percent: int = DEFAULT_REASONING_MAX_PERCENT
     """Ceiling for the reasoning kept, as a percentage of the model window."""
-    image_rounds: int = DEFAULT_IMAGE_ROUNDS
+    image_turns: int = DEFAULT_IMAGE_TURNS
     """Rounds an image stays loaded, counting the one it arrived in."""
     image_max_percent: int = DEFAULT_IMAGE_MAX_PERCENT
     """Ceiling for the pixels that stay, as a percentage of the model window."""
-    keep_recent_turns: int = DEFAULT_KEEP_RECENT_TURNS
+    keep_recent_prompts: int = DEFAULT_KEEP_RECENT_PROMPTS
     max_tool_result_chars: int = DEFAULT_MAX_TOOL_RESULT_CHARS
     output_reserve: int = DEFAULT_OUTPUT_RESERVE
 
@@ -101,12 +101,12 @@ class SigilSettings:
             raise ValueError('reasoning_steps must be at least 1; use reasoning=off to keep none')
         if self.reasoning_max_percent < 0:
             raise ValueError('reasoning_max_percent cannot be negative')
-        if self.image_rounds < 1:
-            raise ValueError('image_rounds must be at least 1: the round in progress always travels')
+        if self.image_turns < 1:
+            raise ValueError('image_turns must be at least 1: the turn in progress always travels')
         if self.image_max_percent < 0:
             raise ValueError('image_max_percent cannot be negative')
-        if self.keep_recent_turns < 1:
-            raise ValueError('keep_recent_turns must be at least 1')
+        if self.keep_recent_prompts < 1:
+            raise ValueError('keep_recent_prompts must be at least 1')
         if self.max_tool_result_chars < 200:
             raise ValueError('max_tool_result_chars must be at least 200')
         if self.output_reserve < 0:
@@ -166,9 +166,9 @@ def load_settings(environ: Mapping[str, str] | None = None) -> SigilSettings:
         reasoning=_read_reasoning(env),
         reasoning_steps=_read_int(env, ENV_CONTEXT_REASONING_STEPS, DEFAULT_REASONING_STEPS),
         reasoning_max_percent=_read_int(env, ENV_CONTEXT_REASONING_MAX_PERCENT, DEFAULT_REASONING_MAX_PERCENT),
-        image_rounds=_read_int(env, ENV_CONTEXT_IMAGE_ROUNDS, DEFAULT_IMAGE_ROUNDS),
+        image_turns=_read_int(env, ENV_CONTEXT_IMAGE_ROUNDS, DEFAULT_IMAGE_TURNS),
         image_max_percent=_read_int(env, ENV_CONTEXT_IMAGE_MAX_PERCENT, DEFAULT_IMAGE_MAX_PERCENT),
-        keep_recent_turns=_read_int(env, ENV_CONTEXT_KEEP_RECENT_TURNS, DEFAULT_KEEP_RECENT_TURNS),
+        keep_recent_prompts=_read_int(env, ENV_CONTEXT_KEEP_RECENT_TURNS, DEFAULT_KEEP_RECENT_PROMPTS),
         max_tool_result_chars=_read_int(env, ENV_CONTEXT_MAX_TOOL_RESULT_CHARS, DEFAULT_MAX_TOOL_RESULT_CHARS),
         output_reserve=_read_int(env, ENV_CONTEXT_OUTPUT_RESERVE, DEFAULT_OUTPUT_RESERVE),
     )

@@ -16,7 +16,7 @@ class ViewResult:
     dropped_messages: int = 0
     dropped_thinking: int = 0
     truncated_results: int = 0
-    compacted_turns: int = 0
+    compacted_prompts: int = 0
     dropped_images: int = 0
 
     @property
@@ -25,6 +25,6 @@ class ViewResult:
             self.dropped_messages
             or self.dropped_thinking
             or self.truncated_results
-            or self.compacted_turns
+            or self.compacted_prompts
             or self.dropped_images
         )

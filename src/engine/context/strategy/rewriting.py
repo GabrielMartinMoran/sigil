@@ -14,9 +14,10 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
+from src.engine.agents.turn_map import library_run_id
 from src.engine.context.images import is_image_part
 from src.engine.context.images_cache import ImageVerdict, decide
-from src.engine.context.strategy.turns import has_pinned_result, split_turns
+from src.engine.context.strategy.turns import has_pinned_result, split_prompts
 from src.engine.context.tokens import estimate_messages_tokens, estimate_tokens, tool_return_text
 
 
@@ -54,33 +55,33 @@ def accepts_replayed_reasoning(part: ThinkingPart, provider: str | None) -> bool
 
 
 def thinking_labels(messages: Sequence[ModelMessage]) -> list[str | None]:
-    """The round each step with reasoning belonged to, in order.
+    """The turn each step with reasoning belonged to, in order.
 
-    `run_id` is the round: pydantic-ai stamps the same id on every message of one
-    run, and a prompt typed while the agent works is enqueued into the same run, so
-    steering does not open a new round. Sessions saved before `run_id` existed group
-    per message instead of merging unrelated rounds into one.
+    A turn is pydantic-ai's run: the library stamps the same identifier on every
+    message of one, and a prompt typed while the agent works is enqueued into the
+    same one, so steering does not open a second turn. The identifier itself is named
+    in exactly one module, `agents/turn_map.py`; here the domain word is enough.
     """
     return [
-        message.run_id
+        library_run_id(message)
         for message in messages
         if isinstance(message, ModelResponse) and any(isinstance(part, ThinkingPart) for part in message.parts)
     ]
 
 
 def steps_with_reasoning(messages: Sequence[ModelMessage], *, provider: str | None = None) -> int:
-    """How many reasoning blocks of the round in progress can be kept.
+    """How many reasoning blocks of the turn in progress can be kept.
 
     It is the ceiling of the window: asking for more than this would keep the
-    previous rounds' reasoning too, which is a record, not working memory.
+    previous turns' reasoning too, which is a record, not working memory.
     """
-    rounds = thinking_labels(messages)
-    current_round = rounds[-1] if rounds else None
+    turns = thinking_labels(messages)
+    current_turn = turns[-1] if turns else None
     return sum(
         1
         for message in messages
         if isinstance(message, ModelResponse)
-        and message.run_id == current_round
+        and library_run_id(message) == current_turn
         and any(isinstance(part, ThinkingPart) for part in message.parts)
         and all(accepts_replayed_reasoning(part, provider) for part in message.parts if isinstance(part, ThinkingPart))
     )
@@ -94,7 +95,7 @@ def keep_fitting_steps(
 ) -> list[ModelMessage] | None:
     """Rewrites the history keeping as many reasoning steps as fit in `available`.
 
-    It starts from the most the current round can keep and shrinks one step at a
+    It starts from the most the current turn can keep and shrinks one step at a
     time, so the result is the largest window that fits. Returns ``None`` when not
     even dropping all the reasoning makes it fit: the caller then has to truncate
     tool results or discard turns, which costs more than reasoning does.
@@ -115,16 +116,16 @@ def keep_recent_steps(
     provider: str | None = None,
     max_tokens: int | None = None,
 ) -> tuple[list[ModelMessage], int, int]:
-    """Keeps the reasoning of the last `steps` steps of the round in progress.
+    """Keeps the reasoning of the last `steps` steps of the turn in progress.
 
-    The round in progress is the one the latest step belongs to. Its steps are
-    walked backwards until either `steps` reasoning blocks are kept or the round
-    ends, so a short round does not borrow the previous one's reasoning. Every other
+    The turn in progress is the one the latest step belongs to. Its steps are
+    walked backwards until either `steps` reasoning blocks are kept or the turn
+    ends, so a short turn does not borrow the previous one's reasoning. Every other
     reasoning block is dropped: it is not working memory, it is a record, and it
     costs what it costs on every request.
 
-    The window is on steps, not on the round, because resending a whole round is
-    quadratic: a measured 317-step round would bill 44M extra tokens, while the loop
+    The window is on steps, not on the turn, because resending a whole turn is
+    quadratic: a measured 317-step turn would bill 44M extra tokens, while the loop
     this fixes is local to a few steps.
 
     Args:
@@ -139,12 +140,12 @@ def keep_recent_steps(
         result, dropped = drop_thinking(messages)
         return result, 0, dropped
 
-    rounds = thinking_labels(messages)
-    current_round = rounds[-1] if rounds else None
+    turns = thinking_labels(messages)
+    current_turn = turns[-1] if turns else None
 
-    # Walk the round in progress backwards: the steps closest to the work in
+    # Walk the turn in progress backwards: the steps closest to the work in
     # progress are the ones that stop the agent from re-deciding what it already
-    # decided. A round shorter than the window keeps only its own reasoning.
+    # decided. A turn shorter than the window keeps only its own reasoning.
     keep: set[int] = set()
     kept = 0
     spent = 0
@@ -152,7 +153,7 @@ def keep_recent_steps(
         if kept >= steps:
             break
         message = messages[order]
-        if not isinstance(message, ModelResponse) or message.run_id != current_round:
+        if not isinstance(message, ModelResponse) or library_run_id(message) != current_turn:
             continue
         parts = [part for part in message.parts if isinstance(part, ThinkingPart)]
         if not parts:
@@ -217,25 +218,25 @@ different pictures.
 def drop_stale_images(
     messages: list[ModelMessage],
     *,
-    rounds: int,
+    turn_window: int,
     max_tokens: int | None = None,
 ) -> tuple[list[ModelMessage], int]:
     """Leaves a note in place of every image that must not travel.
 
-    The decision is `images_cache.decide`: an image is loaded in the round it arrived
-    in and stays for a few rounds, the newest copy of a picture is the one that
+    The decision is `images_cache.decide`: an image is loaded in the turn it arrived
+    in and stays for a few turns, the newest copy of a picture is the one that
     counts, and the pixels have a ceiling. This function only applies the verdicts and
     writes the note, so the model knows the picture existed and what id brings it back.
 
     Args:
         messages: The history, flat.
-        rounds: Rounds an image stays loaded, counting its own.
+        turn_window: Turns an image stays loaded, counting its own.
         max_tokens: Ceiling for the pixels that travel, in tokens.
 
     Returns:
         The rewritten messages and how many images were dropped.
     """
-    verdicts = decide(messages, rounds=rounds, max_tokens=max_tokens)
+    verdicts = decide(messages, turn_window=turn_window, max_tokens=max_tokens)
     if not verdicts:
         return messages, 0
 
@@ -366,7 +367,7 @@ def fit_to_budget(
     summary).
     """
     head = list(keep_head)
-    turns = split_turns(list(messages))
+    turns = split_prompts(list(messages))
     dropped = 0
 
     def total() -> int:

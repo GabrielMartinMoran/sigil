@@ -7,12 +7,12 @@ from dataclasses import dataclass
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 
-from src.engine.context.strategy.turns import split_turns
+from src.engine.context.strategy.turns import split_prompts
 from src.engine.context.tokens import estimate_message_tokens, estimate_tokens, part_text
 
 
 @dataclass(frozen=True, slots=True)
-class TurnUsage:
+class PromptUsage:
     """Cost of one turn of the conversation."""
 
     index: int
@@ -42,12 +42,12 @@ def _turn_label(turn: Sequence[ModelMessage]) -> str:
     return '(no prompt)'
 
 
-def turn_usage(messages: Sequence[ModelMessage]) -> list[TurnUsage]:
+def turn_usage(messages: Sequence[ModelMessage]) -> list[PromptUsage]:
     """Cost of each turn, in order."""
     usage = []
-    for index, turn in enumerate(split_turns(messages)):
+    for index, turn in enumerate(split_prompts(messages)):
         usage.append(
-            TurnUsage(
+            PromptUsage(
                 index=index,
                 label=_turn_label(turn),
                 tokens=sum(estimate_message_tokens(message) for message in turn),

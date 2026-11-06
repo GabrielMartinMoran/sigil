@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-DEFAULT_KEEP_RECENT_TURNS = 3
+DEFAULT_KEEP_RECENT_PROMPTS = 3
 """Turns kept intact before starting to trim."""
 
 DEFAULT_MAX_TOOL_RESULT_CHARS = 4_000
@@ -17,19 +17,19 @@ ReasoningPolicy = Literal['off', 'recent', 'all']
 """What travels back to the model of the reasoning it produced.
 
 - ``off``: none of it.
-- ``recent``: the last `DEFAULT_REASONING_STEPS` steps of the round in progress.
-- ``all``: every block of the session. Expensive: it is quadratic inside a round.
+- ``recent``: the last `DEFAULT_REASONING_STEPS` steps of the turn in progress.
+- ``all``: every block of the session. Expensive: it is quadratic inside a turn.
 """
 
 REASONING_POLICIES: tuple[ReasoningPolicy, ...] = ('off', 'recent', 'all')
 
 DEFAULT_REASONING: ReasoningPolicy = 'recent'
-"""The round in progress is where the agent re-reads its own reasoning."""
+"""The turn in progress is where the agent re-reads its own reasoning."""
 
 DEFAULT_REASONING_STEPS = 10
-"""Steps of the round in progress whose reasoning travels when the policy is ``recent``.
+"""Steps of the turn in progress whose reasoning travels when the policy is ``recent``.
 
-Resending the whole round is quadratic: a measured 317-step round would bill 44M
+Resending the whole turn is quadratic: a measured 317-step turn would bill 44M
 extra tokens. The loop this prevents —re-deciding a decision already taken— shows up
 over a few consecutive steps, so ten covers it with room to spare, and the token cap
 is what keeps the window from being stupid when the context is nearly full.
@@ -43,10 +43,11 @@ Reasoning is the cheapest thing to drop and the most voluminous to carry, so on 
 a reason to lose a turn when it is not.
 """
 
-DEFAULT_IMAGE_ROUNDS = 3
+DEFAULT_IMAGE_TURNS = 3
 """Rounds an image stays loaded, counting the one it arrived in.
 
-The round is `run_id`, the same unit the reasoning window uses, so an image loaded
+The turn is the identifier the library stamps on one run — the same unit the
+reasoning window uses — so an image loaded
 by a prompt or by `view_image` is stamped by the message that carries it. Past the
 window an image leaves its id behind and `view_image` brings it back.
 """
