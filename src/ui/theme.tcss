@@ -48,6 +48,12 @@ Screen {
     margin-top: 0;
 }
 
+/* A spawn that can be opened is a target: the underline is in the renderable and
+ * the hover confirms it, so the block does not need a hint line of its own. */
+.tool-call.clickable:hover {
+    background: $boost;
+}
+
 .notice {
     margin-top: 1;
 }

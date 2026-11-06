@@ -27,7 +27,7 @@ from textual.app import ScreenStackError
 from textual.css.query import NoMatches
 
 from src.engine.agents.tree.models.agent_node import AgentNode
-from src.ui.messages import TreeChanged
+from src.ui.messages import NodeOpened, TreeChanged
 from src.ui.widgets.agent_tree_screen import AgentTreeScreen, TreeAction
 from src.ui.widgets.agent_view import AgentView
 from src.ui.widgets.chat_log import ChatLog
@@ -79,6 +79,26 @@ class TreeMixin:
     def node(self, node_id: str | None) -> AgentNode | None:
         tree = self.agent_tree()
         return None if tree is None or not node_id else tree.active.node(node_id)
+
+    def find_node(self, ref: str) -> AgentNode | None:
+        """The node a reference names, resolving a unique id prefix.
+
+        The ids on screen are eight characters — the tree row, the prompt block of
+        the neighbours, the spawn block the user clicks — while the tree stores the
+        full one. The summoner already resolves prefixes for the tools, and the UI
+        reads the same references, so it resolves them the same way instead of
+        carrying a second rule.
+        """
+        exact = self.node(ref)
+        if exact is not None:
+            return exact
+        summoner = getattr(self, '_summoner', None)
+        if summoner is None:
+            return None
+        try:
+            return summoner.resolve(ref)
+        except Exception:  # noqa: BLE001 - an unknown id is a miss, not a failure
+            return None
 
     async def open_tree(self) -> None:
         """`ctrl+t`: the list of agents of the session, and what to do with one."""
@@ -139,13 +159,35 @@ class TreeMixin:
 
     async def goto_node(self, node_id: str) -> None:
         """Opens ``node_id``: the subagent view, or the chat for the root."""
-        node = self.node(node_id)
+        node = self.find_node(node_id)
         if node is None:
             return
         if node.is_root:
             self.show_chat()
             return
         await self.open_subagent(node)
+
+    def on_node_opened(self, message: NodeOpened) -> None:
+        """A subagent was clicked in the chat: open it.
+
+        The click may name a node the session no longer has — an old transcript, a
+        conversation whose tree was replaced by `/load`. Saying so is better than a
+        click that appears to do nothing.
+        """
+        if self.find_node(message.node_ref) is None:
+            self.run_worker(self._report_missing_node())
+            return
+        self.run_worker(self.goto_node(message.node_ref))
+
+    async def _report_missing_node(self) -> None:
+        try:
+            chat = self.query_one(ChatLog)
+        except NoMatches:
+            return
+        await chat.add_notice(
+            'That subagent is not part of this session anymore.',
+            style='yellow',
+        )
 
     async def open_subagent(self, node: AgentNode) -> None:
         """Replaces the chat with the node and locks the composer."""

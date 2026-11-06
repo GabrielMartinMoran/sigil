@@ -43,6 +43,7 @@ from textual.widgets import Static
 from src.engine.attachments.content import describe_attachments, images_in
 from src.engine.attachments.image_attachment import ImageAttachment
 from src.engine.context.images import image_size
+from src.ui.messages import NodeOpened
 from src.ui.palette import color
 
 RENDER_INTERVAL = 0.08
@@ -430,6 +431,18 @@ class SummonBlock(ToolCallBlock):
         self._status = 'starting'
         self._node_id = ''
         self._node_name = ''
+        self._clickable = False
+
+    def on_click(self) -> None:
+        """A click opens the subagent, once the block knows which one it is.
+
+        Before the result lands there is no id to open, and a click that silently
+        does nothing is better than one that opens whatever was focused: the block
+        is still a line of text at that point.
+        """
+        if not self._node_id:
+            return
+        self.post_message(NodeOpened(self._node_id))
 
     @staticmethod
     def _read_args(args: Any) -> dict[str, str]:
@@ -461,6 +474,10 @@ class SummonBlock(ToolCallBlock):
         found = re.search(r'#([0-9a-f]{8,})', text)
         if found:
             self._node_id = found.group(1)
+            # From here the block is a way in: it paints itself as one, so the
+            # hover is the only hint a reader needs that it can be clicked.
+            self._clickable = True
+            self.add_class('clickable')
         # A resume names no profile in its arguments; its answer does, in the
         # envelope: `[subagent Scout (scout #1a2b3c, sync) finished]`.
         named = re.search(r'\(([a-z0-9][a-z0-9-]*)\s+#', text)
@@ -509,7 +526,14 @@ class SummonBlock(ToolCallBlock):
         # saying the same thing twice.
         label = self._label()
         if label:
-            text.append(label, style=f'bold {color(self, "tool-title")}')
+            # Underlined once there is something to open: the name is the target,
+            # and the hover confirms it.
+            text.append(
+                label,
+                style=f'bold underline {color(self, "tool-title")}'
+                if self._clickable
+                else f'bold {color(self, "tool-title")}',
+            )
         else:
             # Nothing to go on: the block still has to say *what* this is, and the
             # arrow already says it is a spawn. No invented agent name.
