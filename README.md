@@ -697,17 +697,25 @@ being reachable the moment it does.
 | `b` | Send it to the background: stop waiting, keep the work going |
 | `k` | Stop it, and everything it summoned |
 | `Esc` (inside a subagent) | Back to its parent |
+| **Click a spawn in the chat** | Open that subagent |
 
 `b` is the intuitive version of the tool's `mode="async"` on a call that is already
 blocking the turn: the caller stops waiting, the node keeps working, and its answer
 arrives as a message. `k` is what makes a background subagent safe to start: without
 it, the only way to stop one would be to quit.
 
-Choosing a row opens that subagent in place of the chat: its task, its state, and
-the transcript it had — the same blocks, gutters and collapsed reasoning as the
-main conversation. The composer is locked there, because a subagent answers its
+Choosing a row opens that subagent in place of the chat: its transcript — the same
+blocks, gutters and collapsed reasoning as the main conversation — under a header
+with where it hangs, how it ended and how long it took. The task is not repeated up
+there: it is the first message of the transcript, and the header stays fixed while
+that transcript scrolls. The composer is locked there, because a subagent answers its
 parent and a message typed into its transcript would be read by nobody. `Enter` on
 the root row takes you back to the conversation.
+
+The spawn block in the chat is the other way in: once it knows which execution it
+started, its name is underlined, the block highlights on hover, and a click opens the
+node. It works on a session loaded from disk too, where the id comes back inside the
+answer rather than in the call.
 
 The tree is **persisted with the session**, like the history: `/load` brings back
 the subagents that conversation summoned, with their transcripts and how each one
