@@ -156,6 +156,9 @@ class TurnMixin:
             return
         self._last_checkpoint_at = now
         session.messages = list(messages)
+        # The measurement of the blocks that are always sent rides with the row, so a
+        # session loaded later knows its real budget instead of starting at zero.
+        self._meter.stamp(session)
         self._store.save(session)
         # The context section updates per step, not only when the turn closes.
         self.refresh_context(messages)
@@ -517,6 +520,7 @@ class TurnMixin:
         # active one, the turn's result is still saved where it belongs and the
         # conversation on screen is left alone.
         session.messages = history
+        self._meter.stamp(session)
         self._store.save(session)
         if session is self._session:
             self._history = history

@@ -67,6 +67,16 @@ class ContextViewCapability(AbstractCapability[Any]):
         """Instructions and tools of the last request, for diagnostics."""
         return self._snapshot
 
+    def reset(self) -> None:
+        """Forgets the last view and its snapshot.
+
+        Called when another conversation is bound: both describe a request *this*
+        session never made, and `/context` would report the strategy of the previous
+        one as if it had just been applied.
+        """
+        self._last = None
+        self._snapshot = None
+
     def project(self, messages: Sequence[ModelMessage]) -> ViewResult:
         """Projects a history with the strategy, without touching the run state.
 

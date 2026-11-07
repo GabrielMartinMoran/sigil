@@ -66,6 +66,11 @@ def render_report(report: ContextReport) -> str:
             f'  available        : {_fmt_tokens(budget.available_for_history)}',
         ]
     )
+    if not report.tools and not report.instructions:
+        # A session written before the measurement was persisted, or one that has not
+        # made a request in this process yet. Saying so is better than passing the zero
+        # off as a measurement: the room it leaves is not the room there is.
+        lines.append('  note             : the fixed blocks are not measured in this session yet')
 
     if report.view is not None and report.view.changed:
         view = report.view

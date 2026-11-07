@@ -558,10 +558,15 @@ this codebase:
    and only ever grows during a turn, so the prefix already on disk is the
    prefix that will be on disk again.
 2. **Rewrite the last few rows too.** `recover_history` and `repair_messages`
-   rewrite the *tail*: an unanswered call gets a synthesized result, a suspended
-   response is stamped `interrupted`. A blind append would keep the broken
-   version and add a second answer. Rewriting eight rows costs nothing and
-   covers every repair the recovery path performs.
+   rewrite the *tail*: the calls of the last response that nothing answered get a
+   synthesized result, and a suspended response is stamped `interrupted`. A blind
+   append would keep the broken version and add a second answer. Rewriting eight
+   rows costs nothing and covers every repair the recovery path performs.
+   **Only the frontier is repaired**: a dangling call in the middle of a
+   conversation is not a turn that died — the library accepts it and closes it in
+   memory before every request — and repairing those invented tool output that was
+   never produced, wrote it to disk as a turn of its own and then reported a crash
+   that never happened.
 3. **Open the turn before its first message.** `messages.turn_id` is `NOT NULL`,
    so the `turns` row is inserted in the same transaction as the message that
    opens it. A turn row that arrives late would need a nullable column and a
@@ -820,7 +825,8 @@ session can be written out as JSON, and the whole database can be copied with
 format, which is a stronger guarantee than an importer ever gives.
 
 The schema therefore starts at `user_version = 1` and has no marker for an
-import that never happened. That number is what later schema changes step past.
+import that never happened. That number is what later schema changes step past;
+it is at `2` as of the context measurement described in [Schema steps](#schema-steps).
 
 ## What changes in the code
 
@@ -1043,6 +1049,10 @@ CREATE TABLE sessions (
     window       INTEGER,
     efforts      TEXT    NOT NULL DEFAULT '[]',
     images       INTEGER NOT NULL DEFAULT 1,
+    -- What the last request measured of the blocks that are always sent. A property
+    -- of the conversation and not of the process: `0` means "not measured here yet".
+    tools_tokens        INTEGER NOT NULL DEFAULT 0,
+    instructions_tokens INTEGER NOT NULL DEFAULT 0,
     created_at   TEXT    NOT NULL,
     updated_at   TEXT    NOT NULL
 ) STRICT, WITHOUT ROWID;
@@ -1181,10 +1191,29 @@ CREATE TABLE app_state (
     value TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 ```
 
 One consequence worth stating: `roadmap_items.execution_id` uses `''` for the
 root, so it cannot be a foreign key on `agent_executions`. Rows for a discarded
 subagent are deleted by `RoadmapRegistry.discard`, which already does that work;
 the cascade only covers the session.
+
+## Schema steps
+
+The DDL above is what a database created today looks like, and it is applied
+whole. A database written by an older Sigil carries a lower `user_version`, and
+`Database._apply_schema` runs the numbered steps it is missing before stamping the
+current number. A step only ever touches a file that predates it, so the two paths
+end in the same shape.
+
+| Step | Adds |
+| --- | --- |
+| 2 | `sessions.tools_tokens`, `sessions.instructions_tokens` |
+
+Step 2 exists because the two numbers the context meter measures per request — the
+cost of the tool schemas and of the instruction blocks — come from
+`ModelRequestParameters`, which only exists while a request is being made. Nothing
+can rebuild them from the transcript, so they are written on the session and read
+back by `/load`; the panel and `/context` show a budget for the conversation that
+is actually the conversation's.
