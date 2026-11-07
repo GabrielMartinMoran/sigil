@@ -242,3 +242,26 @@ def test_header_and_body_are_plain_renderables():
     report = build_debug_report([], snapshot=meter.snapshot([]), request=snapshot_request(None), model='m')
     assert 'DEBUG' in build_debug_header(report).plain
     assert build_debug_body(report) is not None
+
+
+def test_should_expose_real_turn_node_timings_in_debug_text() -> None:
+    async def scenario() -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _make_app(tmp)
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                worker = app.run_turn('hello')
+                await worker.wait()
+                report = await app.show_debug_text()
+                assert 'Turn timing: total' in report
+                assert 'ModelRequestNode:' in report
+                assert 'first event' in report
+                assert 'outside nodes' in report
+                app.set_debug_visible(True)
+                app.refresh_debug(immediate=True)
+                view = app.query_one(AgentDebugView)
+                from tests.ui_helpers import render_text
+
+                assert 'Turn timing: total' in render_text(view._body.content)
+
+    asyncio.run(scenario())

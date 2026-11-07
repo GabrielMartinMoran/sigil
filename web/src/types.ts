@@ -25,6 +25,7 @@ export type TranscriptItem = {
   call_id?: string;
   args?: unknown;
   ok?: boolean;
+  summary?: { text: string; status: 'good' | 'bad' | 'neutral' } | null;
 };
 
 export type SessionView = {

@@ -10,6 +10,8 @@
 import { create } from 'zustand';
 
 import { ApiError, api, Unauthorized } from './api';
+import { finishTool } from './toolPresentation';
+import type { ToolView } from './toolPresentation';
 import type { LoginState, RepositoryGroup, SessionSummary, State, TranscriptItem } from './types';
 
 export type Phase = 'loading' | 'login' | 'ready' | 'error';
@@ -17,10 +19,12 @@ export type Phase = 'loading' | 'login' | 'ready' | 'error';
 type Stream = {
   text: string;
   thinking: string;
-  tools: { name: string; phase: 'running' | 'done' | 'failed'; detail: string; ms: number }[];
+  tools: ToolView[];
+  batch: number;
+  afterTools: boolean;
 };
 
-const emptyStream = (): Stream => ({ text: '', thinking: '', tools: [] });
+const emptyStream = (): Stream => ({ text: '', thinking: '', tools: [], batch: 0, afterTools: false });
 
 type Store = {
   phase: Phase;
@@ -225,31 +229,43 @@ export const useStore = create<Store>((set, get) => ({
         set({ busy: true, stream: emptyStream() });
         return;
       case 'text_delta':
-        set({ stream: { ...get().stream, text: get().stream.text + text(data.text) } });
+        set({
+          stream: {
+            ...get().stream,
+            text: get().stream.text + text(data.text),
+            afterTools: get().stream.tools.length > 0,
+          },
+        });
         return;
       case 'thinking_delta':
-        set({ stream: { ...get().stream, thinking: get().stream.thinking + text(data.text) } });
+        set({
+          stream: {
+            ...get().stream,
+            thinking: get().stream.thinking + text(data.text),
+            afterTools: get().stream.tools.length > 0,
+          },
+        });
         return;
       case 'tool_call': {
-        const tools = [
-          ...get().stream.tools,
-          { name: text(data.tool_name), phase: 'running' as const, detail: '', ms: 0 },
+        const stream = get().stream;
+        const batch = stream.batch + (stream.afterTools ? 1 : 0);
+        const tools: ToolView[] = [
+          ...stream.tools,
+          {
+            id: text(data.invocation_id) || `live-${text(data.seq) || String(stream.tools.length)}`,
+            name: text(data.tool_name),
+            phase: 'running',
+            args: data.args,
+            output: '',
+            started: Date.now(),
+            batch,
+          },
         ];
-        set({ stream: { ...get().stream, tools } });
+        set({ stream: { ...stream, tools, batch, afterTools: false } });
         return;
       }
       case 'tool_finished': {
-        const tools = get().stream.tools.map((tool) =>
-          tool.name === text(data.tool_name) && tool.phase === 'running'
-            ? {
-                ...tool,
-                phase: data.ok ? ('done' as const) : ('failed' as const),
-                detail: text(data.error) || text(data.preview),
-                ms: Number(data.duration_ms ?? 0),
-              }
-            : tool,
-        );
-        set({ stream: { ...get().stream, tools } });
+        set({ stream: { ...get().stream, tools: finishTool(get().stream.tools, data) } });
         return;
       }
       case 'turn_finished':

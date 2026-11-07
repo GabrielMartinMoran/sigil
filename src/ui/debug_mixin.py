@@ -126,7 +126,8 @@ class DebugMixin:
             report = self.debug_report(pending)
         except Exception:  # noqa: BLE001 - not even diagnostics bring the app down
             return
-        view.update_report(report)
+        timings = getattr(self, '_turn_timings', None)
+        view.update_report(report, timing='' if timings is None else timings.render())
 
     # --- commands ---------------------------------------------------------
 
@@ -134,4 +135,6 @@ class DebugMixin:
         """Plain-text report, for `/debug --text` and for copying."""
         from src.engine.context.meter.debug_render import render_debug_report
 
-        return render_debug_report(self.debug_report())
+        report = render_debug_report(self.debug_report())
+        timings = getattr(self, '_turn_timings', None)
+        return report if timings is None else f'{report}\n\n{timings.render()}'

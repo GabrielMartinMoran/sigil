@@ -28,6 +28,7 @@ from src.engine.mcp.tool_models.server_status import ServerStatus
 from src.engine.roadmap.models.todo_item import TodoItem
 from src.engine.sessions.session_store import Session, SessionSummary
 from src.engine.skills.loaded import loaded_skills
+from src.engine.tooling.outputs import present_output
 from src.engine.tooling.presentation import human_bytes
 from src.engine.workspace.models.worktree import Workspace
 
@@ -334,6 +335,14 @@ def _described(content: Any) -> str:
     return f'{text}\n{prefix}' if text else prefix
 
 
+def _has_binary(value: Any) -> bool:
+    return (
+        isinstance(value, (BinaryContent, bytes))
+        or isinstance(value, (list, tuple))
+        and any(isinstance(item, BinaryContent) for item in value)
+    )
+
+
 def _part_view(part: Any, index: int) -> dict[str, Any] | None:
     kind = getattr(part, 'part_kind', '')
     if kind == 'user-prompt':
@@ -361,12 +370,14 @@ def _part_view(part: Any, index: int) -> dict[str, Any] | None:
         # being told why, so it paints as a failure. Reading only `part_kind` marked
         # every retry green.
         ok = getattr(part, 'outcome', 'success') == 'success'
+        shown = present_output(part.tool_name, part.content)
         return {
             'kind': 'tool_result',
             'index': index,
             'tool_name': _text(getattr(part, 'tool_name', '')),
             'call_id': _text(getattr(part, 'tool_call_id', '')),
-            'text': _cut(_described(getattr(part, 'content', ''))),
+            'text': _cut(shown.text) if not _has_binary(part.content) else _cut(_described(part.content)),
+            'summary': None if shown.summary is None else {'text': shown.summary.text, 'status': shown.summary.status},
             'ok': ok,
         }
     if kind == 'retry-prompt':

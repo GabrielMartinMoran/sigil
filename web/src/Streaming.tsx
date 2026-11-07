@@ -1,6 +1,7 @@
 import { useDeferredValue, useEffect, useState } from 'react';
 
 import { MarkdownText } from './Markdown';
+import { Tools } from './Tools';
 import { useStore } from './store';
 
 /**
@@ -36,20 +37,8 @@ function LiveTurn() {
 
   return (
     <div className="space-y-2">
-      {stream.tools.map((tool, position) => (
-        <div key={`${tool.name}-${position}`} className="font-mono text-xs">
-          <span className={tool.phase === 'failed' ? 'text-danger' : 'text-accent'}>
-            {tool.phase === 'running' ? '▸' : tool.phase === 'failed' ? '✗' : '✓'} {tool.name}
-          </span>
-          {tool.phase === 'running' ? (
-            <span className="text-ink-faint ml-2 animate-pulse">running…</span>
-          ) : (
-            <span className="text-ink-faint ml-2">{tool.ms > 0 ? `${tool.ms} ms` : ''}</span>
-          )}
-          {tool.detail ? (
-            <span className="text-ink-faint/70 ml-2 break-all">{tool.detail.split('\n')[0]?.slice(0, 120)}</span>
-          ) : null}
-        </div>
+      {[...new Set(stream.tools.map((tool) => tool.batch))].map((batch) => (
+        <Tools key={batch ?? 0} tools={stream.tools.filter((tool) => tool.batch === batch)} />
       ))}
 
       {stream.thinking ? (

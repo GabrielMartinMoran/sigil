@@ -47,6 +47,7 @@ from src.engine.interaction.models.question_answer import QuestionAnswer
 from src.engine.interaction.models.question_item import QuestionItem
 from src.engine.sessions.recovery import recover_history
 from src.engine.shell import running as running_commands
+from src.engine.tooling.outputs import present_output
 from src.server.events import EventHub
 
 CHECKPOINT_INTERVAL = 1.0
@@ -302,7 +303,7 @@ class ServerRuntime:
                     self.hub.publish('thinking_delta', text=delta.content_delta)
             elif isinstance(event, FunctionToolResultEvent):
                 ok = getattr(event.part, 'outcome', 'success') == 'success'
-                content = str(getattr(event.part, 'content', ''))
+                content = present_output(event.part.tool_name, event.part.content).text
                 self.hub.publish(
                     'tool_result',
                     tool_name=event.part.tool_name,
@@ -321,6 +322,7 @@ class ServerRuntime:
                 'tool_call',
                 tool_name=event.tool_name,
                 args=_jsonable(event.args),
+                invocation_id=getattr(event, 'invocation_id', ''),
             )
             return
         summary = getattr(event, 'summary', None)
@@ -328,10 +330,11 @@ class ServerRuntime:
             'tool_finished',
             tool_name=event.tool_name,
             phase=phase,
+            invocation_id=getattr(event, 'invocation_id', ''),
             ok=phase != 'error',
             error=event.error,
             duration_ms=round(event.duration_ms or 0.0, 1),
-            preview=(event.result_preview or '')[:PREVIEW_CHARS],
+            preview=(event.output if getattr(event, 'output', None) is not None else '')[:PREVIEW_CHARS],
             summary=None if summary is None else {'text': summary.text, 'status': summary.status},
         )
 

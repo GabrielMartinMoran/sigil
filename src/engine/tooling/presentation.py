@@ -11,11 +11,10 @@ Two things cross the line, both of them data:
 - **the text**, as a short plain string;
 - **how it went**, as a status: `good`, `bad` or `neutral`.
 
-Nothing about layout crosses it: no colors, no widths, no glyphs. The row that shows
-this in the transcript draws `✓` for "the call returned" from its own state, and
-colors the text with the status declared here. Keeping those apart is what lets a
-failing test (`bad`) look different from a tool that crashed (`the call raised`),
-which is the distinction a reader actually needs.
+Nothing about layout crosses it: no colors, no widths, no glyphs. The clients
+combine the call outcome with the status declared here to paint the row. A failed
+test is a bad result, not a raised exception; the detail preserves that distinction
+even when both receive a failure mark.
 
 A tool that declares no presenter gets no summary. That is deliberate: the fallback
 of the old code was `str(result)`, which put a Pydantic repr in the middle of the

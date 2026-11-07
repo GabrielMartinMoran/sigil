@@ -21,7 +21,7 @@ import json
 import re
 import time
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic_ai.messages import (
     BinaryContent,
@@ -36,17 +36,22 @@ from pydantic_ai.messages import (
 )
 from rich.console import Group
 from rich.markdown import Markdown
+from rich.panel import Panel
 from rich.text import Text
+from textual.events import Click
+from textual.timer import Timer
 from textual.widgets import Static
 
 from src.engine.attachments.content import describe_attachments, images_in
 from src.engine.attachments.image_attachment import ImageAttachment
 from src.engine.context.images import image_size
+from src.engine.tooling.outputs import present_output
 from src.engine.tooling.presentation import ToolSummary, display_name
 from src.ui.messages import NodeOpened, RollbackRequested
 from src.ui.palette import color
 from src.ui.widgets.reading import ReadOnlyScroll
 from src.ui.widgets.rows import fit
+from src.ui.widgets.status_bar import SPINNER_FRAMES, SPINNER_INTERVAL
 
 RENDER_INTERVAL = 0.08
 """Seconds between Markdown re-renders while streaming.
@@ -156,26 +161,12 @@ def output_lines(value: Any) -> list[str]:
     correctly with its indentation, and a tool that answers with code is the common
     case. Trailing whitespace is dropped — it is invisible and costs width.
     """
-    lines = [line.rstrip() for line in _raw_output(value).splitlines()]
+    text = value if isinstance(value, str) else present_output('', value).text
+    lines = [line.rstrip() for line in text.splitlines()]
     # A trailing blank line is an artefact of `print`-style output, not content.
     while lines and not lines[-1]:
         lines.pop()
     return lines
-
-
-def _raw_output(value: Any) -> str:
-    """The text of a result, preferring a process's own output over its repr."""
-    stdout = getattr(value, 'stdout', None)
-    stderr = getattr(value, 'stderr', None)
-    if stdout is None and stderr is None:
-        try:
-            return value if isinstance(value, str) else str(value)
-        except Exception:  # noqa: BLE001 - see `preview`
-            return object.__repr__(value)
-    # stderr last: a command that worked and complained reads better that way, and a
-    # failure puts its reason at the bottom, which is where the eye lands.
-    parts = [part for part in (stdout, stderr) if part]
-    return '\n'.join(parts) if parts else f'exit {getattr(value, "returncode", "?")}'
 
 
 def _clip(line: str, limit: int = TOOL_OUTPUT_WIDTH) -> str:
@@ -385,13 +376,15 @@ class ToolCallBlock(Static):
     `engine.tooling.presentation` — and not from `str(result)`, which is how a
     Pydantic repr used to end up in the middle of a conversation.
 
-    Two things are deliberately separate. The **glyph** says whether the call itself
-    came back (`✓`) or raised (`✗`). The **color of the summary** says how it went
-    (`good`, `bad`): a test run that fails is a successful call with a bad result, and
-    painting that with `✗` would make it indistinguishable from a broken tool.
+    The glyph and color summarize the user-visible outcome: `✓` for a completed
+    call, `✗` for a raised call or a declared bad result. The detail distinguishes
+    a failed test from a tool exception; both deserve a visible failure mark.
 
     The body carries the beginning of the output, dimmed.
     """
+
+    can_focus = True
+    BINDINGS: ClassVar = [('enter', 'toggle_output', 'Tool output'), ('space', 'toggle_output', 'Tool output')]
 
     #: Fields the subclass needs before the first paint.
     _pending_state: bool = True
@@ -405,6 +398,9 @@ class ToolCallBlock(Static):
         self._ok = True
         self._error: str | None = None
         self._pending = True
+        self._pending_frame = 0
+        self._pending_started = time.monotonic()
+        self._pending_timer: Timer | None = None
         self._summary: ToolSummary | None = None
         self._duration_ms: float | None = None
         self._prepare()
@@ -416,6 +412,23 @@ class ToolCallBlock(Static):
         `__init__` paints once at the end, and a subclass that set its fields after
         `super().__init__` would be painted with none of them.
         """
+
+    def on_mount(self) -> None:
+        if self._pending:
+            self._pending_timer = self.set_interval(SPINNER_INTERVAL, self._advance_pending)
+
+    def on_unmount(self) -> None:
+        self._stop_pending_timer()
+
+    def _advance_pending(self) -> None:
+        if self._pending:
+            self._pending_frame = (self._pending_frame + 1) % len(SPINNER_FRAMES)
+            self._update_content()
+
+    def _stop_pending_timer(self) -> None:
+        if self._pending_timer is not None:
+            self._pending_timer.stop()
+            self._pending_timer = None
 
     @property
     def name(self) -> str:
@@ -436,15 +449,20 @@ class ToolCallBlock(Static):
         return self._duration_ms
 
     def set_result(self, output: Any, *, ok: bool = True) -> None:
-        self._result = output
+        shown = present_output(self._name, output)
+        self._result = shown.text
+        if self._summary is None:
+            self._summary = shown.summary
         self._ok = ok
         self._pending = False
+        self._stop_pending_timer()
         self._update_content()
 
     def set_error(self, message: str) -> None:
         self._error = message
         self._ok = False
         self._pending = False
+        self._stop_pending_timer()
         self._update_content()
 
     def set_summary(self, summary: ToolSummary | None, duration_ms: float | None = None) -> None:
@@ -463,6 +481,17 @@ class ToolCallBlock(Static):
         self._expanded = expanded
         self._update_content()
 
+    def action_toggle_output(self) -> None:
+        self.set_expanded(not self._expanded)
+
+    def on_click(self, event: Click) -> None:
+        event.stop()
+        self.action_toggle_output()
+
+    @property
+    def failed(self) -> bool:
+        return not self._ok or self._failed
+
     def repaint(self) -> None:
         """Rebuilds the block after a theme change; see `ChatLog.repaint`."""
         self._update_content()
@@ -475,9 +504,15 @@ class ToolCallBlock(Static):
         self.update(self._build())
 
     def _build(self):
-        lines: list[Text] = [self._header()]
-        lines.extend(self._body())
-        return Group(*lines)
+        body = self._body()
+        if self._expanded and body:
+            output = Text('\n').join(line[len(GUTTER) :] for line in body)
+            if self._name == 'run':
+                command = Text(f'$ {self._argument_hint()}\n', style=color(self, 'tool-title'))
+                output = command + output
+            panel = Panel(output, border_style=color(self, 'tool-border'), padding=(0, 1))
+            return Group(self._header(), panel)
+        return Group(self._header(), *body)
 
     def _header(self) -> Text:
         """The call on the left, the outcome flush right, on the block's own width.
@@ -490,28 +525,48 @@ class ToolCallBlock(Static):
         border = color(self, 'tool-border')
         text = Text()
         text.append(GUTTER, style=border)
-        text.append(f'{self._state_mark()} ', style=border)
-        text.append(display_name(self._name), style=f'bold {color(self, "tool-title")}')
-        arguments = format_tool_args(self._args)
+        state_style = color(self, 'error' if self.failed else 'success') if not self._pending else border
+        text.append(f'{self._state_mark()} ', style=state_style)
+        name = display_name(self._name)
+        text.append(name.ljust(12), style=color(self, 'tool-title'))
+        arguments = self._argument_hint()
         if arguments:
-            text.append(f' {arguments}', style=color(self, 'muted'))
+            text.append(f' {arguments}', style=color(self, 'text'))
         return fit(text, self._outcome(), self.size.width)
+
+    def _argument_hint(self) -> str:
+        args = self._args
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except ValueError:
+                return preview(args)
+        if isinstance(args, dict):
+            for key in ('cmds', 'command', 'path', 'query', 'url'):
+                value = args.get(key)
+                if isinstance(value, list):
+                    return preview(' ; '.join(str(item) for item in value))
+                if isinstance(value, str) and value:
+                    return preview(value)
+        return format_tool_args(args)
 
     def _outcome(self) -> Text | None:
         """`9 passed in 0.45s · 1.2s`: the tool's summary, then how long it took.
 
-        Nothing while the call runs — the `…` mark already says that a timer would be
-        the only thing moving. Nothing after a reload either: the duration lives in the
-        event and is not persisted, and `0.0s` would be a lie.
+        While running, show a live elapsed time instead of an outcome. After a
+        reload, no duration is invented: it lives in the event, not in storage.
         """
         if self._pending:
-            return None
+            elapsed = max(0, int(time.monotonic() - self._pending_started))
+            return Text(f'running · {elapsed}s', style=color(self, 'muted'))
         parts: list[tuple[str, str]] = []
         if self._summary is not None:
             parts.append((self._summary.text, self._status_style(self._summary.status)))
         elapsed = format_duration(self._duration_ms)
         if elapsed:
             parts.append((elapsed, color(self, 'muted')))
+        if self._result is not None or self._error:
+            parts.append(('⌄' if self._expanded else '›', color(self, 'muted')))
         if not parts:
             return None
         text = Text(no_wrap=True, overflow='ellipsis')
@@ -524,16 +579,16 @@ class ToolCallBlock(Static):
     def _status_style(self, status: str) -> str:
         """A bad result is red, a good one green, an unknown one muted.
 
-        The color is the second axis: it says how the call went, while the glyph says
-        whether it came back at all.
+        The summary preserves the declared status; the glyph also marks a bad
+        result as failed, without turning it into a tool exception.
         """
         return {'good': color(self, 'success'), 'bad': color(self, 'error')}.get(status, color(self, 'muted'))
 
     def _state_mark(self) -> str:
-        """`…` while running, `✓` or `✗` after. One column, so nothing shifts."""
+        """An animated mark while running, `✓` or `✗` after; always one cell."""
         if self._pending:
-            return '…'
-        return '✓' if self._ok else '✗'
+            return SPINNER_FRAMES[self._pending_frame]
+        return '✗' if self.failed else '✓'
 
     @property
     def _failed(self) -> bool:
@@ -608,14 +663,29 @@ class ToolGroupHeader(Static):
     row says everything a header would.
     """
 
+    can_focus = True
+    BINDINGS: ClassVar = [('enter', 'toggle_group', 'Tool group'), ('space', 'toggle_group', 'Tool group')]
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(Text(''), **kwargs)
         self._rows: list[ToolCallBlock] = []
+        self._collapsed = False
+
+    def action_toggle_group(self) -> None:
+        if self.closed:
+            self._collapsed = not self._collapsed
+            self.refresh_from(self._rows)
+
+    def on_click(self, event: Click) -> None:
+        event.stop()
+        self.action_toggle_group()
 
     def refresh_from(self, rows: Sequence[ToolCallBlock]) -> None:
         """Repaints from the rows the transcript is holding for this batch."""
         self._rows = list(rows)
         self.display = len(self._rows) >= MIN_GROUP_ROWS
+        for row in self._rows:
+            row.display = not self._collapsed or row.failed or row.pending
         self.update(self._build())
 
     def on_resize(self) -> None:
@@ -627,29 +697,38 @@ class ToolGroupHeader(Static):
         return all(not row.pending for row in self._rows)
 
     def _build(self) -> Text:
-        rows = self._rows
-        total = len(rows)
-        done = sum(1 for row in rows if not row.pending)
-        errors = sum(1 for row in rows if row.raised)
-        text = Text(no_wrap=True, overflow='ellipsis')
-        text.append(GUTTER, style=color(self, 'tool-border'))
+        total = len(self._rows)
+        done = sum(not row.pending for row in self._rows)
+        errors = sum(row.raised for row in self._rows)
+        failed = sum(row.failed and not row.raised for row in self._rows)
+        text = Text(GUTTER, style=color(self, 'tool-border'))
+        mark = '⋮ ' if not self.closed else '✗ ' if errors or failed else '✓ '
+        text.append(mark, style=color(self, 'error' if errors or failed else 'tool-title'))
+        text.append(f'{total} tools' + (' completed' if self.closed else ''), style=f'bold {color(self, "tool-title")}')
+        badge = self._badge(done, total, errors, failed)
+        text.append(f'  {badge}', style=f'{color(self, "tool-title")} reverse')
+        elapsed = format_duration(self._longest()) if self.closed else ''
+        right = Text(f'{elapsed}  {"›" if self._collapsed else "⌄"}', style=color(self, 'muted'))
+        header = fit(text, right, self.size.width)
+        if self._collapsed:
+            counts: dict[str, int] = {}
+            for row in self._rows:
+                name = display_name(row.name)
+                counts[name] = counts.get(name, 0) + 1
+            detail = ' · '.join(f'{count} {name}' for name, count in counts.items())
+            header.append(f'\n{GUTTER}  {detail} · collapsed group', style=color(self, 'muted'))
+        return header
+
+    def _badge(self, done: int, total: int, errors: int, failed: int) -> str:
         if not self.closed:
-            text.append('⋯ ', style=color(self, 'tool-border'))
-        text.append(f'{total} tool' + ('s' if total != 1 else ''), style=f'bold {color(self, "tool-title")}')
-        if not self.closed:
-            text.append(f'  [{done}/{total}]', style=color(self, 'muted'))
-        if errors:
-            text.append(' · ', style=color(self, 'muted'))
-            text.append(f'{errors} error' + ('s' if errors != 1 else ''), style=color(self, 'error'))
-        # The batch's duration is its longest row, not the sum: the calls ran together,
-        # so adding them up would invent a number nobody waited for.
-        elapsed = format_duration(self._longest())
-        if elapsed and self.closed:
-            text.append(' · ', style=color(self, 'muted'))
-            text.append(elapsed, style=color(self, 'muted'))
-        if self.size.width and text.cell_len > self.size.width:
-            text.truncate(self.size.width, overflow='ellipsis')
-        return text
+            return f'{done} / {total} done'
+        if errors or failed:
+            return ' · '.join(
+                part for part in (f'{errors} error' if errors else '', f'{failed} failed' if failed else '') if part
+            )
+        if self._rows and all(row._summary is not None and row._summary.status == 'good' for row in self._rows):
+            return 'all passed'
+        return 'done'
 
     def _longest(self) -> float | None:
         durations = [row.duration_ms for row in self._rows if row.duration_ms is not None]
@@ -1084,10 +1163,13 @@ class ChatLog(ReadOnlyScroll):
         self._current.add_text(delta)
 
     def finalize(self) -> None:
-        """Forces the pending render of every block (end of turn/history)."""
+        """Flushes the transcript and closes calls the run never returned."""
         for child in self.children:
             if isinstance(child, AssistantBlock):
                 child.finalize()
+            elif isinstance(child, ToolCallBlock) and child.pending:
+                child.set_error('Interrupted before a result was received.')
+        self._refresh_group()
 
     def repaint(self) -> None:
         """Rebuilds every block so the text picks up the colors of the new theme.

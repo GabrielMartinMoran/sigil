@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
 
 import { MarkdownText } from './Markdown';
+import { Tools } from './Tools';
+import { transcriptBlocks } from './toolPresentation';
 import type { Attachment, TranscriptItem } from './types';
 
 /**
@@ -9,8 +11,8 @@ import type { Attachment, TranscriptItem } from './types';
  * Three decisions:
  *
  * - **Items, not messages.** A tool call and its result travel as two of them with
- *   the same `call_id`; pairing them here would lose the case where the result never
- *   arrived, which is exactly what a cancelled turn looks like.
+ *   the same `call_id`; the presentation pairs them by ID and keeps missing results visible
+ *   as interrupted calls rather than dropping them.
  * - **The tool result is text; the answer is Markdown.** A tool result is what the
  *   tool produced and is shown verbatim. The answer is prose the model wrote on
  *   purpose, and rendering it is most of the value of a chat UI — the terminal client
@@ -49,9 +51,13 @@ export function Transcript({ items }: { items: TranscriptItem[] }) {
         {items.length === 0 ? (
           <p className="text-ink-faint py-16 text-center text-sm">Nothing here yet. Ask something and it starts.</p>
         ) : null}
-        {items.map((item, position) => (
-          <Bubble key={`${item.index}-${item.call_id ?? ''}-${position}`} item={item} />
-        ))}
+        {transcriptBlocks(items).map((block, position) =>
+          block.kind === 'tools' ? (
+            <Tools key={block.id} tools={block.tools} />
+          ) : (
+            <Bubble key={`${block.item.index}-${position}`} item={block.item} />
+          ),
+        )}
       </div>
     </div>
   );
@@ -86,30 +92,6 @@ function Bubble({ item }: { item: TranscriptItem }) {
     );
   }
 
-  if (item.kind === 'tool_call') {
-    return (
-      <div className="text-ink-faint font-mono text-xs">
-        <span className="text-accent">▸ {item.tool_name}</span>
-        {item.args !== undefined && item.args !== null ? (
-          <span className="text-ink-faint/70 ml-2 break-all">{summarize(item.args)}</span>
-        ) : null}
-      </div>
-    );
-  }
-
-  if (item.kind === 'tool_result') {
-    return (
-      <details className="group font-mono text-xs">
-        <summary className={`cursor-pointer select-none ${item.ok ? 'text-ink-faint' : 'text-danger'}`}>
-          {item.ok ? '✓' : '✗'} {item.tool_name}
-        </summary>
-        <pre className="scroll-thin border-border-subtle bg-surface-sunken text-ink-muted mt-1.5 max-h-72 overflow-auto rounded border p-2.5 whitespace-pre-wrap">
-          {item.text}
-        </pre>
-      </details>
-    );
-  }
-
   return <MarkdownText text={item.text ?? ''} />;
 }
 
@@ -124,14 +106,4 @@ function AttachmentChip({ attachment }: { attachment: Attachment }) {
       {attachment.width ? ` · ${attachment.size}` : ''}
     </span>
   );
-}
-
-/** One-line hint of what a call was asked to do. */
-function summarize(args: unknown): string {
-  if (typeof args !== 'object' || args === null) return String(args);
-  const entries = Object.entries(args as Record<string, unknown>);
-  const first = entries.find(([, value]) => typeof value === 'string' && value.length > 0);
-  if (first === undefined) return '';
-  const text = String(first[1]).replace(/\s+/g, ' ');
-  return text.length > 90 ? `${text.slice(0, 90)}…` : text;
 }

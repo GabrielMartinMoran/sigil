@@ -242,3 +242,26 @@ def test_register_shell_tools_passes_the_logger():
     assert [event.phase for event in events] == ['start', 'success']
     assert events[0].tool_name == 'run'
     assert events[0].args['cmds'] == ['true']
+
+
+def test_should_correlate_parallel_same_name_finishes_by_invocation_id() -> None:
+    logger = RecordingLogger()
+
+    async def scenario() -> None:
+        release = asyncio.Event()
+
+        async def tool(value: str) -> str:
+            if value == 'first':
+                await release.wait()
+            else:
+                release.set()
+            return value
+
+        wrapped = wrap_tool(tool, tool_name='same', logger=logger)
+        await asyncio.gather(wrapped('first'), wrapped('second'))
+
+    asyncio.run(scenario())
+    starts = {event.args['value']: event.invocation_id for event in logger.events if event.phase == 'start'}
+    ends = {event.result_preview: event.invocation_id for event in logger.events if event.phase == 'success'}
+    assert starts == ends
+    assert starts['first'] and starts['first'] != starts['second']

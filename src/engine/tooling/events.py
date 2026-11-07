@@ -49,3 +49,7 @@ class ToolCallEvent:
     line, for anyone inspecting the log, while the summary is the sentence the tool
     chose because it is the one worth reading. The chat shows this one.
     """
+    invocation_id: str = ''
+    """Stable logging identity across start and finish, independent of the tool name."""
+    output: str | None = None
+    """Human-formatted output, separate from the raw logging preview."""

@@ -11,6 +11,7 @@ from __future__ import annotations
 import functools
 import inspect
 import time
+import uuid
 from collections.abc import Callable, Mapping
 from typing import Any, get_type_hints
 
@@ -24,6 +25,7 @@ from src.engine.tooling.concurrency import (
 )
 from src.engine.tooling.events import ToolCallEvent, preview
 from src.engine.tooling.logging import ToolLogger, emit_tool_event, emit_tool_event_sync
+from src.engine.tooling.outputs import present_output
 from src.engine.tooling.presentation import Describe, summary_of
 
 
@@ -105,6 +107,7 @@ def _start_event(
     return ToolCallEvent(
         tool_name=tool_name,
         phase='start',
+        invocation_id=uuid.uuid4().hex,
         args=_bind_args(func, args, kwargs, drop_first=drop_first),
     )
 
@@ -116,20 +119,25 @@ def _end_event(
     *,
     describe: Describe | None = None,
     args: Mapping[str, Any] | None = None,
+    invocation_id: str = '',
 ) -> ToolCallEvent:
+    shown = present_output(tool_name, result)
     return ToolCallEvent(
         tool_name=tool_name,
         phase='success',
+        invocation_id=invocation_id,
         duration_ms=round((time.perf_counter() - started) * 1000, 2),
         result_preview=preview(result),
-        summary=summary_of(describe, args or {}, result),
+        summary=summary_of(describe, args or {}, result) or shown.summary,
+        output=shown.text,
     )
 
 
-def _error_event(tool_name: str, started: float, exc: BaseException) -> ToolCallEvent:
+def _error_event(tool_name: str, started: float, exc: BaseException, invocation_id: str = '') -> ToolCallEvent:
     return ToolCallEvent(
         tool_name=tool_name,
         phase='error',
+        invocation_id=invocation_id,
         duration_ms=round((time.perf_counter() - started) * 1000, 2),
         error=f'{type(exc).__name__}: {exc}',
     )
@@ -220,13 +228,14 @@ def wrap_tool(
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             ctx, func_args = split_ctx(args)
             forwarded = forward(ctx, func_args)
-            await emit_tool_event(logger, _start_event(tool_name, func, forwarded, kwargs, drop_first=takes_ctx))
+            announcement = _start_event(tool_name, func, forwarded, kwargs, drop_first=takes_ctx)
+            await emit_tool_event(logger, announcement)
             started = time.perf_counter()
             try:
                 guard(ctx, forwarded, kwargs)
                 result = await func(*forwarded, **kwargs)
             except Exception as exc:
-                await emit_tool_event(logger, _error_event(tool_name, started, exc))
+                await emit_tool_event(logger, _error_event(tool_name, started, exc, announcement.invocation_id))
                 raise
             await emit_tool_event(
                 logger,
@@ -236,6 +245,7 @@ def wrap_tool(
                     result,
                     describe=describe,
                     args=_summary_args(func, forwarded, kwargs, takes_ctx),
+                    invocation_id=announcement.invocation_id,
                 ),
             )
             return result
@@ -246,18 +256,24 @@ def wrap_tool(
     def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
         ctx, func_args = split_ctx(args)
         forwarded = forward(ctx, func_args)
-        emit_tool_event_sync(logger, _start_event(tool_name, func, forwarded, kwargs, drop_first=takes_ctx))
+        announcement = _start_event(tool_name, func, forwarded, kwargs, drop_first=takes_ctx)
+        emit_tool_event_sync(logger, announcement)
         started = time.perf_counter()
         try:
             guard(ctx, forwarded, kwargs)
             result = func(*forwarded, **kwargs)
         except Exception as exc:
-            emit_tool_event_sync(logger, _error_event(tool_name, started, exc))
+            emit_tool_event_sync(logger, _error_event(tool_name, started, exc, announcement.invocation_id))
             raise
         emit_tool_event_sync(
             logger,
             _end_event(
-                tool_name, started, result, describe=describe, args=_summary_args(func, forwarded, kwargs, takes_ctx)
+                tool_name,
+                started,
+                result,
+                describe=describe,
+                args=_summary_args(func, forwarded, kwargs, takes_ctx),
+                invocation_id=announcement.invocation_id,
             ),
         )
         return result

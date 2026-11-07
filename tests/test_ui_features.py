@@ -605,7 +605,8 @@ def test_a_pending_call_is_marked_as_running():
                 from src.ui.widgets.chat_log import ToolCallBlock
 
                 block = next(child for child in chat.children if isinstance(child, ToolCallBlock))
-                assert '…' in render_text(block._build())
+                assert 'running' in render_text(block._build())
+                assert block._state_mark() != '✓'
 
     asyncio.run(inner())
 
@@ -627,7 +628,8 @@ def test_indentation_of_the_output_is_kept():
 
                 block = next(child for child in chat.children if isinstance(child, ToolCallBlock))
                 block.set_expanded(True)
-                assert '  │     return 1' in render_text(block._build())
+                # One panel-padding space plus the original four-space indent.
+                assert '│     return 1' in render_text(block._build())
 
     asyncio.run(inner())
 
