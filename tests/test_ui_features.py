@@ -238,6 +238,37 @@ def test_the_bar_shows_the_branch_and_the_diff(tmp_path):
     asyncio.run(inner())
 
 
+def test_should_refresh_the_branch_after_an_external_checkout(tmp_path):
+    from src.engine.workspace.manager import WorkspaceManager
+
+    root = tmp_path / 'repo'
+    root.mkdir()
+    _git(root, 'init', '-q', '-b', 'original')
+    (root / 'a.txt').write_text('one\n', encoding='utf-8')
+    _git(root, 'add', '.')
+    _git(root, 'commit', '-q', '-m', 'init')
+
+    async def inner():
+        app = _app(str(tmp_path), workspace_manager=WorkspaceManager(root))
+        async with app.run_test(size=(120, 30)):
+            app._stop_diff_polling()
+            await app.workers.wait_for_complete()
+            bar = app.query_one(StatusBar)
+            assert 'original' in bar.plain()
+
+            _git(root, 'checkout', '-q', '-b', 'updated')
+            await app.refresh_diff().wait()
+            assert 'updated' in bar.plain()
+            assert 'original' not in bar.plain()
+
+            _git(root, 'checkout', '-q', '--detach')
+            await app.refresh_diff().wait()
+            assert 'updated' not in bar.plain()
+            assert 'main@' in bar.plain()
+
+    asyncio.run(inner())
+
+
 def test_without_git_the_bar_says_nothing_about_changes():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
