@@ -95,7 +95,7 @@ class ActivityMixin:
 
     @work(group='diff')
     async def refresh_diff(self) -> None:
-        """Reads Git in a thread; overlapping polls share the in-flight read.
+        """Refreshes the diff and branch off-thread; overlapping polls share the read.
 
         Cancelling an exclusive async worker cannot stop its thread. Coalescing
         instead prevents a burst of tool events from spawning concurrent Git reads.
@@ -105,6 +105,7 @@ class ActivityMixin:
             return
         self._diff_reading = True
         try:
+            workspace = await asyncio.to_thread(self.workspace_badge)
             diff = await asyncio.to_thread(worktree_diff, root)
         except Exception:  # noqa: BLE001 - the bar is a summary, never a failure
             return
@@ -114,7 +115,9 @@ class ActivityMixin:
             return
         self._last_diff = diff
         try:
-            self.query_one(StatusBar).set_diff(diff)
+            bar = self.query_one(StatusBar)
+            bar.set_workspace(workspace)
+            bar.set_diff(diff)
         except Exception:  # noqa: BLE001
             return
 
