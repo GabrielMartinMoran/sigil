@@ -1,0 +1,62 @@
+@import 'tailwindcss' source(none);
+
+/*
+ * Sources are declared, never auto-detected.
+ *
+ * Tailwind scans the project by default, and that default is not deterministic:
+ * it excludes `node_modules` by path, so a symlinked or hoisted install (pnpm, a
+ * workspace, a clone that shares packages) gets scanned too. The utilities pulled
+ * out of React's own CSS then end up in the bundle, which makes the built output
+ * depend on how the dependencies were installed — and `web/dist` is committed, so
+ * that difference is a diff nobody can explain.
+ *
+ * With `source(none)` plus explicit globs, the same sources always produce the
+ * same CSS. Adding a file outside these globs means adding it here.
+ */
+@source './**/*.{ts,tsx}';
+@source '../index.html';
+
+/*
+ * The palette derives from the terminal client, so the two clients look like the
+ * same tool: a dark surface, one accent, monospace where the terminal uses
+ * monospace (code, tool output, ids).
+ */
+@theme {
+  --color-surface: #0b0d10;
+  --color-surface-raised: #14181d;
+  --color-surface-sunken: #07090b;
+  --color-border-subtle: #232a31;
+  --color-ink: #e6e9ec;
+  --color-ink-muted: #9aa4ae;
+  --color-ink-faint: #6b7681;
+  --color-accent: #7dd3a0;
+  --color-accent-ink: #06231a;
+  --color-warn: #e0b341;
+  --color-danger: #e06c75;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The transcript is the only scroller that should keep its scrollbar visible. */
+@utility scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-subtle) transparent;
+}

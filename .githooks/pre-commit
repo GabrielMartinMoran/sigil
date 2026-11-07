@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Sigil's pre-commit gate. Installed by `python scripts/install_hooks.py`, which
+# sets `core.hooksPath=.githooks` so the hook travels with the repository instead
+# of living in one person's `.git/hooks`.
+#
+# All the logic is in `scripts/pre_commit.py`: this file only finds an interpreter
+# and keeps the commit's exit code. Two details matter here:
+#
+# - The venv's Python is preferred. A hook that runs the system interpreter would
+#   miss the project's ruff and pytest environment.
+# - `--files` is not passed: the script reads the index itself, so an amended or
+#   partially staged commit sees exactly what it is about to record.
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$root" ]; then
+  echo "sigil pre-commit: not inside a git worktree" >&2
+  exit 1
+fi
+
+python="$root/.venv/bin/python"
+if [ ! -x "$python" ]; then
+  python="$(command -v python3 || command -v python || true)"
+fi
+if [ -z "$python" ]; then
+  echo "sigil pre-commit: no Python interpreter found (expected $root/.venv)" >&2
+  exit 1
+fi
+
+exec "$python" "$root/scripts/pre_commit.py" "$@"

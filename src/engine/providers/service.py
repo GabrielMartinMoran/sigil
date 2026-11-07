@@ -79,7 +79,6 @@ class ModelService:
     router: ModelRouter
     probe: CredentialProbe | None = None
     is_busy: IsBusy = field(default=lambda: False)
-
     _probe_results: dict[str, ProbeResult] = field(default_factory=dict, init=False, repr=False)
 
     # --- accounts ----------------------------------------------------------
@@ -218,6 +217,15 @@ class ModelService:
     async def catalog_for(self, alias: str | None = None) -> ModelCatalog:
         """The catalogue of ``alias``, or of the active account."""
         account = self.find(alias) if alias else self._require_active_account()
+        return await self._catalog_of(account)
+
+    async def _catalog_of(self, account: ProviderAccount) -> ModelCatalog:
+        """One account's catalogue, read the way its credential works.
+
+        The transport is chosen by the catalogue service, which was built with the
+        resolver that knows a plan account renews its token. Here it is only the
+        credential and the call.
+        """
         return await self.catalog.models(account, secret=self._api_key_for(account))
 
     def select(self, alias: str, model: str, thinking: ThinkingChoice = 'default') -> ModelSnapshot:
@@ -339,7 +347,7 @@ class ModelService:
         if account is None or self.catalog.cached(account) is not None:
             return self.snapshot()
 
-        catalog = await self.catalog.models(account, secret=self._api_key_for(account))
+        catalog = await self._catalog_of(account)
         found = catalog.find(selection.model)
         if found is not None:
             self.state.set_last_selection(
@@ -423,9 +431,24 @@ class ModelService:
         return secret
 
     def _api_key_for(self, account: ProviderAccount) -> str | None:
-        """The key needed to read a catalogue, when the store has one."""
+        """The credential needed to read a catalogue, whatever kind the account uses.
+
+        A catalogue is read with a bearer token, and which one that is depends on how
+        the account signed in: a pasted API key for an API-key account, the OAuth
+        access token for a plan account. Returning ``None`` for the second one left
+        every plan account with the static fallback list and "the provider returned
+        an empty model list" next to it — a signed-in ChatGPT account could not see a
+        single one of its models.
+
+        The name is kept for the callers that predate the second case; it reads the
+        same secret the catalogue needs either way.
+        """
         secret = self.secrets.get(account.id)
-        return secret.key if isinstance(secret, ApiKeySecret) else None
+        if isinstance(secret, ApiKeySecret):
+            return secret.key
+        if isinstance(secret, OAuthSecret):
+            return secret.access_token
+        return None
 
     def _build(
         self,
@@ -479,7 +502,8 @@ class ModelService:
             raise SecretRejectedError(result.detail)
 
     async def _default_model(self, account: ProviderAccount, secret: str | None) -> str:
-        catalog = await self.catalog.models(account, secret=secret)
+        del secret  # the transport resolves the credential; the argument predates it
+        catalog = await self._catalog_of(account)
         if catalog.models:
             return catalog.models[0].name
         raise ProviderError(f"No model could be determined for '{account.alias}'. Pick one with /model.")

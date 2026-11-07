@@ -167,6 +167,69 @@ def test_openai_tolerates_a_model_with_no_profile():
     assert by_name['o3'].context_window is None
 
 
+# --- OpenAI, the plan shape -------------------------------------------------
+#
+# A signed-in ChatGPT account answers a different endpoint shape: `{"models": [...]}`
+# with `slug`, `display_name`, `context_window`, `input_modalities` and
+# `supported_reasoning_levels` — everything, under other names. Reading only
+# `{"data": [{"id": ...}]}` made every plan account fall back to four hardcoded
+# models with "the provider returned an empty model list" next to them.
+
+
+def test_the_plan_payload_is_read_even_though_it_has_no_data_key():
+    names = [model.name for model in parse_openai(_fixture('openai_plan_models.json'), lambda _name: None)]
+    assert names == ['codex-auto-review', 'gpt-6.1-sol', 'gpt-reserve']
+
+
+def test_the_plan_payload_hides_the_families_that_cannot_hold_a_chat():
+    names = [model.name for model in parse_openai(_fixture('openai_plan_models.json'), lambda _name: None)]
+    assert 'gpt-image-1' not in names
+    assert 'text-embedding-3-large' not in names
+
+
+def test_the_plan_payload_supplies_the_display_name():
+    by_name = {model.name: model for model in parse_openai(_fixture('openai_plan_models.json'), lambda _name: None)}
+    assert by_name['gpt-6.1-sol'].label == 'GPT-6.1-Sol'
+    assert by_name['gpt-6.1-sol'].name == 'gpt-6.1-sol'
+
+
+def test_the_plan_window_is_the_usable_one_not_the_ceiling():
+    """`max_context_window` is reachable only with experimental context; budgeting it
+    would make the meter promise a turn the provider is going to truncate."""
+    by_name = {model.name: model for model in parse_openai(_fixture('openai_plan_models.json'), lambda _name: None)}
+    assert by_name['gpt-6.1-sol'].context_window == 500_000
+
+
+def test_the_plan_reasoning_levels_are_objects_and_still_produce_efforts():
+    """`[{"effort": "low"}]` stringified is not `low`, so reading them as strings left
+    every plan model looking like it cannot reason."""
+    by_name = {model.name: model for model in parse_openai(_fixture('openai_plan_models.json'), lambda _name: None)}
+    assert by_name['gpt-6.1-sol'].efforts == ('low', 'medium', 'high', 'xhigh')
+    assert by_name['gpt-reserve'].efforts == ()
+
+
+def test_the_plan_modalities_decide_image_input():
+    by_name = {model.name: model for model in parse_openai(_fixture('openai_plan_models.json'), lambda _name: None)}
+    assert by_name['gpt-6.1-sol'].supports_images is True
+    assert by_name['gpt-reserve'].supports_images is False
+
+
+def test_the_plan_payload_wins_over_the_bundled_profile():
+    """Both know the model; the endpoint is the fresher one."""
+    profiles = {'gpt-6.1-sol': {'context_window': 128_000, 'supports_thinking': False}}
+    by_name = {model.name: model for model in parse_openai(_fixture('openai_plan_models.json'), profiles.get)}
+    assert by_name['gpt-6.1-sol'].context_window == 500_000
+    assert by_name['gpt-6.1-sol'].efforts == ('low', 'medium', 'high', 'xhigh')
+
+
+def test_the_plan_payload_picks_up_an_entry_that_names_itself_with_id():
+    """`slug` today, `id` tomorrow: accepting both costs nothing and survives the day
+    the endpoint changes its mind."""
+    payload = {'models': [{'id': 'legacy-model', 'context_window': 128_000}]}
+    models = parse_openai(payload, lambda _name: None)
+    assert [model.name for model in models] == ['legacy-model']
+
+
 # --- cache ------------------------------------------------------------------
 
 

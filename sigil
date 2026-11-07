@@ -32,4 +32,18 @@ if ! command -v uv > /dev/null 2>&1; then
     exit 127
 fi
 
+# The tracked hooks under .githooks only run once this clone points at them, and
+# `core.hooksPath` is per-clone configuration that git cannot ship. Setting it here
+# means a fresh clone gets the hook on its first launch instead of on the first
+# commit whose formatting nobody checked. The full installer — executable bits,
+# diagnostics — is scripts/install_hooks.py; this is the silent fast path, kept in
+# bash because paying a second uv startup on every launch is not worth one line.
+if [ -z "${SIGIL_NO_HOOKS:-}" ] && [ -e "$project_dir/.git" ]; then
+    if [ "$(git -C "$project_dir" config --get core.hooksPath 2>/dev/null)" != ".githooks" ]; then
+        if git -C "$project_dir" config core.hooksPath .githooks 2>/dev/null; then
+            echo "sigil: git hooks enabled (.githooks) — SIGIL_NO_HOOKS=1 opts out." >&2
+        fi
+    fi
+fi
+
 exec uv run --quiet --project "$project_dir" "$project_dir/main.py" "$@"

@@ -13,6 +13,7 @@ from pathlib import Path
 from pydantic_ai.models import Model
 
 from src.engine.providers.catalog.catalog_service import ModelCatalogService
+from src.engine.providers.catalog.plan_transport import resolver_for
 from src.engine.providers.catalog.probe import probe_credential
 from src.engine.providers.domain.provider_account import ProviderAccount
 from src.engine.providers.factory.builder import ModelBuilder
@@ -85,16 +86,19 @@ def build_service(
         initial_model: Model the router holds before any selection is applied.
             The composition root builds a placeholder so the agent is always
             runnable, even with zero configured accounts.
-        oauth_provider_factory: Enables the browser sign-in route.
+        oauth_provider_factory: Enables the browser sign-in route, and lets the
+            catalogue renew a plan account's token while listing its models.
         probe: Credential check. Defaults to the real one; tests pass a fake.
         is_busy: Whether a turn is running. Defaults to "never busy".
-        catalog: Catalogue service. Defaults to the real one.
+        catalog: Catalogue service. Defaults to one that reads a plan account
+            through its provider, so loading models refreshes an expired token.
     """
+    secrets = FileSecretStore(paths.credentials)
     return ModelService(
         accounts=SqliteAccountStore(paths.home),
-        secrets=FileSecretStore(paths.credentials),
+        secrets=secrets,
         state=SqliteStateStore(paths.home),
-        catalog=catalog or ModelCatalogService(),
+        catalog=catalog or ModelCatalogService(transport_for=resolver_for(secrets, oauth_provider_factory)),
         registry=build_registry(session_id, oauth_provider_factory),
         router=ModelRouter(initial_model),
         probe=probe if probe is not None else _default_probe,
