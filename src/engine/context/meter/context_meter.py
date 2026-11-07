@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 from pydantic_ai.messages import ModelMessage
 
@@ -38,6 +39,25 @@ class ContextMeter:
             self._instructions = instructions
         if tools is not None:
             self._tools = tools
+
+    def stamp(self, session: Any) -> None:
+        """Writes what this meter measured onto ``session``, for a later load.
+
+        The two blocks are measured from `ModelRequestParameters`, which only exists
+        while a request is being made: nothing else can rebuild them from the
+        transcript, so the session is where they survive the process.
+        """
+        session.tools_tokens = self._tools
+        session.instructions_tokens = self._instructions
+
+    def restore(self, session: Any) -> None:
+        """Adopts what a loaded session measured, for a meter that just started.
+
+        The window is not restored here: it belongs to the model, and the app
+        publishes the model's own after binding it.
+        """
+        self._tools = int(getattr(session, 'tools_tokens', 0) or 0)
+        self._instructions = int(getattr(session, 'instructions_tokens', 0) or 0)
 
     def budget(self) -> ContextBudget:
         return ContextBudget(

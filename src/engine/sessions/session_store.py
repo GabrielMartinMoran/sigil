@@ -108,6 +108,18 @@ class Session:
     though nothing is running now.
     """
 
+    tools_tokens: int = 0
+    """What the last request measured of the tool schemas.
+
+    Measured per request and written here so `/load` gets the budget back. `0` means
+    "not measured in this session yet", which is the truth for a session written
+    before these columns existed: the first request of the resumed conversation fills
+    them in.
+    """
+
+    instructions_tokens: int = 0
+    """What the last request measured of the instruction blocks. See `tools_tokens`."""
+
     @property
     def root_id(self) -> str:
         """The execution that holds this conversation's transcript.
@@ -196,12 +208,14 @@ class SessionStore:
         with self.database.transaction() as conn:
             conn.execute(
                 'INSERT INTO sessions (id, workspace_id, title, preview, account_id, model, thinking, '
-                'window, efforts, images, created_at, updated_at) '
-                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+                'window, efforts, images, tools_tokens, instructions_tokens, created_at, updated_at) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
                 'ON CONFLICT(id) DO UPDATE SET '
                 'title = excluded.title, preview = excluded.preview, account_id = excluded.account_id, '
                 'model = excluded.model, thinking = excluded.thinking, window = excluded.window, '
-                'efforts = excluded.efforts, images = excluded.images, updated_at = excluded.updated_at',
+                'efforts = excluded.efforts, images = excluded.images, '
+                'tools_tokens = excluded.tools_tokens, '
+                'instructions_tokens = excluded.instructions_tokens, updated_at = excluded.updated_at',
                 (
                     session.id,
                     self.workspace_id,
@@ -213,6 +227,8 @@ class SessionStore:
                     None if selection is None else selection.window,
                     json.dumps([] if selection is None else list(selection.efforts)),
                     1 if selection is None or selection.images else 0,
+                    int(session.tools_tokens),
+                    int(session.instructions_tokens),
                     session.created_at,
                     session.updated_at,
                 ),
@@ -313,6 +329,8 @@ class SessionStore:
             title=None if row['title'] is None else str(row['title']),
             selection=_selection_from(row),
             agent='',
+            tools_tokens=int(row['tools_tokens'] or 0),
+            instructions_tokens=int(row['instructions_tokens'] or 0),
         )
         session.messages = root_messages(self.database, self.blobs, session.id)
         session.tree = load_tree(self.database, self.blobs, session.id)

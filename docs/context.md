@@ -141,6 +141,19 @@ flowchart TD
 In that state no strategy drops anything — a model without a declared window
 is never trimmed blind.
 
+### The measured blocks travel with the session
+
+`tools` and `instructions` are measured from `ModelRequestParameters`, which only
+exists while a request is being made: nothing can rebuild them from the
+transcript. They are therefore **written on the session** (`sessions.tools_tokens`
+and `sessions.instructions_tokens`) and read back by `/load`, so a resumed
+conversation starts with the budget it actually had instead of a zero that made
+`available_for_history` larger than the room there was. The window is not part of
+this: it belongs to the model, and the app publishes the model's own after binding
+the session. A session that has not made a request in this process reports `0` —
+`/context` says the blocks are not measured yet instead of passing the zero off as
+a measurement.
+
 ## The three levers
 
 `WindowedStrategy` applies three levers, ordered from cheapest to most

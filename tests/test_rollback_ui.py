@@ -19,7 +19,15 @@ from src.engine.agents.rollback import Rollback
 from src.engine.sessions.session_store import SessionStore
 from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import ChatLog, UserMessage
-from src.ui.widgets.rollback_screen import Point, RollbackScreen, action_option, point_option
+from src.ui.widgets.prompt_input import PromptInput
+from src.ui.widgets.rollback_screen import (
+    ROLLBACK_ONLY,
+    Point,
+    RollbackChoice,
+    RollbackScreen,
+    action_option,
+    point_option,
+)
 from tests.ui_helpers import render_text
 
 
@@ -161,6 +169,159 @@ def test_the_command_rolls_back_and_rebuilds_the_conversation(monkeypatch):
                 chat = app.query_one(ChatLog)
                 assert len(app._session.messages) == 2
                 assert chat is not None
+
+    asyncio.run(inner())
+
+
+# --- the prompt comes back -----------------------------------------------------
+
+
+def test_a_rollback_puts_the_prompt_back_in_the_composer():
+    """Going back to a message is "let me say it differently", so it is ready to send."""
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _app(tmp, turns=2)
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                point = app._rollback.points(app._session.id)[0]
+                chat = app.query_one(ChatLog)
+
+                await app.apply_rollback(chat, RollbackChoice(turn_id=point.turn_id, action=ROLLBACK_ONLY))
+
+                prompt = app.query_one(PromptInput)
+                assert prompt.text.strip() == 'question 1'
+                # Ready to be edited and sent, not a dead line in the transcript.
+                assert prompt.has_focus
+
+    asyncio.run(inner())
+
+
+def test_a_rollback_keeps_the_draft_that_was_in_the_composer():
+    """The prompt comes back; what the user was already typing does not disappear."""
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _app(tmp, turns=2)
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                prompt = app.query_one(PromptInput)
+                prompt.text = 'a draft I was writing'
+                point = app._rollback.points(app._session.id)[0]
+                chat = app.query_one(ChatLog)
+
+                await app.apply_rollback(chat, RollbackChoice(turn_id=point.turn_id, action=ROLLBACK_ONLY))
+
+                lines = prompt.text.splitlines()
+                assert 'a draft I was writing' in lines
+                # The restored prompt is the last line: it is the one Enter sends.
+                assert lines[-1].strip() == 'question 1'
+
+    asyncio.run(inner())
+
+
+def test_a_prompt_that_is_only_a_screenshot_gets_its_marker_back():
+    """An image sent without words has no `[Image #n]`, and the composer needs one."""
+
+    async def inner():
+        import io
+
+        from PIL import Image
+        from pydantic_ai.messages import BinaryImage
+
+        buffer = io.BytesIO()
+        Image.new('RGB', (8, 8), 'blue').save(buffer, format='PNG')
+        payload = buffer.getvalue()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(cwd=Path(tmp) / 'ws', base_dir=Path(tmp) / 'sessions')
+            session = store.create_session()
+            session.messages = [
+                ModelRequest(parts=[UserPromptPart(content='question 0')], run_id='r0'),
+                ModelResponse(parts=[TextPart(content='answer 0')], run_id='r0'),
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(content=[BinaryImage(data=payload, media_type='image/png', identifier='img_z')])
+                    ],
+                    run_id='r1',
+                ),
+                ModelResponse(parts=[TextPart(content='answer 1')], run_id='r1'),
+            ]
+            store.save(session)
+            app = SigilApp(
+                agent=Agent(TestModel(custom_output_text='ok'), instructions='x'),
+                store=store,
+                session=session,
+                rollback=Rollback(store, workspace=Path(tmp) / 'ws'),
+            )
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                point = app._rollback.points(session.id)[0]
+                chat = app.query_one(ChatLog)
+
+                await app.apply_rollback(chat, RollbackChoice(turn_id=point.turn_id, action=ROLLBACK_ONLY))
+
+                prompt = app.query_one(PromptInput)
+                assert prompt.text.strip() == '[Image #1]'
+                assert len(prompt.attachments) == 1
+                assert prompt.attachments[0].image_id == 'img_z'
+
+    asyncio.run(inner())
+
+
+def test_a_rollback_brings_the_images_back_with_their_prompt():
+    """A message whose text came back without its picture points at nothing."""
+
+    async def inner():
+        import io
+
+        from PIL import Image
+        from pydantic_ai.messages import BinaryImage
+
+        buffer = io.BytesIO()
+        Image.new('RGB', (8, 8), 'red').save(buffer, format='PNG')
+        payload = buffer.getvalue()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(cwd=Path(tmp) / 'ws', base_dir=Path(tmp) / 'sessions')
+            session = store.create_session()
+            session.messages = [
+                ModelRequest(parts=[UserPromptPart(content='question 0')], run_id='r0'),
+                ModelResponse(parts=[TextPart(content='answer 0')], run_id='r0'),
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content=[
+                                'look at [Image #1]',
+                                BinaryImage(data=payload, media_type='image/png', identifier='img_abc12345'),
+                            ]
+                        )
+                    ],
+                    run_id='r1',
+                ),
+                ModelResponse(parts=[TextPart(content='answer 1')], run_id='r1'),
+            ]
+            store.save(session)
+            app = SigilApp(
+                agent=Agent(TestModel(custom_output_text='ok'), instructions='x'),
+                store=store,
+                session=session,
+                rollback=Rollback(store, workspace=Path(tmp) / 'ws'),
+            )
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                point = app._rollback.points(session.id)[0]
+                chat = app.query_one(ChatLog)
+
+                await app.apply_rollback(chat, RollbackChoice(turn_id=point.turn_id, action=ROLLBACK_ONLY))
+
+                prompt = app.query_one(PromptInput)
+                assert prompt.text.strip() == 'look at [Image #1]'
+                attachments = prompt.attachments
+                assert len(attachments) == 1
+                assert attachments[0].data == payload
+                assert attachments[0].media_type == 'image/png'
+                assert attachments[0].image_id == 'img_abc12345'
 
     asyncio.run(inner())
 
