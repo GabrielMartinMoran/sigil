@@ -9,8 +9,13 @@ from __future__ import annotations
 
 from textual.css.query import NoMatches
 
-from src.engine.agents.rollback import RollbackError
+from src.engine.agents.rollback import RollbackError, prompt_of_turn
+from src.engine.attachments.image_attachment import ImageAttachment, new_image_id
+from src.engine.attachments.tokens import numbers_in
+from src.engine.context.images import image_size
+from src.engine.sessions.titling import shorten
 from src.ui.widgets.chat_log import ChatLog
+from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.rollback_screen import (
     FORK,
     ROLLBACK_FILES,
@@ -94,6 +99,9 @@ class RollbackMixin:
             return
 
         files = choice.action == ROLLBACK_FILES
+        # Read before the truncation: the prompt is in the rows the rollback drops.
+        store = getattr(self, '_store', None)
+        prompt = None if store is None else prompt_of_turn(store.database, choice.turn_id)
         try:
             outcome = await asyncio.to_thread(lambda: rollback.to_turn(session.id, choice.turn_id, files=files))
         except RollbackError as exc:
@@ -109,6 +117,7 @@ class RollbackMixin:
             + f'. Undo with `/rollback {outcome.undo_checkpoint[:8]}` if you did not mean it.',
             style='green',
         )
+        self._restore_prompt(prompt)
 
     @staticmethod
     def _files_report(outcome) -> str:
@@ -120,6 +129,48 @@ class RollbackMixin:
 
     # --- helpers -------------------------------------------------------------
 
+    def _restore_prompt(self, prompt: tuple[str, list] | None) -> None:
+        """Puts the turn's prompt back in the composer, ready to be sent again.
+
+        A rollback is "put me back where I was before I sent this", and what the user
+        does next is say it differently: retyping it from the transcript is work the
+        app can do. The images travel with it — a message whose text came back without
+        its picture points at an `[Image #1]` that no longer exists — and the composer
+        takes the focus so `Enter` sends.
+
+        A draft already in the composer is not thrown away: it stays as the message
+        above, and the restored prompt lands under it, which is the line the cursor
+        ends on.
+        """
+        if prompt is None:
+            return
+        text, images = prompt
+        if not text.strip() and not images:
+            return
+        try:
+            composer = self.query_one(PromptInput)
+        except NoMatches:
+            return
+        entries: list[tuple[str, list[ImageAttachment]]] = []
+        if composer.text.strip() or composer.attachments:
+            entries.append((composer.text, list(composer.attachments)))
+        attachments: list[ImageAttachment] = []
+        for number, image in enumerate(images, start=1):
+            width, height = image_size(image.data)
+            attachments.append(
+                ImageAttachment(
+                    number=number,
+                    data=image.data,
+                    media_type=image.media_type or 'application/octet-stream',
+                    width=width,
+                    height=height,
+                    image_id=image.identifier or new_image_id(),
+                )
+            )
+        entries.append((_with_every_marker(text, len(images)), attachments))
+        composer.restore(entries)
+        composer.focus()
+
     def _rollback_points(self, rollback, session_id: str):
         """The points, with the file cost of each, newest first.
 
@@ -130,7 +181,7 @@ class RollbackMixin:
 
         points: list[Point] = []
         for checkpoint in rollback.points(session_id):
-            preview = self._first_line_of_turn(session_id, checkpoint.turn_id)
+            preview = self._first_line_of_turn(checkpoint.turn_id)
             points.append(
                 Point(
                     checkpoint=checkpoint,
@@ -153,34 +204,27 @@ class RollbackMixin:
         except Exception:  # noqa: BLE001 - a preview must never block the screen
             return None
 
-    def _first_line_of_turn(self, session_id: str, turn_id: str | None) -> str:
-        """The prompt that opened a turn, cut to one line."""
+    def _first_line_of_turn(self, turn_id: str | None) -> str:
+        """The prompt that opened a turn, cut to one line.
+
+        From the prompt and not from the turn's first message: a point is identified
+        by what the user typed, and the first message of a turn can be a thought, a
+        tool result or a fragment. That mismatch is what once listed a rollback point
+        whose preview was an answer the agent wrote.
+        """
         store = getattr(self, '_store', None)
         if store is None or turn_id is None:
             return ''
-        row = store.database.one(
-            'SELECT m.payload FROM messages m WHERE m.turn_id = ? ORDER BY m.seq LIMIT 1',
-            (turn_id,),
-        )
-        if row is None:
+        prompt = prompt_of_turn(store.database, turn_id)
+        if prompt is None:
             return ''
-        import json
-
-        from src.engine.sessions.titling import shorten
-
-        try:
-            payload = json.loads(str(row['payload']))
-        except ValueError:
-            return ''
-        for part in payload.get('parts') or []:
-            content = part.get('content')
-            if isinstance(content, str) and content.strip():
-                return shorten(' '.join(content.split()))
-            if isinstance(content, list):
-                text = ' '.join(item for item in content if isinstance(item, str)).strip()
-                if text:
-                    return shorten(' '.join(text.split()))
-        return ''
+        text, images = prompt
+        line = shorten(' '.join(text.split()))
+        if not images:
+            return line
+        plural = 'image' if len(images) == 1 else 'images'
+        count = f'+{len(images)} {plural}'
+        return f'{line} {count}'.strip()
 
     def _turn_of_seq(self, seq: int) -> str | None:
         """Which turn starts the message at ``seq``."""
@@ -220,6 +264,23 @@ class RollbackMixin:
             return self.query_one(ChatLog)
         except NoMatches:
             return None
+
+
+def _with_every_marker(text: str, images: int) -> str:
+    """The prompt with a `[Image #n]` for every image it brings back.
+
+    A message can carry a picture with no words — a screenshot pasted and sent — and
+    the composer's contract is that the marker is what stands for the image. Without
+    one the image is unreachable and the first edit drops it, so the markers the text
+    is missing are appended in order.
+    """
+    if not images:
+        return text
+    missing = [number for number in range(1, images + 1) if number not in numbers_in(text)]
+    if not missing:
+        return text
+    markers = ' '.join(f'[Image #{number}]' for number in missing)
+    return f'{text} {markers}'.strip()
 
 
 __all__ = ['RollbackMixin']

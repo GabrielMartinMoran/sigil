@@ -1,14 +1,25 @@
 """Going back to a message: the conversation, the plan, and the files.
 
-A rollback point is a **turn of the root execution with `origin = 'user'`**. A prompt
-is not one, because steering stays inside the turn; a subagent's turn is not one
-either, because its files were changed as part of the parent's turn — to undo a
-subagent the user goes back to the turn that summoned it, and the cascade takes it.
+A rollback point is a **turn of the root execution with `origin = 'user'` that opens
+with a prompt**. The three parts of that sentence are different people's rules: the
+root, because a subagent's transcript is not a conversation the user is having;
+`origin = 'user'`, because steering stays inside the turn; and *opens with a prompt*,
+because a rollback means "put me back where I was before I sent this", and only a
+prompt can be sent again. A turn the library stamped on a thought, on a tool result,
+or on a fragment the writer carved out of a damaged batch has nothing to give back.
 
 The instant restored is **before that turn started**, so the turn itself is dropped:
 it is "put me back where I was before I sent it", which is what a user does when they
 want to say something different. Both halves describe the same instant or the state
 is a lie.
+
+**By position, not by clock.** A turn is identified in the transcript by the `seq` of
+its first message, and everything from that `seq` on is what goes. The timestamp was
+the obvious boundary and it was wrong in both directions: a turn whose messages carry
+an earlier timestamp than the boundary — a steered batch, a retried request, a clock
+that stepped back — survived a rollback that should have dropped it, and matched
+`started_at >= ?` on the way in, so rolling back to one turn could eat the whole
+conversation. `seq` is the same order the provider reads.
 
 **Files first, conversation last.** Filesystem work is not transactional, and this
 order leaves the recoverable half recoverable on every failure: if the restore dies
@@ -25,6 +36,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from src.engine.agents.snapshots import NotARepository, WorkspaceSnapshots
 from src.engine.sessions.session_store import SessionStore
@@ -33,9 +45,15 @@ from src.engine.storage.database import Database
 from src.engine.storage.executions import root_id_for
 from src.engine.storage.roadmap import plan_as_json, restore_plan_from_json
 
+if TYPE_CHECKING:
+    from pydantic_ai.messages import BinaryContent
+
 REASON_PROMPT = 'prompt'
 REASON_BEFORE_ROLLBACK = 'before_rollback'
 REASON_MANUAL = 'manual'
+
+PROMPT_KIND = 'user-prompt'
+"""The part kind a turn opens with when the user started it by typing."""
 
 
 def _now() -> str:
@@ -224,17 +242,31 @@ class Rollback:
     # --- the points a user can go back to ------------------------------------
 
     def points(self, session_id: str) -> list[Checkpoint]:
-        """The turns of the root that a user may return to, newest first."""
+        """The turns of the root that a user may return to, newest first.
+
+        Newest first is *last in the transcript*, not latest on the clock: `seq` is the
+        order the conversation happened in. Ordering by `started_at` listed the points
+        out of order — a turn whose messages carry an earlier timestamp than the one
+        above it — and made "the newest point" anything but the end of the conversation.
+
+        A turn that does not open with a prompt is not a point here even though it has
+        a row: nothing can be sent again from it. See the module docstring.
+        """
+        root = root_id_for(session_id)
         rows = self._db.query(
-            'SELECT t.id AS turn_id, t.started_at, c.id AS checkpoint_id '
+            'SELECT t.id AS turn_id, t.started_at, c.id AS checkpoint_id, '
+            '       (SELECT min(m.seq) FROM messages m WHERE m.turn_id = t.id) AS first_seq '
             'FROM turns t '
             'LEFT JOIN checkpoints c ON c.turn_id = t.id '
             "WHERE t.execution_id = ? AND t.origin = 'user' "
-            'ORDER BY t.started_at DESC',
-            (root_id_for(session_id),),
+            'ORDER BY first_seq DESC',
+            (root,),
         )
         found: list[Checkpoint] = []
         for row in rows:
+            first_seq = row['first_seq']
+            if first_seq is None or not _opens_with_a_prompt(self._db, root, int(first_seq)):
+                continue
             if row['checkpoint_id'] is not None:
                 checkpoint = self._checkpoints.get(str(row['checkpoint_id']))
                 if checkpoint is not None:
@@ -244,7 +276,7 @@ class Rollback:
                 Checkpoint(
                     id='',
                     session_id=session_id,
-                    execution_id=root_id_for(session_id),
+                    execution_id=root,
                     turn_id=str(row['turn_id']),
                     at=str(row['started_at']),
                     reason=REASON_PROMPT,
@@ -273,8 +305,10 @@ class Rollback:
         if open_turn:
             raise RollbackError('A turn is still running: finish or stop it before rolling back.')
 
+        boundary = self._turn_boundary(root_id_for(session_id), turn_id)
+        if boundary is None:
+            raise RollbackError(f'Turn {turn_id!r} has no messages: there is nothing to put back.')
         checkpoint = self._checkpoints.of_turn(turn_id)
-        started_at = str(target['started_at'])
 
         # 1. The undo, and the tail it preserves. Written before anything destructive.
         undo_commit = self._snapshot()
@@ -283,10 +317,10 @@ class Rollback:
             root_id_for(session_id),
             turn_id=None,
             reason=REASON_BEFORE_ROLLBACK,
-            label=f'before rolling back to {started_at}',
+            label=f'before rolling back to {target["started_at"]}',
             tree_commit=undo_commit,
         )
-        self._export_tail(session_id, started_at, undo.id)
+        self._export_tail(session_id, boundary, undo.id)
 
         # 2. The files. If this dies halfway the conversation is still intact.
         restored = deleted = 0
@@ -303,7 +337,7 @@ class Rollback:
         plan = None if checkpoint is None else self._plan_of(checkpoint)
 
         # 3. The conversation, in one transaction: turns, executions, plan.
-        turns_dropped, executions_dropped, messages_dropped = self._truncate(session_id, started_at)
+        turns_dropped, executions_dropped, messages_dropped = self._truncate(session_id, boundary)
         if plan is not None:
             self._write_plan(checkpoint.execution_id, plan)
 
@@ -342,7 +376,9 @@ class Rollback:
         if source is None:
             raise RollbackError(f'No session {session_id!r}.')
 
-        started_at = str(target['started_at'])
+        boundary = self._turn_boundary(root_id_for(session_id), turn_id)
+        if boundary is None:
+            raise RollbackError(f'Turn {turn_id!r} has no messages: there is nothing to fork at.')
         new_id = _new_id()
         new_root = root_id_for(new_id)
         checkpoint = self._checkpoints.of_turn(turn_id)
@@ -366,7 +402,7 @@ class Rollback:
             )
             for execution in executions:
                 created_by = execution['created_by_turn']
-                if created_by is not None and not self._turn_before(str(created_by), started_at):
+                if created_by is not None and not self._turn_starts_before(str(created_by), boundary):
                     continue
                 new_execution = new_root if execution['parent_id'] is None else _new_id()
                 parent = None if execution['parent_id'] is None else str(execution['parent_id'])
@@ -405,10 +441,10 @@ class Rollback:
                     conn,
                     str(execution['id']),
                     new_execution,
-                    before=started_at,
+                    before=boundary,
                     messages=messages_copied,
                 )
-                messages_copied += self._copy_messages(conn, str(execution['id']), new_execution, before=started_at)
+                messages_copied += self._copy_messages(conn, str(execution['id']), new_execution, before=boundary)
 
             # The plan of the fork is the plan at the boundary, not the current one.
             if plan is not None:
@@ -482,33 +518,63 @@ class Rollback:
         deleted = sum(1 for entry in touched if entry.startswith('deleted '))
         return restored, deleted, False
 
-    def _truncate(self, session_id: str, started_at: str) -> tuple[int, int, int]:
-        """Drops the turns from ``started_at`` on, and what only they created."""
+    def _turn_boundary(self, execution_id: str, turn_id: str) -> int | None:
+        """The `seq` of the turn's first message: the instant the conversation is cut at.
+
+        Positional on purpose. See the module docstring: a timestamp is not a place
+        in a transcript.
+        """
+        value = self._db.value(
+            'SELECT min(seq) FROM messages WHERE execution_id = ? AND turn_id = ?',
+            (execution_id, turn_id),
+        )
+        return None if value is None else int(value)
+
+    def _truncate(self, session_id: str, boundary: int) -> tuple[int, int, int]:
+        """Drops the messages from ``boundary`` on, and the turns that held them.
+
+        The turn ids are read before anything is deleted: the messages are what says
+        which turns are doomed, and they go first.
+        """
         root = root_id_for(session_id)
+        doomed = [
+            str(row['turn_id'])
+            for row in self._db.query(
+                'SELECT DISTINCT turn_id FROM messages WHERE execution_id = ? AND seq >= ?',
+                (root, boundary),
+            )
+        ]
         with self._db.transaction() as conn:
             # Counted first: deleting the executions cascades into the messages, so a
             # count taken after it would always be zero.
             messages_before = conn.execute(
-                'SELECT count(*) FROM messages WHERE turn_id IN '
-                '(SELECT id FROM turns WHERE execution_id = ? AND started_at >= ?)',
-                (root, started_at),
+                'SELECT count(*) FROM messages WHERE execution_id = ? AND seq >= ?',
+                (root, boundary),
             ).fetchone()[0]
-            executions = conn.execute(
-                'DELETE FROM agent_executions WHERE session_id = ? AND created_by_turn IN '
-                '(SELECT id FROM turns WHERE execution_id = ? AND started_at >= ?)',
-                (session_id, root, started_at),
-            ).rowcount
-            turns = conn.execute(
-                'DELETE FROM turns WHERE execution_id = ? AND started_at >= ?',
-                (root, started_at),
-            ).rowcount
+            executions = 0
+            turns = 0
+            if doomed:
+                placeholders = ','.join('?' for _ in doomed)
+                executions = conn.execute(
+                    f'DELETE FROM agent_executions WHERE session_id = ? AND created_by_turn IN ({placeholders})',
+                    (session_id, *doomed),
+                ).rowcount
+                conn.execute(
+                    'DELETE FROM messages WHERE execution_id = ? AND seq >= ?',
+                    (root, boundary),
+                )
+                turns = conn.execute(
+                    f'DELETE FROM turns WHERE id IN ({placeholders})',
+                    tuple(doomed),
+                ).rowcount
             # The plan of the root is restored from the checkpoint, not derived.
             conn.execute('DELETE FROM roadmap_items WHERE execution_id = ?', (root,))
         return int(turns or 0), int(executions or 0), int(messages_before or 0)
 
-    def _turn_before(self, turn_id: str, started_at: str) -> bool:
-        row = self._db.one('SELECT started_at FROM turns WHERE id = ?', (turn_id,))
-        return row is not None and str(row['started_at']) < started_at
+    def _turn_starts_before(self, turn_id: str, boundary: int) -> bool:
+        """Whether ``turn_id`` opens before ``boundary`` in the transcript."""
+        value = self._db.value('SELECT min(seq) FROM messages WHERE turn_id = ?', (turn_id,))
+        return value is not None and int(value) < boundary
 
     def _copy_turns(
         self,
@@ -516,12 +582,14 @@ class Rollback:
         source_execution: str,
         destination_execution: str,
         *,
-        before: str,
+        before: int,
         messages: int,
     ) -> int:
-        """Copies the turns of one execution that started before the boundary."""
+        """Copies the turns of one execution that start before the boundary."""
         rows = self._db.query(
-            'SELECT * FROM turns WHERE execution_id = ? AND started_at < ? ORDER BY started_at',
+            'SELECT * FROM turns t WHERE t.execution_id = ? '
+            'AND (SELECT min(m.seq) FROM messages m WHERE m.turn_id = t.id) < ? '
+            'ORDER BY (SELECT min(m.seq) FROM messages m WHERE m.turn_id = t.id)',
             (source_execution, before),
         )
         for row in rows:
@@ -549,12 +617,11 @@ class Rollback:
         source_execution: str,
         destination_execution: str,
         *,
-        before: str,
+        before: int,
     ) -> int:
-        """Copies the messages that belong to the turns of the prefix."""
+        """Copies the messages that belong to the prefix of the transcript."""
         rows = self._db.query(
-            'SELECT m.* FROM messages m JOIN turns t ON t.id = m.turn_id '
-            'WHERE m.execution_id = ? AND t.started_at < ? ORDER BY m.seq',
+            'SELECT * FROM messages WHERE execution_id = ? AND seq < ? ORDER BY seq',
             (source_execution, before),
         )
         for row in rows:
@@ -599,14 +666,15 @@ class Rollback:
         raw = self._plan_of(checkpoint)
         return 0 if raw is None else self._write_plan(checkpoint.execution_id, raw)
 
-    def _export_tail(self, session_id: str, started_at: str, undo_id: str) -> int:
+    def _export_tail(self, session_id: str, boundary: int, undo_id: str) -> int:
         """Exports the turns about to be dropped, so the undo has something to put back."""
         root = root_id_for(session_id)
         turns = [
             str(row['id'])
             for row in self._db.query(
-                'SELECT id FROM turns WHERE execution_id = ? AND started_at >= ? ORDER BY started_at',
-                (root, started_at),
+                'SELECT id FROM turns WHERE execution_id = ? AND id IN '
+                '(SELECT turn_id FROM messages WHERE execution_id = ? AND seq >= ?)',
+                (root, root, boundary),
             )
         ]
         payload: dict[str, object] = {'turns': [], 'messages': [], 'plan': []}
@@ -706,6 +774,90 @@ def _forked_id(turn_id: str, execution_id: str) -> str:
     return hashlib.sha256(f'fork:{execution_id}:{turn_id}'.encode()).hexdigest()[:32]
 
 
+def _opens_with_a_prompt(database: Database, execution_id: str, seq: int) -> bool:
+    """Whether the message at ``seq`` opens with text the user typed.
+
+    The first *part* decides, and only the first one: a prompt carries
+    `instruction-baseline` and its images after the text, so looking at the whole
+    message would accept any batch that mentions a prompt.
+    """
+    row = database.one(
+        'SELECT payload FROM messages WHERE execution_id = ? AND seq = ?',
+        (execution_id, seq),
+    )
+    if row is None:
+        return False
+    try:
+        payload = json.loads(str(row['payload']))
+    except ValueError:
+        return False
+    parts = payload.get('parts') if isinstance(payload, dict) else None
+    if not isinstance(parts, list) or not parts:
+        return False
+    first = parts[0]
+    return isinstance(first, dict) and first.get('part_kind') == PROMPT_KIND
+
+
+def prompt_of_turn(database: Database, turn_id: str) -> tuple[str, list[BinaryContent]] | None:
+    """The prompt that opened a turn: the text the user typed and its images.
+
+    It is what a rollback gives back — the preview on the list and the message the
+    composer is refilled with — so both read it from here, and a turn is identified
+    by its prompt instead of by whatever message happens to come first.
+
+    The lookup is filtered in SQL so a turn of two hundred steps costs one row and
+    not two hundred: the payload is JSON text and the part kind is a literal in it.
+    The full scan behind it is the rare path — a result whose arguments happen to
+    quote a prompt.
+    """
+    marker = f'%"part_kind":"{PROMPT_KIND}"%'
+    row = database.one(
+        'SELECT payload FROM messages WHERE turn_id = ? AND payload LIKE ? ORDER BY seq LIMIT 1',
+        (turn_id, marker),
+    )
+    found = None if row is None else _prompt_in(str(row['payload']))
+    if found is not None:
+        return found
+    for candidate in database.query('SELECT payload FROM messages WHERE turn_id = ? ORDER BY seq', (turn_id,)):
+        found = _prompt_in(str(candidate['payload']))
+        if found is not None:
+            return found
+    return None
+
+
+def _prompt_in(raw: str) -> tuple[str, list[BinaryContent]] | None:
+    """The prompt a serialized message carries, or ``None`` when it carries none."""
+    from pydantic_ai.messages import BinaryContent
+
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    for part in payload.get('parts') or []:
+        if not isinstance(part, dict) or part.get('part_kind') != PROMPT_KIND:
+            continue
+        content = part.get('content')
+        if isinstance(content, str):
+            return content, []
+        if isinstance(content, list):
+            text = ' '.join(item for item in content if isinstance(item, str))
+            images = [
+                BinaryContent(
+                    data=item['data'],
+                    media_type=item.get('media_type', 'application/octet-stream'),
+                    identifier=item.get('identifier'),
+                )
+                for item in content
+                if isinstance(item, dict)
+                and item.get('kind') == 'binary'
+                and str(item.get('media_type', '')).startswith('image/')
+            ]
+            return text, images
+    return None
+
+
 def _fork_title(title: object) -> str:
     return f'{title} (fork)' if isinstance(title, str) and title else 'fork'
 
@@ -724,6 +876,7 @@ def _checkpoint_from(row) -> Checkpoint:
 
 
 __all__ = [
+    'PROMPT_KIND',
     'REASON_BEFORE_ROLLBACK',
     'REASON_MANUAL',
     'REASON_PROMPT',
@@ -733,4 +886,5 @@ __all__ = [
     'Rollback',
     'RollbackError',
     'RollbackOutcome',
+    'prompt_of_turn',
 ]

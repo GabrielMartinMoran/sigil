@@ -17,14 +17,23 @@ stores its state](storage.md), which owns the tables.
 
 ## The unit is the turn
 
-A rollback point is a **`Turn` of the root execution with `origin = 'user'`**,
-not a prompt and not a message.
+A rollback point is a **`Turn` of the root execution with `origin = 'user'` that
+opens with a prompt**, not any message.
 
-Both restrictions matter. A prompt is not a point because steering is inside the
-turn. A **subagent's** turn is not a point either: its transcript is internal to
-an execution the user never sent a message to, and its files were changed as
-part of the parent's turn. To undo a subagent, the user goes back to the turn
-that summoned it, and the cascade takes the subagent with it.
+All three restrictions matter, and each one answers a different mistake:
+
+- **The root execution.** A subagent's turn is not a point: its transcript is
+  internal to an execution the user never sent a message to, and its files were
+  changed as part of the parent's turn. To undo a subagent, the user goes back to
+  the turn that summoned it, and the cascade takes the subagent with it.
+- **`origin = 'user'`.** A prompt typed mid-turn is not a point because steering is
+  inside the turn.
+- **Opening with a prompt.** `write_history` gives a message that carries no run of
+  its own — a steer the library delivered inside a batch, a repair's synthesized
+  tool result — a turn row of its own. Those rows are not turns the user started,
+  and listing them offered "roll back to" an answer the agent wrote or a tool result
+  that only exists because a repair made it. The point is "put me back where I was
+  before I sent *this*", and only a prompt can be sent again.
 
 That follows from the definition already settled: a turn is the span between the
 user sending a message and the agent finishing, and **steering is part of it** —
@@ -90,6 +99,15 @@ The screen has two stages for the same reason: first the point, then what
 happens to it. A single list of "rollback to here / fork here" pairs would put a
 destructive action next to a harmless one on the same key.
 
+### The way out: the prompt comes back
+
+A rollback drops the turn, so the message that opened it exists nowhere on screen
+— and saying it again, differently, is the whole reason a user goes back. The
+prompt therefore returns to the composer: the text and the images exactly as they
+were sent, focused and ready for `Enter`. It is read from the row before the
+truncation, because the rollback is what deletes it, and an image restored without
+its bytes would point at an `[Image #1]` that no longer exists.
+
 ## Two halves, one command
 
 | Half | What it does | Is it reversible? |
@@ -125,19 +143,29 @@ One transaction, and the schema does most of the work:
 ```sql
 BEGIN IMMEDIATE;
 
+-- The boundary is the `seq` of the target turn's first message, and the turn ids
+-- that are doomed are read from the messages *after* it. Position and not clock:
+-- a timestamp is not a place in a transcript, and `started_at >= ?` matched turns
+-- whose messages carried an earlier clock than the boundary — a steered batch, a
+-- retried request, a clock that stepped back — so rolling back to one turn could
+-- eat the whole conversation, and a turn in the tail could survive it.
+
 -- Everything the dropped turns created goes with them: the FK cascade on
 -- agent_executions.created_by_turn takes the subagents, their turns, their
 -- messages and their plans.
 DELETE FROM agent_executions
-WHERE session_id = :session AND created_by_turn IN (
-    SELECT id FROM turns WHERE started_at >= (SELECT started_at FROM turns WHERE id = :target)
-);
+WHERE session_id = :session AND created_by_turn IN (:doomed_turn_ids);
 
-DELETE FROM turns
-WHERE started_at >= (SELECT started_at FROM turns WHERE id = :target);
+DELETE FROM messages WHERE execution_id = :root AND seq >= :boundary;
+
+DELETE FROM turns WHERE id IN (:doomed_turn_ids);
 
 COMMIT;
 ```
+
+`doomed_turn_ids` is `SELECT DISTINCT turn_id FROM messages WHERE execution_id =
+:root AND seq >= :boundary`, read before anything is deleted — the messages are
+what say which turns are doomed, and they go in the same transaction.
 
 What survives, and why:
 

@@ -8,16 +8,25 @@ back from its snapshot, the undo puts everything back, and a repository is optio
 from __future__ import annotations
 
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 
-from src.engine.agents.rollback import Checkpoints, Rollback, RollbackError
+from src.engine.agents.rollback import Checkpoints, Rollback, RollbackError, prompt_of_turn
 from src.engine.agents.snapshots import WorkspaceSnapshots
 from src.engine.agents.tree.tree import AgentTree
 from src.engine.roadmap.models.todo_item import TodoItem
 from src.engine.roadmap.stores import RoadmapStores
+from src.engine.sessions.recovery import recover_history
 from src.engine.sessions.session_store import SessionStore
 from src.engine.storage.database import Database, database_path
 
@@ -28,6 +37,19 @@ def _turn(index: int, text: str = '', *, run: str | None = None) -> list:
         ModelRequest(parts=[UserPromptPart(content=text or f'question {index}')], run_id=run or f'run-{index}'),
         ModelResponse(parts=[TextPart(content=f'answer {index}')], run_id=run or f'run-{index}'),
     ]
+
+
+def _earlier(messages: list, *, than: object) -> list:
+    """The same messages, stamped an hour before ``than``.
+
+    It is what a steered batch, a retried request or a clock that stepped back
+    leaves behind: a message written later in the transcript with an earlier
+    timestamp.
+    """
+    from dataclasses import replace
+    from datetime import timedelta
+
+    return [replace(message, timestamp=than - timedelta(hours=1)) for message in messages]
 
 
 def _session(tmp_path: Path) -> tuple[SessionStore, object]:
@@ -88,7 +110,134 @@ def test_the_points_are_listed_newest_first(tmp_path):
     store.save(session)
 
     points = Rollback(store, workspace=tmp_path / 'workspace').points(session.id)
-    assert [item.at for item in points] == sorted((item.at for item in points), reverse=True)
+    assert [prompt_of_turn(store.database, point.turn_id)[0] for point in points] == ['question 1', 'question 0']
+
+
+def test_a_batch_that_opens_with_a_tool_result_is_not_a_point(tmp_path):
+    """A fragment the writer carved out of a damaged batch is not a turn to go back to.
+
+    `write_history` gives a message that carries no `run_id` a turn of its own, and the
+    repair that used to run over the whole history left synthesized tool results as
+    ones: the list offered "roll back to" a tool result. The rule is the prompt — a
+    rollback means "before I sent *this*", and a result was never sent by anyone.
+    """
+    store, session = _session(tmp_path)
+    session.messages = [
+        *_turn(0),
+        # An earlier repair carved this into its own turn: a closed-out result.
+        ModelRequest(parts=[ToolReturnPart('run', 'closed out', 'c1'), UserPromptPart(content='a steer')]),
+        *_turn(1),
+    ]
+    store.save(session)
+
+    points = Rollback(store, workspace=tmp_path / 'workspace').points(session.id)
+
+    assert [prompt_of_turn(store.database, point.turn_id)[0] for point in points] == ['question 1', 'question 0']
+
+
+def test_a_turn_that_does_not_open_with_a_prompt_is_not_a_point(tmp_path):
+    """An answer the library stamped with its own run is not a place to go back to.
+
+    The prompt is what a rollback point means: "put me back where I was before I
+    sent this". A turn that opens with a thought has nothing to send again.
+    """
+    store, session = _session(tmp_path)
+    session.messages = [
+        ModelRequest(parts=[UserPromptPart(content='question 0')], run_id='run-0'),
+        ModelResponse(parts=[ToolCallPart('run', '{}', 'c1')], run_id='run-0'),
+        ModelRequest(parts=[ToolReturnPart('run', 'ok', 'c1')], run_id='run-0'),
+        ModelResponse(parts=[TextPart(content='the answer')], run_id='run-1'),
+    ]
+    store.save(session)
+
+    points = Rollback(store, workspace=tmp_path / 'workspace').points(session.id)
+
+    assert len(points) == 1
+    assert prompt_of_turn(store.database, points[0].turn_id)[0] == 'question 0'
+
+
+def test_the_points_are_ordered_by_position_not_by_clock(tmp_path):
+    """`seq` orders the transcript; a message's timestamp does not.
+
+    A steered batch, a retried request or a clock that stepped back writes a later
+    message with an earlier timestamp. Ordering by it listed the points out of order.
+    """
+    store, session = _session(tmp_path)
+    first = _turn(0)
+    second = _earlier(_turn(1), than=datetime.now(UTC))
+    session.messages = first + second
+    store.save(session)
+
+    points = Rollback(store, workspace=tmp_path / 'workspace').points(session.id)
+
+    # Newest first: the turn that comes later in the transcript.
+    assert [prompt_of_turn(store.database, point.turn_id)[0] for point in points] == ['question 1', 'question 0']
+
+
+def test_a_rollback_drops_by_position_not_by_clock(tmp_path):
+    """The regression that ate nine turns: `started_at >= ?` matched earlier turns.
+
+    A turn whose messages carry an earlier timestamp than the one being rolled back
+    to is still *after* it in the conversation, and it is the only one that goes.
+    """
+    store, session = _session(tmp_path)
+    first = _turn(0)
+    second = _earlier(_turn(1), than=datetime.now(UTC))
+    session.messages = first + second
+    store.save(session)
+    rollback = Rollback(store, workspace=tmp_path / 'workspace')
+    target = rollback.points(session.id)[0]
+
+    outcome = rollback.to_turn(session.id, target.turn_id, files=False)
+
+    assert outcome.turns_dropped == 1
+    assert outcome.messages_dropped == 2
+    assert len(store.load(session.id).messages) == 2
+
+
+def test_a_rollback_leaves_a_history_the_agent_accepts(tmp_path):
+    """No result without its call, and no call without its result.
+
+    Truncating by clock cut a turn in half and left its tool results behind: a
+    history a provider rejects, and the reason a rollback looked like a move to
+    another conversation.
+    """
+    store, session = _session(tmp_path)
+    session.messages = [
+        *_turn(0),
+        ModelRequest(parts=[UserPromptPart(content='question 1')], run_id='run-1'),
+        ModelResponse(parts=[ToolCallPart('run', '{}', 'c1'), ToolCallPart('run', '{}', 'c2')], run_id='run-1'),
+        ModelRequest(parts=[ToolReturnPart('run', 'ok', 'c1')], run_id='run-1'),
+        ModelRequest(parts=[ToolReturnPart('run', 'ok', 'c2')], run_id='run-1'),
+    ]
+    store.save(session)
+    rollback = Rollback(store, workspace=tmp_path / 'workspace')
+    target = rollback.points(session.id)[0]
+
+    rollback.to_turn(session.id, target.turn_id, files=False)
+
+    loaded = store.load(session.id)
+    assert loaded is not None
+    assert len(loaded.messages) == 2
+    assert recover_history(loaded.messages).changed is False
+
+
+def test_the_prompt_of_a_turn_is_what_the_user_typed(tmp_path):
+    """The preview and the composer both need the prompt, not the first thing said."""
+    store, session = _session(tmp_path)
+    session.messages = [
+        *_turn(0),
+        ModelRequest(parts=[ToolReturnPart('run', 'ok', 'c1')], run_id='run-1'),
+        ModelRequest(parts=[UserPromptPart(content='do the thing')], run_id='run-1'),
+        ModelResponse(parts=[TextPart(content='done')], run_id='run-1'),
+    ]
+    store.save(session)
+    turn_id = store.database.value(
+        'SELECT turn_id FROM messages WHERE execution_id = ? AND seq = 3', (session.root_id,)
+    )
+
+    assert prompt_of_turn(store.database, str(turn_id))[0] == 'do the thing'
+    assert prompt_of_turn(store.database, 'nope') is None
 
 
 # --- the conversation half ----------------------------------------------------
