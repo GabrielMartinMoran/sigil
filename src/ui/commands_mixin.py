@@ -284,6 +284,15 @@ class CommandsMixin:
         """Points the app at ``session``: history, agent, tree, roadmap and persistence."""
         self._session = session
         self._history = session.messages
+        # The measured half of the context lives with the request that produced it, so
+        # it travels on the session and is read back here. `/load` used to leave the
+        # budget at zero, and `/context` then promised room the next request did not
+        # have.
+        self._meter.restore(session)
+        # What the last request of the *previous* conversation did is not this one's
+        # answer: the view is a report about a request, and this session has not made
+        # one yet.
+        self.reset_context_view()
         self.bind_agent(getattr(session, 'agent', ''))
         # The tree travels with the conversation: loading a session brings back the
         # subagents it summoned, and the view of a node of the old one has to close.
@@ -292,6 +301,13 @@ class CommandsMixin:
         # Another conversation is another window title: the repository is the same
         # and the title is not.
         self.paint_window_title()
+
+    def reset_context_view(self) -> None:
+        """Drops the last projected view, if the app has the capability."""
+        capability = getattr(self, '_context_capability', None)
+        reset = getattr(capability, 'reset', None)
+        if callable(reset):
+            reset()
 
     def _restore_session_model(self, session) -> None:
         """Re-applies the model the conversation was using.
@@ -329,6 +345,8 @@ class CommandsMixin:
         """Saves the current session if it has messages."""
         self._sync_session_selection()
         if self._session.messages:
+            # What the meter measured rides with the row: `/load` reads it back.
+            self._meter.stamp(self._session)
             self._store.save(self._session)
 
     def _sync_session_selection(self) -> None:

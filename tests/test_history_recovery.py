@@ -131,6 +131,32 @@ def test_a_history_recovered_mid_turn_keeps_its_answered_calls():
     assert original.content == 'contents'
 
 
+def test_a_dangling_call_from_an_earlier_step_is_left_alone():
+    """Only the frontier can make the next prompt fail.
+
+    A call with no result in the middle of the conversation is not a turn that died:
+    it is a batch a steer, a retry or a lost write split in two. `Agent.run` accepts
+    it — only the *last* response's unprocessed calls are refused — and pydantic-ai
+    closes it in memory before every request. Repairing it here invented tool output
+    that was never produced, wrote it to disk and then reported a crash that never
+    happened.
+    """
+    messages = [
+        ModelRequest(parts=[UserPromptPart('first')]),
+        ModelResponse(parts=[ToolCallPart('run', '{}', 'c1'), ToolCallPart('run', '{}', 'c2')]),
+        ModelRequest(parts=[ToolReturnPart('run', 'ok', 'c1')]),
+        ModelRequest(parts=[UserPromptPart('second')]),
+        ModelResponse(parts=[TextPart('answered')]),
+    ]
+
+    recovered = recover_history(messages)
+
+    assert recovered.changed is False
+    assert recovered.messages is messages
+    assert recovered.closed_calls == 0
+    assert recovered.notice == ''
+
+
 # --- the app ------------------------------------------------------------------
 
 

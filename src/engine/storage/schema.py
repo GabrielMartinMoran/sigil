@@ -1,9 +1,12 @@
 """The schema of Sigil's database.
 
-One database for every workspace, in `$SIGIL_HOME/sigil.db`. The DDL is here as
-one string because it is applied whole: there is no import from the old JSON
-files, so there is no version 0 and nothing to migrate. Schema changes after this
-one are numbered steps guarded by `PRAGMA user_version`.
+One database for every workspace, in `$SIGIL_HOME/sigil.db`. The DDL below is what a
+database created **today** looks like, applied whole. A database written by an older
+Sigil carries a lower `PRAGMA user_version` and gets the numbered steps in
+`MIGRATIONS` on top: `SCHEMA` is written with `IF NOT EXISTS` and is a no-op for the
+tables that already exist, and the columns a step adds are in `SCHEMA` too, so a fresh
+file and a migrated one end up identical. That is what makes a schema change a number
+and not a rewrite.
 """
 
 from __future__ import annotations
@@ -36,6 +39,11 @@ CREATE TABLE IF NOT EXISTS sessions (
     window       INTEGER,
     efforts      TEXT    NOT NULL DEFAULT '[]',
     images       INTEGER NOT NULL DEFAULT 1,
+    -- What the last request measured of the blocks that are always sent. They are a
+    -- property of the conversation and not of the process: `/load` reads them back so
+    -- the budget of the next request is the real one. See `ContextMeter`.
+    tools_tokens        INTEGER NOT NULL DEFAULT 0,
+    instructions_tokens INTEGER NOT NULL DEFAULT 0,
     created_at   TEXT    NOT NULL,
     updated_at   TEXT    NOT NULL
 ) STRICT, WITHOUT ROWID;
@@ -177,8 +185,23 @@ CREATE TABLE IF NOT EXISTS app_state (
 ) STRICT, WITHOUT ROWID;
 """
 
-USER_VERSION = 1
-"""Numbered schema steps start above this. The database starts empty, so there is
-no step 0 and no import to convert."""
+USER_VERSION = 2
+"""The version `SCHEMA` describes.
 
-__all__ = ['SCHEMA', 'USER_VERSION']
+Steps start above the empty file: a database created today is written whole and its
+version is stamped straight away, so a step only ever runs for a database that was
+written by an older Sigil.
+"""
+
+MIGRATIONS: dict[int, str] = {
+    2: (
+        # What the last request measured of the blocks that are always sent. A session
+        # written before this column existed has measured nothing, and `0` says that
+        # honestly: the first request of the resumed conversation fills it in.
+        'ALTER TABLE sessions ADD COLUMN tools_tokens INTEGER NOT NULL DEFAULT 0;'
+        'ALTER TABLE sessions ADD COLUMN instructions_tokens INTEGER NOT NULL DEFAULT 0;'
+    ),
+}
+"""Numbered steps, each one bringing the file up to its key. Applied in order."""
+
+__all__ = ['MIGRATIONS', 'SCHEMA', 'USER_VERSION']

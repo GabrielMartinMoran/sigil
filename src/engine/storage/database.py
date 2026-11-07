@@ -23,7 +23,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from src.engine.storage.schema import SCHEMA, USER_VERSION
+from src.engine.storage.schema import MIGRATIONS, SCHEMA, USER_VERSION
 
 DEFAULT_DATABASE_NAME = 'sigil.db'
 
@@ -72,10 +72,23 @@ class Database:
     # --- schema --------------------------------------------------------------
 
     def _apply_schema(self) -> None:
+        """Brings the file to `USER_VERSION`, creating it or stepping it forward.
+
+        The DDL is applied whole and is idempotent, so the only decision is whether
+        the numbered steps run on top: a file with no version yet is either brand new
+        or old enough to predate the database, and `SCHEMA` already describes it with
+        every column. A file that was written by an older Sigil carries its number and
+        gets the steps it is missing, in order.
+        """
         with self._lock:
-            current = self._connection.execute('PRAGMA user_version').fetchone()[0]
+            current = int(self._connection.execute('PRAGMA user_version').fetchone()[0])
             if current == USER_VERSION:
                 return
+            if current > 0:
+                for version in range(current + 1, USER_VERSION + 1):
+                    step = MIGRATIONS.get(version)
+                    if step is not None:
+                        self._connection.executescript(step)
             self._connection.executescript(SCHEMA)
             self._connection.execute(f'PRAGMA user_version = {USER_VERSION}')
 
