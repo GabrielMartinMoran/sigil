@@ -517,6 +517,41 @@ def test_catalog_for_without_an_account_raises(tmp_path):
         asyncio.run(service.catalog_for())
 
 
+# --- the credential a catalogue is read with --------------------------------
+#
+# A catalogue is a bearer-authenticated GET, and which bearer is right depends on how
+# the account signed in. Returning nothing for a plan account made a signed-in
+# ChatGPT subscription show four hardcoded models and an "empty list" error: the
+# request was never made with a credential at all.
+
+
+def test_a_plan_account_reads_its_catalogue_with_the_oauth_token(tmp_path):
+    service = _service(tmp_path)
+    flow = _Flow(_oauth_secret(access_token='the-plan-token'))
+    asyncio.run(service.add_oauth(ProviderKind.OPENAI, 'plan', flow))
+    account = service.accounts.load()[0]
+
+    assert service._api_key_for(account) == 'the-plan-token'
+
+
+def test_an_api_key_account_reads_its_catalogue_with_the_key(tmp_path):
+    service = _service(tmp_path)
+    _add(service)
+    account = service.accounts.load()[0]
+
+    assert service._api_key_for(account) == 'sk-test'
+
+
+def test_an_account_without_a_secret_has_nothing_to_send(tmp_path):
+    service = _service(tmp_path)
+    flow = _Flow(_oauth_secret())
+    asyncio.run(service.add_oauth(ProviderKind.OPENAI, 'plan', flow))
+    account = service.accounts.load()[0]
+    service.secrets.delete(account.id)
+
+    assert service._api_key_for(account) is None
+
+
 def test_secret_is_missing_produces_a_domain_error(tmp_path):
     service = _service(tmp_path)
     _add(service)

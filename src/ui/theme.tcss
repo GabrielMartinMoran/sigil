@@ -409,3 +409,9 @@ ThemePickerScreen > #theme-wrap {
     background: $panel;
     padding: 1 2;
 }
+
+/* Tool rows are keyboard targets as well as clickable output disclosures. */
+.tool-call:focus, .tool-group:focus {
+    background: $boost;
+    text-style: underline;
+}

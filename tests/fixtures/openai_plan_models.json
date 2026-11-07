@@ -1,0 +1,49 @@
+{
+  "models": [
+    {
+      "slug": "gpt-6.1-sol",
+      "display_name": "GPT-6.1-Sol",
+      "description": "Latest workhorse model for coding and everyday work.",
+      "context_window": 500000,
+      "max_context_window": 872000,
+      "input_modalities": ["text", "image"],
+      "default_reasoning_level": "low",
+      "supported_reasoning_levels": [
+        { "effort": "low", "description": "Fast responses with lighter reasoning" },
+        { "effort": "medium", "description": "Balanced" },
+        { "effort": "high", "description": "Deeper reasoning" },
+        { "effort": "xhigh", "description": "Maximum" }
+      ],
+      "visibility": "list",
+      "supported_in_api": true
+    },
+    {
+      "slug": "gpt-reserve",
+      "display_name": "GPT-Reserve",
+      "context_window": 500000,
+      "max_context_window": 872000,
+      "input_modalities": ["text"],
+      "supported_reasoning_levels": [],
+      "visibility": "list"
+    },
+    {
+      "slug": "codex-auto-review",
+      "context_window": null,
+      "visibility": "list"
+    },
+    {
+      "slug": "gpt-image-1",
+      "display_name": "GPT Image 1",
+      "context_window": 8000
+    },
+    {
+      "slug": "text-embedding-3-large",
+      "context_window": 8191
+    },
+    {
+      "display_name": "An entry with no identifier at all",
+      "context_window": 1000,
+      "note": "neither a slug nor an id: it cannot be addressed and is skipped"
+    }
+  ]
+}

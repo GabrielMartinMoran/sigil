@@ -27,6 +27,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic_ai import Agent
 from pydantic_ai.capabilities import ProcessEventStream
 from pydantic_ai.exceptions import RunCancelled
 from pydantic_ai.messages import (
@@ -51,6 +52,7 @@ from src.engine.providers.domain.thinking import settings_value as thinking_sett
 from src.engine.sessions.recovery import recover_history
 from src.engine.shell import running as running_commands
 from src.ui.messages import ChatNotice
+from src.ui.turn_timing import TurnTimings
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.status_bar import StatusBar
@@ -172,6 +174,9 @@ class TurnMixin:
 
         async def handler(_ctx: Any, events: Any) -> None:
             async for event in events:
+                timings = getattr(self, '_turn_timings', None)
+                if timings is not None:
+                    timings.stream_event()
                 # Checkpoint per event: as soon as the run adds a message to
                 # the history (e.g. the user prompt) it lands on disk.
                 self.checkpoint()
@@ -398,6 +403,7 @@ class TurnMixin:
     async def run_turn(self, text: str, *, attachments: tuple[ImageAttachment, ...] = ()) -> None:
         """Runs a full turn, persisting progress along the way."""
         self._turn_active = True
+        timings = self._turn_timings = TurnTimings()
         # The session this turn belongs to. A command that swaps it mid-turn is
         # refused (`CommandsMixin`), but the run must not take that on trust: if
         # the session changed underneath, what this turn produced belongs to the
@@ -482,7 +488,9 @@ class TurnMixin:
                 self._current_run = run
                 # A message typed while the run was being built has no id yet.
                 self._flush_steering(run)
-                async for _node in run:
+                async for _node in timings.trace(run):
+                    if Agent.is_model_request_node(_node):
+                        self.set_activity_label('Waiting for model')
                     # Checkpoint per iteration: every completed node (model
                     # response, tool batch) gets persisted.
                     self.checkpoint()
@@ -551,6 +559,7 @@ class TurnMixin:
         # The turn just wrote files: the bar shows the tree as it is now, not as it
         # was when the last poll ran.
         self.refresh_diff()
+        timings.finish()
         # The debug view shows the cost of the turn just closed.
         refresh_debug = getattr(self, 'refresh_debug', None)
         if callable(refresh_debug):

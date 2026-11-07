@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from src.engine.tooling.catalog import ToolCatalog
 from src.engine.tooling.concurrency import ConcurrencyGuard
 from src.engine.tooling.logging import ToolLogger
+from src.engine.tooling.outputs import OutputPresenter, register_output
 from src.engine.tooling.permission import ToolPermission
 from src.engine.tooling.presentation import Describe
 from src.engine.tooling.wrapper import wrap_tool
@@ -59,6 +60,7 @@ class ToolRegistrar:
         permission: ToolPermission | None = None,
         requires: str | tuple[str, ...] | None = None,
         describe: Describe | None = None,
+        output: OutputPresenter | None = None,
         **tool_kwargs: Any,
     ) -> Any:
         """Decorator equivalent to ``agent.tool_plain`` with logging.
@@ -68,7 +70,8 @@ class ToolRegistrar:
         the tool is for the agent profile, which is what lets a profile deny a
         whole group or a specific path instead of only the tool by name.
         ``describe`` is how the tool summarizes its own result in one line for the
-        transcript; see ``presentation``.
+        transcript; see ``presentation``. ``output`` formats normalized result
+        data for the expanded human view, including session replay.
         """
         return self._make(
             func,
@@ -79,6 +82,7 @@ class ToolRegistrar:
             permission=permission,
             requires=requires,
             describe=describe,
+            output=output,
             **tool_kwargs,
         )
 
@@ -92,6 +96,7 @@ class ToolRegistrar:
         permission: ToolPermission | None = None,
         requires: str | tuple[str, ...] | None = None,
         describe: Describe | None = None,
+        output: OutputPresenter | None = None,
         **tool_kwargs: Any,
     ) -> Any:
         """Decorator equivalent to ``agent.tool`` (it receives a ``RunContext``)."""
@@ -104,6 +109,7 @@ class ToolRegistrar:
             permission=permission,
             requires=requires,
             describe=describe,
+            output=output,
             **tool_kwargs,
         )
 
@@ -118,6 +124,7 @@ class ToolRegistrar:
         permission: ToolPermission | None = None,
         requires: str | tuple[str, ...] | None = None,
         describe: Describe | None = None,
+        output: OutputPresenter | None = None,
         **tool_kwargs: Any,
     ) -> Callable[..., Any]:
         """Registers an already defined function and returns the wrapper."""
@@ -130,6 +137,7 @@ class ToolRegistrar:
             permission=permission,
             requires=requires,
             describe=describe,
+            output=output,
             **tool_kwargs,
         )
 
@@ -144,10 +152,13 @@ class ToolRegistrar:
         permission: ToolPermission | None = None,
         requires: str | tuple[str, ...] | None = None,
         describe: Describe | None = None,
+        output: OutputPresenter | None = None,
         **tool_kwargs: Any,
     ) -> Any:
         def decorator(target: Callable[..., Any]) -> Callable[..., Any]:
             tool_name = name or target.__name__
+            if output is not None:
+                register_output(tool_name, output)
             wrapped = wrap_tool(
                 target,
                 tool_name=tool_name,

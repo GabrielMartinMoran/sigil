@@ -211,6 +211,11 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# The web client's bundle is committed on purpose: `sigil server` serves it and
+# must not need Node at runtime. `dist/` above is the Python packaging artifact.
+!web/dist/
+web/node_modules/
+
 .codegraph/
 
 .sigil/config.json

@@ -14,6 +14,7 @@ the file tools never see, so there is no event to subscribe to.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
@@ -92,20 +93,24 @@ class ActivityMixin:
 
     # --- diff ---------------------------------------------------------------
 
-    @work(exclusive=True, group='diff')
+    @work(group='diff')
     async def refresh_diff(self) -> None:
-        """Reads the diff off the event loop and paints it.
+        """Reads Git in a thread; overlapping polls share the in-flight read.
 
-        `git diff` spawns processes; doing it on the UI thread would stall the
-        spinner it is meant to accompany. The worker is exclusive: a burst of tool
-        calls schedules one read, not one per call.
+        Cancelling an exclusive async worker cannot stop its thread. Coalescing
+        instead prevents a burst of tool events from spawning concurrent Git reads.
         """
         root = self._workspace_root()
-        if root is None:
+        if root is None or getattr(self, '_diff_reading', False):
             return
+        self._diff_reading = True
         try:
-            diff = worktree_diff(root)
+            diff = await asyncio.to_thread(worktree_diff, root)
         except Exception:  # noqa: BLE001 - the bar is a summary, never a failure
+            return
+        finally:
+            self._diff_reading = False
+        if root != self._workspace_root():
             return
         self._last_diff = diff
         try:

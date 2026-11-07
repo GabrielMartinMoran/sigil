@@ -272,8 +272,9 @@ class AgentDebugView(Vertical):
         """Last painted report. Tests use it to inspect without parsing the screen."""
         return self._report
 
-    def update_report(self, report: DebugReport) -> None:
-        """Repaints the view with a new report."""
+    def update_report(self, report: DebugReport, *, timing: str = '') -> None:
+        """Repaints context and optional, content-free TUI turn timings."""
         self._report = report
         self._header.update(build_debug_header(report))
-        self._body.update(build_debug_body(report))
+        body = build_debug_body(report)
+        self._body.update(Group(Text(timing), body) if timing else body)

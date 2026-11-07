@@ -208,8 +208,13 @@ def test_the_block_shows_the_summary_and_the_duration_instead_of_a_repr():
                 await chat.add_tool_call('run', {'cmds': ['pytest -q']})
                 await pilot.pause()
                 block = app.query_one(ToolCallBlock)
-                # While it runs there is no outcome: the `…` already says it.
-                assert '…' in block._header().plain
+                # Pending is animated, not a frozen check or an ellipsis.
+                assert block.pending
+                first = block._state_mark()
+                block._advance_pending()
+                assert block._state_mark() != first
+                assert block._pending_timer is not None
+                assert 'running' in block._header().plain
                 assert '9 passed' not in block._header().plain
 
                 chat.set_tool_summary('run', ToolSummary('9 passed in 0.45s', 'good'), 450)
@@ -219,14 +224,17 @@ def test_the_block_shows_the_summary_and_the_duration_instead_of_a_repr():
                 assert '9 passed in 0.45s' in header
                 assert '450ms' in header
                 assert 'returncode=' not in header
+                assert block._state_mark() == '✓'
+                assert block._pending_timer is None
+                assert 'running' not in header
                 # Flush right on the width the block actually has.
                 assert block._header().cell_len == block.size.width
 
     asyncio.run(inner())
 
 
-def test_a_failed_result_is_red_and_still_checks_the_call():
-    """Two axes: the glyph says the call returned, the color says how it went."""
+def test_a_failed_result_is_red_and_marks_the_outcome_as_failed():
+    """A bad result is a visible failure even when the invocation returned."""
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -244,7 +252,7 @@ def test_a_failed_result_is_red_and_still_checks_the_call():
                 await chat.add_tool_result('run', FAILED)
                 await pilot.pause()
                 block = app.query_one(ToolCallBlock)
-                assert block._state_mark() == '✓'
+                assert block._state_mark() == '✗'
                 summary = block._outcome()
                 assert summary is not None
                 assert '1 failed' in summary.plain
@@ -400,11 +408,11 @@ def test_the_header_counts_what_is_left_and_then_stops_counting():
                 await pilot.pause()
                 header = _headers(chat)[0]
                 assert '3 tools' in header.render().plain
-                assert '[0/3]' in header.render().plain
+                assert '0 / 3 done' in header.render().plain
 
                 await chat.add_tool_result('run', 'ok')
                 await pilot.pause()
-                assert '[1/3]' in header.render().plain
+                assert '1 / 3 done' in header.render().plain
 
                 await chat.add_tool_result('run', 'ok')
                 await chat.add_tool_result('read_file', 'ok')
@@ -605,3 +613,33 @@ def test_tools_expanded_repaints_what_is_already_on_screen_and_is_remembered():
                 assert prefs.load().tools_expanded is False
 
     asyncio.run(inner())
+
+
+def test_should_stop_pending_animation_on_interrupted_turn_and_unmount() -> None:
+    async def scenario() -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
+            app = SigilApp(
+                agent=Agent(TestModel(custom_output_text='ok'), instructions='x'),
+                store=store,
+                session=store.create_session(),
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                chat = app.query_one(ChatLog)
+                await chat.add_tool_call('run', {'cmds': ['sleep 10']})
+                block = app.query_one(ToolCallBlock)
+                assert block._pending_timer is not None
+                chat.finalize()
+                assert not block.pending
+                assert block._state_mark() == '✗'
+                assert block._pending_timer is None
+                assert block.raised
+
+                await chat.add_tool_call('read_file', {'path': 'a.py'})
+                other = list(app.query(ToolCallBlock))[-1]
+                assert other._pending_timer is not None
+                await other.remove()
+                assert other._pending_timer is None
+
+    asyncio.run(scenario())
