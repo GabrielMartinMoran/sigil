@@ -174,6 +174,7 @@ class PromptInput(TextArea):
         )
         self._attachments: dict[int, ImageAttachment] = {}
         self._next_number = 1
+        self._last_submission: tuple[str, tuple[ImageAttachment, ...]] | None = None
 
     # --- attachments ---------------------------------------------------------
 
@@ -307,6 +308,12 @@ class PromptInput(TextArea):
                 await self.app.menu_choose()
             else:
                 await self.action_submit()
+            return
+
+        if event.key == 'ctrl+p':
+            event.stop()
+            event.prevent_default()
+            self.run_worker(self.app.open_command_palette())
             return
 
         if event.key == CTRL_MODELS:
@@ -444,16 +451,29 @@ class PromptInput(TextArea):
             return
         # A message that is only a pasted image has no text of its own: the
         # marker it was written with is the whole message.
+        self.remember_submission(text, attachments)
         self.clear()
         self.post_message(self.Submitted(text, attachments))
 
+    def remember_submission(self, text: str, attachments: tuple[ImageAttachment, ...] = ()) -> None:
+        """Keeps the last sent message or executed menu command for recall."""
+        self._last_submission = (text, attachments)
+
     async def action_menu_up(self) -> None:
         self.app.cancel_abort()
-        self.app.menu_move(-1)
+        if self.app.menu_visible:
+            self.app.menu_move(-1)
+        elif not self.text and self._last_submission is not None:
+            self.restore([self._last_submission])
+        else:
+            self.action_cursor_up()
 
     async def action_menu_down(self) -> None:
         self.app.cancel_abort()
-        self.app.menu_move(1)
+        if self.app.menu_visible:
+            self.app.menu_move(1)
+        else:
+            self.action_cursor_down()
 
     async def action_menu_complete(self) -> None:
         """Tab completes the highlighted command instead of running it.

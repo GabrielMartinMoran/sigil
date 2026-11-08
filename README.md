@@ -1153,11 +1153,12 @@ from the UI: no key goes in an environment variable and nothing needs a restart.
 
 An **account** is one credential plus a name you choose. You can have as many as
 you want, including several of the same provider — two OpenRouter keys, a personal
-and a work OpenAI org — and switch between them with `/provider`.
+and a work OpenAI org. Manage them with `/provider` and choose a model across
+accounts with `/model`.
 
 ```
-/provider                 open the list: activate, add, rename, remove
-/model                    pick a model for the active account
+/provider                 manage accounts: add, rename, remove
+/model                    choose a model across accounts, then its reasoning effort
 /effort [level]           open the effort picker, or set a level directly
 ```
 
@@ -1166,6 +1167,7 @@ and a work OpenAI org — and switch between them with `/provider`.
 | `ctrl+a` | the agent picker |
 | `ctrl+l` | the reasoning-effort picker |
 | `ctrl+m` | the model picker |
+| `ctrl+p` | the searchable command palette |
 | `ctrl+v` | paste an image from the clipboard (or text) |
 | `alt+d` | the agent debug view |
 | `ctrl+t` | the agents of the session, and the way into any subagent |
@@ -1179,9 +1181,17 @@ Enter and the message is sent, exactly as before. Nothing is swallowed either
 way. `ctrl+a` is `home` in a text input, and that is precisely why it is read
 here: the prompt claims it before the widget turns it into a cursor move.
 
-In every list: `↑`/`↓` move, `PgUp`/`PgDn` jump, `Enter` chooses, `Tab`
-completes (writes the highlighted value into the input without committing), `Esc`
-goes back. In the command menu, `Tab` completes the highlighted command and adds
+In the model picker, type to filter by account or model, and press `ctrl+f` to
+mark or unmark a favorite. Favorites appear first and remain saved between runs.
+Selecting a model opens the effort picker; `Esc` cancels without changing the
+active selection. If no model matches, you can use the typed ID for an account.
+
+In the command palette, type to filter, use `↑`/`↓` to move, and press `Enter`
+to run the selected command. The worktree entry requests a name before running
+`/new --worktree`. `Esc` cancels without changing your draft.
+
+In the model picker, `↑`/`↓` move, `PgUp`/`PgDn` jump, `Enter` chooses, `Tab`
+completes the highlighted model, and `Esc` goes back. In the command menu, `Tab` completes the highlighted command and adds
 a trailing space when it takes an argument.
 
 Adding an account asks for the provider, the product and the sign-in method, and
@@ -1288,11 +1298,12 @@ type.
 | `/new [--worktree <name>]` | Starts a new session, with its empty roadmap; `--worktree` creates a git worktree and works there |
 | `/load` | Loads a saved session and its roadmap, switching workspace if it belongs to another worktree |
 | `/agent [name]` | Opens the agent picker; with a name, switches directly |
-| `/provider` | Manage provider accounts: add, rename, remove, activate |
-| `/model` | Picks the model for the active account |
+| `/provider` | Manage provider accounts: add, rename, remove |
+| `/model` | Pick a model across accounts, then its reasoning effort |
 | `/effort [level]` | Opens the effort picker; with a level, sets it directly |
 | `/reasoning-visibility [on\|off]` | Shows or collapses the reasoning in the chat; without an argument, toggles |
 | `/tools [expanded\|collapsed]` | Shows or collapses the tool output in the chat; without an argument, toggles |
+| `/alerts [on\|off]` | Shows desktop alert status; enables or disables alerts |
 | `/theme [name\|--list]` | Opens the theme picker with a live preview; with a name, applies it; `--list` lists the installed ones |
 | `/sidebar [on\|off]` | Shows or hides the sidebar; without an argument, toggles |
 | `/mcp` | Queries the state of the MCP servers |
@@ -1522,6 +1533,51 @@ restored conversation shows the bill its own requests produced, not zero.
 requests were priced by the provider, how many came from the table, and how
 many could not be priced.
 
+
+## Notifications
+
+Sigil separates in-app alerts from desktop notifications. In the terminal
+client, transient alerts appear at the top right, above the composer, without
+taking keyboard focus. Long stacks scroll within the upper part of the screen
+instead of covering the input or question panel.
+
+Desktop notifications announce a completed turn, a failed turn, or a batch of
+questions waiting for your answer. Cancelling a turn does not send a completion
+notification. Each notification identifies the project and conversation title;
+these names can be visible on a locked screen. The message is generic and does
+not include prompts, answers, question text, or exception details. If the session
+has no title yet, the notification uses its short ID instead of message content.
+
+- **Linux terminal:** Install `notify-send` (usually the `libnotify-bin` or
+  `libnotify` package). Delivery needs a running desktop notification service.
+- **macOS terminal:** Sigil uses `osascript`; allow notifications for the host
+  application in system settings if required.
+- **Other terminal platforms:** Native desktop delivery is not implemented.
+  In-app alerts and question panels still work.
+- **Web desktop:** Select **Enable alerts** in the header and grant notification
+  permission. HTTPS or localhost and a supported browser are required. Select
+  **Alerts on** to disable delivery again. This preference belongs to the
+  browser. The page must remain open and connected; this is not background push
+  delivery. Many mobile browsers require a service worker and cannot use this
+  delivery path.
+
+Terminal desktop notifications are enabled by default. Use `/alerts` to check
+whether they are enabled and whether a local helper is available. Use
+`/alerts on` or `/alerts off` to change the preference immediately, including
+during a turn. The preference is saved in `~/.sigil/ui.json` (or under
+`SIGIL_HOME`).
+
+Terminal delivery runs on the machine hosting Sigil, not on an SSH client's
+machine. It is best-effort and runs off the UI thread with a three-second
+process timeout. Missing helpers, denied permissions, and system notification
+policies can prevent an alert without interrupting the turn. Desktop delivery is
+disabled during headless UI tests. Browser event replay and duplicate sequence
+numbers do not resend old desktop alerts.
+
+In the browser, answering a question, starting another turn, disabling alerts,
+returning focus to the app, or signing out closes the obsolete desktop alert.
+The button follows permission changes and preferences changed in another tab;
+while a permission request is pending, it cannot open another request.
 
 ## Reading the chat
 

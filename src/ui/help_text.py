@@ -29,7 +29,7 @@ KEYS_TEXT = (
     'Keys: Enter sends · Shift+Enter adds a line · ctrl+v pastes an image · '
     'Up/Down pick in the menu · Tab completes · Esc closes the menu · '
     'pgup/pgdn and ctrl+↑/↓ read the conversation · '
-    'ctrl+t the agents of the session · alt+d the agent debug view · '
+    'ctrl+p command palette · ctrl+t the agents of the session · alt+d the agent debug view · '
     '/tools expanded shows the tool output'
 )
 

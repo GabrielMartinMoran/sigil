@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 
 import { Composer } from './Composer';
 import { Login } from './Login';
+import { NotificationToggle } from './NotificationToggle';
 import { QuestionPanel } from './QuestionPanel';
 import { Sidebar } from './Sidebar';
 import { Streaming } from './Streaming';
@@ -87,6 +88,7 @@ export function App() {
           <h1 className="text-ink min-w-0 flex-1 truncate text-sm font-medium">
             {state?.session.display_title ?? 'sigil'}
           </h1>
+          <NotificationToggle />
           {state?.busy ? (
             <span className="text-accent shrink-0 animate-pulse font-mono text-[11px]">working</span>
           ) : null}

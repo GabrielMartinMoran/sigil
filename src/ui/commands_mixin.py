@@ -138,6 +138,7 @@ class CommandsMixin:
             '/effort': lambda: self.show_effort(chat, args),
             '/reasoning-visibility': lambda: self.handle_reasoning_visibility(args, chat),
             '/tools': lambda: self.handle_tools(args, chat),
+            '/alerts': lambda: self.handle_alerts(args, chat),
             '/theme': lambda: self.handle_theme_command(args, chat),
             '/sidebar': lambda: self.handle_sidebar(args, chat),
             '/mcp': lambda: self.show_mcp(chat),

@@ -22,6 +22,7 @@ from __future__ import annotations
 from src.engine.paths import themes_dir
 from src.engine.preferences import Preferences, PreferencesStore
 from src.engine.themes import ThemeRegistry, theme_variable_defaults
+from src.ui.desktop_notifications import Attention, notification_command
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.theme_picker_screen import ThemePickerScreen
 
@@ -64,6 +65,24 @@ class PreferencesMixin:
         called, and the sheet fails to parse on a variable only Sigil knows.
         """
         return theme_variable_defaults()
+
+    # --- desktop alerts -----------------------------------------------------
+
+    async def handle_alerts(self, args: str, chat: ChatLog) -> None:
+        value = args.strip().lower()
+        if value in {'on', 'off'}:
+            self._preferences = self._preferences.with_desktop_notifications(value == 'on')
+            self.save_preferences()
+            await chat.add_notice(f'Desktop alerts: {"enabled" if value == "on" else "disabled"}.', style='dim')
+        elif not value:
+            enabled = 'enabled' if self._preferences.desktop_notifications else 'disabled'
+            backend = 'available' if notification_command(Attention.FINISHED) else 'unavailable'
+            await chat.add_notice(
+                f'Desktop alerts: {enabled}; local backend: {backend}. Use /alerts on or /alerts off.',
+                style='dim',
+            )
+        else:
+            await chat.add_notice('Usage: /alerts [on|off]', style='yellow')
 
     # --- reasoning ----------------------------------------------------------
 

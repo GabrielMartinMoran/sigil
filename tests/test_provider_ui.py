@@ -89,10 +89,10 @@ def test_a_opens_the_add_flow():
     assert result == ProviderAction('add')
 
 
-def test_enter_activates_the_highlighted_account():
+def test_enter_does_not_activate_the_highlighted_account():
     account = ProviderAccount.create('work', ProviderKind.OPENROUTER)
     result = _screen_result(ProviderScreen([account]), ('enter',))
-    assert result == ProviderAction('activate', 'work')
+    assert result is None
 
 
 def test_d_requests_removal_of_the_highlighted_account():

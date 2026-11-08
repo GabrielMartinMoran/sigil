@@ -12,6 +12,7 @@
 import { useEffect } from 'react';
 
 import { api, setUnauthorizedHandler } from './api';
+import { closeAttention, createAttentionListener } from './notifications';
 import { useStore } from './store';
 
 export function useEvents(active: boolean): void {
@@ -26,12 +27,24 @@ export function useEvents(active: boolean): void {
   useEffect(() => {
     if (!active) return;
 
+    const attention = createAttentionListener(useStore.getState().state?.seq ?? 0, () => {
+      const state = useStore.getState().state;
+      if (!state) return undefined;
+      const workspace = state.workspace;
+      const project = workspace.repository
+        ? workspace.is_worktree
+          ? `${workspace.repository}:${workspace.label}`
+          : workspace.repository
+        : workspace.label;
+      return { project, conversation: state.session.title || `Session ${state.session.short_id}` };
+    });
     const source = new EventSource('/events', { withCredentials: true });
     let opened = false;
 
     const listen = (type: string) => {
       source.addEventListener(type, (event) => {
         const payload = JSON.parse((event as MessageEvent<string>).data) as Record<string, unknown>;
+        attention(type, payload);
         applyEvent(type, payload);
       });
     };
@@ -71,6 +84,9 @@ export function useEvents(active: boolean): void {
       if (source.readyState === EventSource.CLOSED) setUnauthenticated();
     });
 
-    return () => source.close();
+    return () => {
+      source.close();
+      closeAttention();
+    };
   }, [active, applyEvent, setUnauthenticated]);
 }

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shlex
+
 from textual.css.query import NoMatches
 from textual.widgets import TextArea
 
@@ -20,6 +22,21 @@ class MenuMixin:
     """
 
     menu_visible: bool
+
+    async def open_command_palette(self) -> None:
+        from src.ui.widgets.command_palette_screen import CommandPaletteScreen
+        from src.ui.widgets.text_prompt_screen import TextPromptScreen
+
+        choice = await self.push_screen_wait(CommandPaletteScreen())
+        if choice is None:
+            return
+        args = ''
+        if choice.worktree:
+            name = await self.push_screen_wait(TextPromptScreen(title='New worktree', placeholder='Worktree name…'))
+            if name is None:
+                return
+            args = f'--worktree {shlex.quote(name)}'
+        await self.handle_command(choice.name, args)
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """The composer changed: refilter the menu.
@@ -104,6 +121,8 @@ class MenuMixin:
         if option is None or option.id is None:
             return
         self.menu_hide()
-        self.query_one(PromptInput).clear()
+        field = self.query_one(PromptInput)
+        field.remember_submission(str(option.id))
+        field.clear()
         # In a worker to be able to use `push_screen_wait` (e.g. /load).
         self.run_worker(self.handle_command(option.id))

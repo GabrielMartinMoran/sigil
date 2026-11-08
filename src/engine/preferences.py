@@ -24,6 +24,8 @@ FILE_NAME = 'ui.json'
 THEME_KEY = 'theme'
 REASONING_KEY = 'reasoning_visible'
 TOOLS_KEY = 'tools_expanded'
+DESKTOP_NOTIFICATIONS_KEY = 'desktop_notifications'
+MODEL_FAVORITES_KEY = 'model_favorites'
 
 DEFAULT_THEME = 'dark'
 """Theme applied on a cold start. It is a builtin, so it always exists."""
@@ -47,6 +49,8 @@ class Preferences:
     theme: str = DEFAULT_THEME
     reasoning_visible: bool = DEFAULT_REASONING_VISIBLE
     tools_expanded: bool = DEFAULT_TOOLS_EXPANDED
+    desktop_notifications: bool = True
+    model_favorites: tuple[tuple[str, str], ...] = ()
 
     def with_theme(self, theme: str) -> Preferences:
         return replace(self, theme=theme)
@@ -57,8 +61,29 @@ class Preferences:
     def with_tools_expanded(self, expanded: bool) -> Preferences:
         return replace(self, tools_expanded=expanded)
 
+    def with_desktop_notifications(self, enabled: bool) -> Preferences:
+        return replace(self, desktop_notifications=enabled)
+
+    def with_favorites(self, favorites: tuple[tuple[str, str], ...]) -> Preferences:
+        return replace(self, model_favorites=favorites)
+
+    def with_favorite(self, account_id: str, model: str) -> Preferences:
+        key = (account_id, model)
+        favorites = list(self.model_favorites)
+        if key in favorites:
+            favorites.remove(key)
+        else:
+            favorites.append(key)
+        return self.with_favorites(tuple(favorites))
+
     def to_dict(self) -> dict[str, object]:
-        return {THEME_KEY: self.theme, REASONING_KEY: self.reasoning_visible, TOOLS_KEY: self.tools_expanded}
+        return {
+            THEME_KEY: self.theme,
+            REASONING_KEY: self.reasoning_visible,
+            TOOLS_KEY: self.tools_expanded,
+            DESKTOP_NOTIFICATIONS_KEY: self.desktop_notifications,
+            MODEL_FAVORITES_KEY: [list(item) for item in self.model_favorites],
+        }
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> Preferences:
@@ -70,10 +95,27 @@ class Preferences:
         theme = data.get(THEME_KEY)
         reasoning = data.get(REASONING_KEY)
         tools = data.get(TOOLS_KEY)
+        desktop = data.get(DESKTOP_NOTIFICATIONS_KEY)
+        raw_favorites = data.get(MODEL_FAVORITES_KEY)
+        favorites = (
+            tuple(
+                dict.fromkeys(
+                    (item[0], item[1])
+                    for item in raw_favorites
+                    if isinstance(item, list)
+                    and len(item) == 2
+                    and all(isinstance(value, str) and value for value in item)
+                )
+            )
+            if isinstance(raw_favorites, list)
+            else ()
+        )
         return cls(
             theme=theme if isinstance(theme, str) and theme.strip() else DEFAULT_THEME,
             reasoning_visible=reasoning if isinstance(reasoning, bool) else DEFAULT_REASONING_VISIBLE,
             tools_expanded=tools if isinstance(tools, bool) else DEFAULT_TOOLS_EXPANDED,
+            desktop_notifications=desktop if isinstance(desktop, bool) else True,
+            model_favorites=favorites,
         )
 
 

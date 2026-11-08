@@ -34,7 +34,7 @@ class ProviderScreen(ProviderModal):
     """Lists the accounts and returns the action to perform."""
 
     TITLE_TEXT = 'Providers'
-    HINT_TEXT = 'a add · Enter activate · r rename · d delete · Esc close'
+    HINT_TEXT = 'a add · r rename · d delete · Esc close'
 
     BINDINGS: ClassVar[list[Binding]] = [
         Binding('escape', 'cancel', 'Close', show=False),
@@ -91,12 +91,6 @@ class ProviderScreen(ProviderModal):
         if index is None or not 0 <= index < len(self._accounts):
             return None
         return self._accounts[index]
-
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        del event
-        account = self._highlighted()
-        if account is not None:
-            self.dismiss(ProviderAction('activate', account.alias))
 
     # --- actions -----------------------------------------------------------
 
