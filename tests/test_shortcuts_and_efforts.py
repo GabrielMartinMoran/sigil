@@ -32,6 +32,7 @@ from src.engine.providers.factory.unconfigured import UnconfiguredModel
 from src.engine.sessions.session_store import SessionStore
 from src.ui.app import SigilApp
 from src.ui.widgets.effort_screen import EffortScreen
+from src.ui.widgets.grouped_model_screen import GroupedModelScreen
 from src.ui.widgets.model_picker_screen import ModelPickerScreen
 from src.ui.widgets.prompt_input import PromptInput
 
@@ -110,7 +111,7 @@ def test_ctrl_m_opens_the_model_picker():
                 await pilot.press('ctrl+m')
                 for _ in range(8):
                     await pilot.pause()
-                assert isinstance(app.screen, ModelPickerScreen)
+                assert isinstance(app.screen, GroupedModelScreen)
 
     asyncio.run(inner())
 

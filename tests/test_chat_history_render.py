@@ -86,13 +86,10 @@ def test_the_history_renders_every_message():
 
 
 def test_a_run_of_tool_calls_is_spaced_the_same_live_and_restored():
-    """`tight` is what draws a run of calls as one column, and it must not depend
-    on how the transcript was built.
+    """Separate model responses keep their spacing in live and restored transcripts.
 
-    The regression: the restored path asked whether the *open* block existed, which
-    a result had already cleared, so a second call after a result got a top margin
-    and the run broke into separate blocks. A live turn asks about the last mounted
-    block, which is what the stylesheet keys on.
+    Each response contains a single tool, so its header is hidden and the row must
+    own the gap. The live fixture must begin each response just as the engine does.
     """
 
     def two_calls() -> list:
@@ -117,18 +114,17 @@ def test_a_run_of_tool_calls_is_spaced_the_same_live_and_restored():
 
             await chat.clear()
             for call, result in (('run', 'a.py'), ('read', 'print(1)')):
+                await chat.begin_response()
                 await chat.add_tool_call(call, {})
                 await chat.add_tool_result(call, result)
             chat.finalize()
             live = [child.classes for child in chat.children if isinstance(child, ToolCallBlock)]
 
             assert restored == live
-            # The batch header owns the gap above the run, and every row of the run is
-            # `tight`: spacing is decided in one place, live and restored alike.
             headers = [child for child in chat.children if isinstance(child, ToolGroupHeader)]
-            assert len(headers) == 1
-            assert {header.display for header in headers} == {True}
-            assert all('tight' in classes for classes in restored)
+            assert len(headers) == 2
+            assert not any(header.display for header in headers)
+            assert all('tight' not in classes for classes in restored)
 
     asyncio.run(inner())
 

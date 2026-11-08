@@ -32,6 +32,9 @@ Screen {
 .user-msg {
     margin-top: 1;
     color: $text;
+    background: $panel;
+    border-left: thick $accent;
+    padding: 0 1;
 }
 
 .assistant-msg {
@@ -50,10 +53,9 @@ Screen {
     text-overflow: ellipsis;
 }
 
-/* A batch of calls: the header describes the step, the rows are the calls. The gap
- * above the batch belongs to the header and every row of the batch is `tight`, so
- * spacing is decided in one place instead of being fought over by a header that may
- * be hidden (a batch of one call) and the row under it. */
+/* The visible header owns the gap above a batch. When it is hidden for a single
+ * call, that row keeps its own margin instead. ToolGroupHeader assigns `tight`
+ * after deciding whether the header is visible. */
 .tool-group {
     margin-top: 1;
     text-wrap: nowrap;
@@ -206,6 +208,8 @@ SessionPicker,
 AgentTreeScreen,
 ProviderScreen,
 AccountFormScreen,
+GroupedModelScreen,
+CommandPaletteScreen,
 ModelPickerScreen,
 ConfirmScreen,
 TextPromptScreen,
@@ -314,6 +318,8 @@ QuestionPanel {
 
 ProviderScreen,
 AccountFormScreen,
+GroupedModelScreen,
+CommandPaletteScreen,
 ModelPickerScreen,
 AgentPickerScreen,
 ConfirmScreen,
@@ -338,6 +344,7 @@ TextPromptScreen {
 #provider-list,
 #form-options,
 #picker-models,
+#palette-commands,
 #agent-list,
 #confirm-options {
     height: auto;
@@ -352,6 +359,8 @@ TextPromptScreen {
 #form-alias,
 #form-secret,
 #picker-filter,
+#grouped-filter,
+#palette-filter,
 #agent-filter,
 #prompt-text {
     margin-top: 1;
@@ -359,6 +368,8 @@ TextPromptScreen {
 
 #form-status,
 #picker-status,
+#grouped-status,
+#palette-status,
 #agent-status,
 #prompt-status {
     margin-top: 1;
@@ -413,5 +424,12 @@ ThemePickerScreen > #theme-wrap {
 /* Tool rows are keyboard targets as well as clickable output disclosures. */
 .tool-call:focus, .tool-group:focus {
     background: $boost;
-    text-style: underline;
+}
+
+/* Transient alerts occupy the top layer, never the composer or question panel. */
+ToastRack {
+    dock: top;
+    align: right top;
+    max-height: 40%;
+    margin: 0;
 }

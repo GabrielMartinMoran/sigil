@@ -280,6 +280,8 @@ export const useStore = create<Store>((set, get) => ({
       case 'notice':
         set({ notice: text(data.text) });
         return;
+      case 'question':
+      case 'question_closed':
       case 'state_changed':
         void get()
           .refresh()

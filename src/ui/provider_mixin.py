@@ -8,9 +8,11 @@ split is what keeps the destructive and the network paths in one testable place.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from src.engine.providers.domain.auth_method import AuthMethod
+from src.engine.providers.domain.model_capability import ModelCatalog
 from src.engine.providers.domain.provider_error import (
     AliasError,
     ProviderError,
@@ -23,7 +25,8 @@ from src.ui.widgets.account_form_screen import AccountFormScreen, NewAccount
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.confirm_screen import ConfirmScreen
 from src.ui.widgets.effort_screen import EffortScreen
-from src.ui.widgets.model_picker_screen import ModelChoice, ModelPickerScreen
+from src.ui.widgets.grouped_model_screen import AccountCatalog, GroupedModelScreen
+from src.ui.widgets.model_picker_screen import ModelChoice
 from src.ui.widgets.provider_screen import ProviderAction, ProviderScreen
 from src.ui.widgets.sidebar_panel import ModelState
 
@@ -74,30 +77,44 @@ class ProviderMixin:
         return True
 
     async def show_models(self, chat: ChatLog, query: str = '') -> None:
-        """Opens the picker for the active account."""
+        """Chooses a model and reasoning effort across all configured accounts."""
         service = self._model_service
-        if service is None or not service.is_configured():
+        if service is None or not service.list_accounts():
             await chat.add_notice('Configure a provider first: /provider', style='yellow')
             return
 
-        snapshot = service.snapshot()
-        await chat.add_notice('Fetching the model list…', style='cyan')
-        try:
-            catalog = await service.catalog_for()
-        except ProviderError as exc:
-            await chat.add_notice(str(exc), style='bold red')
+        accounts = service.list_accounts()
+        await chat.add_notice('Fetching the model lists…', style='cyan')
+        results = await asyncio.gather(
+            *(service.catalog_for(account.alias) for account in accounts), return_exceptions=True
+        )
+        catalogs = []
+        for account, result in zip(accounts, results, strict=True):
+            if isinstance(result, BaseException):
+                await chat.add_notice(f'{account.alias}: model list unavailable ({result})', style='yellow')
+                result = ModelCatalog(error=str(result))
+            catalogs.append(AccountCatalog(account.id, account.alias, result))
+        if not catalogs:
             return
-
         choice = await self.push_screen_wait(
-            ModelPickerScreen(
-                catalog,
-                account_label=snapshot.account.display_name if snapshot.account else '',
-                current=snapshot.model,
-            )
+            GroupedModelScreen(catalogs, self._preferences.model_favorites, on_favorites=self._save_model_favorites)
         )
         if choice is None:
             return
-        self._select_model(choice, chat, query)
+        effort = await self.push_screen_wait(EffortScreen(accepted=choice.model.efforts, model=choice.model.name))
+        if effort is None:
+            return
+        try:
+            snapshot = service.select(choice.alias, choice.model.name, effort.effort)
+        except ProviderError as exc:
+            await chat.add_notice(str(exc), style='bold red')
+            return
+        self._after_model_change(snapshot)
+        await chat.add_notice(f'Model: {snapshot.label}', style='green')
+
+    def _save_model_favorites(self, favorites: tuple[tuple[str, str], ...]) -> None:
+        self._preferences = self._preferences.with_favorites(favorites)
+        self.save_preferences()
 
     async def open_models(self) -> None:
         """`alt+m` / `/model` with no argument: the picker, from any context.

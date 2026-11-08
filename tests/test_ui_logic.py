@@ -38,6 +38,7 @@ def test_match_commands_filters_by_prefix():
         '/tools',
         '/theme',
         '/sidebar',
+        '/alerts',
         '/debug',
         '/help',
         '/quit',
@@ -78,8 +79,7 @@ def test_assistant_block_renders_markdown_and_collapses_reasoning():
     collapsed.add_text('# Hello')
     collapsed.finalize()
     text = render_text(collapsed._build())
-    # Collapsed: the reasoning is a marker line with the command that opens it,
-    # and the answer is still there.
+    # Collapsed reasoning keeps its marker without exposing the hidden content.
     assert 'Reasoning' in text
     assert 'thinking hard' not in text
     assert 'Hello' in text
@@ -121,4 +121,4 @@ def test_collapsed_reasoning_reports_how_much_it_hides():
     block.finalize()
     text = render_text(block._build())
     assert '3 lines' in text
-    assert '/reasoning-visibility on' in text
+    assert '/reasoning-visibility' not in text

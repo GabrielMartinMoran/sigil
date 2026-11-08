@@ -56,6 +56,7 @@ from src.ui.activity_mixin import ActivityMixin
 from src.ui.agent_mixin import AgentMixin
 from src.ui.commands_mixin import CommandsMixin
 from src.ui.debug_mixin import DebugMixin
+from src.ui.desktop_notifications import Attention, NotificationContext, send_notification
 from src.ui.menu_mixin import MenuMixin
 from src.ui.messages import ChatNotice, ModelRetryNotice, RoadmapChanged
 from src.ui.model_view_mixin import ModelViewMixin
@@ -99,6 +100,7 @@ class SigilApp(
 
     CSS_PATH = 'theme.tcss'
     TITLE = 'Sigil'
+    ENABLE_COMMAND_PALETTE = False
 
     # Focus lives in the input, which swallows the keys. The pickers therefore
     # read `ctrl+m` / `ctrl+l` in `PromptInput._on_key` instead of here: a global
@@ -528,6 +530,19 @@ class SigilApp(
     def on_roadmap_changed(self, message: RoadmapChanged) -> None:
         self.query_one(SidebarPanel).refresh_from_store()
 
+    def notify_attention(self, event: Attention) -> None:
+        """Desktop delivery never takes the keyboard or blocks the message pump."""
+        if not self.is_headless and self._preferences.desktop_notifications:
+            context = NotificationContext(
+                self.repository_label(), self._session.title or f'Session {self._session.short_id}'
+            )
+            self._deliver_attention(event, context)
+
+    @work(thread=True, group='desktop-notifications', exit_on_error=False)
+    def _deliver_attention(self, event: Attention, context: NotificationContext) -> None:
+        if not send_notification(event, context):
+            self.log.debug('Desktop notification unavailable or rejected')
+
     # --- interactive questions --------------------------------------------
 
     async def ask_question(self, questions: list[QuestionItem]) -> list[QuestionAnswer] | None:
@@ -553,6 +568,7 @@ class SigilApp(
         if not questions:
             return []
         self._hide_composer()
+        self.notify_attention(Attention.QUESTION)
         try:
             answers = await self.query_one(QuestionPanel).ask(questions)
         finally:

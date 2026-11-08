@@ -338,9 +338,8 @@ class AssistantBlock(Static):
     def _reasoning_renderable(self):
         """The reasoning, expanded or as a one-line marker.
 
-        The marker is the whole point of the collapsed state: it says the model
-        thought, how much it thought, and which command brings it back. Without it
-        a collapsed turn looks like a model that answered without reasoning.
+        The marker keeps the presence and size of hidden reasoning visible without
+        repeating command help throughout the transcript.
         """
         if not self._reasoning_visible:
             return self._collapsed_marker()
@@ -358,7 +357,6 @@ class AssistantBlock(Static):
         text.append(f'{REASONING_MARKER} ', style=color(self, 'reasoning'))
         text.append('Reasoning', style=f'italic {color(self, "reasoning")}')
         text.append(f' · {self._reasoning_size()}', style=color(self, 'muted'))
-        text.append('  /reasoning-visibility on', style=color(self, 'muted'))
         return text
 
     def _reasoning_size(self) -> str:
@@ -684,7 +682,8 @@ class ToolGroupHeader(Static):
         """Repaints from the rows the transcript is holding for this batch."""
         self._rows = list(rows)
         self.display = len(self._rows) >= MIN_GROUP_ROWS
-        for row in self._rows:
+        for index, row in enumerate(self._rows):
+            row.set_class(self.display or index > 0, 'tight')
             row.display = not self._collapsed or row.failed or row.pending
         self.update(self._build())
 
@@ -706,7 +705,7 @@ class ToolGroupHeader(Static):
         text.append(mark, style=color(self, 'error' if errors or failed else 'tool-title'))
         text.append(f'{total} tools' + (' completed' if self.closed else ''), style=f'bold {color(self, "tool-title")}')
         badge = self._badge(done, total, errors, failed)
-        text.append(f'  {badge}', style=f'{color(self, "tool-title")} reverse')
+        text.append(f'  {badge}', style=color(self, 'tool-title'))
         elapsed = format_duration(self._longest()) if self.closed else ''
         right = Text(f'{elapsed}  {"›" if self._collapsed else "⌄"}', style=color(self, 'muted'))
         header = fit(text, right, self.size.width)

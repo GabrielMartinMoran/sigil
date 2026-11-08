@@ -19,6 +19,7 @@ export function Composer() {
   const busy = useStore((store) => store.busy);
   const [text, setText] = useState('');
   const area = useRef<HTMLTextAreaElement>(null);
+  const lastSubmission = useRef('');
 
   useEffect(() => {
     const node = area.current;
@@ -30,11 +31,18 @@ export function Composer() {
   const submit = () => {
     const value = text.trim();
     if (!value) return;
+    lastSubmission.current = value;
     setText('');
     void send(value);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.nativeEvent.isComposing) return;
+    if (event.key === 'ArrowUp' && text === '' && lastSubmission.current) {
+      event.preventDefault();
+      setText(lastSubmission.current);
+      return;
+    }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       submit();

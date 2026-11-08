@@ -21,6 +21,7 @@ CLIENT_COMMANDS = frozenset(
     {
         '/reasoning-visibility',
         '/tools',
+        '/alerts',
         '/theme',
         '/sidebar',
         '/debug',

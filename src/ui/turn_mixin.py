@@ -51,6 +51,7 @@ from src.engine.attachments.image_attachment import ImageAttachment
 from src.engine.providers.domain.thinking import settings_value as thinking_settings
 from src.engine.sessions.recovery import recover_history
 from src.engine.shell import running as running_commands
+from src.ui.desktop_notifications import Attention
 from src.ui.messages import ChatNotice
 from src.ui.turn_timing import TurnTimings
 from src.ui.widgets.chat_log import ChatLog
@@ -459,6 +460,7 @@ class TurnMixin:
         # a run started before a session swap must continue the conversation it was
         # started from.
         history = session.messages
+        attention: Attention | None = Attention.FINISHED
         # Where `checkpoint` writes: the session this turn started on.
         self._turn_session = session
         # The first checkpoint of the turn (the user prompt) is saved right away.
@@ -496,6 +498,7 @@ class TurnMixin:
                     self.checkpoint()
             history = run.all_messages()
         except RunCancelled:
+            attention = None
             # The user stopped the turn: cancelling an `ask_user` panel, or `Esc`
             # twice. It is not an error, so there is no error to report. What the
             # run completed is kept; the calls that were cut off are closed out
@@ -504,6 +507,7 @@ class TurnMixin:
                 history = run.all_messages()
             await chat.add_notice('Turn cancelled.', style='yellow')
         except Exception as exc:  # noqa: BLE001
+            attention = Attention.FAILED
             if run is not None:
                 history = run.all_messages()
             await chat.add_notice(f'Error: {exc}', style='bold red')
@@ -560,6 +564,8 @@ class TurnMixin:
         # was when the last poll ran.
         self.refresh_diff()
         timings.finish()
+        if attention is not None:
+            self.notify_attention(attention)
         # The debug view shows the cost of the turn just closed.
         refresh_debug = getattr(self, 'refresh_debug', None)
         if callable(refresh_debug):
