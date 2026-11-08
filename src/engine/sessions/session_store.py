@@ -75,6 +75,10 @@ class SessionSummary:
         return shorten(self.preview)
 
 
+class SessionConflictError(RuntimeError):
+    """Another process changed this session; reload it before saving."""
+
+
 @dataclass
 class Session:
     """A conversation with its pydantic-ai message history."""
@@ -84,6 +88,7 @@ class Session:
     messages: list[ModelMessage] = field(default_factory=list)
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
+    _persisted_at: str | None = field(default=None, repr=False, compare=False)
     title: str | None = None
     selection: Selection | None = None
     """Provider account, model and reasoning level the conversation runs on.
@@ -203,9 +208,12 @@ class SessionStore:
         a half-written one. The session's size stopped mattering: an append is
         rows, not a rewrite.
         """
-        session.touch()
         selection = session.selection
         with self.database.transaction() as conn:
+            row = conn.execute('SELECT updated_at FROM sessions WHERE id = ?', (session.id,)).fetchone()
+            if row is not None and session._persisted_at is not None and row[0] != session._persisted_at:
+                raise SessionConflictError('Session changed in another process; reload it before saving.')
+            session.touch()
             conn.execute(
                 'INSERT INTO sessions (id, workspace_id, title, preview, account_id, model, thinking, '
                 'window, efforts, images, tools_tokens, instructions_tokens, created_at, updated_at) '
@@ -268,6 +276,8 @@ class SessionStore:
                     conn=conn,
                 )
 
+        session._persisted_at = session.updated_at
+
     def load(self, session_id: str) -> Session | None:
         """Loads a session by id and marks it as the last one used."""
         row = self.database.one('SELECT * FROM sessions WHERE id = ?', (session_id,))
@@ -326,6 +336,7 @@ class SessionStore:
             cwd=self.cwd,
             created_at=str(row['created_at']),
             updated_at=str(row['updated_at']),
+            _persisted_at=str(row['updated_at']),
             title=None if row['title'] is None else str(row['title']),
             selection=_selection_from(row),
             agent='',

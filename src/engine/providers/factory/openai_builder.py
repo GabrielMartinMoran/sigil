@@ -56,7 +56,12 @@ class OpenAIKeyBuilder:
 
         key = require_api_key(account, secret)
         provider = OpenAIProvider(api_key=key.key)
-        return OpenAIResponsesModel(model_name=model, provider=provider, profile=_profile(capability))
+        return OpenAIResponsesModel(
+            model_name=model,
+            provider=provider,
+            profile=_profile(capability),
+            settings={'openai_reasoning_summary': 'auto'} if capability.efforts else None,
+        )
 
 
 class OpenAIOAuthBuilder:
@@ -81,7 +86,12 @@ class OpenAIOAuthBuilder:
 
         credential = require_oauth(account, secret)
         provider = self._provider_factory(credential, account)
-        return OpenAIResponsesModel(model_name=model, provider=provider, profile=_profile(capability))
+        return OpenAIResponsesModel(
+            model_name=model,
+            provider=provider,
+            profile=_profile(capability),
+            settings={'openai_reasoning_summary': 'auto'} if capability.efforts else None,
+        )
 
 
 def _profile(capability: ModelCapability) -> dict[str, object]:

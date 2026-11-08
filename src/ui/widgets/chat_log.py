@@ -251,6 +251,7 @@ class AssistantBlock(Static):
     def __init__(self, *, reasoning_visible: bool = False, **kwargs: Any) -> None:
         super().__init__(Text(''), **kwargs)
         self._thinking = ''
+        self._has_thinking = False
         self._text = ''
         self._reasoning_visible = reasoning_visible
         self._dirty = False
@@ -269,6 +270,7 @@ class AssistantBlock(Static):
         self._flush()
 
     def add_thinking(self, delta: str) -> None:
+        self._has_thinking = True
         self._thinking += delta
         self._schedule_refresh()
 
@@ -325,7 +327,7 @@ class AssistantBlock(Static):
 
     def _build(self):
         parts: list[object] = []
-        if self._thinking:
+        if self._has_thinking:
             parts.append(self._reasoning_renderable())
         if self._text:
             parts.append(Markdown(self._text))
@@ -347,7 +349,7 @@ class AssistantBlock(Static):
         text = Text()
         text.append(f'{REASONING_MARKER} ', style=color(self, 'reasoning'))
         text.append('Reasoning\n', style=f'italic {color(self, "reasoning")}')
-        for line in self._thinking.splitlines():
+        for line in (self._thinking or 'unavailable').splitlines():
             text.append(INDENT, style=color(self, 'reasoning'))
             text.append(f'{line}\n', style=f'italic {color(self, "reasoning")}')
         return text
@@ -356,7 +358,8 @@ class AssistantBlock(Static):
         text = Text()
         text.append(f'{REASONING_MARKER} ', style=color(self, 'reasoning'))
         text.append('Reasoning', style=f'italic {color(self, "reasoning")}')
-        text.append(f' · {self._reasoning_size()}', style=color(self, 'muted'))
+        if self._thinking:
+            text.append(f' · {self._reasoning_size()}', style=color(self, 'muted'))
         return text
 
     def _reasoning_size(self) -> str:
@@ -1210,7 +1213,7 @@ class ChatLog(ReadOnlyScroll):
         batches: list[Static] = []
         # A tool block receives its result after it is mounted, which is what
         # `add_tool_result` does through the open-call registry.
-        open_tool: ToolCallBlock | None = None
+        open_tools: dict[str, ToolCallBlock] = {}
         current: AssistantBlock | None = None
         # The batch being rebuilt. A `ModelResponse` is exactly one batch — the parts it
         # carries are the calls of one step — so the restored transcript does not have
@@ -1232,7 +1235,7 @@ class ChatLog(ReadOnlyScroll):
             return bool(batches) and isinstance(batches[-1], (ToolCallBlock, ToolGroupHeader))
 
         def block_for_tool(name: str, args: Any) -> ToolCallBlock:
-            nonlocal open_tool, group
+            nonlocal group
             if group is None:
                 group = ToolGroupHeader(classes='tool-group')
                 batches.append(group)
@@ -1244,7 +1247,6 @@ class ChatLog(ReadOnlyScroll):
             )
             group_rows.append(block)
             batches.append(block)
-            open_tool = block
             return block
 
         for position, message in enumerate(messages):
@@ -1252,21 +1254,22 @@ class ChatLog(ReadOnlyScroll):
                 for part in message.parts:
                     if isinstance(part, UserPromptPart):
                         current = None
-                        open_tool = None
                         # The transcript is read ordered by `seq`, so the position in
                         # this list *is* the seq. That is what makes the click map to
                         # a turn without a side channel.
                         batches.append(_user_widget(part.content, seq=position))
                     elif isinstance(part, ToolReturnPart):
                         ok = getattr(part, 'outcome', 'success') == 'success'
-                        block = open_tool if open_tool is not None and open_tool.name == part.tool_name else None
+                        block = open_tools.pop(part.tool_call_id, None)
                         if block is None:
-                            block = block_for_tool(part.tool_name, {})
+                            match = next(
+                                (key for key, value in open_tools.items() if value.name == part.tool_name), None
+                            )
+                            block = open_tools.pop(match) if match is not None else block_for_tool(part.tool_name, {})
                         block.set_result(part.content, ok=ok)
-                        open_tool = None
             elif isinstance(message, ModelResponse):
                 for part in message.parts:
-                    if isinstance(part, ThinkingPart) and part.content:
+                    if isinstance(part, ThinkingPart):
                         if current is None:
                             current = AssistantBlock(reasoning_visible=self._reasoning_visible, classes='assistant-msg')
                             batches.append(current)
@@ -1278,7 +1281,7 @@ class ChatLog(ReadOnlyScroll):
                         current.add_text(part.content)
                     elif isinstance(part, ToolCallPart):
                         current = None
-                        block_for_tool(part.tool_name, part.args)
+                        open_tools[part.tool_call_id] = block_for_tool(part.tool_name, part.args)
                 current = None
                 close_group()
 

@@ -164,12 +164,12 @@ class ContextViewCapability(AbstractCapability[Any]):
         result = self._strategy_for_now().view(request_context.messages, budget)
         # Assigning the sequence is request-only; mutating a message in place
         # would affect the persistent history.
-        request_context.messages = result.messages
+        request_context.messages = compatible_model_history(result.messages, request_context.model.model_name)
         if is_root:
             self._last = result
         _require_budget(result, budget)
         if is_root:
-            self._snapshot = snapshot_request(parameters, messages=result.messages, preview_chars=0)
+            self._snapshot = snapshot_request(parameters, messages=request_context.messages, preview_chars=0)
         self._record_decision(ctx, result, budget)
         if self.on_view is not None:
             # Diagnostics never break the turn.
@@ -235,3 +235,23 @@ def _last_part_key(messages: Sequence[ModelMessage]) -> str | None:
         if message.parts:
             return part_key(message, message.parts[-1], len(message.parts) - 1)
     return None
+
+
+def compatible_model_history(messages: Sequence[ModelMessage], model_name: str | None) -> list[ModelMessage]:
+    """Avoid replaying signed reasoning produced by a different model."""
+    from pydantic_ai.messages import ModelResponse, ThinkingPart
+
+    result = []
+    for message in messages:
+        if (
+            not isinstance(message, ModelResponse)
+            or not model_name
+            or not message.model_name
+            or message.model_name == model_name
+        ):
+            result.append(message)
+            continue
+        parts = [part for part in message.parts if not (isinstance(part, ThinkingPart) and part.signature)]
+        if parts:
+            result.append(message if len(parts) == len(message.parts) else replace(message, parts=parts))
+    return result

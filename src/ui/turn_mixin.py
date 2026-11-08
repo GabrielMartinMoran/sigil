@@ -192,7 +192,7 @@ class TurnMixin:
                 await chat.begin_response()
                 self.set_activity_label('Thinking')
             part = event.part
-            if isinstance(part, ThinkingPart) and part.content:
+            if isinstance(part, ThinkingPart):
                 await chat.add_thinking(part.content)
             elif isinstance(part, TextPart) and part.content:
                 await chat.add_text(part.content)

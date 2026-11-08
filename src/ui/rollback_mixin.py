@@ -258,6 +258,7 @@ class RollbackMixin:
             return
         await chat.clear()
         await chat.render_history(reloaded.messages)
+        chat.finalize()
 
     def _chat_or_none(self):
         try:

@@ -207,6 +207,7 @@ Screen {
 SessionPicker,
 AgentTreeScreen,
 ProviderScreen,
+RollbackScreen,
 AccountFormScreen,
 GroupedModelScreen,
 CommandPaletteScreen,
@@ -317,6 +318,7 @@ QuestionPanel {
 /* --- provider screens ---------------------------------------------------- */
 
 ProviderScreen,
+RollbackScreen,
 AccountFormScreen,
 GroupedModelScreen,
 CommandPaletteScreen,

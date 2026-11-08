@@ -160,3 +160,93 @@ def test_plain_text_cache_uses_the_same_descending_order():
 
     text = render_debug_report(report())
     assert text.index('    2 |') < text.index('    1 |')
+
+
+def test_timeline_shows_newest_step_first_with_colors():
+    messages = [
+        ModelRequest(parts=[UserPromptPart('earlier')]),
+        ModelResponse(parts=[TextPart('old')], usage=RequestUsage(input_tokens=999)),
+        ModelRequest(parts=[UserPromptPart('new')]),
+        ModelResponse(parts=[TextPart('private')], usage=RequestUsage(input_tokens=200, cache_read_tokens=180)),
+        ModelResponse(parts=[TextPart('private')], usage=RequestUsage(input_tokens=950, cache_read_tokens=95)),
+    ]
+    meter = ContextMeter(window=1000)
+    r = build_debug_report(messages, snapshot=meter.snapshot(messages), request=snapshot_request(None))
+    timeline = ui._turn_timeline(r)
+    assert timeline.plain.index('Step 2') < timeline.plain.index('Step 1')
+    assert '20%' in timeline.plain and '200 / 1,000' in timeline.plain
+    assert '90%' in timeline.plain and '95%' in timeline.plain
+    assert '999' not in timeline.plain and 'private' not in timeline.plain
+    assert '┌' in timeline.plain and '└' in timeline.plain
+    assert {'green', 'red'} <= {span.style for span in timeline.spans}
+
+
+def test_timeline_preserves_unmeasured_steps_and_previous_turn_while_waiting():
+    messages = [
+        ModelRequest(parts=[UserPromptPart('first')]),
+        ModelResponse(parts=[TextPart('one')], usage=RequestUsage(input_tokens=100, cache_read_tokens=50)),
+        ModelResponse(parts=[TextPart('two')]),
+        ModelRequest(parts=[UserPromptPart('next')]),
+    ]
+    meter = ContextMeter(window=1000)
+    r = build_debug_report(messages, snapshot=meter.snapshot(messages), request=snapshot_request(None))
+    text = ui._turn_timeline(r).plain
+    assert 'Step 1' in text and 'Step 2' in text
+    assert '?' in text
+    assert 'Turn 1' in text
+
+
+def test_timeline_marks_compaction_at_its_step():
+    from src.engine.context.compaction.events import CompactionEvent, CompactionReason
+
+    messages = [
+        ModelRequest(parts=[UserPromptPart('first')]),
+        ModelResponse(parts=[TextPart('old')], usage=RequestUsage(input_tokens=100)),
+        ModelRequest(parts=[UserPromptPart('second')]),
+        ModelResponse(parts=[TextPart('one')], usage=RequestUsage(input_tokens=300)),
+        ModelResponse(parts=[TextPart('two')], usage=RequestUsage(input_tokens=400)),
+    ]
+    meter = ContextMeter(window=1000)
+    r = build_debug_report(
+        messages,
+        snapshot=meter.snapshot(messages),
+        request=snapshot_request(None),
+        events=[CompactionEvent(step=3, reason=CompactionReason.BUDGET)],
+    )
+    text = ui._turn_timeline(r).plain
+    assert 'compaction' in text.lower() and 'budget' in text
+    assert text.index('Step 2') < text.index('budget')
+
+
+def test_timeline_handles_missing_window_and_invalid_cache_counts():
+    messages = [
+        ModelRequest(parts=[UserPromptPart('test')]),
+        ModelResponse(parts=[TextPart('result')], usage=RequestUsage(input_tokens=100, cache_read_tokens=150)),
+    ]
+    meter = ContextMeter(window=None)
+    r = build_debug_report(messages, snapshot=meter.snapshot(messages), request=snapshot_request(None))
+    timeline = ui._turn_timeline(r)
+    assert '100 / ? (?)' in timeline.plain
+    assert 'cache ?' in timeline.plain
+    assert {span.style for span in timeline.spans} >= {'dim'}
+
+
+def test_timeline_with_no_steps_has_empty_state():
+    meter = ContextMeter(window=1000)
+    r = build_debug_report([], snapshot=meter.snapshot([]), request=snapshot_request(None))
+    assert 'No completed steps yet' in ui._turn_timeline(r).plain
+
+
+def test_timeline_aligns_columns_with_different_step_and_metric_widths():
+    messages = [ModelRequest(parts=[UserPromptPart('test')])]
+    messages.extend(
+        ModelResponse(parts=[TextPart('result')], usage=RequestUsage(input_tokens=value, cache_read_tokens=0))
+        for value in [1, 100, 900, 2, 3, 4, 5, 6, 7, 1000]
+    )
+    meter = ContextMeter(window=10000)
+    r = build_debug_report(messages, snapshot=meter.snapshot(messages), request=snapshot_request(None))
+    lines = ui._turn_timeline(r).plain.splitlines()[1:]
+    assert len(lines) == 10
+    assert 'Step 10' in lines[0] and 'Step 1 ' in lines[-1]
+    assert len({line.index('context') for line in lines}) == 1
+    assert len({line.index('cache') for line in lines}) == 1

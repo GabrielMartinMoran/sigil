@@ -423,3 +423,36 @@ def test_clicking_a_message_that_never_reached_a_checkpoint_does_nothing():
                 assert not isinstance(app.screen, RollbackScreen)
 
     asyncio.run(inner())
+
+
+def test_rollback_modal_is_centered():
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _app(tmp)
+            async with app.run_test(size=(120, 40)) as pilot:
+                app.push_screen(RollbackScreen([]))
+                await pilot.pause()
+                box = app.screen.query_one('#provider-box')
+                assert abs(box.region.center[0] - app.screen.region.center[0]) <= 1
+                assert abs(box.region.center[1] - app.screen.region.center[1]) <= 1
+
+    asyncio.run(inner())
+
+
+def test_rollback_restores_visible_assistant_answers():
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _app(tmp)
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                point = app._rollback.points(app._session.id)[0]
+                chat = app.query_one(ChatLog)
+                await app.apply_rollback(chat, RollbackChoice(turn_id=point.turn_id, action=ROLLBACK_ONLY))
+                await pilot.pause()
+                from src.ui.widgets.chat_log import AssistantBlock
+
+                blocks = list(chat.query(AssistantBlock))
+                assert len(blocks) == 1
+                assert 'answer 0' in render_text(blocks[0]._build())
+
+    asyncio.run(inner())

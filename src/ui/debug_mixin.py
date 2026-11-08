@@ -98,7 +98,9 @@ class DebugMixin:
         """
         if not self.debug_visible:
             return
-        self._debug_pending = list(self._history if messages is None else messages)
+        run = getattr(self, '_current_run', None)
+        current = run.all_messages() if messages is None and run is not None else self._history
+        self._debug_pending = list(current if messages is None else messages)
         if immediate:
             self._flush_debug()
         elif self._debug_timer is None:
@@ -126,8 +128,7 @@ class DebugMixin:
             report = self.debug_report(pending)
         except Exception:  # noqa: BLE001 - not even diagnostics bring the app down
             return
-        timings = getattr(self, '_turn_timings', None)
-        view.update_report(report, timing='' if timings is None else timings.render())
+        view.update_report(report)
 
     # --- commands ---------------------------------------------------------
 

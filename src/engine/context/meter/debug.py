@@ -34,7 +34,7 @@ from pydantic_ai.messages import (
 
 from src.engine.agents.turn_map import library_run_id
 from src.engine.context.compaction.events import CompactionEvent
-from src.engine.context.meter.cache import CacheSummary, cache_summary
+from src.engine.context.meter.cache import CacheSummary, RequestCacheRow, cache_summary, request_cache_rows
 from src.engine.context.meter.request import RequestSnapshot
 from src.engine.context.meter.snapshot import ContextSnapshot
 from src.engine.context.strategy.view_result import ViewResult
@@ -99,6 +99,9 @@ class DebugTurn:
     cache_ratio: float | None
     events: tuple[CompactionEvent, ...] = ()
     """The compaction boundaries that fell inside this turn."""
+    steps: tuple[RequestCacheRow | None, ...] = ()
+    steps_before: int = 0
+    step_events: tuple[tuple[CompactionEvent, ...], ...] = ()
 
     @property
     def context_used(self) -> int | None:
@@ -118,6 +121,32 @@ def _turn_groups(messages: list[ModelMessage]) -> list[list[ModelMessage]]:
         if run:
             current_run = run
     return groups
+
+
+def _turn_steps(messages: list[ModelMessage], count: int) -> tuple[RequestCacheRow | None, ...]:
+    rows = {row.index: row for row in request_cache_rows(messages)}
+    return tuple(rows.get(index) for index in range(1, count + 1))
+
+
+def _events_by_step(
+    messages: list[ModelMessage], events: tuple[CompactionEvent, ...], steps_before: int
+) -> tuple[tuple[CompactionEvent, ...], ...]:
+    from src.engine.context.compaction.events import RECORD_KEY
+
+    responses = [message for message in messages if isinstance(message, ModelResponse)]
+    requests = {}
+    for index, response in enumerate(responses):
+        record = (response.metadata or {}).get(RECORD_KEY)
+        if isinstance(record, dict) and record.get('status') != 'restored' and record.get('request_id'):
+            requests[record['request_id']] = index
+    result: list[list[CompactionEvent]] = [[] for _ in responses]
+    for event in events:
+        index = requests.get(event.request_id) if event.request_id else None
+        if index is None:
+            index = event.step - steps_before - 1
+        if 0 <= index < len(result):
+            result[index].append(event)
+    return tuple(tuple(items) for items in result)
 
 
 def debug_turns(
@@ -152,6 +181,7 @@ def debug_turns(
             if (owner in runs) if owner else (steps_before < event.step <= steps_before + steps_here):
                 in_turn.append(event)
         in_turn = tuple(in_turn)
+        first_step = steps_before
         steps_before += steps_here
         responses = [message for message in messages_in_turn if isinstance(message, ModelResponse)]
         summary = cache_summary(messages_in_turn)
@@ -171,6 +201,9 @@ def debug_turns(
                 summary.requests,
                 summary.hit_ratio,
                 in_turn,
+                _turn_steps(messages_in_turn, steps_here),
+                first_step,
+                _events_by_step(messages_in_turn, in_turn, first_step),
             )
         )
     return tuple(turns)
