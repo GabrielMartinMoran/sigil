@@ -34,7 +34,7 @@ the kind of agent.
 under it is stopped: its answer has nobody to reach, and keeping it alive would
 leave a branch hanging from a parent that no longer exists.
 
-**Messages travel by the channel of the receiver's profile.** A parent steers its
+**Messages travel by the channel of the sender's profile.** A parent steers its
 child (an instruction); a child, if it declared a bidirectional channel, sends
 *notices* to its parent and to the siblings it named. A notice is information, and
 the prompt says so: the receiver decides whether it deserves an answer.
@@ -503,26 +503,16 @@ class SubagentSummoner:
     # --- messages between agents -------------------------------------------
 
     def send_message(self, *, sender_id: str | None, target_id: str, text: str) -> str:
-        """Delivers a message from one node to another, if the channel allows it.
+        """Steer a child directly, or add a notice to the receiver's context table.
 
-        The checks live here and not only in the prompt: a rule that is written in a
-        paragraph is a suggestion, and this is the place where it becomes true.
-
-        **A message needs a live receiver.** Nothing is left waiting for a node to
-        come back: a subagent that stopped is not something that reads, and a queue
-        nobody promised to drain is a queue that grows in the dark. When the sender
-        is the parent of that node it can do something about it — it owns the
-        execution — and the refusal says exactly which call brings it back with this
-        message.
-
-        Raises:
-            SummonError: The message is not allowed, or the receiver is not running.
+        Both paths require a live receiver. Final async reports retain their own
+        delivery mechanism; they are not intermediate notifications.
         """
         body = text.strip()
         if not body:
             raise SummonError('`message` is empty: say what you want to tell it.')
         tree = self._trees.active
-        sender = tree.node(sender_id) or tree.root
+        sender = tree.root if sender_id is None else tree.node(sender_id)
         if sender is None:
             raise SummonError('There is no agent tree for this session.')
         target = self.resolve(target_id)
@@ -533,13 +523,28 @@ class SubagentSummoner:
         if not self.is_live(target):
             raise SummonError(self._unreachable(tree, sender, target, body))
 
+        if kind == 'notice':
+            notice = tree.notifications.publish(sender, target.id, body)
+            self._notify(target)
+            return f'Notification {notice.id} delivered to {target.label} #{target.short_id}; pending ACK.'
         message = AgentMessage(sender_id=sender.id, sender_name=sender.name, kind=kind, text=body)
         if not _enqueue(self._run_of(target), message.render()):
-            # It ended between the check and the enqueue. Same refusal: the fact
-            # that it was running a moment ago does not make it readable now.
             raise SummonError(self._unreachable(tree, sender, target, body))
         self._announce_delivery(target)
-        return f'Message delivered to {target.label} #{target.short_id}, which is working on it now.'
+        return f'Instruction queued for {target.label} #{target.short_id} as steering.'
+
+    def ack_notifications(self, *, receiver_id: str | None, notification_ids: list[str]) -> str:
+        """Confirm receipt without removing content, changing order, or resolving it."""
+        tree = self._trees.active
+        receiver = tree.root if receiver_id is None else tree.node(receiver_id)
+        if receiver is None:
+            raise SummonError('There is no receiving execution in this session.')
+        try:
+            tree.notifications.acknowledge(receiver.id, notification_ids)
+        except ValueError as error:
+            raise SummonError(str(error)) from error
+        self._notify(receiver)
+        return f'ACK recorded for {", ".join(dict.fromkeys(notification_ids))}. Receipt only; notifications remain visible.'
 
     def _allowed(self, tree: AgentTree, sender: AgentNode, target: AgentNode) -> Literal['instruction', 'notice']:
         """Which message this is, or a refusal explaining why there is none.
@@ -550,7 +555,7 @@ class SubagentSummoner:
         if target.parent_id == sender.id:
             # Parent to child: this is steering, always allowed.
             return 'instruction'
-        if target.is_root:
+        if target.id == sender.parent_id:
             if not sender.channel.may_message_parent():
                 raise SummonError(
                     f'Your channel does not allow talking to your parent ({sender.channel.describe()}). '

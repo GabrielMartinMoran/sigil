@@ -90,6 +90,20 @@ CREATE TRIGGER IF NOT EXISTS executions_no_orphan BEFORE DELETE ON agent_executi
      AND EXISTS (SELECT 1 FROM sessions WHERE id = OLD.session_id)
     BEGIN SELECT RAISE(ABORT, 'delete the session, not its root'); END;
 
+CREATE TABLE IF NOT EXISTS agent_notifications (
+    session_id   TEXT    NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    sequence     INTEGER NOT NULL CHECK (sequence > 0),
+    sender_id    TEXT    NOT NULL REFERENCES agent_executions(id) ON DELETE CASCADE,
+    sender_name  TEXT    NOT NULL,
+    receiver_id  TEXT    NOT NULL REFERENCES agent_executions(id) ON DELETE CASCADE,
+    content      TEXT    NOT NULL,
+    acknowledged INTEGER NOT NULL DEFAULT 0 CHECK (acknowledged IN (0, 1)),
+    created_at   REAL    NOT NULL,
+    PRIMARY KEY (session_id, sequence)
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS notifications_by_receiver ON agent_notifications(receiver_id, sequence);
+
 -- The turn: the span between the user sending a message and the agent finishing.
 -- library_run_id is the identifier pydantic-ai stamps on one run: 1:1 with a
 -- turn, and the only place in the schema where the library's word appears.
@@ -185,7 +199,7 @@ CREATE TABLE IF NOT EXISTS app_state (
 ) STRICT, WITHOUT ROWID;
 """
 
-USER_VERSION = 2
+USER_VERSION = 3
 """The version `SCHEMA` describes.
 
 Steps start above the empty file: a database created today is written whole and its

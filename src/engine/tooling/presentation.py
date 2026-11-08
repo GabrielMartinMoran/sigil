@@ -112,6 +112,7 @@ DISPLAY_NAMES: Mapping[str, str] = {
     'update_roadmap': 'plan',
     'summon': 'spawn',
     'send_message': 'tell',
+    'ack_notifications': 'ack',
     'kill_subagent': 'stop',
     'list_agents': 'agents',
 }

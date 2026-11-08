@@ -31,7 +31,7 @@ from src.engine.agents.factory import AgentFactory, AgentSpec
 from src.engine.agents.profile.models.agent_role import AgentRole
 from src.engine.agents.profile.registry import AgentRegistry
 from src.engine.agents.profile.source import ProfileSource
-from src.engine.agents.tree.rendering import render_peers, summonable
+from src.engine.agents.tree.rendering import render_notifications, render_peers, summonable
 from src.engine.agents.tree.store import AgentTreeStore
 from src.engine.agents.tree.summoner import SigilDeps, SubagentSummoner
 from src.engine.agents.tree.tools import register_tree_tools
@@ -255,7 +255,7 @@ class Script:
     # --- the driver ---
 
     def engineer(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        seen = '\n'.join(prompts_of(messages))
+        seen = '\n'.join([*prompts_of(messages), info.instructions or ''])
         results = returns_of(messages)
 
         if 'approved unit 1' in seen and not self.engineer_reported:
@@ -287,7 +287,7 @@ class Script:
     # --- the peer ---
 
     def copilot(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        seen = '\n'.join(prompts_of(messages))
+        seen = '\n'.join([*prompts_of(messages), info.instructions or ''])
         results = returns_of(messages)
 
         if 'ready_for_review' in seen and not self.copilot_approved:
@@ -336,7 +336,9 @@ def squad_env(tmp_path: Path, registry: AgentRegistry):
         tree = trees.active
         node = tree.node(node_id)
         profile = registry.get(node.name) if node is not None else registry.active
-        return render_peers(tree, node_id, profile=profile, is_live=summoner.is_live)
+        return render_peers(tree, node_id, profile=profile, is_live=summoner.is_live) + render_notifications(
+            tree, node_id
+        )
 
     def tools(target) -> None:
         register_shell_tools(target)
@@ -401,11 +403,15 @@ def test_the_pair_delivers_a_delegation_through_the_channel(squad_env):
     assert 'implementation_report' in (engineer.result or '')
     assert 'audit_report' in (copilot.result or '')
 
-    # The channel carried both directions, as notices, and each side read its own.
-    driver_channel = [text for text in prompts_of(engineer.messages) if 'approved unit 1' in text]
-    peer_channel = [text for text in prompts_of(copilot.messages) if 'ready_for_review' in text]
-    assert len(driver_channel) == 1 and 'notice' in driver_channel[0]
-    assert len(peer_channel) == 1 and 'notice' in peer_channel[0]
+    # Notices travel through dynamic context, never as user instructions.
+    driver_channel = [entry for entry in trees.active.notifications.for_receiver(engineer.id)]
+    peer_channel = [entry for entry in trees.active.notifications.for_receiver(copilot.id)]
+    assert len(driver_channel) == 1 and 'approved unit 1' in driver_channel[0].text
+    assert len(peer_channel) == 1 and 'ready_for_review' in peer_channel[0].text
+    assert not any('approved unit 1' in text for text in prompts_of(engineer.messages))
+    assert not any('ready_for_review' in text for text in prompts_of(copilot.messages))
+    assert any('approved unit 1' in (getattr(message, 'instructions', '') or '') for message in engineer.messages)
+    assert any('ready_for_review' in (getattr(message, 'instructions', '') or '') for message in copilot.messages)
 
     # Both async results waited for the next turn, and the Lead adjudicated them.
     assert len(pending) == 2

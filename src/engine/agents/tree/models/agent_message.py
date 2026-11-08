@@ -1,19 +1,8 @@
-"""One message between two agents of the session.
+"""A rendered inter-agent envelope.
 
-Two kinds exist, and the difference is the whole point of the channel design:
-
-- **Instruction.** From a parent to its child. It arrives the way a message typed
-  in the chat arrives — injected into the run, read as the next thing to do.
-- **Notice.** From a child to its parent, or between siblings. It is information:
-  "I found something", "I am blocked", "stop looking there". The receiver reads it
-  and decides. It is not a command, and the prompt says so in the block that lists
-  the pending ones.
-
-A message is delivered one way: into a live run, with ``enqueue``, so the model reads
-it before its next request. A node that is not running has nothing to read with, and
-the caller is told so instead of leaving the message in a queue nobody promised to
-drain. What arrives on its own — a subagent's answer — is different: that travels as
-an envelope, and it waits in the summoner's queue when no turn is open.
+Parent instructions use this envelope as steering in the child's history.
+Informational notices live in ``Notifications`` instead; they are never enqueued
+as user instructions. Final async reports have their own delivery mechanism.
 """
 
 from __future__ import annotations

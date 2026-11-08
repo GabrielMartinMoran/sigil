@@ -35,7 +35,7 @@ from src.engine.agents.model_features import IMAGE_INPUT, ModelFeatureGate
 from src.engine.agents.profile.registry import AgentRegistry
 from src.engine.agents.retry import RetryTransientModelErrors
 from src.engine.agents.rollback import Rollback
-from src.engine.agents.tree.rendering import SUMMON_TOOL, render_peers, summonable
+from src.engine.agents.tree.rendering import SUMMON_TOOL, render_notifications, render_peers, summonable
 from src.engine.agents.tree.store import AgentTreeStore
 from src.engine.agents.tree.summoner import SubagentSummoner
 from src.engine.agents.tree.tools import register_tree_tools
@@ -381,7 +381,14 @@ class Composition:
         tree = self.agent_trees.active
         node = tree.node(node_id)
         profile = self.agent_registry.get(node.name) if node is not None else self.agent_registry.active
-        return render_peers(tree, node_id, profile=profile, is_live=self.summoner.is_live)
+        return '\n'.join(
+            block
+            for block in (
+                render_peers(tree, node_id, profile=profile, is_live=self.summoner.is_live),
+                render_notifications(tree, node_id),
+            )
+            if block
+        )
 
     def install_tools(self, target: Any) -> None:
         """Every tool every agent of the session gets. The root included."""

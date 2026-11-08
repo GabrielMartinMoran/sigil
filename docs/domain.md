@@ -417,8 +417,16 @@ the library writes it, and read back by the library's own validator.
 
 A message between two executions: `instruction` (parent to child, something to
 do) or `notice` (child to parent or sibling, something to know). Identity: `id`.
-It is delivered into a live turn; when no turn is open, it waits in the
-summoner's queue and does not pretend to have been read.
+Parent-to-child instructions enter the child's history as live-run steering.
+Child-to-parent and sibling notices are stored in the session's notification
+log and shown in one dynamic table for the receiving execution. Both paths
+require a live receiver. Final asynchronous reports use a separate delivery
+mechanism and can wait for the next turn.
+
+A notification has a stable session-scoped ID and sequence. Its ACK means
+"OK, received," not read, agreed, acted on, or resolved. Only its receiver can
+ACK it. ACK never removes content or changes position: pending and ACK rows
+remain together in sequence order, including after a session reload.
 
 ### RoadmapItem
 
@@ -671,7 +679,7 @@ gets now is the name it keeps.
    does not create a new execution.
 3. **A child cannot outlive its parent.** Ending an execution stops what is
    under it.
-4. **A message travels through the receiver's channel policy**, and a notice is
+4. **A notice travels through the sender's channel policy**, and a notice is
    information, not an order.
 5. **A turn is owned by one execution, and at most one turn of an execution is
    open at a time.** Reads may be many; the writes of a turn come from whoever
@@ -679,8 +687,9 @@ gets now is the name it keeps.
    to a running execution is delivered into its turn, never as a second one —
    and the database enforces it with a partial unique index (see
    [storage](storage.md)).
-6. **A session is resumable from its transcript alone.** No live object is part
-   of its state.
+6. **A session is resumable from its stored state and transcripts.** No live
+   object is required. Notification content and ACK state are persisted data,
+   not facts inferred from an ACK tool call.
 7. **A prompt never ends mid tool call.** That is why a prompt, and not a
    message, is the unit that can be dropped.
 8. **Derived state is computed, never kept.** The loaded skills and the prompt a

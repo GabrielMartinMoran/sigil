@@ -24,6 +24,7 @@ from pydantic_ai.models.test import TestModel
 from src.engine.context.meter.context_meter import ContextMeter
 from src.engine.sessions.session_store import SessionStore
 from src.engine.storage.database import Database, database_path
+from src.engine.storage.schema import USER_VERSION
 from src.ui.app import SigilApp
 
 
@@ -89,7 +90,7 @@ def test_an_older_database_gets_the_new_columns(tmp_path):
     assert loaded.instructions_tokens == 0
     # And what was already there is intact.
     assert len(loaded.messages) == 2
-    assert reopened.database.value('PRAGMA user_version') == 2
+    assert reopened.database.value('PRAGMA user_version') == USER_VERSION
 
 
 def test_the_meter_stamps_what_it_measured_onto_the_session():

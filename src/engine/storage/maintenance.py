@@ -128,6 +128,12 @@ def export_session(database: Database, blobs: Blobs, session_id: str) -> str:
         'updated_at': str(session['updated_at']),
         'profile': None,
         'executions': [],
+        'notifications': [
+            dict(row)
+            for row in database.query(
+                'SELECT * FROM agent_notifications WHERE session_id = ? ORDER BY sequence', (session_id,)
+            )
+        ],
     }
     for execution in executions:
         turns = database.query(
