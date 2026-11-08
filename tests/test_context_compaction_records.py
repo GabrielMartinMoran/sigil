@@ -268,3 +268,20 @@ def test_streamed_history_survives_two_resumes_without_reinterpreting_events():
 
     messages = asyncio.run(streamed())
     assert recorded_state(messages)[1][0].step == 20
+
+
+def test_debug_timeline_shows_real_compaction_on_request_that_recorded_it():
+    from src.engine.context.meter.debug import build_debug_report
+    from src.engine.context.meter.request import RequestSnapshot
+    from src.ui.widgets.debug_view import _turn_timeline
+
+    messages = run_recorded(history(20))
+    meter = ContextMeter(window=100000)
+    view = WindowedStrategy(reasoning_steps=10).view(messages, meter.budget())
+    report = build_debug_report(
+        messages, snapshot=meter.snapshot(messages), request=RequestSnapshot(), view_result=view
+    )
+    assert report.turns[-1].events
+    timeline = _turn_timeline(report).plain
+    assert 'Step 1' in timeline
+    assert 'compaction: operational' in timeline

@@ -261,7 +261,8 @@ def test_should_expose_real_turn_node_timings_in_debug_text() -> None:
                 view = app.query_one(AgentDebugView)
                 from tests.ui_helpers import render_text
 
-                assert 'Turn timing: total' in render_text(view._body.content)
+                assert 'Turn timing: total' not in render_text(view._body.content)
+                assert 'ModelRequestNode:' not in render_text(view._body.content)
 
     asyncio.run(scenario())
 
@@ -300,3 +301,24 @@ def test_dynamic_instruction_rows_are_highlighted_without_coloring_static_rows()
     table = _fixed_cost_table(report)
     assert table.rows[0].style is None
     assert table.rows[1].style == '#ffaf5f'
+
+
+def test_debug_refresh_uses_live_history_instead_of_stale_session():
+    from pydantic_ai.messages import ModelResponse, TextPart
+    from pydantic_ai.usage import RequestUsage
+
+    class Run:
+        def all_messages(self):
+            return [ModelResponse(parts=[TextPart('ok')], usage=RequestUsage(input_tokens=100, output_tokens=10))]
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _make_app(tmp)
+            async with app.run_test() as pilot:
+                await pilot.press('alt+d')
+                app._current_run = Run()
+                app.refresh_debug(immediate=True)
+                assert app.query_one(AgentDebugView).last_report.cache.requests == 1
+                app._current_run = None
+
+    asyncio.run(inner())

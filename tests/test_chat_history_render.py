@@ -139,3 +139,51 @@ def test_an_empty_history_is_a_no_op():
             assert not chat.children
 
     asyncio.run(inner())
+
+
+def test_restored_parallel_tool_results_match_call_ids():
+    async def inner() -> None:
+        app = Harness()
+        async with app.run_test() as pilot:
+            chat = app.query_one(ChatLog)
+            await chat.render_history(
+                [
+                    ModelResponse(
+                        parts=[ToolCallPart('run', {}, tool_call_id='a'), ToolCallPart('run', {}, tool_call_id='b')]
+                    ),
+                    ModelRequest(
+                        parts=[
+                            ToolReturnPart('run', 'first', tool_call_id='a'),
+                            ToolReturnPart('run', 'second', tool_call_id='b'),
+                        ]
+                    ),
+                ]
+            )
+            await pilot.pause()
+            tools = list(chat.query(ToolCallBlock))
+            assert len(tools) == 2
+            assert [tool.pending for tool in tools] == [False, False]
+            assert [tool._result for tool in tools] == ['first', 'second']
+
+    asyncio.run(inner())
+
+
+def test_history_shows_opaque_reasoning_without_exposing_signature():
+    from pydantic_ai.messages import ThinkingPart
+
+    from src.ui.widgets.chat_log import AssistantBlock
+    from tests.ui_helpers import render_text
+
+    async def inner() -> None:
+        app = Harness()
+        async with app.run_test() as pilot:
+            chat = app.query_one(ChatLog)
+            await chat.render_history([ModelResponse(parts=[ThinkingPart(content='', signature='secret')])])
+            chat.finalize()
+            await pilot.pause()
+            block = chat.query_one(AssistantBlock)
+            text = render_text(block._build())
+            assert 'Reasoning' in text
+            assert 'secret' not in text
+
+    asyncio.run(inner())

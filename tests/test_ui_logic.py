@@ -122,3 +122,16 @@ def test_collapsed_reasoning_reports_how_much_it_hides():
     text = render_text(block._build())
     assert '3 lines' in text
     assert '/reasoning-visibility' not in text
+
+
+def test_unavailable_reasoning_is_only_shown_when_expanded():
+    from src.ui.widgets.chat_log import AssistantBlock
+
+    block = AssistantBlock()
+    block.add_thinking('')
+    assert 'Reasoning' in render_text(block._build())
+    assert 'unavailable' not in render_text(block._build())
+    block.set_reasoning_visible(True)
+    assert 'unavailable' in render_text(block._build())
+    block.set_reasoning_visible(False)
+    assert 'unavailable' not in render_text(block._build())

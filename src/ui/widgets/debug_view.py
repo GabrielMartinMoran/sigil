@@ -190,9 +190,41 @@ def _composition_table(report: DebugReport) -> RenderableType:
     return table
 
 
+def _turn_timeline(report: DebugReport) -> Text:
+    turn = next((item for item in reversed(report.turns) if item.steps), None)
+    if turn is None:
+        return Text('Turn timeline\n  No completed steps yet.', style='dim')
+    text = Text(f'Turn {turn.index} timeline · newest first\n', style='bold')
+    step_width = len(str(len(turn.steps)))
+    context_width = max(
+        len(_context_cell(row.input_tokens if row else None, report.window).plain) for row in turn.steps
+    )
+    cache_width = max(len(_pct(row.hit_ratio if row else None)) for row in turn.steps)
+    for index in range(len(turn.steps), 0, -1):
+        row = turn.steps[index - 1]
+        marker = '└' if index == 1 else '┌' if index == len(turn.steps) else '├'
+        text.append(f'  {marker} Step {index:<{step_width}}  ', style='bold')
+        used = row.input_tokens if row else None
+        text.append('context ')
+        context = _context_cell(used, report.window)
+        text.append_text(context)
+        text.append(' ' * (context_width - len(context.plain)))
+        ratio = row.hit_ratio if row else None
+        text.append('  cache ')
+        cache = _pct(ratio)
+        text.append(cache.ljust(cache_width), style=cache_style(ratio))
+        events = turn.step_events[index - 1] if turn.step_events else ()
+        for event in events:
+            text.append(f'  ◆ compaction: {event.reason}', style='bold yellow')
+        text.append('\n')
+    return text
+
+
 def build_debug_body(report: DebugReport) -> RenderableType:
     """Scrollable, content-free tables for cache, context, and request overhead."""
     sections: list[RenderableType] = [
+        _turn_timeline(report),
+        Text(''),
         _cache_table(report),
         Text(''),
         _last_request_table(report),
@@ -242,9 +274,8 @@ class AgentDebugView(Vertical):
         """Last painted report. Tests use it to inspect without parsing the screen."""
         return self._report
 
-    def update_report(self, report: DebugReport, *, timing: str = '') -> None:
-        """Repaints context and optional, content-free TUI turn timings."""
+    def update_report(self, report: DebugReport) -> None:
+        """Repaints context and cache diagnostics."""
         self._report = report
         self._header.update(build_debug_header(report))
-        body = build_debug_body(report)
-        self._body.update(Group(Text(timing), body) if timing else body)
+        self._body.update(build_debug_body(report))

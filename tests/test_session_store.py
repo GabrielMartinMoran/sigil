@@ -164,3 +164,44 @@ def test_preview_uses_first_user_message(tmp_path):
     session = store.create_session()
     session.messages = _sample_messages()
     assert session.preview == 'hello'
+
+
+def test_stale_writer_must_not_discard_newer_conversation(tmp_path):
+    import pytest
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+    from src.engine.sessions.session_store import SessionConflictError
+
+    store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'state')
+    first = store.create_session()
+    first.messages = [ModelRequest(parts=[UserPromptPart('initial')])]
+    store.save(first)
+    stale = store.load(first.id)
+    assert stale is not None
+    first.messages.append(ModelRequest(parts=[UserPromptPart('newer')]))
+    store.save(first)
+    with pytest.raises(SessionConflictError):
+        store.save(stale)
+    loaded = store.load(first.id)
+    assert loaded is not None
+    assert len(loaded.messages) == 2
+
+
+def test_stale_writer_cannot_replace_divergent_same_length_history(tmp_path):
+    import pytest
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+    from src.engine.sessions.session_store import SessionConflictError
+
+    store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'state')
+    first = store.create_session()
+    stale = store.load(first.id)
+    assert stale is not None
+    first.messages = [ModelRequest(parts=[UserPromptPart('newer')])]
+    store.save(first)
+    stale.messages = [ModelRequest(parts=[UserPromptPart('different')])]
+    with pytest.raises(SessionConflictError):
+        store.save(stale)
+    loaded = store.load(first.id)
+    assert loaded is not None
+    assert loaded.messages[0].parts[0].content == 'newer'

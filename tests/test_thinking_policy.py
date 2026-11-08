@@ -421,3 +421,16 @@ def test_a_smaller_share_keeps_less():
 
     # A target is not a trigger: 1.7% is below the operational ceiling of 10%.
     assert len(_thinking_contents(stingy.messages)) == len(_thinking_contents(generous.messages)) == 10
+
+
+def test_signed_reasoning_is_removed_when_switching_models_without_changing_history():
+    from src.engine.context.capability import compatible_model_history
+
+    old = ModelResponse(
+        parts=[ThinkingPart(content='', signature='encrypted', provider_name='openai'), TextPart('answer')],
+        model_name='old',
+    )
+    result = compatible_model_history([old], 'new')
+    assert [part.content for part in result[0].parts] == ['answer']
+    assert len(old.parts) == 2
+    assert compatible_model_history([old], 'old') == [old]
