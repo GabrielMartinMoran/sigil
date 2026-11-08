@@ -256,3 +256,76 @@ def test_unconfigured_model_refuses_a_request_with_an_actionable_message():
             raise AssertionError('expected NoProviderError')
 
     asyncio.run(inner())
+
+
+def test_openrouter_claude_enables_cache_without_changing_other_models():
+    account = _account(ProviderKind.OPENROUTER)
+    claude = OpenRouterBuilder().build(account, 'anthropic/claude-sonnet-4.6', _capability(), KEY)
+    other = OpenRouterBuilder().build(account, 'openai/gpt-5.1', _capability(), KEY)
+    assert claude.settings is not None
+    assert claude.settings['openrouter_cache_instructions'] is True
+    assert claude.settings['openrouter_cache_tool_definitions'] is True
+    assert claude.settings['openrouter_cache_messages'] is True
+    assert not other.settings
+
+
+def test_claude_openrouter_serializes_cache_breakpoints_and_keeps_tool_order(monkeypatch):
+    """Exercise the real adapter without sending credentials or traffic."""
+    import asyncio
+    import json
+
+    import httpx2
+    from pydantic_ai import Agent
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx2.Response(
+            200,
+            json={
+                'id': 'test',
+                'provider': 'test',
+                'model': 'anthropic/claude-sonnet-4.6',
+                'object': 'chat.completion',
+                'created': 1,
+                'choices': [{'index': 0, 'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': 'ok'}}],
+                'usage': {'prompt_tokens': 1200, 'completion_tokens': 1, 'total_tokens': 1201},
+            },
+        )
+
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
+    monkeypatch.setattr(
+        'pydantic_ai.providers.openrouter.OpenRouterProvider',
+        lambda **kwargs: OpenRouterProvider(api_key='test', http_client=client),
+    )
+    model = OpenRouterBuilder().build(
+        _account(ProviderKind.OPENROUTER), 'anthropic/claude-sonnet-4.6', _capability(), KEY
+    )
+    agent = Agent(model, instructions='stable instructions')
+
+    @agent.tool_plain
+    def alpha() -> str:
+        return 'a'
+
+    @agent.tool_plain
+    def beta() -> str:
+        return 'b'
+
+    async def scenario():
+        first = await agent.run('first')
+        await agent.run('second', message_history=first.all_messages())
+        await client.aclose()
+
+    asyncio.run(scenario())
+    assert len(requests) == 2
+    for request in requests:
+        assert [tool['function']['name'] for tool in request['tools']] == ['alpha', 'beta']
+        assert request['tools'][-1]['cache_control']['type'] == 'ephemeral'
+        assert any(
+            'cache_control' in part
+            for message in request['messages']
+            for part in message.get('content', [])
+            if isinstance(part, dict)
+        )

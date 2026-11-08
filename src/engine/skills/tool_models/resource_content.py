@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class ResourceContent(BaseModel):
@@ -13,5 +13,4 @@ class ResourceContent(BaseModel):
     size: int
     truncated: bool
     binary: bool
-    encoding: str = Field(description='utf-8 for text, base64 for binary content.')
-    content: str
+    note: str

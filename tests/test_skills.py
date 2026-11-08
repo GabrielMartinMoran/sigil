@@ -1,7 +1,6 @@
 """Tests del protocolo Agent Skills (sin red ni LLM)."""
 
 import asyncio
-import base64
 import os
 from pathlib import Path
 
@@ -308,8 +307,8 @@ def test_read_skill_resource_tool_decodes_binary(tmp_path):
 
     result = agent.registered['read_skill_resource']('demo', 'assets/blob.bin')
     assert result.binary is True
-    assert result.encoding == 'base64'
-    assert base64.b64decode(result.content) == payload
+    assert 'not available' in result.note
+    assert not hasattr(result, 'content')
     assert result.size == len(payload)
 
 
@@ -449,3 +448,72 @@ def test_list_skills_tool_refreshes(tmp_path):
     assert agent.registered['list_skills']() == []
     write_skill(tmp_path, 'late')
     assert [skill.name for skill in agent.registered['list_skills']()] == ['late']
+
+
+def test_global_skill_resources_and_script_are_available(tmp_path):
+    project = tmp_path / 'project'
+    global_root = tmp_path / 'global'
+    project.mkdir()
+    write_skill(
+        global_root,
+        'global-demo',
+        files={
+            'references/guide.md': 'global instructions',
+            'assets/image.bin': b'\x00\xff',
+            'scripts/check.py': "from pathlib import Path\nprint(Path('references/guide.md').read_text())\n",
+        },
+    )
+    registry = SkillRegistry([('project', project), ('global', global_root)])
+    agent = DummyAgent()
+    register_skill_tools(agent, registry)
+    loaded = agent.registered['load_skill']('global-demo')
+    assert loaded.source == 'global'
+    assert {item.path for item in loaded.resources} == {'references/guide.md', 'assets/image.bin', 'scripts/check.py'}
+    text = agent.registered['read_skill_resource']('global-demo', 'references/guide.md')
+    assert not text.binary
+    assert 'Loaded skills' in text.note
+    binary = agent.registered['read_skill_resource']('global-demo', 'assets/image.bin')
+    assert binary.binary
+    assert 'not available' in binary.note
+    result = asyncio.run(agent.registered['run_skill_script']('global-demo', 'scripts/check.py'))
+    assert result.returncode == 0
+    assert result.stdout.strip() == 'global instructions'
+
+
+def test_catalogue_order_is_stable_across_root_and_creation_order(tmp_path):
+    project, global_root = tmp_path / 'project', tmp_path / 'global'
+    write_skill(global_root, 'zulu')
+    write_skill(project, 'middle')
+    write_skill(global_root, 'alpha')
+    registry = SkillRegistry([('project', project), ('global', global_root)])
+    first = rendering.render_available_skills(registry)
+    assert first.index('`alpha`') < first.index('`middle`') < first.index('`zulu`')
+    assert rendering.render_available_skills(registry.refresh()) == first
+
+
+def test_read_resource_is_rendered_in_skill_instructions_and_follows_rollback(tmp_path):
+    from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
+
+    from src.engine.skills.loaded import loaded_resources
+
+    write_skill(tmp_path, 'demo', files={'references/doc.md': 'first version'})
+    registry = SkillRegistry([('project', tmp_path)])
+    messages = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='read_skill_resource',
+                    args={'name': 'demo', 'path': 'references/doc.md'},
+                    tool_call_id='r1',
+                )
+            ]
+        ),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='read_skill_resource', content={'binary': False}, tool_call_id='r1')]
+        ),
+    ]
+    resources = loaded_resources(messages)
+    assert 'first version' in rendering.render_loaded_skills(registry, ['demo'], resources)
+    (tmp_path / 'demo' / 'references' / 'doc.md').write_text('new version')
+    assert 'new version' in rendering.render_loaded_skills(registry, ['demo'], resources)
+    assert loaded_resources(messages[:1]) == ()

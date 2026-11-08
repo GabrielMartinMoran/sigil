@@ -12,6 +12,7 @@ from src.engine.roadmap.models.todo_status import TodoStatus
 from src.engine.roadmap.store import RoadmapStore
 from src.engine.roadmap.stores import RoadmapStores
 from src.engine.tooling.catalog import ToolCatalog
+from src.engine.tooling.lod_policies import UPDATE_ROADMAP_LOD
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.permission import ToolGroup, ToolPermission
 from src.engine.tooling.registrar import ToolRegistrar
@@ -106,7 +107,7 @@ def register_roadmap_tools(
             return store.for_node(getattr(deps, 'node_id', None))
         return store
 
-    @tools.context_tool(permission=_ROADMAP)
+    @tools.context_tool(permission=_ROADMAP, lod=UPDATE_ROADMAP_LOD)
     def update_roadmap(
         ctx: RunContext[Any],
         action: Literal['set', 'add', 'update', 'remove', 'clear'],

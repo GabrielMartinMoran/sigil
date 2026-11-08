@@ -8,9 +8,30 @@ the diagnostics lying when an instruction changes between requests.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-from src.engine.context.tokens import estimate_tokens
+from pydantic_ai.messages import ThinkingPart
+
+from src.engine.context.tokens import estimate_tokens, part_tokens
+
+if TYPE_CHECKING:
+    from pydantic_ai.messages import ModelMessage
+
+
+_PROMPT_KINDS = {
+    'user-prompt': 'user',
+    'tool-call': 'tool_call',
+    'tool-return': 'tool_return',
+    'builtin-tool-call': 'tool_call',
+    'builtin-tool-return': 'tool_return',
+    'retry-prompt': 'retry',
+    'system-prompt': 'system',
+}
+
+_KNOWN_PROMPT_KINDS = frozenset(_PROMPT_KINDS.values()) | {'thinking', 'text', 'compaction'}
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,14 +56,26 @@ class ToolRow:
 
 
 @dataclass(frozen=True, slots=True)
+class PromptSection:
+    """A sent history part's identity and cost, never its contents."""
+
+    kind: str
+    label: str
+    tokens: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class RequestSnapshot:
-    """Fixed cost of the last request: instructions and tool schemas."""
+    """Fixed sections and content-free history costs of the last prepared request."""
 
     instructions: tuple[InstructionRow, ...] = ()
     tools: tuple[ToolRow, ...] = ()
     native_tools: int = 0
     """Native provider tools (they do not travel as a JSON schema)."""
 
+    sections: tuple[PromptSection, ...] = ()
+    history_captured: bool = False
+    skills: dict[str, int] = field(default_factory=dict)
     captured: bool = False
     """Whether the snapshot comes from a real request. When false, the zeros are not a measurement.
 
@@ -66,11 +99,15 @@ class RequestSnapshot:
 
 
 def _preview(text: str, limit: int = 120) -> str:
+    if limit <= 0:
+        return ''
     collapsed = ' '.join(text.split())
     return collapsed if len(collapsed) <= limit else collapsed[: limit - 1] + '…'
 
 
-def snapshot_request(parameters: object, *, preview_chars: int = 120) -> RequestSnapshot:
+def snapshot_request(
+    parameters: object, *, preview_chars: int = 120, messages: Sequence[ModelMessage] | None = None
+) -> RequestSnapshot:
     """Builds the request snapshot from `ModelRequestParameters`.
 
     Without parameters there was no request: it returns an empty and **not captured**
@@ -102,7 +139,15 @@ def snapshot_request(parameters: object, *, preview_chars: int = 120) -> Request
 
     native = getattr(parameters, 'native_tools', None) or ()
 
-    return RequestSnapshot(instructions=instructions, tools=tools, native_tools=len(native), captured=True)
+    return RequestSnapshot(
+        instructions=instructions,
+        tools=tools,
+        native_tools=len(native),
+        captured=True,
+        skills=_skill_metrics(parts),
+        sections=_prompt_sections(messages) if messages is not None else (),
+        history_captured=messages is not None,
+    )
 
 
 def _tool_payload(tool: object) -> str:
@@ -118,3 +163,39 @@ def _tool_payload(tool: object) -> str:
         return json.dumps(payload, ensure_ascii=False, default=str)
     except TypeError, ValueError:
         return str(payload)
+
+
+def _skill_metrics(parts: Sequence[object]) -> dict[str, int]:
+    """Estimate rendered skill costs and resource states without retaining their text."""
+    text = '\n'.join(getattr(part, 'content', '') for part in parts if getattr(part, 'name', '') == 'loaded-skills')
+    if not text:
+        return {}
+    resources = re.split(r'(?m)^#### Resource `[^\n]+`', text)
+    tokens = sum(estimate_tokens(section) for section in resources[1:])
+    return {
+        'instructions_tokens': max(0, estimate_tokens(text) - tokens),
+        'resources_tokens': tokens,
+        'resources': max(0, len(resources) - 1),
+        'partial': len(re.findall(r'(?m)^#### Resource `[^\n]+` \(partial\)', text)),
+        'binary': len(re.findall(r'(?m)^#### Resource `[^\n]+` \(binary\)', text)),
+        'unavailable': len(re.findall(r'(?m)^#### Resource `[^\n]+` \(unavailable\)', text)),
+        'unavailable_skills': text.count('[Skill unavailable;'),
+    }
+
+
+def _prompt_sections(messages: Sequence[ModelMessage]) -> tuple[PromptSection, ...]:
+    return tuple(
+        _prompt_section(part, message_index + 1, part_index + 1)
+        for message_index, message in enumerate(messages)
+        for part_index, part in enumerate(message.parts)
+    )
+
+
+def _prompt_section(part: object, message_index: int, part_index: int) -> PromptSection:
+    part_kind = getattr(part, 'part_kind', 'unknown')
+    kind = _PROMPT_KINDS.get(part_kind, part_kind)
+    opaque = part_kind.startswith('builtin-') or kind not in _KNOWN_PROMPT_KINDS
+    unknown = opaque or (isinstance(part, ThinkingPart) and bool(part.signature) and not part.content)
+    name = getattr(part, 'tool_name', None)
+    label = f'{message_index}.{part_index} {part_kind}' + (f' {name}' if name else '')
+    return PromptSection(kind, label, None if unknown else part_tokens(part))

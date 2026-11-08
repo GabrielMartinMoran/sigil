@@ -1,0 +1,270 @@
+"""Maintenance records survive real agent hooks and the transactional session store."""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import replace
+
+import pytest
+from pydantic_ai import Agent
+from pydantic_ai.messages import (
+    ModelMessagesTypeAdapter,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.test import TestModel
+
+from src.engine.context.budget import ContextBudget
+from src.engine.context.capability import ContextBudgetExceeded, ContextViewCapability
+from src.engine.context.compaction.coordinator import ContextPolicyVersionError, recorded_state
+from src.engine.context.compaction.events import RECORD_KEY
+from src.engine.context.meter.context_meter import ContextMeter
+from src.engine.context.strategy.windowed import WindowedStrategy
+from src.engine.sessions.session_store import SessionStore
+
+
+def history(count: int) -> list:
+    messages = [ModelRequest(parts=[UserPromptPart(content='go')], run_id='past')]
+    for i in range(count):
+        messages.extend(
+            [
+                ModelResponse(
+                    parts=[
+                        ThinkingPart(content=f'thought {i}'),
+                        ToolCallPart(tool_name='noop', args={}, tool_call_id=f'c{i}'),
+                    ],
+                    run_id='past',
+                ),
+                ModelRequest(
+                    parts=[ToolReturnPart(tool_name='noop', content='ok', tool_call_id=f'c{i}')], run_id='past'
+                ),
+            ]
+        )
+    return messages
+
+
+def run_recorded(messages: list, *, steps: int = 10) -> list:
+    capability = ContextViewCapability(
+        strategy=WindowedStrategy(reasoning_steps=steps), meter=ContextMeter(window=100000)
+    )
+    agent = Agent(TestModel(), capabilities=[capability])
+    return asyncio.run(agent.run('continue', message_history=messages)).all_messages()
+
+
+def test_agent_hook_persists_frontiers_without_altering_original_payloads():
+    messages = history(20)
+    original = ModelMessagesTypeAdapter.dump_json(messages)
+    result = run_recorded(messages)
+    state, events = recorded_state(result)
+    assert state.reasoning_cutoff == 10
+    assert [event.step for event in events] == [20]
+    assert any(RECORD_KEY in (message.metadata or {}) for message in result)
+    assert ModelMessagesTypeAdapter.dump_json(messages) == original
+    assert sum(isinstance(p, ThinkingPart) for m in result for p in m.parts) == 20
+
+
+def test_recorded_boundaries_survive_multiple_sqlite_resumes_and_config_changes(tmp_path):
+    store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'home')
+    session = store.create_session()
+    session.messages = run_recorded(history(20))
+    store.save(session)
+    before = recorded_state(session.messages)
+    for _ in range(2):
+        session = store.load(session.id)
+        assert recorded_state(session.messages) == before
+        session.messages = run_recorded(session.messages, steps=100)
+        store.save(session)
+        state, events = recorded_state(session.messages)
+        assert state.reasoning_cutoff == before[0].reasoning_cutoff
+        assert events == before[1]
+        before = state, events
+
+
+def test_rollback_and_alternative_branch_cannot_inherit_future_events():
+    original = history(20)
+    completed = run_recorded(original)
+    assert recorded_state(completed)[1]
+    rolled_back = completed[: len(original)]
+    assert not recorded_state(rolled_back)[1]
+    alternative = run_recorded(rolled_back[:5], steps=10)
+    assert recorded_state(alternative)[0].reasoning_cutoff == 0
+    assert not recorded_state(alternative)[1]
+
+
+def test_interleaved_agents_do_not_share_frontiers():
+    capability = ContextViewCapability(strategy=WindowedStrategy(), meter=ContextMeter(window=100000))
+    agent = Agent(TestModel(), capabilities=[capability])
+
+    async def run_both():
+        return await asyncio.gather(
+            agent.run('a', message_history=history(20)), agent.run('b', message_history=history(2))
+        )
+
+    first, second = asyncio.run(run_both())
+    assert recorded_state(first.all_messages())[0].reasoning_cutoff == 10
+    assert recorded_state(second.all_messages())[0].reasoning_cutoff == 0
+
+
+def test_debug_projection_is_pure_and_retains_recorded_events():
+    messages = run_recorded(history(20))
+    original = ModelMessagesTypeAdapter.dump_json(messages)
+    capability = ContextViewCapability(
+        strategy=WindowedStrategy(reasoning_steps=100), meter=ContextMeter(window=100000)
+    )
+    first = capability.project(messages)
+    second = capability.project(messages)
+    assert first.events == second.events == recorded_state(messages)[1]
+    assert first.messages == second.messages
+    assert ModelMessagesTypeAdapter.dump_json(messages) == original
+
+
+def test_unknown_policy_version_fails_explicitly():
+    messages = run_recorded(history(20))
+    last_index = next(i for i, m in reversed(list(enumerate(messages))) if RECORD_KEY in (m.metadata or {}))
+    last = messages[last_index]
+    record = {**last.metadata[RECORD_KEY], 'version': 999}
+    messages[last_index] = replace(last, metadata={RECORD_KEY: record})
+    with pytest.raises(ContextPolicyVersionError, match='migration'):
+        WindowedStrategy().view(messages, ContextBudget(window=None))
+
+
+def test_overfull_protected_request_never_reaches_the_model():
+    capability = ContextViewCapability(strategy=WindowedStrategy(), meter=ContextMeter(window=100, output_reserve=0))
+    agent = Agent(TestModel(), capabilities=[capability])
+    with pytest.raises(ContextBudgetExceeded, match='larger context window'):
+        asyncio.run(agent.run('x' * 10000))
+    assert capability.last_view.budget_exceeded
+
+
+def test_streamed_response_records_the_same_request_decision():
+    capability = ContextViewCapability(strategy=WindowedStrategy(), meter=ContextMeter(window=100000))
+    agent = Agent(TestModel(), capabilities=[capability])
+
+    async def streamed():
+        async with agent.run_stream('continue', message_history=history(20)) as run:
+            await run.get_output()
+        return run.all_messages()
+
+    messages = asyncio.run(streamed())
+    assert recorded_state(messages)[0].reasoning_cutoff == 10
+    assert [event.step for event in recorded_state(messages)[1]] == [20]
+
+
+def test_failed_transcript_transaction_does_not_persist_half_an_event(tmp_path, monkeypatch):
+    from src.engine.storage import executions
+
+    store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'home')
+    session = store.create_session()
+    session.messages = history(19)
+    store.save(session)
+    before = ModelMessagesTypeAdapter.dump_json(store.load(session.id).messages)
+    session.messages = run_recorded(history(20))
+    original_write = executions.write_history
+
+    def fail_after_write(*args, **kwargs):
+        original_write(*args, **kwargs)
+        raise RuntimeError('simulated disk failure')
+
+    monkeypatch.setattr(executions, 'write_history', fail_after_write)
+    with pytest.raises(RuntimeError, match='disk failure'):
+        store.save(session)
+    restored = store.load(session.id)
+    assert ModelMessagesTypeAdapter.dump_json(restored.messages) == before
+    assert not recorded_state(restored.messages)[1]
+
+
+def test_emergency_dropped_parts_survive_merged_requests_on_resume():
+    # The first turn is large user data, not eligible tool detail. Under pressure it
+    # must go; its identities, not mutable message positions, are the frontier.
+    old = [
+        ModelRequest(parts=[UserPromptPart(content='old ' * 3000)], run_id='old'),
+        ModelResponse(parts=[TextPart(content='old answer')], run_id='old'),
+    ]
+    capability = ContextViewCapability(strategy=WindowedStrategy(), meter=ContextMeter(window=1000, output_reserve=0))
+    agent = Agent(TestModel(), capabilities=[capability])
+    first = asyncio.run(agent.run('continue', message_history=old)).all_messages()
+    state, events = recorded_state(first)
+    assert state.dropped_parts
+    assert any(event.reason == 'emergency' for event in events)
+    second = asyncio.run(agent.run('again', message_history=first)).all_messages()
+    view = capability.project(second)
+    assert not view.budget_exceeded
+    assert all('old old' not in str(part) for m in view.messages for part in m.parts)
+    assert recorded_state(second)[0].dropped_parts == state.dropped_parts
+
+
+def test_child_request_does_not_replace_root_debug_snapshot_or_budget():
+    from types import SimpleNamespace
+
+    from pydantic_ai import RunContext
+
+    meter = ContextMeter(window=100000)
+    capability = ContextViewCapability(strategy=WindowedStrategy(), meter=meter)
+    agent = Agent(TestModel(), capabilities=[capability])
+
+    @agent.instructions
+    def instructions(ctx: RunContext) -> str:
+        return 'child instructions ' * 100 if getattr(ctx.deps, 'node_id', None) else 'root instructions'
+
+    asyncio.run(agent.run('root'))
+    root_view, root_snapshot, root_budget = capability.last_view, capability.last_request, meter.budget()
+    asyncio.run(agent.run('child', deps=SimpleNamespace(node_id='child')))
+    assert capability.last_view is root_view
+    assert capability.last_request is root_snapshot
+    assert meter.budget() == root_budget
+
+
+def test_failed_prepared_request_retains_its_events_when_the_tail_is_reprepared():
+    from pydantic_ai.models.function import FunctionModel
+
+    def offline(messages, info):
+        raise RuntimeError('simulated offline provider')
+
+    capability = ContextViewCapability(strategy=WindowedStrategy(), meter=ContextMeter(window=100000))
+    agent = Agent(FunctionModel(offline), capabilities=[capability])
+
+    async def interrupted():
+        async with agent.iter('continue', message_history=history(20)) as run:
+            try:
+                async for _ in run:
+                    pass
+            except RuntimeError:
+                return run.all_messages()
+        raise AssertionError('Expected a simulated failure')
+
+    failed = asyncio.run(interrupted())
+    state, events = recorded_state(failed)
+    assert state.reasoning_cutoff == 10 and events
+    resumed = run_recorded(failed, steps=100)
+    assert recorded_state(resumed)[0].reasoning_cutoff == state.reasoning_cutoff
+    assert recorded_state(resumed)[1] == events
+
+
+def test_streamed_history_survives_two_resumes_without_reinterpreting_events():
+    capability = ContextViewCapability(strategy=WindowedStrategy(), meter=ContextMeter(window=100000))
+    agent = Agent(TestModel(), capabilities=[capability])
+
+    async def streamed():
+        messages = history(20)
+        previous = None
+        for _ in range(3):
+            async with agent.run_stream('continue', message_history=messages) as run:
+                await run.get_output()
+            messages = run.all_messages()
+            state, events = recorded_state(messages)
+            assert state.reasoning_cutoff == 10
+            assert len(events) == 1
+            assert events[0].policy['reasoning_steps'] == 10
+            assert events[0].window == 100000
+            if previous is not None:
+                assert events == previous
+            previous = events
+        return messages
+
+    messages = asyncio.run(streamed())
+    assert recorded_state(messages)[1][0].step == 20

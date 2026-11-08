@@ -15,12 +15,13 @@ from pathlib import Path
 import dotenv
 import pytest
 
+from src.engine.context.compaction.constants import (
+    REASONING_TARGET_STEPS,
+)
 from src.engine.settings import (
     DEFAULT_CONTEXT_STRATEGY,
     DEFAULT_MAX_STEPS,
     DEFAULT_MODEL_MAX_ATTEMPTS,
-    DEFAULT_REASONING,
-    DEFAULT_REASONING_STEPS,
     SigilSettings,
     load_settings,
 )
@@ -67,24 +68,22 @@ def test_an_unknown_context_strategy_is_rejected():
         load_settings({'SIGIL_CONTEXT_STRATEGY': 'magic'})
 
 
-@pytest.mark.parametrize('raw', ['off', 'recent', 'all', 'RECENT', '  All  '])
-def test_the_reasoning_policy_is_a_name(raw):
-    policy = load_settings({'SIGIL_CONTEXT_REASONING': raw}).reasoning
-    assert policy == raw.strip().lower()
+@pytest.mark.parametrize('raw', ['off', 'all'])
+def test_removed_reasoning_modes_do_not_change_context_strategy(raw):
+    import dataclasses
+
+    from src.engine.bootstrap import build_strategy
+
+    settings = load_settings({'SIGIL_CONTEXT_REASONING': raw, 'SIGIL_CONTEXT_KEEP_THINKING': '1'})
+    assert not hasattr(settings, 'reasoning')
+    strategy = build_strategy(settings)
+    assert 'reasoning' not in {field.name for field in dataclasses.fields(strategy)}
+    assert strategy.reasoning_steps == REASONING_TARGET_STEPS
 
 
 def test_the_default_policy_keeps_the_recent_steps():
     settings = load_settings({})
-    assert settings.reasoning == DEFAULT_REASONING
-    assert settings.reasoning_steps == DEFAULT_REASONING_STEPS
-
-
-@pytest.mark.parametrize('raw', ['4', '0', 'on', 'yes'])
-def test_a_number_is_not_a_policy(raw):
-    """A count was a mode before; it is rejected instead of guessed."""
-    with pytest.raises(ValueError) as error:
-        load_settings({'SIGIL_CONTEXT_REASONING': raw})
-    assert 'SIGIL_CONTEXT_REASONING' in str(error.value)
+    assert settings.reasoning_steps == REASONING_TARGET_STEPS
 
 
 def test_the_step_count_is_its_own_number():
@@ -95,22 +94,6 @@ def test_a_step_count_below_one_is_rejected():
     with pytest.raises(ValueError) as error:
         load_settings({'SIGIL_CONTEXT_REASONING_STEPS': '0'})
     assert 'reasoning_steps' in str(error.value)
-
-
-@pytest.mark.parametrize('raw', ['1', 'true', 'YES', 'on'])
-def test_the_deprecated_switch_still_means_keep_everything(raw):
-    """`SIGIL_CONTEXT_KEEP_THINKING` was a boolean; it keeps meaning what it did."""
-    assert load_settings({'SIGIL_CONTEXT_KEEP_THINKING': raw}).reasoning == 'all'
-
-
-@pytest.mark.parametrize('raw', ['0', 'false', 'no', '4'])
-def test_the_deprecated_switch_off_means_no_reasoning(raw):
-    assert load_settings({'SIGIL_CONTEXT_KEEP_THINKING': raw}).reasoning == 'off'
-
-
-def test_the_new_policy_wins_over_the_deprecated_switch():
-    settings = load_settings({'SIGIL_CONTEXT_REASONING': 'recent', 'SIGIL_CONTEXT_KEEP_THINKING': '1'})
-    assert settings.reasoning == 'recent'
 
 
 def test_settings_are_immutable():

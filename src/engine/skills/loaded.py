@@ -82,3 +82,28 @@ def _name_of(part: ToolCallPart) -> str:
 
 
 __all__ = ['LOAD_SKILL_TOOL', 'loaded_skills']
+
+
+def loaded_resources(messages: Sequence[ModelMessage]) -> tuple[tuple[str, str, int], ...]:
+    """Successful resource reads, in order; rollback naturally removes later reads."""
+    from src.engine.skills.discovery import DEFAULT_MAX_READ_BYTES, MAX_READ_BYTES
+
+    calls: dict[str, tuple[str, str, int]] = {}
+    resources: dict[tuple[str, str], int] = {}
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, ToolCallPart) and part.tool_name == 'read_skill_resource':
+                try:
+                    args = part.args_as_dict()
+                    name, path = args.get('name'), args.get('path')
+                    limit = args.get('max_bytes', DEFAULT_MAX_READ_BYTES)
+                    if isinstance(name, str) and isinstance(path, str) and isinstance(limit, int):
+                        calls[part.tool_call_id or ''] = (name, path, max(1, min(limit, MAX_READ_BYTES)))
+                except ValueError, TypeError:
+                    continue
+            elif isinstance(part, ToolReturnPart) and part.tool_name == 'read_skill_resource':
+                resource = calls.get(part.tool_call_id or '')
+                if resource and part.outcome == 'success':
+                    name, path, limit = resource
+                    resources[name, path] = max(limit, resources.get((name, path), 0))
+    return tuple((name, path, limit) for (name, path), limit in resources.items())

@@ -13,20 +13,6 @@ The short version: **the session log keeps everything, but the model only ever
 sees a projection of it.** Keeping the log intact is what makes the session
 resumable; projecting it is what keeps the request inside the window.
 
-- [The two things that exist](#the-two-things-that-exist)
-- [The pipeline of one request](#the-pipeline-of-one-request)
-- [The budget](#the-budget)
-- [The three levers](#the-three-levers)
-- [Reasoning: a window of steps](#reasoning-a-window-of-steps)
-- [Tokens: measured versus projected](#tokens-measured-versus-projected)
-- [What travels and what does not](#what-travels-and-what-does-not)
-- [What the model is told about its tools](#what-the-model-is-told-about-its-tools)
-- [Strategies](#strategies)
-- [Configuration](#configuration)
-- [What the session cost](#what-the-session-cost)
-- [Inspecting a session](#inspecting-a-session)
-- [Invariants](#invariants)
-
 ## The two things that exist
 
 There are two distinct message lists, and confusing them is the source of most
@@ -165,10 +151,10 @@ flowchart TD
     IN["Full history"] --> L1
 
     L1{"Lever 1<br/>Trim reasoning"}
-    L1 -->|"keeps the last N steps<br/>of the turn in progress"| A1["Past turns: dropped<br/>Current turn: last N kept<br/>Signed by another provider: dropped"]
+    L1 -->|"event applies stable frontiers"| A1["Recent reasoning across turns<br/>Ceiling 20 → target 10<br/>Signed by another provider: dropped"]
 
-    A1 --> L2{"Lever 2<br/>Truncate old tool results"}
-    L2 -->|"prompts older than keep_recent_prompts"| A2["Each result clipped to<br/>max_tool_result_chars,<br/>head kept so the signal survives.<br/>Pinned tools are exempt"]
+    A1 --> L2{"Lever 2<br/>Level down tool detail"}
+    L2 -->|"arguments and results, by age"| A2["Each call clipped to the level<br/>its age earns, on both sides.<br/>Pinned tools are exempt"]
     A2 --> L3{"Lever 3<br/>Discard whole prompts"}
     L3 -->|"oldest first, never the last prompt"| A3["Prompt gone.<br/>Prefers prompts without pinned results"]
 
@@ -208,13 +194,103 @@ flowchart LR
 and `fit_to_budget` stops when only one prompt is left. The current prompt is
 never discarded while the agent is working in it.
 
-### Why some tool results are pinned
+### Why skill calls retain reconstruction metadata
 
-`PINNED_TOOLS` (`load_skill`, `read_skill_resource`) hold **instructions, not
-data**. A skill body is what the agent must keep complying with; truncating it
-to a stub or collapsing it into `load_skill -> ok` removes the instructions
-mid-task. They are never truncated and never compacted, and when prompts have
-to be discarded, prompts without pinned results go first.
+Loaded skills and resource reads are reconstructed from successful calls in the
+original transcript, before the model view is reduced. Their result inventories
+can use semantic LOD without removing the skill name, resource path, or read
+limit. Their turns are preferred over ordinary data during emergency discard;
+they are not exempt from input and output LOD.
+
+## Compaction events, and the levels of detail
+
+A maintenance event advances stable frontiers for reasoning and eligible tools.
+Operational events fire at inclusive component ceilings, not at fixed intervals:
+20 reasoning responses, 10% known reasoning tokens, or 4,000 characters of
+eligible tool reduction. The tool reduction target is zero pending eligible
+savings. These initial values require calibration, not claims of measured savings.
+
+`sigil_context` metadata records policy version 2, effective settings, the window,
+frontiers, content-free counters, and event reasons in the normal transcript
+transaction. Payloads remain original. Metadata is attached to the prepared
+request and canonical response; duplicate records share a request id. Each event
+also retains the request that owns it. Before-run recovery captures records before
+the library merges request envelopes and drops their application metadata, then
+restores them once onto the envelope containing their stable owning part.
+An owning part anchor makes a copied request record invalid when rollback removes
+that request. Anchors contain protocol ids or timestamps, not content hashes.
+
+| Case | Recovery rule |
+| --- | --- |
+| Resume | Replay recorded frontiers; evaluate only subsequent steps |
+| Rollback | Ignore records whose owning part was removed |
+| Fork | Inherit the retained prefix, never decisions beyond the fork point |
+| Configuration/model change | Keep recorded frontiers; apply new settings to future maintenance |
+| Legacy session without records | Reconstruct once under current settings, explicitly labeled in debug |
+| Unknown record version | Stop with an explicit migration error; don't reinterpret it |
+| Debug | Project without writing metadata, storage, or events |
+
+A prepared record proves which projection was selected, not that a provider
+accepted or billed the request. Failed attempts can retain that decision; no
+new response means no new step. SQLite transaction failure preserves the previous
+complete transcript and its frontiers together.
+
+### The step
+
+A **step** is one model response that became part of the transcript. Three
+parallel tool calls are one step, because they were one decision. A prompt typed
+while the agent works belongs to the turn it reached. Retries that never
+produced a response are not steps. The counter runs over the whole execution and
+continues across turns.
+
+### The reason
+
+Every event says why the view was reduced, because the reason is what tells a
+scheduled reduction apart from one that happened under pressure.
+
+| Reason | When |
+| --- | --- |
+| `operational` | A component reached its inclusive count, size, or eligible-tool ceiling |
+| `budget` | The request would not fit, so maintenance ran earlier than scheduled |
+| `emergency` | The reduction was not enough and whole turns had to go |
+
+The policy numbers are starting points for calibration, in
+`src/engine/context/compaction/policy.py`: a ceiling triggers, a target is where
+the component lands. Triggering at the target would compact on every request;
+landing at the ceiling would let the context creep.
+
+### Levels of detail
+
+Tool calls keep their identity and lose their payload as they age. Every tool
+declares two functions —one for its arguments, one for its result— and the
+eligible level is a function of the step's age. An event applies eligible
+reductions in a batch; crossing an age fence alone does not rewrite the history:
+
+| Level | From age | What it keeps | Generic size |
+| --- | ---: | --- | ---: |
+| `FULL` | 0 | The original value | — |
+| `LOD_1` | 25 steps | Long strings shortened; structure and identifiers intact | 2.000 chars |
+| `LOD_2` | 50 steps | The meaning of the call, without its payload | 500 chars |
+| `LOD_3` | 75 steps | What the call was and whether it worked | 100 chars |
+
+`src/engine/tooling/lod_policies.py` holds the declaration of every tool this
+project owns. The agent build fails if a tool is registered without one: a
+missing declaration is a cost nobody decided, and the moment to notice is not
+the bill.
+
+External tools use fixed targets of 2,000, 500, and 100 characters for each whole
+input or output value, not each string leaf. Large structured values become valid
+JSON preview envelopes with an explicit truncation marker. Calls keep their
+protocol name, id, pairing, and order. Indispensable error/status metadata and
+opaque binary, multimodal, or provider-native protocol values can exceed the target; debug reports those
+exceptions rather than corrupting the payload.
+
+Own tools use semantic policies for both sides. Live Pydantic values and stored
+JSON take the same path. Short values don't expand, and coarser levels never
+increase serialized size. User decisions, recoverable identifiers, process exit
+codes, timeout state, errors, and original truncation flags survive. Binary
+content from own resource/file tools becomes a labeled omission with its identity,
+not a broken base64 string.
 
 ## Tokens: measured versus projected
 
@@ -309,7 +385,7 @@ resent and which are recorded is what makes the estimate correct.
 | `UserPromptPart`, `TextPart` | yes | yes |
 | `ToolCallPart` (name + args) | yes | yes |
 | `ToolReturnPart` | yes, unless truncated or discarded | yes |
-| `ThinkingPart` | the last N steps of the turn in progress | only what is sent |
+| `ThinkingPart` | recent cross-turn steps until a maintenance frontier | known text only; signatures can have unknown size |
 | `instructions` of past requests | **no** | **no** (bug fixed) |
 | `instructions` of the current request | yes | via `ContextBudget` |
 | Tool schemas | yes, on every request | via `ContextBudget` |
@@ -317,165 +393,43 @@ resent and which are recorded is what makes the estimate correct.
 
 ## Reasoning: a window of steps
 
-Reasoning is not resent to the model by default, and that blanket rule had a
-measurable cost. While the agent is **inside** a turn, it re-reads its own
-reasoning step after step. In a measured session, 38 of the 77 reasoning blocks of
-one turn —76% of its volume— were the model re-deciding the same ambiguity:
-whether "I uploaded those changes" meant it had, or that it should. It could not
-see that it had already answered, so it asked itself again for 110 steps.
-
-What fixes that is the reasoning of the steps next to the work in progress. What a
-turn's reasoning is not, is a record worth its price: it is resent on every
-request.
+Recent reasoning survives across user turns. A step is one model response,
+regardless of how many parallel calls or thinking blocks it contains. Steps without
+reasoning advance tool age but do not fill the reasoning count band.
 
 ### A turn, a step, a window
 
-| Term | Meaning |
-| --- | --- |
-| **Turn** | Everything until control goes back to the user: one `agent.iter()`, one `library_run_id`. A prompt typed while the agent works is enqueued into the same turn, so steering does not open a second one. |
-| **Step** | One model request and its response, inside a turn. |
-| **Prompt** | A slice of a turn, from one user prompt to the next. It is the unit that can be dropped whole. |
-| **Window** | How many steps of the turn in progress keep their reasoning. `SIGIL_CONTEXT_REASONING_STEPS`, default 10. |
-| **Cap** | The most reasoning that window may cost, in tokens: the smaller of a share of the model window (`SIGIL_CONTEXT_REASONING_MAX_PERCENT`, default 5%) and the room the history has left. |
+Retention uses hysteresis rather than a sliding window. With the defaults,
+responses 1–19 with reasoning remain eligible. At response 20, maintenance removes
+the oldest reasoning until both the count target of 10 and the known-token target
+of 5% of the model window are met. Subsequent requests only append new reasoning
+until another ceiling is reached. A new user message does not reset retention.
 
-```mermaid
-flowchart LR
-    subgraph done["Finished turns — reasoning dropped"]
-        R1["turn 1<br/>317 steps"]
-        R2["turn 2<br/>110 steps"]
-    end
-
-    subgraph current["Turn in progress — last N steps keep it"]
-        direction LR
-        S1["step 1"] --> S2["step 2"] --> S3["step 3"] --> S4["step 4<br/>reasoning kept"]
-    end
-
-    done --> current
-    current --> NEXT["next request"]
-
-    style done fill:#da363322,stroke:#da3633
-    style current fill:#23863622,stroke:#238636
-```
-
-### The handoff, and why the first request of a turn is different
-
-A new turn has no response yet, so the most recent turn *in the history* is the
-previous one. The window therefore lands on the last steps of the turn that just
-ended — which is the handoff: what the agent concluded before it handed control
-back. As soon as the new turn answers, its own steps take over and the previous
-turn becomes a record again.
-
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant A as Agent
-    participant V as View
-
-    U->>A: prompt (turn 2 starts)
-    Note over V: no response from turn 2 yet<br/>→ keeps the tail of turn 1
-    A->>V: response 1 of turn 2
-    Note over V: turn 2 is now the current one<br/>→ keeps turn 2's steps, turn 1 dropped
-    A->>V: response 2 of turn 2
-    Note over V: window slides: the last N steps of turn 2
-    A-->>U: control back (turn 2 ends)
-```
-
-The window is on steps and not on the whole turn because resending a turn is
-quadratic: each request carries every reasoning block produced so far in it.
-
-| Turn | Steps | Reasoning blocks | Extra billed if the whole turn is resent |
-| --- | --- | --- | --- |
-| 1 | 317 | 198,525 tokens | **44.1M tokens** |
-| 2 | 110 | 128,577 tokens | **9.1M tokens** |
-| 3 | 24 | 3,877 tokens | 51k tokens |
-
-A window of steps costs `K × tamaño_de_paso`, linearly. The loop it prevents
-(re-deciding what was already decided) is local to a few steps, which is where a
-window belongs.
+`SIGIL_CONTEXT_REASONING_STEPS` configures the count target; the count ceiling is
+twice that target. `SIGIL_CONTEXT_REASONING_MAX_PERCENT` configures the size target;
+the size ceiling is twice the target, with a minimum of 10% and maximum of 100%.
+Targets and ceilings are initial operational settings, not quality guarantees.
 
 ### Signed reasoning belongs to its provider
 
-`ThinkingPart.signature` is not Anthropic-only: Anthropic, Bedrock, Google and
-OpenAI all sign reasoning, and a signature is only sent back to the provider that
-produced it. Keeping a signed block for a different receiver spends history on
-something the adapter has to render as plain text anyway.
-
-```mermaid
-flowchart TD
-    P["ThinkingPart<br/>signature + provider_name"]
-
-    P --> Q{"signed?"}
-    Q -->|no| KEEP["Replayable by anyone"]
-    Q -->|yes| S{"provider_name ==<br/>receiving provider?"}
-
-    S -->|yes| KEEP
-    S -->|no| DROP["Dropped: it would be<br/>rendered as plain text"]
-
-    style KEEP fill:#23863622,stroke:#238636
-    style DROP fill:#bf870022,stroke:#bf8700
-```
-
-The receiving provider is read per request, not at startup: the model can be
-swapped mid-session and the strategy is built once. When the provider is unknown,
-the check is skipped rather than guessed — a wrong guess drops reasoning that was
-fine.
+Signed blocks are replayed only to their owning provider when both identities
+are known. Unsigned reasoning can travel to another provider. Empty content with
+a signature has unknown size, not measured zero cost. Debug reports known text
+estimates and unknown blocks separately. The response-count ceiling still applies
+when the window or encrypted size is unknown.
 
 ### Reasoning is a lever, not a guarantee
 
-Keeping it never costs a turn. If the reasoning the policy kept does not fit the
-budget, the window shrinks step by step until it does; tool results are truncated
-and prompts discarded only after all reasoning is gone.
+Under global pressure, the shared pipeline reduces reasoning before discarding
+whole turns. Both `windowed` and `compacting` use the same tool policies and budget
+fitting; there is no additional legacy tool-result truncation pass. The summary
+strategy still summarizes old unprotected turns deterministically.
 
-```mermaid
-flowchart TD
-    A["View with the reasoning<br/>the policy kept"] --> B{"fits?"}
-    B -->|yes| SEND["Send"]
-    B -->|no| C["Shrink the window<br/>one step"]
-    C --> D{"fits?"}
-    D -->|no, and steps left| C
-    D -->|yes| SEND
-    D -->|no steps left| E["Truncate old tool results,<br/>then discard prompts"]
-
-    style SEND fill:#23863622,stroke:#238636
-    style E fill:#bf870022,stroke:#bf8700
-```
-
-### The cap: a wide window must not be a stupid one
-
-A step count alone is either too small to help or too large to be safe. Ten steps
-of a model that thinks in 5k tokens is 50k, every request; the same ten steps in a
-context with 8k left is the whole turn.
-
-So the window has a ceiling, and the ceiling is the **smaller** of two numbers:
-
-```mermaid
-flowchart TD
-    W["Model window<br/>e.g. 1,000,000"] --> SHARE["share = window × 5%<br/>= 50,000"]
-    A["Room left for the history<br/>available_for_history"] --> CAP
-    SHARE --> CAP{"cap = min(share, room)"}
-    CAP --> RESULT["Ceiling for the reasoning<br/>in tokens"]
-    RESULT --> KEEP["Keep reasoning backwards<br/>until the cap is spent"]
-
-    style RESULT fill:#1f6feb22,stroke:#1f6feb
-```
-
-- **The share** stops reasoning from becoming a standing tax: on a 1M window it can
-  never exceed 50k, however long the turn gets.
-- **The room** stops it from starving the turn it is meant to help: with 8k left,
-  the cap is 8k, not 50k.
-
-When the window is unknown there is no cap and the step count is the only limit:
-without a budget there is nothing to spend against.
-
-The blocks are taken newest first, so the ones that survive are the closest to the
-work in progress. A block that does not fit ends the search, because the ones
-further back cost the same or more.
-
-In a measured session the cap never binds: ten steps of reasoning cost about 2.7k
-tokens against a 50k ceiling. It exists for the case that is not measured yet —a
-model that thinks in tens of thousands of tokens per step— and for a context that
-is nearly full, where it is the difference between keeping some reasoning and
-losing a turn.
+If the protected final turn or fixed instructions still cannot fit, the view marks
+its unmet window target and the capability raises `ContextBudgetExceeded` before
+calling the provider. You must reduce the input, start a new conversation, or
+select a larger window. The character heuristic is an estimate, not a physical
+window guarantee for unknown provider overhead or encrypted reasoning.
 
 ### Images: priced by pixels, recoverable by id
 
@@ -683,21 +637,14 @@ not touched.
 | --- | --- | --- |
 | `SIGIL_CONTEXT_STRATEGY` | `windowed` | `windowed`, `compacting` or `passthrough` |
 | `SIGIL_CONTEXT_KEEP_RECENT_TURNS` | `3` | Prompts kept intact before trimming starts |
-| `SIGIL_CONTEXT_MAX_TOOL_RESULT_CHARS` | `4000` | Cap of an old tool result |
 | `SIGIL_CONTEXT_OUTPUT_RESERVE` | `8000` | Tokens reserved for the answer |
-| `SIGIL_CONTEXT_REASONING` | `recent` | What travels back of the model's reasoning: `recent`, `off` or `all` |
-| `SIGIL_CONTEXT_REASONING_STEPS` | `10` | Steps of the turn in progress kept under `recent` |
-| `SIGIL_CONTEXT_REASONING_MAX_PERCENT` | `5` | Ceiling for that reasoning, as a percentage of the model window |
+| `SIGIL_CONTEXT_REASONING_STEPS` | `10` | Reasoning step target across turns; ceiling is twice this value |
+| `SIGIL_CONTEXT_REASONING_MAX_PERCENT` | `5` | Reasoning size target; ceiling is twice this value, at least 10% |
 | `SIGIL_CONTEXT_IMAGE_ROUNDS` | `3` | Turns an image stays loaded, counting its own. The field it sets is `image_turns`; the variable keeps its old name because it is a published interface |
 | `SIGIL_CONTEXT_IMAGE_MAX_PERCENT` | `10` | Ceiling for the pixels that stay, as a percentage of the model window |
-| ~~`SIGIL_CONTEXT_KEEP_THINKING`~~ | — | Deprecated by `SIGIL_CONTEXT_REASONING`; truthy still means `all` |
 
-The policy is always a name, never a number: a count was a mode once, and reading
-`4` as "keep four steps" next to `1` as "keep everything" was a trap. The step
-count is its own setting, and it is a quantity, not a mode.
-
-`all` exists because some routes require round-tripping the reasoning before they
-will answer. It is the expensive option, not the recommended one.
+The step count controls the current reasoning window; there is no configuration
+switch for retaining all reasoning or discarding all reasoning.
 
 ## What the session cost
 
@@ -748,57 +695,101 @@ heaviest tool results. The debug view builds the same projection the agent would
 send *now*, which is why it calls `project()` rather than reading the last
 `ViewResult`.
 
-To check a saved session without opening the UI:
+The debug view also paints one row per turn with three columns that answer three
+different questions: **context used** (the prompt size of the turn's last request, which
+is what made the turn expensive), **cache read** and its share of the input (whether the
+prefix stayed stable), and the **compaction events** that fell inside the turn — the
+step and the reason, so a reduction is attributable to the turn that paid for it.
+Nothing of the conversation appears in any of them.
 
-```python
-import json
+The **Prompt cache** table lists requests newest first, retaining their original
+request numbers. Cache read share is red below 50%, yellow from 50% to below
+80%, and green from 80%. Context occupancy uses the opposite direction: green
+below 70% of the model window, yellow from 70% to below 90%, and red from 90%.
+Unknown values stay neutral. These are display thresholds, not compaction
+triggers; tune them in `src/ui/widgets/debug_styles.py`.
 
-from pydantic_ai.messages import ModelMessagesTypeAdapter
+**Last request** restores the section breakdown from the last request prepared
+in this process, after context projection. It does not substitute the estimated
+next request or append the response that followed it. Dynamic instructions are
+orange, user parts cyan, tool schemas/calls/results lilac, reasoning gray, and
+assistant text white. Rows retain type labels and estimated tokens without
+showing prompt contents. Native payloads and encrypted reasoning with unknown
+sizes display `?` and make the total explicitly partial. Sections use logical
+order, not a claim about provider wire serialization. A loaded session shows
+no captured request until a new request is prepared in this process.
 
-from src.engine.context.budget import ContextBudget
-from src.engine.context.strategy.turns import split_prompts
-from src.engine.context.strategy.windowed import WindowedStrategy
-from src.engine.context.tokens import estimate_messages_tokens
-
-path = '~/.sigil/sessions/<id>/<run>.json'
-messages = ModelMessagesTypeAdapter.validate_python(json.load(open(path))['messages'])
-
-budget = ContextBudget(window=1_000_000, tools=12_000, instructions=8_000, output_reserve=8_000)
-result = WindowedStrategy().view(messages, budget)
-
-print(f'prompts: {len(split_prompts(messages))}')
-print(f'estimated: {estimate_messages_tokens(messages):,} of {budget.available_for_history:,}')
-print(f'dropped messages: {result.dropped_messages}')
-```
-
-If `dropped_messages` is not zero while the real content fits, the estimate is
-inflating something that does not travel. Check the table in
-[What travels and what does not](#what-travels-and-what-does-not).
+To inspect a saved SQLite snapshot without opening the UI, use the
+[read-only calibration simulator](#calibration-simulator). Its report compares the
+cumulative input estimates of the same execution under each policy; it does not
+need a provider account or export private conversation text.
 
 ## Invariants
 
 These are the properties the implementation guarantees. A change that breaks
 one of them is a regression, not a trade-off.
 
-1. **The log is never mutated.** The strategy only reassigns
-   `request_context.messages`. `run.all_messages()` and the session file keep
-   the full conversation.
+1. **Original payloads are never reduced in storage.** Strategies project copies.
+   Request/response metadata adds durable, content-free frontier records.
 2. **The current prompt is never discarded.** Trimming stops at one prompt, and
    `keep_recent_prompts` keeps the last ones intact.
 3. **A `ToolCallPart` never loses its `ToolReturnPart`.** Prompts are the unit of
    discard for exactly this reason.
-4. **Reasoning of past turns is not resent, and reasoning of the turn in
-   progress never costs a turn.** The window shrinks before anything else does.
-5. **Pinned tool results are never truncated or compacted.** They are
-   instructions, not data.
+4. **Reasoning continues across turns and shrinks in batches.** Under budget
+   pressure, reasoning is exhausted before a whole turn is lost.
+5. **Skills reconstruct from the original successful calls.** Their historical
+   results still obey semantic LOD.
 6. **Instructions are counted once per request, never per historical message.**
-7. **With an unknown window, nothing is dropped.** `fits()` returns `None` and
-   no lever runs.
+7. **An unknown window disables percentage/global fitting, not maintenance.**
+   Reasoning counts and eligible tool reductions still trigger events.
 8. **Diagnostics never break a turn.** `on_view` failures are suppressed.
 9. **A tool the model cannot use is absent, not refused.** It has no definition and
    no bullet in the prompt, and a stray call is refused as a second line of defence.
 10. **An unpriced request never counts as zero.** The total reports the hole
     (`+`, `?`) instead of shaving the amount down to a smaller lie.
+
+### Central tuning constants
+
+All maintenance thresholds have named units and a single configuration source.
+Edit defaults there and restart Sigil; runtime targets remain available through
+the environment settings above.
+
+| Module | Constants |
+| --- | --- |
+| `src/engine/context/compaction/constants.py` | Reasoning targets/ceilings, override multiplier, LOD eligibility ages in steps, pending-tool reduction bands in characters, summary defaults |
+| `src/engine/tooling/lod_constants.py` | Whole-value generic ladder, semantic text-field budgets by level, script argument counts |
+| `src/engine/context/strategy/constants.py` | Image retention/pixel share and recent-turn protection; imports the shared reasoning targets |
+| `src/engine/context/budget.py` | Default output reservation in tokens |
+| `src/engine/context/tokens.py` | Character-to-token estimation factor |
+
+The former `SIGIL_CONTEXT_MAX_TOOL_RESULT_CHARS` knob no longer configures any
+strategy. Generic LOD comes only from `GENERIC_LOD_CHARS`; this avoids conflicting
+values between environment settings and the fixed 2,000/500/100 ladder. Use
+`SEMANTIC_LOD_CHARS` for own-tool field sizes, not the generic fallback.
+
+## Calibration simulator
+
+Use an explicitly selected database or copy. The simulator opens SQLite read-only
+and holds one consistent read transaction; it never reads credential tables or
+resource files. Results contain numeric aggregates, not conversation content,
+execution ids, or hashes of private text.
+
+```bash
+uv run python -m src.engine.context.compaction.simulator \
+  --database /tmp/session-snapshot.db --window 200000
+```
+
+The report compares the full transcript, the former per-turn sliding policy,
+the coordinated defaults, and configurable alternatives. It sums every request,
+splits history components and captured instructions, counts events and unknown
+reasoning, and reports the first changed prefix. Historical schemas are unknown
+unless you supply `--schemas-tokens` as an explicit assumption.
+
+Optional `--normal-per-million`, `--read-per-million`, and `--write-per-million`
+rates combine with `--assumed-read-share` and `--assumed-write-share` to produce
+hypothetical input-only costs. All three rates are required together. These are
+not measured savings: output, re-reads, retries, quality, TTL, and routing need
+real task experiments. No production default is claimed to be calibrated.
 
 ## Where the code lives
 
@@ -809,9 +800,12 @@ one of them is a regression, not a trade-off.
 | `src/engine/context/tokens.py` | Measurement and estimation |
 | `src/engine/context/overhead.py` | Measures instruction parts and tool schemas |
 | `src/engine/context/strategy/` | `windowed`, `compacting`, `passthrough` |
+| `src/engine/context/compaction/` | The step clock, the policy, the coordinator and the events |
 | `src/engine/context/strategy/turns.py` | Prompt grouping, pinned-result detection |
 | `src/engine/context/meter/` | The `/context` report and the debug view |
 | `src/engine/context/meter/cost.py` | What the session cost, and where each amount came from |
+| `src/engine/tooling/lod.py` | The levels of detail and the generic policy |
+| `src/engine/tooling/lod_policies.py` | What each own tool keeps of its input and its output |
 | `src/engine/attachments/library.py` | Image ids, and resolving one against the log |
 | `src/engine/attachments/tools.py` | `view_image`: hands a picture back as an image |
 | `src/engine/context/instructions/` | `AGENTS.md` / `CLAUDE.md` resolution over the scope |

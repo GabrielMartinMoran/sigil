@@ -59,9 +59,9 @@ def test_cache_rows_split_cached_from_uncached():
 
     assert row.index == 1
     assert row.input_tokens == 1_000
-    assert row.cached == 900
+    assert row.cached == 800
     assert row.uncached == 100
-    assert row.hit_ratio == 0.9
+    assert row.hit_ratio == 0.8
 
 
 def test_cache_summary_aggregates_requests():
@@ -75,16 +75,16 @@ def test_cache_summary_aggregates_requests():
     assert summary.input_tokens == 2_000
     assert summary.cache_write == 1_000
     assert summary.cache_read == 900
-    assert summary.cached == 1_900
+    assert summary.cached == 900
     assert summary.uncached == 100
-    assert summary.hit_ratio == 0.95
+    assert summary.hit_ratio == 0.45
 
 
 def test_cache_summary_without_usage_is_empty():
     summary = cache_summary([_request(UserPromptPart(content='hello'))])
     assert not summary.has_data
     assert summary.rows == ()
-    assert summary.hit_ratio == 0.0
+    assert summary.hit_ratio is None
 
 
 def test_cache_summary_skips_responses_without_usage():
@@ -202,7 +202,7 @@ def test_debug_messages_clip_long_previews_but_keep_the_real_cost():
     assert part.clipped is True
     assert part.clipped_chars == 4_900
     # The cost is measured on the whole text, not on the preview.
-    assert part.tokens == 1_250
+    assert part.tokens == 1_252
 
 
 def test_debug_messages_reports_compaction_and_instructions():
@@ -282,17 +282,59 @@ def test_render_debug_report_includes_every_section():
     text = render_debug_report(_report(messages, view_result=dropped))
 
     assert 'Agent debug' in text
-    assert 'Context (next request)' in text
+    assert 'Context (next request; estimated)' in text
     assert 'Fixed cost per request' in text
     assert 'Instruction blocks' in text
     assert 'Prompt cache' in text
     assert 'Per request' in text
-    assert 'uncached' in text
+    assert 'normal input' in text
     assert 'Applied view' in text
-    assert 'Agent view' in text
-    assert 'Session log' in text
+    assert 'hello' not in text
+    assert 'History composition' in text
 
 
 def test_render_debug_report_without_usage_says_so():
     text = render_debug_report(_report([_request(UserPromptPart(content='solo yo'))]))
     assert '(no usage reported yet)' in text
+
+
+def test_report_never_renders_context_content():
+    secret = 'sensitive-message-not-for-debug'
+    report = _report([_request(UserPromptPart(content=secret))])
+    assert secret not in render_debug_report(report)
+    assert all(not part.preview for row in report.log for part in row.parts)
+
+
+def test_invalid_cache_counts_are_not_presented_as_a_valid_hit():
+    row = request_cache_rows([_response(input_tokens=100, cache_read_tokens=80, cache_write_tokens=30)])[0]
+    assert row.hit_ratio is None
+    assert row.uncached is None
+
+
+def test_partial_cost_and_unmeasured_requests_are_labeled():
+    from decimal import Decimal
+
+    messages = [
+        _response(input_tokens=100, cost=Decimal('0.1')),
+        ModelResponse(parts=[TextPart(content='no usage')]),
+        _response(input_tokens=200),
+    ]
+    report = _report(messages)
+    assert [row.index for row in report.cache.rows] == [1, 3]
+    assert report.cache.cost_requests == 1
+    assert '1 of 3' in render_debug_report(report)
+
+
+def test_provider_cost_takes_precedence_and_estimates_are_labeled():
+    from decimal import Decimal
+
+    provider = ModelResponse(
+        parts=[TextPart(content='ok')],
+        usage=RequestUsage(input_tokens=100, cost=Decimal('0.5')),
+        provider_details={'cost': 0.2},
+    )
+    estimate = _response(input_tokens=200, cost=Decimal('0.1'))
+    cache = cache_summary([provider, estimate])
+    assert cache.cost == 0.30000000000000004
+    assert cache.estimated_cost_requests == 1
+    assert 'includes 1 estimates' in render_debug_report(_report([provider, estimate]))

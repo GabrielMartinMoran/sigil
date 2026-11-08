@@ -29,6 +29,14 @@ from pydantic_ai import RunContext
 
 from src.engine.agents.tree.rendering import SUMMON_GROUP, SUMMON_TOOL
 from src.engine.agents.tree.summoner import SigilDeps, SubagentSummoner, SummonMode
+from src.engine.tooling.catalog import ToolCatalog
+from src.engine.tooling.lod_policies import (
+    ACK_NOTIFICATIONS_LOD,
+    KILL_SUBAGENT_LOD,
+    LIST_AGENTS_LOD,
+    SEND_MESSAGE_LOD,
+    SUMMON_LOD,
+)
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.permission import ToolPermission
 from src.engine.tooling.registrar import ToolRegistrar
@@ -87,9 +95,15 @@ def register_tree_tools(
     summoner: SubagentSummoner,
     *,
     logger: ToolLogger | None = None,
+    catalog: ToolCatalog | None = None,
 ) -> None:
-    """Registers the tools of the tree on ``agent``."""
-    registrar = ToolRegistrar(agent, logger)
+    """Registers the tools of the tree on ``agent``.
+
+    ``catalog`` is the one the agent owns: without it these tools declare their level of
+    detail into a catalogue nobody reads, and the context view falls back to the generic
+    size policy for them.
+    """
+    registrar = ToolRegistrar(agent, logger, catalog)
 
     async def summon(
         ctx: RunContext[SigilDeps],
@@ -166,6 +180,7 @@ def register_tree_tools(
         name=SUMMON_TOOL,
         description=SUMMON_DESCRIPTION,
         permission=ToolPermission(groups=SUMMON_GROUP, resource='agent'),
+        lod=SUMMON_LOD,
     )
     registrar.register(
         send_message,
@@ -173,6 +188,7 @@ def register_tree_tools(
         name='send_message',
         description=SEND_DESCRIPTION,
         permission=_SUMMON,
+        lod=SEND_MESSAGE_LOD,
     )
     registrar.register(
         ack_notifications,
@@ -180,6 +196,7 @@ def register_tree_tools(
         name='ack_notifications',
         description=ACK_DESCRIPTION,
         permission=_SUMMON,
+        lod=ACK_NOTIFICATIONS_LOD,
     )
     registrar.register(
         kill_subagent,
@@ -187,6 +204,7 @@ def register_tree_tools(
         name='kill_subagent',
         description=KILL_DESCRIPTION,
         permission=_SUMMON,
+        lod=KILL_SUBAGENT_LOD,
     )
     registrar.register(
         list_agents,
@@ -194,6 +212,7 @@ def register_tree_tools(
         name='list_agents',
         description=LIST_DESCRIPTION,
         permission=_SUMMON,
+        lod=LIST_AGENTS_LOD,
     )
 
 

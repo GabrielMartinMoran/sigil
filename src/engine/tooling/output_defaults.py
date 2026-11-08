@@ -78,6 +78,13 @@ def content_output(value: Any) -> ToolOutput:
     return ToolOutput(text, ToolSummary('Content received'))
 
 
+def skill_resource_output(value: Any) -> ToolOutput:
+    if not isinstance(value, dict) or 'note' not in value:
+        return content_output(value)
+    path = str(value.get('path', 'resource'))
+    return ToolOutput(f'{path}\n{value["note"]}', ToolSummary('Skill resource read'))
+
+
 def search_output(value: Any) -> ToolOutput:
     if not isinstance(value, dict):
         return ToolOutput(readable(value))
@@ -124,7 +131,7 @@ def builtin_presenters() -> dict[str, OutputPresenter]:
         'update_roadmap': roadmap_output,
         'read_mcp_resource': content_output,
         'get_mcp_prompt': prompt_output,
-        'read_skill_resource': content_output,
+        'read_skill_resource': skill_resource_output,
         'read_url': content_output,
         'web_search': search_output,
     }
