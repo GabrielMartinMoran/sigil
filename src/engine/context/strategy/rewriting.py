@@ -70,20 +70,11 @@ def thinking_labels(messages: Sequence[ModelMessage]) -> list[str | None]:
 
 
 def steps_with_reasoning(messages: Sequence[ModelMessage], *, provider: str | None = None) -> int:
-    """How many reasoning blocks of the turn in progress can be kept.
-
-    It is the ceiling of the window: asking for more than this would keep the
-    previous turns' reasoning too, which is a record, not working memory.
-    """
-    turns = thinking_labels(messages)
-    current_turn = turns[-1] if turns else None
+    """How many responses contain compatible reasoning across the execution."""
     return sum(
-        1
+        isinstance(message, ModelResponse)
+        and any(isinstance(part, ThinkingPart) and accepts_replayed_reasoning(part, provider) for part in message.parts)
         for message in messages
-        if isinstance(message, ModelResponse)
-        and library_run_id(message) == current_turn
-        and any(isinstance(part, ThinkingPart) for part in message.parts)
-        and all(accepts_replayed_reasoning(part, provider) for part in message.parts if isinstance(part, ThinkingPart))
     )
 
 
@@ -95,7 +86,7 @@ def keep_fitting_steps(
 ) -> list[ModelMessage] | None:
     """Rewrites the history keeping as many reasoning steps as fit in `available`.
 
-    It starts from the most the current turn can keep and shrinks one step at a
+    It starts from the most the execution can keep and shrinks one step at a
     time, so the result is the largest window that fits. Returns ``None`` when not
     even dropping all the reasoning makes it fit: the caller then has to truncate
     tool results or discard turns, which costs more than reasoning does.
@@ -116,36 +107,17 @@ def keep_recent_steps(
     provider: str | None = None,
     max_tokens: int | None = None,
 ) -> tuple[list[ModelMessage], int, int]:
-    """Keeps the reasoning of the last `steps` steps of the turn in progress.
+    """Keep the newest compatible reasoning steps across turns, within a token cap.
 
-    The turn in progress is the one the latest step belongs to. Its steps are
-    walked backwards until either `steps` reasoning blocks are kept or the turn
-    ends, so a short turn does not borrow the previous one's reasoning. Every other
-    reasoning block is dropped: it is not working memory, it is a record, and it
-    costs what it costs on every request.
-
-    The window is on steps, not on the turn, because resending a whole turn is
-    quadratic: a measured 317-step turn would bill 44M extra tokens, while the loop
-    this fixes is local to a few steps.
-
-    Args:
-        messages: The history.
-        steps: How many steps keep their reasoning.
-        provider: The provider the request goes to, to filter signed blocks.
-        max_tokens: Ceiling for the reasoning kept, in tokens. ``None`` means the
-            step count is the only limit, which is wrong when the context is nearly
-            full: a wide window would starve the turn it is meant to help.
+    This is the budget lever, not the operational retention policy. The coordinator
+    controls when a frontier advances; a view always starts from the original log.
     """
     if steps <= 0 or max_tokens == 0:
         result, dropped = drop_thinking(messages)
         return result, 0, dropped
 
-    turns = thinking_labels(messages)
-    current_turn = turns[-1] if turns else None
-
-    # Walk the turn in progress backwards: the steps closest to the work in
-    # progress are the ones that stop the agent from re-deciding what it already
-    # decided. A turn shorter than the window keeps only its own reasoning.
+    # Budget fitting can retain reasoning across user turns. Operational hysteresis
+    # is handled by the coordinator; this helper only selects the newest steps.
     keep: set[int] = set()
     kept = 0
     spent = 0
@@ -153,7 +125,7 @@ def keep_recent_steps(
         if kept >= steps:
             break
         message = messages[order]
-        if not isinstance(message, ModelResponse) or library_run_id(message) != current_turn:
+        if not isinstance(message, ModelResponse):
             continue
         parts = [part for part in message.parts if isinstance(part, ThinkingPart)]
         if not parts:
@@ -187,9 +159,15 @@ def keep_recent_steps(
 
 
 def _truncate_text(text: str, head_chars: int) -> str:
-    omitted = len(text) - head_chars
     tokens = estimate_tokens(text)
-    return f'{text[:head_chars]}\n\n[tool result truncated: {omitted:,} chars omitted, ~{tokens:,} tokens total]'
+    kept = min(len(text), head_chars)
+    while True:
+        omitted = len(text) - kept
+        notice = f'\n\n[tool result truncated: {omitted:,} chars omitted, ~{tokens:,} tokens total]'
+        adjusted = max(0, min(kept, head_chars - len(notice)))
+        if adjusted == kept:
+            return (text[:kept] + notice)[:head_chars]
+        kept = adjusted
 
 
 IMAGE_OMITTED = '[image {image_id} from an earlier turn: not attached here, use view_image to look at it]'
@@ -341,7 +319,9 @@ def truncate_old_tool_results(
                 if isinstance(part, ToolReturnPart) and part.tool_name not in pinned_tools:
                     text = tool_return_text(part)
                     if len(text) > max_chars:
-                        parts.append(dataclasses.replace(part, content=_truncate_text(text, head_chars)))
+                        parts.append(
+                            dataclasses.replace(part, content=_truncate_text(text, min(head_chars, max_chars)))
+                        )
                         truncated += 1
                         changed = True
                         continue
@@ -356,6 +336,7 @@ def fit_to_budget(
     *,
     pinned_tools: frozenset[str] = frozenset(),
     keep_head: Sequence[ModelMessage] = (),
+    keep_recent: int = 1,
 ) -> tuple[list[ModelMessage], int]:
     """Discards whole turns until it fits in the budget.
 
@@ -364,11 +345,14 @@ def fit_to_budget(
     `read_file` is what gets lost.
 
     ``keep_head`` are the messages that are never discarded (the compaction
-    summary).
+    summary). ``keep_recent`` is how many turns at the end are protected: the
+    caller decides the floor, and a floor of one means the turn in progress always
+    survives.
     """
     head = list(keep_head)
     turns = split_prompts(list(messages))
     dropped = 0
+    floor = max(1, keep_recent)
 
     def total() -> int:
         return estimate_messages_tokens([*head, *(message for turn in turns for message in turn)])
@@ -376,9 +360,11 @@ def fit_to_budget(
     if estimate_messages_tokens([*head, *messages]) <= available:
         return [*head, *messages], 0
 
-    while len(turns) > 1 and total() > available:
+    while len(turns) > floor and total() > available:
+        # Only the turns outside the protected tail are candidates.
+        candidates = range(len(turns) - floor)
         victim = next(
-            (index for index, turn in enumerate(turns[:-1]) if not has_pinned_result(turn, pinned_tools)),
+            (index for index in candidates if not has_pinned_result(turns[index], pinned_tools)),
             None,
         )
         if victim is None:

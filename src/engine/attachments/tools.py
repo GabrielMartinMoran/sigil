@@ -36,6 +36,7 @@ from src.engine.attachments.library import find_image
 from src.engine.files.models.file_tool_error import FileToolError
 from src.engine.files.paths import resolve
 from src.engine.tooling.catalog import ToolCatalog
+from src.engine.tooling.lod_policies import VIEW_IMAGE_LOD
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.permission import ToolGroup, ToolPermission
 from src.engine.tooling.registrar import ToolRegistrar
@@ -177,7 +178,7 @@ def register_image_tools(agent: Any, logger: ToolLogger | None = None, catalog: 
     """Registers the image tool on a pydantic-ai agent."""
     tools = ToolRegistrar(agent, logger, catalog)
 
-    @tools.context_tool(permission=_VIEW, requires='image_input')
+    @tools.context_tool(permission=_VIEW, requires='image_input', lod=VIEW_IMAGE_LOD)
     async def view_image(ctx: RunContext[Any], *, source: str) -> ToolReturn:
         """Look at an image: one from earlier in this session, or a new one.
 

@@ -41,11 +41,13 @@ from src.engine.agents.tree.summoner import SubagentSummoner
 from src.engine.agents.tree.tools import register_tree_tools
 from src.engine.attachments.tools import register_image_tools
 from src.engine.context.capability import ContextViewCapability
+from src.engine.context.compaction.coordinator import PolicyLookup
 from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
 from src.engine.context.meter.context_meter import ContextMeter
 from src.engine.context.scope import ScopeSink, ScopeTracker
 from src.engine.context.strategy.compacting import CompactingStrategy
 from src.engine.context.strategy.passthrough import PassthroughStrategy
+from src.engine.context.strategy.protocol import ContextStrategy
 from src.engine.context.strategy.windowed import WindowedStrategy
 from src.engine.files.tools import register_file_tools
 from src.engine.interaction.hub import QuestionHub
@@ -76,33 +78,36 @@ from src.engine.web.tools import register_web_tools
 from src.engine.workspace.manager import WorkspaceManager
 
 
-def build_strategy(settings: SigilSettings):
-    """View strategy based on configuration.
+def build_strategy(settings: SigilSettings, *, lookup: PolicyLookup | None = None) -> ContextStrategy:
+    """View strategy, with the level of detail each tool declared.
 
-    - `windowed` (default): trims reasoning, old tool results and old turns.
-    - `compacting`: also collapses old turns into a deterministic summary.
-    - `passthrough`: sends the history as is.
+    - `windowed` (default): the coordinator's events — reasoning window, tool detail by
+      age, and turns only under budget pressure.
+    - `compacting`: the same levers, plus old turns collapsed into a deterministic
+      summary.
+    - `passthrough`: sends the history as is, for diagnostics.
+
+    The modes that retain all reasoning or none of it are gone: the window is always the
+    configured number of steps, and an event is what records that maintenance happened.
     """
     if settings.context_strategy == 'passthrough':
         return PassthroughStrategy()
     if settings.context_strategy == 'compacting':
         return CompactingStrategy(
             keep_recent_prompts=settings.keep_recent_prompts,
-            max_tool_result_chars=settings.max_tool_result_chars,
-            reasoning=settings.reasoning,
             reasoning_steps=settings.reasoning_steps,
             reasoning_max_percent=settings.reasoning_max_percent,
             image_turns=settings.image_turns,
             image_max_percent=settings.image_max_percent,
+            lookup=lookup,
         )
     return WindowedStrategy(
         keep_recent_prompts=settings.keep_recent_prompts,
-        max_tool_result_chars=settings.max_tool_result_chars,
-        reasoning=settings.reasoning,
         reasoning_steps=settings.reasoning_steps,
         reasoning_max_percent=settings.reasoning_max_percent,
         image_turns=settings.image_turns,
         image_max_percent=settings.image_max_percent,
+        lookup=lookup,
     )
 
 
@@ -206,10 +211,16 @@ class Composition:
         # last known value, so this needs no network.
         self.meter.set_window(self.model_service.stored_window())
 
+        # Every tool declares itself here as it is registered: the name, the
+        # permission it serves, the model feature it needs and what it keeps of its
+        # arguments and results. The context view reads the last one, so the catalogue
+        # has to exist before the capability that projects the history.
+        self.tool_catalog = ToolCatalog()
+
         # The context strategy is built once but the provider can be swapped
         # mid-session, so it reads the active one per request.
         self.context_capability = ContextViewCapability(
-            strategy=build_strategy(settings),
+            strategy=build_strategy(settings, lookup=self.tool_catalog.lod),
             meter=self.meter,
             provider=lambda: active_provider(self.model_service),
         )
@@ -252,10 +263,6 @@ class Composition:
         # client so it can announce every retry.
         self.model_retry = RetryTransientModelErrors(max_attempts=settings.model_max_attempts)
 
-        # Every tool declares itself here as it is registered: the name, the
-        # permission it serves and the model feature it needs.
-        self.tool_catalog = ToolCatalog()
-
         # Agents of the tree are built from the same parts as the root.
         self.summoner = SubagentSummoner(
             trees=self.agent_trees,
@@ -274,6 +281,14 @@ class Composition:
 
         self.factory = self._build_factory()
         self.agent = self.factory.root()
+
+    def _require_declared_lod(self) -> None:
+        # A missing declaration is not a fallback to the generic policy: it is a tool
+        # nobody decided the cost of, and the place to notice is the build, not a bill.
+        missing = self.tool_catalog.uncovered()
+        if missing:
+            listed = ', '.join(missing)
+            raise RuntimeError(f'tools without a level-of-detail policy: {listed}')
 
     # --- the built pieces ---------------------------------------------------
 
@@ -402,7 +417,8 @@ class Composition:
         register_image_tools(target, logger=logger, catalog=catalog)
         register_interaction_tools(target, self.question_hub, logger=logger, catalog=catalog)
         register_roadmap_tools(target, self.roadmap_store, logger=logger, catalog=catalog)
-        register_tree_tools(target, self.summoner, logger=logger)
+        register_tree_tools(target, self.summoner, logger=logger, catalog=catalog)
+        self._require_declared_lod()
 
     # --- tree listeners -----------------------------------------------------
     #

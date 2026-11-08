@@ -51,7 +51,7 @@ class ContextBudget:
         available = self.available_for_history
         if available is None:
             return None
-        return history_tokens <= available
+        return self.fixed + self.output_reserve <= self.window and history_tokens <= available
 
     def with_measurements(self, *, tools: int | None = None, instructions: int | None = None) -> ContextBudget:
         """Copy with the measurements updated."""

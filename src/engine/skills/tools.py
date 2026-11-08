@@ -11,7 +11,6 @@ They implement the three levels of *progressive disclosure*:
 from __future__ import annotations
 
 import asyncio
-import base64
 import os
 import shlex
 from typing import Any
@@ -28,6 +27,12 @@ from src.engine.skills.tool_models.script_run_result import ScriptRunResult
 from src.engine.skills.tool_models.skill_resource_info import SkillResourceInfo
 from src.engine.skills.tool_models.skill_summary import SkillSummary
 from src.engine.tooling.catalog import ToolCatalog
+from src.engine.tooling.lod_policies import (
+    LIST_SKILLS_LOD,
+    LOAD_SKILL_LOD,
+    READ_SKILL_RESOURCE_LOD,
+    RUN_SKILL_SCRIPT_LOD,
+)
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.permission import ToolGroup, ToolPermission
 from src.engine.tooling.registrar import ToolRegistrar
@@ -51,14 +56,14 @@ def _summary(metadata: SkillMetadata) -> SkillSummary:
     )
 
 
-def _decode(data: bytes) -> tuple[str, bool, str]:
-    """Returns ``(content, is_binary, encoding)``."""
+def _is_binary(data: bytes, *, truncated: bool) -> bool:
     if b'\x00' in data:
-        return base64.b64encode(data).decode('ascii'), True, 'base64'
+        return True
     try:
-        return data.decode('utf-8'), False, 'utf-8'
-    except UnicodeDecodeError:
-        return base64.b64encode(data).decode('ascii'), True, 'base64'
+        data.decode('utf-8')
+    except UnicodeDecodeError as error:
+        return not (truncated and error.reason == 'unexpected end of data' and error.end == len(data))
+    return False
 
 
 def _script_env(metadata: SkillMetadata) -> dict[str, str]:
@@ -90,7 +95,7 @@ def register_skill_tools(
     """
     tools = ToolRegistrar(agent, logger, catalog)
 
-    @tools.tool(permission=_SKILLS)
+    @tools.tool(permission=_SKILLS, lod=LIST_SKILLS_LOD)
     def list_skills(query: str | None = None) -> list[SkillSummary]:
         """List installed Agent Skills (metadata only).
 
@@ -110,7 +115,7 @@ def register_skill_tools(
             skills = [skill for skill in skills if _matches(skill, needle)]
         return [_summary(skill) for skill in skills]
 
-    @tools.tool(permission=_SKILL_RESOURCE)
+    @tools.tool(permission=_SKILL_RESOURCE, lod=LOAD_SKILL_LOD)
     def load_skill(name: str) -> LoadedSkill:
         """Load a skill and list its bundled resources.
 
@@ -143,7 +148,7 @@ def register_skill_tools(
             ),
         )
 
-    @tools.tool(permission=_SKILL_RESOURCE)
+    @tools.tool(permission=_SKILL_RESOURCE, lod=READ_SKILL_RESOURCE_LOD)
     def read_skill_resource(
         name: str,
         path: str,
@@ -152,8 +157,8 @@ def register_skill_tools(
         """Read a file bundled inside a skill (references, assets, scripts).
 
         Paths are relative to the skill directory and cannot escape it. Text
-        files are returned as UTF-8; binary files are returned base64-encoded
-        with `binary=true`.
+        is injected into the loaded skills instructions on the next request.
+        Binary content is not included in the instructions or this result.
 
         Args:
             name: Skill name.
@@ -162,18 +167,22 @@ def register_skill_tools(
             max_bytes: Maximum number of bytes to read (default 256 KiB).
         """
         data, truncated, total_size = registry.read_resource(name, path, max_bytes=max_bytes)
-        content, binary, encoding = _decode(data)
+        binary = _is_binary(data, truncated=truncated)
+        note = (
+            'Binary content is not available in the prompt or this result.'
+            if binary
+            else 'The text is available in the Loaded skills instruction block on the next request.'
+        )
         return ResourceContent(
             skill=name,
             path=path,
             size=total_size,
             truncated=truncated,
             binary=binary,
-            encoding=encoding,
-            content=content,
+            note=note,
         )
 
-    @tools.tool(permission=_SKILL_SCRIPT)
+    @tools.tool(permission=_SKILL_SCRIPT, lod=RUN_SKILL_SCRIPT_LOD)
     async def run_skill_script(
         name: str,
         script: str,

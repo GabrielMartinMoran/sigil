@@ -120,7 +120,7 @@ def test_a_failed_load_does_not_reach_the_instructions():
         assert 'Demo body' not in _last_request_instructions(result)
 
 
-def test_workspace_block_uses_append_policy():
+def test_workspace_block_uses_rewrite_policy():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / 'AGENTS.md').write_text('# Rules', encoding='utf-8')
@@ -155,3 +155,59 @@ def test_loaded_skills_block_is_rewritten_not_appended():
         assert 'Demo body' in _last_request_instructions(result)
         request = [m for m in result.all_messages() if type(m).__name__ == 'ModelRequest'][-1]
         assert not any(type(part).__name__ == 'InstructionDeltaPart' for part in request.parts)
+
+
+def test_node_context_is_registered_after_all_other_dynamic_instructions(tmp_path):
+    registry = SkillRegistry([('project', tmp_path)])
+    agent = create_agent(
+        registry, workspace=WorkspaceInstructions(tmp_path), scope=ScopeTracker(tmp_path), node_blocks=lambda _: 'state'
+    )
+    names = _instruction_names(agent)
+    assert names[-1] == 'node-context'
+    assert names.index('workspace') < names.index('node-context')
+    assert names.index('skills') < names.index('node-context')
+
+
+def test_workspace_changes_replace_prior_instructions(tmp_path):
+    from pydantic_ai.messages import InstructionDeltaPart, ModelRequest
+
+    path = tmp_path / 'AGENTS.md'
+    path.write_text('old workspace rule', encoding='utf-8')
+    agent = create_agent(workspace=WorkspaceInstructions(tmp_path), scope=ScopeTracker(tmp_path))
+    with agent.override(model=TEST_MODEL):
+        first = asyncio.run(agent.run('first'))
+        path.write_text('new workspace rule', encoding='utf-8')
+        second = asyncio.run(agent.run('second', message_history=first.all_messages()))
+    requests = [message for message in second.all_messages() if isinstance(message, ModelRequest)]
+    assert 'new workspace rule' in (requests[-1].instructions or '')
+    assert 'old workspace rule' not in (requests[-1].instructions or '')
+    assert not any(isinstance(part, InstructionDeltaPart) for message in requests for part in message.parts)
+
+
+def test_rewriting_workspace_with_legacy_append_history(tmp_path):
+    from pydantic_ai import Agent
+
+    path = tmp_path / 'AGENTS.md'
+    path.write_text('old workspace rule', encoding='utf-8')
+    workspace = WorkspaceInstructions(tmp_path)
+    scope = ScopeTracker(tmp_path)
+    old_agent = Agent(TEST_MODEL)
+
+    @old_agent.instructions(name='workspace', on_change='append')
+    def old_workspace():
+        return workspace.render(scope.scopes())
+
+    first = asyncio.run(old_agent.run('first'))
+    path.write_text('intermediate workspace rule', encoding='utf-8')
+    second = asyncio.run(old_agent.run('second', message_history=first.all_messages()))
+    path.write_text('current workspace rule', encoding='utf-8')
+    new_agent = create_agent(workspace=workspace, scope=scope)
+    with new_agent.override(model=TEST_MODEL):
+        third = asyncio.run(new_agent.run('third', message_history=second.all_messages()))
+    assert 'current workspace rule' in _last_request_instructions(third)
+    assert 'old workspace rule' not in _last_request_instructions(third)
+    assert 'intermediate workspace rule' not in _last_request_instructions(third)
+    projected = TEST_MODEL.prepare_messages(third.all_messages())
+    parts = [part for message in projected for part in message.parts]
+    assert 'intermediate workspace rule' not in str(parts)
+    assert 'old workspace rule' not in str(parts)

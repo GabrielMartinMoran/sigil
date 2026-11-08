@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.engine.tooling.catalog import ToolCatalog
 from src.engine.tooling.concurrency import ConcurrencyGuard
+from src.engine.tooling.lod import ToolLODPolicy
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.outputs import OutputPresenter, register_output
 from src.engine.tooling.permission import ToolPermission
@@ -61,6 +62,7 @@ class ToolRegistrar:
         requires: str | tuple[str, ...] | None = None,
         describe: Describe | None = None,
         output: OutputPresenter | None = None,
+        lod: ToolLODPolicy | None = None,
         **tool_kwargs: Any,
     ) -> Any:
         """Decorator equivalent to ``agent.tool_plain`` with logging.
@@ -83,6 +85,7 @@ class ToolRegistrar:
             requires=requires,
             describe=describe,
             output=output,
+            lod=lod,
             **tool_kwargs,
         )
 
@@ -97,6 +100,7 @@ class ToolRegistrar:
         requires: str | tuple[str, ...] | None = None,
         describe: Describe | None = None,
         output: OutputPresenter | None = None,
+        lod: ToolLODPolicy | None = None,
         **tool_kwargs: Any,
     ) -> Any:
         """Decorator equivalent to ``agent.tool`` (it receives a ``RunContext``)."""
@@ -110,6 +114,7 @@ class ToolRegistrar:
             requires=requires,
             describe=describe,
             output=output,
+            lod=lod,
             **tool_kwargs,
         )
 
@@ -125,6 +130,7 @@ class ToolRegistrar:
         requires: str | tuple[str, ...] | None = None,
         describe: Describe | None = None,
         output: OutputPresenter | None = None,
+        lod: ToolLODPolicy | None = None,
         **tool_kwargs: Any,
     ) -> Callable[..., Any]:
         """Registers an already defined function and returns the wrapper."""
@@ -138,6 +144,7 @@ class ToolRegistrar:
             requires=requires,
             describe=describe,
             output=output,
+            lod=lod,
             **tool_kwargs,
         )
 
@@ -153,6 +160,7 @@ class ToolRegistrar:
         requires: str | tuple[str, ...] | None = None,
         describe: Describe | None = None,
         output: OutputPresenter | None = None,
+        lod: ToolLODPolicy | None = None,
         **tool_kwargs: Any,
     ) -> Any:
         def decorator(target: Callable[..., Any]) -> Callable[..., Any]:
@@ -168,7 +176,7 @@ class ToolRegistrar:
                 describe=describe,
             )
             needed = _as_requirements(requires)
-            self.catalog.declare(tool_name, permission=permission, requires=needed)
+            self.catalog.declare(tool_name, permission=permission, requires=needed, lod=lod)
             metadata = dict(permission.metadata()) if permission is not None else {}
             if needed:
                 metadata[REQUIRES_METADATA_KEY] = sorted(needed)

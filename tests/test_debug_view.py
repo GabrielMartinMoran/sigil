@@ -103,14 +103,13 @@ def test_debug_view_renders_agent_side_sections(monkeypatch):
 
                 header = _header_text(app)
                 assert 'DEBUG' in header
-                assert 'agent side of the conversation' in header
+                assert 'Context and cache' in header
                 assert 'log' in header and 'cache' in header
 
                 body = _report_text(app)
                 assert 'Fixed cost per request' in body
-                assert 'Agent view' in body
-                assert 'Session log' in body
-                assert 'hello' in body
+                assert 'History composition' in body
+                assert 'hello' not in body
                 assert 'Prompt cache' in body
 
     asyncio.run(inner())
@@ -171,7 +170,7 @@ def test_report_without_request_does_not_raise(monkeypatch):
                 body = _report_text(app)
                 assert 'Fixed cost per request' in body
                 assert 'no usage reported yet' in body
-                assert '(empty session)' in body
+                assert 'History composition' in body
                 # The zeros for instructions/tools are not shown as if they
                 # were a measurement.
                 assert 'no request captured' in body
@@ -265,3 +264,39 @@ def test_should_expose_real_turn_node_timings_in_debug_text() -> None:
                 assert 'Turn timing: total' in render_text(view._body.content)
 
     asyncio.run(scenario())
+
+
+def test_rendered_debug_tables_do_not_contain_message_content():
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+    from src.engine.context.meter.debug import build_debug_report
+    from src.engine.context.meter.request import snapshot_request
+    from tests.ui_helpers import render_text
+
+    messages = [ModelRequest(parts=[UserPromptPart(content='private-debug-sentinel')])]
+    report = build_debug_report(messages, snapshot=ContextMeter().snapshot(messages), request=snapshot_request(None))
+    for width in (80, 120):
+        body = render_text(build_debug_body(report), width=width)
+        assert 'private-debug-sentinel' not in body
+        assert 'History composition' in body
+
+
+def test_dynamic_instruction_rows_are_highlighted_without_coloring_static_rows():
+    from src.engine.context.meter.debug import build_debug_report
+    from src.engine.context.meter.request import InstructionRow, RequestSnapshot
+    from src.ui.widgets.debug_view import _fixed_cost_table
+
+    report = build_debug_report(
+        [],
+        snapshot=ContextMeter().snapshot([]),
+        request=RequestSnapshot(
+            instructions=(
+                InstructionRow(name='stable', dynamic=False, tokens=20, preview=''),
+                InstructionRow(name='changing', dynamic=True, tokens=30, preview=''),
+            ),
+            captured=True,
+        ),
+    )
+    table = _fixed_cost_table(report)
+    assert table.rows[0].style is None
+    assert table.rows[1].style == '#ffaf5f'

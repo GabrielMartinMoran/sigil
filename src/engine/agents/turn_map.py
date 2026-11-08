@@ -13,8 +13,12 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.messages import ModelMessage
+
+if TYPE_CHECKING:
+    from pydantic_ai.tools import RunContext
 
 
 def library_run_id(message: ModelMessage) -> str | None:
@@ -35,4 +39,9 @@ def turn_id_of(messages: Sequence[ModelMessage], index: int, *, scope: str = '')
     return hashlib.sha256(seed.encode('utf-8')).hexdigest()[:32]
 
 
-__all__ = ['library_run_id', 'turn_id_of']
+def request_id_of(context: RunContext[Any]) -> str:
+    """Stable request identity for content-free maintenance records."""
+    return f'{context.run_id}:{context.run_step}'
+
+
+__all__ = ['library_run_id', 'request_id_of', 'turn_id_of']

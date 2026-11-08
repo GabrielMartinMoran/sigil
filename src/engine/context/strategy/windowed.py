@@ -1,168 +1,124 @@
-"""Windowed view: trims reasoning, old tool results and old turns."""
+"""Windowed view: the coordinator's projection of the history onto the model view.
+
+The levers, cheapest to most destructive, and the reason for the order:
+
+1. **Reasoning** past the window: a record, not working memory, and the bulkiest thing a
+   long turn carries.
+2. **Tool detail** past the level its age earns, arguments and results both: the payload
+   is usually the result, and the path or the query lives in the argument.
+3. **Whole turns**, only when the request still does not fit.
+
+Items 1 and 2 are the compaction events of `context.compaction`; item 3 is the emergency,
+and it is the only one that loses information the agent cannot get back without asking.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
-from pydantic_ai.messages import ModelMessage, ModelResponse, ThinkingPart
+from pydantic_ai.messages import ModelMessage
 
 from src.engine.context.budget import ContextBudget
+from src.engine.context.compaction import constants as tuning
+from src.engine.context.compaction.constants import (
+    REASONING_TARGET_PERCENT,
+    REASONING_TARGET_STEPS,
+)
+from src.engine.context.compaction.coordinator import PolicyLookup
+from src.engine.context.compaction.policy import DEFAULT_POLICY, CompactionPolicy
 from src.engine.context.strategy.constants import (
     DEFAULT_IMAGE_MAX_PERCENT,
     DEFAULT_IMAGE_TURNS,
     DEFAULT_KEEP_RECENT_PROMPTS,
-    DEFAULT_MAX_TOOL_RESULT_CHARS,
-    DEFAULT_REASONING,
-    DEFAULT_REASONING_MAX_PERCENT,
-    DEFAULT_REASONING_STEPS,
-    DEFAULT_TOOL_RESULT_HEAD_CHARS,
     PINNED_TOOLS,
-    ReasoningPolicy,
-    image_token_cap,
-    reasoning_token_cap,
-    window_for,
 )
-from src.engine.context.strategy.rewriting import (
-    accepts_replayed_reasoning,
-    drop_stale_images,
-    fit_to_budget,
-    keep_fitting_steps,
-    keep_recent_steps,
-    truncate_old_tool_results,
-)
-from src.engine.context.strategy.turns import split_prompts
 from src.engine.context.strategy.view_result import ViewResult
-from src.engine.context.tokens import estimate_messages_tokens
 
 
 @dataclass(frozen=True, slots=True)
 class WindowedStrategy:
-    """Windowed view: trims reasoning, old tool results and old turns.
+    """Projects the history through the compaction coordinator.
 
-    Order of the levers, from cheapest to most destructive:
-
-    1. Trim reasoning: it adds nothing to the next step and is the most
-       voluminous. The reasoning of the turn in progress is the exception: it is
-       what stops the agent from re-deciding a decision it already made, so the
-       last `keep_thinking_steps` steps of that turn are kept.
-    2. Truncate tool results of old turns: 80% of the weight is usually there.
-    3. Discard whole turns, oldest to newest.
+    The view is a pure function of the transcript, the policy and the provider: the same
+    history produces the same view, and the events it reports are the boundaries that
+    history crossed. That is what makes a resume, a rollback and a fork correct without
+    storing a decision per message.
     """
 
     keep_recent_prompts: int = DEFAULT_KEEP_RECENT_PROMPTS
-    max_tool_result_chars: int = DEFAULT_MAX_TOOL_RESULT_CHARS
-    tool_result_head_chars: int = DEFAULT_TOOL_RESULT_HEAD_CHARS
-    reasoning: ReasoningPolicy = DEFAULT_REASONING
-    """What travels back to the model of its own reasoning.
+    """Turns kept intact before the budget starts discarding them."""
 
-    ``recent`` keeps the last `reasoning_steps` steps of the turn in progress: that
-    is where the agent re-reads what it already decided. Past turns are a record
-    and are resent on every request.
-    """
-    reasoning_steps: int = DEFAULT_REASONING_STEPS
-    """Steps of the turn in progress that keep their reasoning under ``recent``."""
-    reasoning_max_percent: int = DEFAULT_REASONING_MAX_PERCENT
-    """Ceiling for the reasoning kept, as a percentage of the model's window.
+    reasoning_steps: int = REASONING_TARGET_STEPS
+    """Operational target for reasoning responses retained across user turns."""
 
-    ``0`` means the step count is the only limit. Otherwise the window is capped by
-    the smaller of this share and the room the history has left, so a wide step count
-    cannot become a standing tax on every request.
-    """
+    reasoning_max_percent: int = REASONING_TARGET_PERCENT
+    """Operational known-token target as a percentage of the model window."""
+
     provider: str | None = None
-    """The provider the request is going to. Signed reasoning is only replayed to
-    the provider that produced it; ``None`` trusts the adapter."""
+    """The provider the request goes to. Signed reasoning is only replayed to it."""
+
     image_turns: int = DEFAULT_IMAGE_TURNS
-    """Rounds an image stays loaded, counting its own. Older ones leave their id behind."""
+    """Rounds an image stays loaded, counting its own."""
+
     image_max_percent: int = DEFAULT_IMAGE_MAX_PERCENT
-    """Ceiling for the pixels that stay, as a percentage of the model's window.
+    """Ceiling for the pixels that stay, as a percentage of the model's window."""
 
-    Counting turns alone lets three screenshots of a dense table cost more than the
-    whole conversation. Images past the cap are dropped oldest first, even inside a
-    turn that is otherwise kept whole.
-    """
     pinned_tools: frozenset[str] = PINNED_TOOLS
-    """Tools whose result is instruction and is never truncated."""
+    """Skill reconstruction calls whose turns are discarded last under pressure."""
 
-    def view(self, messages: Sequence[ModelMessage], budget: ContextBudget) -> ViewResult:
-        working = list(messages)
-        dropped_thinking = 0
+    lookup: PolicyLookup | None = None
+    """The level of detail each tool declared, by name.
 
-        steps = window_for(self.reasoning, self.reasoning_steps)
-        if steps is None:
-            working, dropped_thinking = self._drop_reasoning_that_cannot_be_replayed(working)
-        else:
-            working, _, dropped_thinking = keep_recent_steps(
-                working,
-                steps=steps,
-                provider=self.provider,
-                max_tokens=reasoning_token_cap(budget.window, budget.available_for_history, self.reasoning_max_percent),
-            )
+    ``None`` means every tool travels at the generic policy: the sizes shrink, and no
+    tool says what it keeps. The engine always wires the catalogue; the default keeps a
+    standalone strategy usable without one.
+    """
 
-        prompts = split_prompts(working)
-
-        working, dropped_images = drop_stale_images(
-            working,
-            turn_window=self.image_turns,
-            max_tokens=image_token_cap(budget.window, budget.available_for_history, self.image_max_percent),
-        )
-        # Recomputed on purpose: dropping images rewrote the parts, and the
-        # boundaries of a prompt are what the truncation walks.
-        prompts = split_prompts(working)
-        recent_start = max(0, len(prompts) - self.keep_recent_prompts)
-
-        working, truncated_results = truncate_old_tool_results(
-            prompts,
-            recent_start=recent_start,
-            max_chars=self.max_tool_result_chars,
-            head_chars=self.tool_result_head_chars,
+    def policy(self) -> CompactionPolicy:
+        """The coordinator rules this strategy asks for."""
+        return replace(
+            DEFAULT_POLICY,
+            reasoning_steps=self.reasoning_steps,
+            reasoning_trigger_steps=(
+                tuning.REASONING_CEILING_STEPS
+                if self.reasoning_steps == tuning.REASONING_TARGET_STEPS
+                else max(1, self.reasoning_steps * tuning.REASONING_CEILING_MULTIPLIER)
+            ),
+            reasoning_max_percent=self.reasoning_max_percent,
+            reasoning_trigger_percent=(
+                tuning.REASONING_CEILING_PERCENT
+                if self.reasoning_max_percent == tuning.REASONING_TARGET_PERCENT
+                else min(
+                    100,
+                    max(
+                        tuning.REASONING_CEILING_PERCENT,
+                        self.reasoning_max_percent * tuning.REASONING_CEILING_MULTIPLIER,
+                    ),
+                )
+            ),
             pinned_tools=self.pinned_tools,
         )
 
-        dropped_messages = 0
-        available = budget.available_for_history
-        if available is not None:
-            working, dropped_for_budget = self._fit_dropping_reasoning_first(working, available)
-            dropped_messages = dropped_for_budget
+    def view(self, messages: Sequence[ModelMessage], budget: ContextBudget) -> ViewResult:
+        from src.engine.context.compaction.projection import finish, prepare
 
-        return ViewResult(
-            messages=working,
-            estimated_tokens=estimate_messages_tokens(working),
-            dropped_messages=dropped_messages,
-            dropped_thinking=dropped_thinking,
-            truncated_results=truncated_results,
-            dropped_images=dropped_images,
+        policy = self.policy()
+        prepared = prepare(
+            messages,
+            budget,
+            policy=policy,
+            lookup=self.lookup,
+            provider=self.provider,
+            image_turns=self.image_turns,
+            image_percent=self.image_max_percent,
         )
-
-    def _drop_reasoning_that_cannot_be_replayed(self, messages: list[ModelMessage]) -> tuple[list[ModelMessage], int]:
-        """When everything is kept, a block the receiver rejects is still useless."""
-        if self.provider is None:
-            return messages, 0
-        kept: list[ModelMessage] = []
-        dropped = 0
-        for message in messages:
-            if not isinstance(message, ModelResponse):
-                kept.append(message)
-                continue
-            parts = [
-                part
-                for part in message.parts
-                if not isinstance(part, ThinkingPart) or accepts_replayed_reasoning(part, self.provider)
-            ]
-            dropped += len(message.parts) - len(parts)
-            kept.append(message if len(parts) == len(message.parts) else replace(message, parts=parts))
-        return kept, dropped
-
-    def _fit_dropping_reasoning_first(
-        self, messages: list[ModelMessage], available: int
-    ) -> tuple[list[ModelMessage], int]:
-        """Reasoning is the cheapest thing to lose: it goes before a turn does.
-
-        Keeping the reasoning of the turn is a lever like the others: if what the
-        policy kept does not fit, the window shrinks until it does, and only then
-        are tool results truncated and turns discarded.
-        """
-        kept = keep_fitting_steps(messages, available, provider=self.provider)
-        if kept is not None:
-            return kept, 0
-        return fit_to_budget(messages, available, pinned_tools=self.pinned_tools)
+        return finish(
+            messages,
+            prepared,
+            budget,
+            policy=policy,
+            lookup=self.lookup,
+            provider=self.provider,
+            keep_recent=self.keep_recent_prompts,
+        )

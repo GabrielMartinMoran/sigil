@@ -1756,48 +1756,25 @@ cost of the session so far.
 
 ### Agent debug view (`alt+d`)
 
-`alt+d` replaces the chat with **the agent side** of the conversation: not what
-the user read, but what travels in the request. It answers two questions the chat
-cannot: what the agent has in context right now, and how much of that comes from
-cache.
+`alt+d` replaces the chat with content-free diagnostics for the current execution.
+It shows context estimates, reported cache reads and writes, per-turn usage,
+recorded maintenance events, and the next request projection. Dynamic instruction
+blocks retain their yellow highlighting. `/debug --text` returns the same numeric
+report without prompt, tool payload, or conversation previews.
 
-```
- DEBUG   agent side of the conversation   alt+d to close
-  model ~anthropic/claude-sonnet-4  effort high  window 200,000
-  log 141,209 tok → agent view 38,412 tok  (−102,797 tok, 73%)
-  cache 92% hit  cached 24,800  uncached 1,200  writes 13,800  cost $0.4213
-```
+Maintenance reports reasoning targets/ceilings, partial or unknown encrypted
+sizes, calls by LOD, separate argument/result reductions, exceptions, and skill
+resource states. Historical records and projected events are labeled separately.
+Cache writes are not hits; missing cache reporting is not evidence of zero reuse.
 
-From top to bottom:
+The shared pipeline preserves recent reasoning across user turns and reduces it
+in batches (default ceiling 20, target 10). External tool inputs and outputs use
+aggregate 2,000/500/100-character LOD targets; own tools declare semantic policies.
+If the protected request still exceeds its estimated budget, Sigil stops before
+calling the provider with an actionable error.
 
-- **Fixed header**: model, effort, window, and the pair that matters — tokens of
-  the persisted log against tokens the agent actually receives, with what was
-  left out. Below, the prompt cache summary.
-- **Fixed cost per request**: every instruction block (marked `static` or
-  `dynamic`) and every tool schema, with their tokens. The order of the blocks is
-  the order in which they travel: the `dynamic` ones that are recomputed per
-  request are the candidates to break the cacheable prefix.
-- **Prompt cache per request**: one row per request with `input`, `read`,
-  `written`, `uncached` and the hit ratio. `input` is inclusive —it includes what
-  was read from and written to cache—, so `uncached` is the expensive number:
-  input the provider processed from scratch and that could have been reused if
-  the prefix had been stable. An `uncached` that does not go down after the first
-  request is the sign that something invalidates the prefix.
-- **Applied context strategy**: which levers the view used (reasoning dropped,
-  tool results truncated, turns compacted or discarded).
-- **Agent view**: the messages the model receives on the next request, message by
-  message, part by part, with tokens and bounded previews.
-- **Session log**: the same messages as they are persisted and shown in the chat,
-  in grey. What is in one list and not in the other is exactly what the UI was not
-  telling you.
-
-The input stays active with the view open: the view refreshes on every step of
-the turn, so you can launch a prompt and watch the cost grow live. Refreshes are
-coalesced per 150 ms window so as not to re-project the history on every stream
-event.
-
-`/debug --text` dumps the same report as plain text into the chat, to read it
-there or copy it.
+See [context maintenance and calibration](docs/context.md) for recovery rules,
+known estimation limits, and the read-only simulation command.
 
 ### Configuration
 
@@ -1811,13 +1788,11 @@ change behaviour behind your back.
 | `SIGIL_MODEL_MAX_ATTEMPTS` | `5` | Attempts per model request on transient failures. |
 | `SIGIL_HOME` | `~/.sigil` | Where sessions, roadmaps and provider credentials live. |
 | `SIGIL_CONTEXT_STRATEGY` | `windowed` | `windowed`, `compacting` or `passthrough`. |
-| `SIGIL_CONTEXT_REASONING` | `recent` | What travels back of the model's reasoning: `recent`, `off` or `all`. |
-| `SIGIL_CONTEXT_REASONING_STEPS` | `10` | Steps of the round in progress kept under `recent`. |
-| `SIGIL_CONTEXT_REASONING_MAX_PERCENT` | `5` | Ceiling for that reasoning, as a percentage of the model window. |
+| `SIGIL_CONTEXT_REASONING_STEPS` | `10` | Reasoning step target across turns; ceiling is twice the target. |
+| `SIGIL_CONTEXT_REASONING_MAX_PERCENT` | `5` | Reasoning size target; ceiling is twice the target, at least 10%. |
 | `SIGIL_CONTEXT_IMAGE_ROUNDS` | `3` | Rounds an image stays loaded. Older ones leave their id behind. |
 | `SIGIL_CONTEXT_IMAGE_MAX_PERCENT` | `10` | Ceiling for the pixels that stay, as a percentage of the model window. |
 | `SIGIL_CONTEXT_KEEP_RECENT_TURNS` | `3` | Turns kept intact before trimming. |
-| `SIGIL_CONTEXT_MAX_TOOL_RESULT_CHARS` | `4000` | Cap of an old tool result. |
 | `SIGIL_CONTEXT_OUTPUT_RESERVE` | `8000` | Tokens reserved for the response. |
 | `SIGIL_WORKTREES_DIR` | `<SIGIL_HOME>/worktrees` | Where `/new --worktree` creates the worktrees. |
 | `SIGIL_MCP_SHUTDOWN_TIMEOUT` | `0.2` | Seconds a stdio MCP server has to exit on EOF when quitting. |

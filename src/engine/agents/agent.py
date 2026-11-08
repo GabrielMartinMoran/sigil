@@ -16,7 +16,7 @@ from src.engine.agents.tree.rendering import render_subagents
 from src.engine.agents.tree.summoner import SigilDeps
 from src.engine.providers.factory.unconfigured import UnconfiguredModel
 from src.engine.settings import DEFAULT_MODEL_MAX_ATTEMPTS
-from src.engine.skills.loaded import loaded_skills
+from src.engine.skills.loaded import loaded_resources, loaded_skills
 from src.engine.skills.rendering import render_available_skills, render_loaded_skills
 
 if TYPE_CHECKING:
@@ -122,13 +122,6 @@ def create_agent(
         def _agent_profile() -> str:
             return render_agent_profile(source)
 
-    if node_blocks is not None:
-        # Per run, not per profile: one agent object serves every execution of its
-        # profile, and the block it contributes depends on which node is running.
-        @agent.instructions(name='node-context')
-        def _node_context(ctx: RunContext[SigilDeps]) -> str:
-            return node_blocks(ctx.deps.node_id if ctx.deps is not None else None)
-
     if agent_registry is not None and source is not None:
         # Right after the profile: which subagents it may start is part of what the
         # profile is, and it changes when the folder does, so it is rebuilt per
@@ -138,10 +131,8 @@ def create_agent(
             return render_subagents(agent_registry, source.profile())
 
     if workspace is not None and scope is not None:
-        # `on_change='append'`: the scope widens mid-turn when a
-        # tool enters a new subdirectory. Appending the child text
-        # preserves the instruction prefix; rewriting it would break the cache.
-        @agent.instructions(name='workspace', on_change='append')
+        # Replace the full workspace snapshot when the scope or files change.
+        @agent.instructions(name='workspace')
         def _workspace_instructions() -> str:
             return workspace.render(scope.scopes())
 
@@ -158,7 +149,7 @@ def create_agent(
         # a registry in memory lost them on restart and said nothing.
         @agent.instructions(name='loaded-skills')
         def _loaded_skills(ctx: RunContext[SigilDeps]) -> str:
-            return render_loaded_skills(skill_registry, loaded_skills(ctx.messages))
+            return render_loaded_skills(skill_registry, loaded_skills(ctx.messages), loaded_resources(ctx.messages))
 
     if skill_registry is not None:
         # Progressive disclosure, level 1: the metadata (name + description)
@@ -167,5 +158,12 @@ def create_agent(
         @agent.instructions(name='skills')
         def _skills_metadata() -> str:
             return render_available_skills(skill_registry)
+
+    if node_blocks is not None:
+        # Per run, not per profile: one agent object serves every execution of its
+        # profile, and the block it contributes depends on which node is running.
+        @agent.instructions(name='node-context')
+        def _node_context(ctx: RunContext[SigilDeps]) -> str:
+            return node_blocks(ctx.deps.node_id if ctx.deps is not None else None)
 
     return agent

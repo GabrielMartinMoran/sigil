@@ -1,10 +1,4 @@
-"""Tests for keeping the reasoning of the turn in progress.
-
-A turn is everything between handing control back to the user: one run id, one
-or more prompts if the user steered mid-turn. While the agent is inside a turn
-it re-reads its own reasoning step after step; that is where a loop of
-re-litigating a decision shows up. Past turns are not working memory.
-"""
+"""Cross-turn reasoning retention, budget fitting, and provider compatibility tests."""
 
 from __future__ import annotations
 
@@ -72,16 +66,16 @@ def test_keeps_reasoning_of_the_round_in_progress():
         'why r2/1',
         'why r2/2',
     ]
-    assert kept == 3
-    assert dropped == 3
+    assert kept == 5
+    assert dropped == 1
 
 
-def test_past_rounds_lose_their_reasoning():
+def test_budget_window_retains_recent_reasoning_across_rounds():
     messages = [*_round('r1', 3), *_round('r2', 3)]
 
     result, _, _ = keep_recent_steps(messages, steps=5)
 
-    assert all(not content.startswith('why r1') for content in _thinking_contents(result))
+    assert _thinking_contents(result) == ['why r1/1', 'why r1/2', 'why r2/0', 'why r2/1', 'why r2/2']
 
 
 def test_keeps_only_the_last_steps_of_a_long_round():
@@ -109,14 +103,14 @@ def test_zero_steps_drops_everything():
     assert _thinking_contents(result) == []
 
 
-def test_steps_needed_does_not_cross_a_round_boundary():
-    """A short turn keeps its own reasoning and does not borrow the previous one."""
+def test_budget_window_crosses_round_boundaries():
+    """Budget fitting counts responses across turns rather than resetting at a prompt."""
     messages = [*_round('r1', 5), *_round('r2', 2)]
 
     result, kept, _ = keep_recent_steps(messages, steps=4)
 
-    assert kept == 2
-    assert _thinking_contents(result) == ['why r2/0', 'why r2/1']
+    assert kept == 4
+    assert _thinking_contents(result) == ['why r1/3', 'why r1/4', 'why r2/0', 'why r2/1']
 
 
 def test_messages_without_run_id_are_their_own_round():
@@ -278,13 +272,13 @@ def test_the_first_request_of_a_round_keeps_the_handoff():
     assert kept == 2
     assert _thinking_contents(result) == ['why r1/4', 'why r1/5']
 
-    # once the new turn answers, the previous turn is a record again.
+    # The new response extends the same cross-turn budget window.
     answered = [*handoff, _response(0, 'r2', thinking=_thinking('why r2/0'))]
 
     result, kept, _ = keep_recent_steps(answered, steps=2)
 
-    assert kept == 1
-    assert _thinking_contents(result) == ['why r2/0']
+    assert kept == 2
+    assert _thinking_contents(result) == ['why r1/5', 'why r2/0']
 
 
 # --- the strategies apply the policy ---------------------------------------
@@ -297,7 +291,7 @@ def _budget(tokens: int = 10_000_000) -> ContextBudget:
 def test_windowed_keeps_the_reasoning_of_the_round_in_progress():
     messages = [*_round('r1', 3), *_round('r2', 3)]
 
-    result = WindowedStrategy(reasoning='recent', reasoning_steps=2).view(messages, _budget())
+    result = WindowedStrategy(reasoning_steps=2).view(messages, _budget())
 
     kept = [content for content in _thinking_contents(result.messages) if content.startswith('why r2')]
     assert kept == ['why r2/1', 'why r2/2']
@@ -307,19 +301,29 @@ def test_windowed_keeps_the_reasoning_of_the_round_in_progress():
 def test_windowed_with_zero_steps_behaves_like_before():
     messages = [*_round('r1', 3), *_round('r2', 3)]
 
-    result = WindowedStrategy(reasoning='off').view(messages, _budget())
+    result = WindowedStrategy(reasoning_steps=0).view(messages, _budget())
 
     assert _thinking_contents(result.messages) == []
     assert result.dropped_thinking == 6
 
 
-def test_windowed_all_keeps_everything():
+def test_a_wide_operational_window_retains_previous_turns():
+    """Recent reasoning stays eligible across user turns until a ceiling is reached."""
     messages = [*_round('r1', 2), *_round('r2', 2)]
 
-    result = WindowedStrategy(reasoning='all').view(messages, _budget())
+    result = WindowedStrategy(reasoning_steps=1000).view(messages, _budget())
 
-    assert len(_thinking_contents(result.messages)) == 4
+    assert _thinking_contents(result.messages) == ['why r1/0', 'why r1/1', 'why r2/0', 'why r2/1']
     assert result.dropped_thinking == 0
+
+
+def test_the_retention_modes_are_gone():
+    """`off` and `all` were flags, and a flag is a second policy. There is one now."""
+    import dataclasses
+
+    fields = {field.name for field in dataclasses.fields(WindowedStrategy)}
+    assert 'reasoning' not in fields
+    assert 'reasoning' not in {field.name for field in dataclasses.fields(CompactingStrategy)}
 
 
 def test_thinking_window_never_breaks_the_budget():
@@ -339,13 +343,13 @@ def test_thinking_window_never_breaks_the_budget():
     messages = [*round_with_long_reasoning('r1', 2), *round_with_long_reasoning('r2', 20)]
 
     # Room for the conversation plus a few steps of reasoning, not for all of it.
-    without_reasoning = WindowedStrategy(reasoning='off').view(messages, ContextBudget(window=None))
+    without_reasoning = WindowedStrategy(reasoning_steps=0).view(messages, ContextBudget(window=None))
     room = estimate_messages_tokens(without_reasoning.messages)
     one_step = estimate_tokens('why r2/0 ' + 'y' * 2_000)
     allowance = one_step * 3
 
     # The percentage cap stays out of the way so the room itself is what shrinks it.
-    tight = WindowedStrategy(reasoning='recent', reasoning_steps=20, reasoning_max_percent=100).view(
+    tight = WindowedStrategy(reasoning_steps=20, reasoning_max_percent=100).view(
         messages, ContextBudget(window=room + allowance + 8_000, output_reserve=8_000)
     )
 
@@ -358,18 +362,19 @@ def test_thinking_window_never_breaks_the_budget():
 def test_compacting_applies_the_same_policy():
     messages = [*_round('r1', 3), *_round('r2', 3)]
 
-    result = CompactingStrategy(reasoning='recent', reasoning_steps=1).view(messages, _budget())
+    result = CompactingStrategy(reasoning_steps=1).view(messages, _budget())
 
     kept = _thinking_contents(result.messages)
     assert kept == ['why r2/2']
 
 
-def test_compacting_all_keeps_everything():
+def test_compacting_uses_the_same_single_window():
+    """Compaction summarises old turns; it does not bring their reasoning back."""
     messages = [*_round('r1', 2), *_round('r2', 2)]
 
-    result = CompactingStrategy(reasoning='all').view(messages, _budget())
+    result = CompactingStrategy(reasoning_steps=1000).view(messages, _budget())
 
-    assert len(_thinking_contents(result.messages)) == 4
+    assert _thinking_contents(result.messages) == ['why r1/0', 'why r1/1', 'why r2/0', 'why r2/1']
 
 
 # --- the cap in the strategies ---------------------------------------------
@@ -384,9 +389,7 @@ def test_the_strategies_cap_the_window_by_tokens():
     """
     messages = [*_round_with_sized_reasoning('r1', 10, 2_000)]
 
-    result = WindowedStrategy(reasoning='recent', reasoning_steps=10, reasoning_max_percent=10).view(
-        messages, _budget()
-    )
+    result = WindowedStrategy(reasoning_steps=10, reasoning_max_percent=10).view(messages, _budget())
 
     assert len(_thinking_contents(result.messages)) == 10
 
@@ -394,8 +397,8 @@ def test_the_strategies_cap_the_window_by_tokens():
 def test_a_tight_context_shrinks_the_window():
     messages = [*_round_with_sized_reasoning('r1', 10, 20_000)]
 
-    roomy = WindowedStrategy(reasoning='recent', reasoning_steps=10).view(messages, _budget())
-    tight = WindowedStrategy(reasoning='recent', reasoning_steps=10).view(messages, _budget(tokens=40_000))
+    roomy = WindowedStrategy(reasoning_steps=10).view(messages, _budget())
+    tight = WindowedStrategy(reasoning_steps=10).view(messages, _budget(tokens=40_000))
 
     assert len(_thinking_contents(tight.messages)) < len(_thinking_contents(roomy.messages))
 
@@ -404,7 +407,7 @@ def test_an_unknown_window_has_no_cap():
     """No window means no opinion: the step count is the only limit."""
     messages = [*_round_with_sized_reasoning('r1', 10, 2_000)]
 
-    result = WindowedStrategy(reasoning='recent', reasoning_steps=10).view(messages, ContextBudget(window=None))
+    result = WindowedStrategy(reasoning_steps=10).view(messages, ContextBudget(window=None))
 
     assert len(_thinking_contents(result.messages)) == 10
 
@@ -413,7 +416,8 @@ def test_a_smaller_share_keeps_less():
     messages = [*_round_with_sized_reasoning('r1', 10, 2_000)]
     budget = _budget(tokens=300_000)
 
-    generous = WindowedStrategy(reasoning='recent', reasoning_steps=10, reasoning_max_percent=50).view(messages, budget)
-    stingy = WindowedStrategy(reasoning='recent', reasoning_steps=10, reasoning_max_percent=1).view(messages, budget)
+    generous = WindowedStrategy(reasoning_steps=10, reasoning_max_percent=50).view(messages, budget)
+    stingy = WindowedStrategy(reasoning_steps=10, reasoning_max_percent=1).view(messages, budget)
 
-    assert len(_thinking_contents(stingy.messages)) < len(_thinking_contents(generous.messages))
+    # A target is not a trigger: 1.7% is below the operational ceiling of 10%.
+    assert len(_thinking_contents(stingy.messages)) == len(_thinking_contents(generous.messages)) == 10

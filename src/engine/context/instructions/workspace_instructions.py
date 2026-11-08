@@ -135,16 +135,11 @@ class WorkspaceInstructions:
         return '\n'.join(lines).rstrip() + '\n'
 
     def block(self, scopes: Iterable[Path]) -> InstructionBlock | None:
-        """The `workspace` block, or ``None`` if there are no files.
-
-        `on_change='append'`: the scope widens mid-turn when a tool
-        enters a new subdirectory. Appending the child text preserves the
-        instruction prefix; rewriting it would invalidate the prompt cache.
-        """
+        """The replaceable workspace snapshot, or ``None`` if there are no files."""
         content = self.render(scopes)
         if not content:
             return None
-        return InstructionBlock(name='workspace', content=content, on_change='append', source='AGENTS.md/CLAUDE.md')
+        return InstructionBlock(name='workspace', content=content, on_change='rewrite', source='AGENTS.md/CLAUDE.md')
 
     def describe(self, scopes: Iterable[Path]) -> Sequence[str]:
         """Relative paths of the resolved files, for the UI."""
