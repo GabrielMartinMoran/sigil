@@ -431,9 +431,8 @@ def test_a_bidirectional_child_reaches_its_parent_when_it_is_working(tmp_path):
     message = env.summoner.send_message(sender_id=node.id, target_id=root.id, text='found something')
 
     assert 'delivered' in message
-    assert 'found something' in run.enqueued[0]
-    # It arrived as a notice, not as an order: the parent decides what to do.
-    assert 'notice' in run.enqueued[0]
+    assert run.enqueued == []
+    assert tree.notifications.for_receiver(root.id)[0].text == 'found something'
 
 
 def test_a_parent_steers_a_running_child_with_an_instruction(tmp_path):
@@ -455,7 +454,7 @@ def test_a_parent_steers_a_running_child_with_an_instruction(tmp_path):
 
     message = env.summoner.send_message(sender_id=root.id, target_id=node.id, text='go left instead')
 
-    assert 'delivered' in message
+    assert 'queued' in message
     assert 'go left instead' in run.enqueued[0]
     assert 'instruction from your parent' in run.enqueued[0]
 
@@ -511,8 +510,8 @@ def test_a_sibling_needs_its_name_in_the_channel(tmp_path):
     message = env.summoner.send_message(sender_id=reader.id, target_id=reviewer.id, text='look at this')
 
     assert 'delivered' in message
-    assert 'look at this' in reviewer.run.enqueued[0]
-    assert 'notice' in reviewer.run.enqueued[0]
+    assert reviewer.run.enqueued == []
+    assert tree.notifications.for_receiver(reviewer.id)[0].text == 'look at this'
 
 
 def test_a_sibling_that_is_not_running_cannot_be_messaged(tmp_path):
@@ -788,7 +787,8 @@ def test_a_short_id_reaches_a_live_sibling(tmp_path):
     message = env.summoner.send_message(sender_id=reader.id, target_id=f'#{worker.short_id}', text='look')
 
     assert 'delivered' in message
-    assert 'look' in worker.run.enqueued[0]
+    assert worker.run.enqueued == []
+    assert tree.notifications.for_receiver(worker.id)[0].text == 'look'
 
 
 def test_an_ambiguous_prefix_is_refused_instead_of_guessing(tmp_path):

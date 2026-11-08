@@ -83,6 +83,7 @@ BUILTIN_TOOLS: Mapping[str, ToolGroup] = {
     'update_roadmap': ToolGroup.ROADMAP,
     'summon': ToolGroup.SUMMON,
     'send_message': ToolGroup.SUMMON,
+    'ack_notifications': ToolGroup.SUMMON,
     'kill_subagent': ToolGroup.SUMMON,
     'list_agents': ToolGroup.SUMMON,
 }

@@ -26,6 +26,43 @@ slowness.
 > secrets do not share permissions with data that must be world-readable) and
 > the configuration (themes, MCP, agent profiles).
 
+## Agent notifications
+
+Intermediate child-to-parent and sibling notices are session state, separate
+from conversation messages. `agent_notifications` stores the sender and
+receiver execution IDs, full content, creation time, session sequence, and ACK
+state. Schema version 3 adds this table and its receiver index to existing
+version 2 databases without changing their history.
+
+Each receiver gets one dynamic notification table on every model request,
+ordered by sequence. IDs such as `n-7` are scoped to the session. ACK changes
+only the state: it does not read, resolve, reorder, or remove a notification.
+Acknowledged rows remain visible alongside pending rows for the lifetime of
+the session; there is no automatic pruning in this implementation.
+
+The tree owns the in-memory log. Session saves persist it in the same
+transaction as executions and transcripts. Rendering never changes ACK state;
+`ack_notifications` validates the entire batch against the caller's execution
+before updating it. Repeating an ACK is idempotent, including in memory.
+Checkpoint writes compare the stored log with the snapshot: they insert only
+new notifications and update only new ACKs. An unchanged checkpoint issues no
+notification writes. ACK is monotonic: a stale snapshot cannot revoke a stored
+ACK. A conflicting ID with different content or sender is rejected before any
+notification writes instead of silently losing the new content. This comparison
+still reads the session's notification log; it is not a constant-time save.
+
+The domain rejects invalid fields and duplicate sequences. Restoring malformed
+records raises a contextual error instead of silently dropping notices.
+Notifications are included in session exports and deleted with their session
+or participating execution.
+A fork starts a separate notification log rather than copying the current
+session's inbox; notification ACK state is not a turn-level rollback snapshot.
+
+Parent-to-child instructions bypass this table and enter the child's history
+through live-run steering. Final asynchronous reports keep their existing
+report-delivery mechanism. Both intermediate paths still require a live
+receiver; an ACK does not start or resume a turn.
+
 ## What it cost before
 
 Every number here was measured on this install (`~/.sigil`: 51 session files, 50
@@ -1095,6 +1132,20 @@ CREATE TRIGGER executions_no_orphan BEFORE DELETE ON agent_executions
     WHEN OLD.parent_id IS NULL
      AND EXISTS (SELECT 1 FROM sessions WHERE id = OLD.session_id)
     BEGIN SELECT RAISE(ABORT, 'delete the session, not its root'); END;
+
+CREATE TABLE agent_notifications (
+    session_id   TEXT    NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    sequence     INTEGER NOT NULL CHECK (sequence > 0),
+    sender_id    TEXT    NOT NULL REFERENCES agent_executions(id) ON DELETE CASCADE,
+    sender_name  TEXT    NOT NULL,
+    receiver_id  TEXT    NOT NULL REFERENCES agent_executions(id) ON DELETE CASCADE,
+    content      TEXT    NOT NULL,
+    acknowledged INTEGER NOT NULL DEFAULT 0 CHECK (acknowledged IN (0, 1)),
+    created_at   REAL    NOT NULL,
+    PRIMARY KEY (session_id, sequence)
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX notifications_by_receiver ON agent_notifications(receiver_id, sequence);
 
 -- The turn: the span between the user sending a message and the agent
 -- finishing. library_run_id is pydantic-ai's run_id: foreign, 1:1 with a turn,

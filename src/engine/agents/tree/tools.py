@@ -1,12 +1,13 @@
 """The tools that make a tree of agents a place you can work in.
 
-Four of them, and they are one vocabulary — the subagents an agent can start and
+They share one vocabulary — the subagents an agent can start and
 manage:
 
 | Tool | What it does |
 | --- | --- |
 | `summon` | Starts a subagent, or resumes one by its id |
-| `send_message` | Steers a child, or answers a notice |
+| `send_message` | Steers a child, or sends an informational notice |
+| `ack_notifications` | Confirms receipt without removing notices |
 | `kill_subagent` | Stops a subagent and everything under it |
 | `list_agents` | Shows the ids, names and states of the branch |
 
@@ -16,8 +17,8 @@ resume) is to ask. It is also what makes the tools usable without trusting the
 prompt's table to still be accurate.
 
 Every rule about *who* may do *what* lives in the summoner, not here, and the
-permission is the tool's group: a profile that closes `summon` closes all four,
-because managing subagents is one capability and not four.
+permission is the tool's group: a profile that closes `summon` closes all tree tools,
+because managing subagents is one capability and not a collection of independent permissions.
 """
 
 from __future__ import annotations
@@ -47,9 +48,17 @@ SUMMON_DESCRIPTION = (
 )
 
 SEND_DESCRIPTION = (
-    'Send a message to another agent of this session: to a child (an instruction it will act on) '
-    'or back to your parent (a notice). Siblings can be messaged only if your channel names them '
-    'and they are running. Use it to steer a subagent mid-run instead of waiting for it to finish.'
+    'Send a message to a working agent of this session. To your direct child it is an instruction '
+    'in its history (steering). To your direct parent or a sibling named by your channel it is an '
+    'informational notice in its dynamic notification table, not a user instruction. Notices remain '
+    'visible after ACK; ACK confirms receipt only. The receiver must be running.'
+)
+
+ACK_DESCRIPTION = (
+    'Confirm receipt of notifications addressed to your execution, using the exact IDs in your '
+    'notification table. ACK means OK, received, not read, agreed, acted on, or resolved. It changes '
+    'only the state: content and sequence stay visible. Repeating an ACK is harmless. '
+    'An invalid ID rejects the entire batch.'
 )
 
 KILL_DESCRIPTION = (
@@ -67,8 +76,8 @@ _SUMMON = ToolPermission(groups=SUMMON_GROUP)
 """No resource: the permission is the tool, not the name inside the call.
 
 `summon` narrows by subagent *name* because that is what a profile declares. The
-other three act on an execution id, which no profile can know in advance, so they
-are ruled on whole-tool: `summon: deny` closes the four, and a narrowed allow list
+other tools address execution or notification IDs minted at runtime, so they
+are ruled on whole-tool: `summon: deny` closes the group, and a narrowed allow list
 narrows only what may be summoned.
 """
 
@@ -79,7 +88,7 @@ def register_tree_tools(
     *,
     logger: ToolLogger | None = None,
 ) -> None:
-    """Registers the four tools of the tree on ``agent``."""
+    """Registers the tools of the tree on ``agent``."""
     registrar = ToolRegistrar(agent, logger)
 
     async def summon(
@@ -112,7 +121,7 @@ def register_tree_tools(
             agent_id=agent_id or None,
         )
 
-    def send_message(ctx: RunContext[SigilDeps], agent_id: str, message: str) -> str:
+    async def send_message(ctx: RunContext[SigilDeps], agent_id: str, message: str) -> str:
         """Send a message to another agent of this session.
 
         Args:
@@ -125,6 +134,16 @@ def register_tree_tools(
             sender_id=getattr(ctx.deps, 'node_id', None),
             target_id=agent_id,
             text=message,
+        )
+
+    async def ack_notifications(ctx: RunContext[SigilDeps], notification_ids: list[str]) -> str:
+        """Confirm receipt of notices without removing them from your table.
+
+        Args:
+            notification_ids: Exact notification IDs from your table, not agent IDs.
+        """
+        return summoner.ack_notifications(
+            receiver_id=getattr(ctx.deps, 'node_id', None), notification_ids=notification_ids
         )
 
     def kill_subagent(ctx: RunContext[SigilDeps], agent_id: str) -> str:
@@ -153,6 +172,13 @@ def register_tree_tools(
         use_context=True,
         name='send_message',
         description=SEND_DESCRIPTION,
+        permission=_SUMMON,
+    )
+    registrar.register(
+        ack_notifications,
+        use_context=True,
+        name='ack_notifications',
+        description=ACK_DESCRIPTION,
         permission=_SUMMON,
     )
     registrar.register(
@@ -195,6 +221,7 @@ def render_tree_table(tree: AgentTree | None, viewer_id: str | None) -> str:
 
 
 __all__ = [
+    'ACK_DESCRIPTION',
     'KILL_DESCRIPTION',
     'LIST_DESCRIPTION',
     'SEND_DESCRIPTION',

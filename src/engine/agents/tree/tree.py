@@ -24,6 +24,7 @@ from typing import Any
 from src.engine.agents.profile.models.agent_role import AgentRole
 from src.engine.agents.tree.models.agent_node import ROOT_TASK, AgentNode
 from src.engine.agents.tree.models.node_status import NodeStatus
+from src.engine.agents.tree.notifications import Notifications
 
 
 class AgentTree:
@@ -32,6 +33,7 @@ class AgentTree:
     def __init__(self, nodes: Sequence[AgentNode] = ()) -> None:
         self._nodes: dict[str, AgentNode] = {}
         self._root_id = ''
+        self.notifications = Notifications()
         for node in nodes:
             self._adopt(node)
 
@@ -217,7 +219,10 @@ class AgentTree:
     # --- persistence -------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        return {'nodes': [node.to_dict() for node in self.nodes()]}
+        return {
+            'nodes': [node.to_dict() for node in self.nodes()],
+            'notifications': [entry.to_dict() for entry in self.notifications.all()],
+        }
 
     @classmethod
     def from_dict(cls, data: Any) -> AgentTree | None:
@@ -239,7 +244,11 @@ class AgentTree:
         # The root has to come first for `_adopt` to pin it, and it is the one the
         # serialization wrote first anyway.
         nodes.sort(key=lambda node: (node.parent_id is not None, node.started_at))
-        return cls(nodes)
+        tree = cls(nodes)
+        raw_notifications = data.get('notifications', [])
+        if isinstance(raw_notifications, list):
+            tree.notifications = Notifications.from_dict(raw_notifications)
+        return tree
 
 
 __all__ = ['AgentTree']

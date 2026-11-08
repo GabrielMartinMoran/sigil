@@ -21,6 +21,7 @@ from src.engine.agents.tree.tree import AgentTree
 from src.engine.storage.blobs import Blobs
 from src.engine.storage.database import Database
 from src.engine.storage.history import read_history, write_history
+from src.engine.storage.notifications import load_notifications, save_notifications
 
 if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
@@ -131,6 +132,8 @@ def save_executions(
             )
             write_history(database, blobs, node.id, node.messages, conn=conn)
 
+    if tree is not None:
+        save_notifications(conn, session_id, tree.notifications)
     write_history(database, blobs, root_id, root_messages, conn=conn)
     return root_id
 
@@ -170,6 +173,7 @@ def load_tree(database: Database, blobs: Blobs, session_id: str) -> AgentTree | 
     # tree shows it at the end rather than throwing away a run that happened.
     nodes.sort(key=lambda node: (node.parent_id is not None, node.started_at))
     tree = AgentTree(nodes)
+    tree.notifications = load_notifications(database, session_id)
     for node in tree.nodes():
         node.messages = read_history(database, blobs, node.id)
     return tree
