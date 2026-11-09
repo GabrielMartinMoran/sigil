@@ -1,62 +1,111 @@
-"""Shared view pipeline: coordinated maintenance, reasoning-first fitting, diagnostics."""
+"""Turning the transcript into the request the provider receives.
+
+The projection has three parts, and they can coexist:
+
+1. a model-written checkpoint that replaces everything before its boundary;
+2. the exchanges after it, with old reasoning removed and old tool payloads reduced;
+3. the protected recent tail, which is never rewritten.
+
+Only two things change the view: reaching the trigger, and applying a summary the caller
+obtained. Nothing here drops a turn to make a request fit — that is what the safety
+budget and an explicit failure are for.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
 
-from pydantic_ai.messages import ModelMessage, ModelResponse, ThinkingPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ThinkingPart, ToolCallPart, ToolReturnPart
 
 from src.engine.context.budget import ContextBudget
-from src.engine.context.compaction.clock import step_count, step_of_message
+from src.engine.context.compaction.clock import step_count
 from src.engine.context.compaction.coordinator import (
     CompactionPlan,
     PolicyLookup,
     apply,
     exceptions,
-    part_key,
-    pending_tool_chars,
     plan,
 )
 from src.engine.context.compaction.events import CompactionEvent, CompactionReason
-from src.engine.context.compaction.policy import CompactionPolicy
-from src.engine.context.strategy.rewriting import drop_stale_images, fit_to_budget, keep_fitting_steps
+from src.engine.context.compaction.maintenance import last_summary_failure
+from src.engine.context.compaction.policy import DEFAULT_POLICY, CompactionPolicy
+from src.engine.context.compaction.records import last_projection_error
+from src.engine.context.compaction.summary import Summary, SummaryRequest, summary_request
+from src.engine.context.input_estimate import estimate_input
+from src.engine.context.strategy.rewriting import apply_image_removals, image_removals
 from src.engine.context.strategy.view_result import ViewResult
 from src.engine.context.tokens import estimate_messages_tokens, estimate_tokens, part_tokens
-from src.engine.tooling.lod import ToolLOD
-
-POSITION_KEY = 'sigil_view_position'
 
 
 def prepare(
     messages: Sequence[ModelMessage],
     budget: ContextBudget,
     *,
-    policy: CompactionPolicy,
-    lookup: PolicyLookup | None,
-    provider: str | None,
+    policy: CompactionPolicy = DEFAULT_POLICY,
+    lookup: PolicyLookup | None = None,
+    provider: str | None = None,
     image_turns: int,
     image_percent: int,
+    summary: Summary | None = None,
+    compact_opportunistically: bool = False,
 ) -> ViewResult:
-    """Image expiry is independent; all text reductions pass through one plan."""
-    from src.engine.context.strategy.constants import image_token_cap
+    """Project the history, compacting under pressure or at an instruction boundary."""
+    planned = plan(messages, policy=policy, lookup=lookup, provider=provider)
+    working, reduced = _project(messages, planned, lookup, provider)
+    working, images = apply_image_removals(working, dict(planned.state.image_removals))
+    # The trigger is measured on the request as it would be sent without intervention.
+    pressured = _over(budget, working, policy.trigger_percent) or _exceeds_budget(budget, working)
+    if pressured or compact_opportunistically or summary is not None:
+        planned = _planned(
+            messages, policy, lookup, provider, pressure=pressured or compact_opportunistically, summary=summary
+        )
+        working, reduced = _project(messages, planned, lookup, provider)
+        working, images = apply_image_removals(working, dict(planned.state.image_removals))
+    if pressured or budget.fits(estimate_messages_tokens(working)) is False:
+        from src.engine.context.strategy.constants import image_token_cap
 
-    planned = plan(messages, policy=policy, lookup=lookup, window=budget.window, provider=provider)
-    working, reduced = apply(list(messages), planned, lookup=lookup, provider=provider, with_positions=True)
-    available = budget.available_for_history
-    if available is not None and estimate_messages_tokens(working) > available:
-        planned = plan(messages, policy=policy, lookup=lookup, pressure=True, window=budget.window, provider=provider)
-        working, reduced = apply(list(messages), planned, lookup=lookup, provider=provider, with_positions=True)
-    working, images = drop_stale_images(
-        working, turn_window=image_turns, max_tokens=image_token_cap(budget.window, available, image_percent)
-    )
+        removals = image_removals(
+            working, turn_window=image_turns, max_tokens=image_token_cap(budget.window, image_percent)
+        )
+        if removals:
+            state = replace(
+                planned.state, image_removals=tuple({**dict(planned.state.image_removals), **removals}.items())
+            )
+            planned = replace(planned, state=state)
+            working, newly_dropped = apply_image_removals(working, removals)
+            images += newly_dropped
+            planned = replace(
+                planned, events=(*planned.events, _event(messages, working, planned, CompactionReason.DETERMINISTIC))
+            )
+
+    request: SummaryRequest | None = None
+    if pressured and summary is None and _over(budget, working, policy.target_percent):
+        request = summary_request(
+            messages,
+            boundary=planned.state.summary_boundary,
+            previous=planned.state.summary,
+            reasoning_blocks=policy.recent_reasoning_blocks,
+            tool_calls=policy.recent_tool_calls,
+        )
+        if request is not None:
+            eligible = replace(planned, state=replace(planned.state, summary=None, summary_boundary=None))
+            payload, _ = _project(request.messages, eligible, lookup, provider)
+            payload, _ = apply_image_removals(payload, dict(planned.state.image_removals))
+            request = replace(request, messages=tuple(payload))
+        else:
+            planned = replace(planned, exceptions=(*planned.exceptions, 'summary_boundary_unavailable'))
     return ViewResult(
         working,
         estimate_messages_tokens(working),
-        truncated_results=reduced,
+        compacted_parts=reduced,
         dropped_images=images,
         events=planned.events,
         plan=planned,
+        summary_request=request,
+        summary_error=None
+        if summary is not None
+        else last_summary_failure(messages) or last_projection_error(messages),
     )
 
 
@@ -65,78 +114,39 @@ def finish(
     prepared: ViewResult,
     budget: ContextBudget,
     *,
-    policy: CompactionPolicy,
-    lookup: PolicyLookup | None,
-    provider: str | None,
-    keep_recent: int,
+    policy: CompactionPolicy = DEFAULT_POLICY,
+    lookup: PolicyLookup | None = None,
 ) -> ViewResult:
-    """Exhaust reasoning before losing turns; an indivisible overfull tail is explicit."""
+    """Record the decision and report honestly when the projection does not fit."""
     planned = prepared.plan
     if planned is None:
         raise ValueError('Shared projection requires a compaction plan')
     working = prepared.messages
-    available = budget.available_for_history
     events = list(prepared.events)
-    state = planned.state
-    dropped = 0
-    if available is not None and estimate_messages_tokens(working) > available:
-        fitted = keep_fitting_steps(working, available, provider=provider)
-        if fitted is None:
-            fitted, _, _ = _without_reasoning(working)
-        if fitted != working:
-            state = replace(state, reasoning_cutoff=max(state.reasoning_cutoff, _cutoff(original, fitted)))
-            events.append(_event(original, fitted, CompactionReason.BUDGET))
-        working = fitted
-        if estimate_messages_tokens(working) > available:
-            from pydantic_ai.messages import CompactionPart
-
-            head = working[:1] if working and any(isinstance(p, CompactionPart) for p in working[0].parts) else []
-            tail = working[len(head) :]
-            working, dropped = fit_to_budget(
-                tail, available, pinned_tools=policy.pinned_tools, keep_recent=keep_recent, keep_head=head
-            )
-            if estimate_messages_tokens(working) > available:
-                working, more = fit_to_budget(
-                    working[len(head) :], available, pinned_tools=policy.pinned_tools, keep_head=head
-                )
-                dropped += more
-            events.append(_event(original, working, CompactionReason.EMERGENCY, dropped=dropped))
-    exceeded = budget.fits(estimate_messages_tokens(working)) is False
-    if exceeded and (not events or events[-1].reason is not CompactionReason.EMERGENCY):
-        events.append(_event(original, working, CompactionReason.EMERGENCY))
+    reasons = {*planned.exceptions, *exceptions(original, planned, lookup)}
+    if prepared.summary_request is not None:
+        reasons.add('summary_pending')
+    elif planned.state.summary and _over(budget, working, policy.target_percent):
+        reasons.add('summary_insufficient')
+    if budget.window is None:
+        reasons.add('window_unknown')
+    exceeded = _exceeds_budget(budget, working)
     if exceeded:
-        events[-1] = replace(events[-1], unmet=tuple(sorted({*events[-1].unmet, 'window'})))
-    if dropped:
-        retained = {(message.metadata or {}).get(POSITION_KEY) for message in working}
-        dropped_parts = set(state.dropped_parts)
-        for message in prepared.messages:
-            index = (message.metadata or {}).get(POSITION_KEY)
-            if index is not None and index not in retained:
-                dropped_parts.update(
-                    part_key(original[index], part, offset) for offset, part in enumerate(original[index].parts)
-                )
-        state = replace(state, dropped_parts=tuple(sorted(dropped_parts)))
-    reasons = exceptions(original, planned, lookup)
-    if reasons and len(events) > planned.recorded_events:
-        events[-1] = replace(events[-1], unmet=tuple(sorted({*events[-1].unmet, *reasons})))
-    state = replace(state, evaluated_steps=step_count(original))
-    projected_events = [
+        reasons.add('window')
+        events.append(_event(original, working, planned, CompactionReason.EMERGENCY))
+    state = replace(planned.state, evaluated_steps=step_count(original))
+    projected = [
         replace(event, policy=planned.effective_policy, window=budget.window)
         for event in events[planned.recorded_events :]
     ]
-    events = [*events[: planned.recorded_events], *_coalesce(projected_events)]
-    planned = replace(planned, state=state, events=tuple(events), exceptions=reasons)
-    diagnostics = metrics(original, working, planned, policy, budget, lookup)
-    cleaned = [
-        replace(message, metadata={k: v for k, v in (message.metadata or {}).items() if k != POSITION_KEY} or None)
-        for message in working
-    ]
+    events = [*events[: planned.recorded_events], *_coalesce(projected)]
+    planned = replace(planned, state=state, events=tuple(events), exceptions=tuple(sorted(reasons)))
+    diagnostics = metrics(original, working, planned, policy, budget)
     return replace(
         prepared,
-        messages=cleaned,
-        estimated_tokens=estimate_messages_tokens(cleaned),
-        dropped_messages=dropped,
-        dropped_thinking=_thinking_count(original) - _thinking_count(cleaned),
+        messages=working,
+        estimated_tokens=estimate_messages_tokens(working),
+        dropped_thinking=_thinking_count(original) - _thinking_count(working),
         events=tuple(events),
         plan=planned,
         diagnostics=diagnostics,
@@ -144,26 +154,42 @@ def finish(
     )
 
 
-def _without_reasoning(messages: Sequence[ModelMessage]) -> tuple[list[ModelMessage], int, int]:
-    from src.engine.context.strategy.rewriting import drop_thinking
+def _planned(
+    messages: Sequence[ModelMessage],
+    policy: CompactionPolicy,
+    lookup: PolicyLookup | None,
+    provider: str | None,
+    *,
+    pressure: bool,
+    summary: Summary | None,
+) -> CompactionPlan:
+    """The decision for this projection, with the checkpoint the caller obtained, if any."""
+    planned = plan(messages, policy=policy, lookup=lookup, pressure=pressure, provider=provider)
+    if summary is None:
+        return planned
+    planned = replace(planned, state=replace(planned.state, summary=summary.text, summary_boundary=summary.boundary))
+    working, _ = _project(messages, planned, lookup, provider)
+    return replace(planned, events=(*planned.events, _event(messages, working, planned, CompactionReason.SUMMARY)))
 
-    result, dropped = drop_thinking(list(messages))
-    return result, 0, dropped
+
+def _project(
+    messages: Sequence[ModelMessage],
+    planned: CompactionPlan,
+    lookup: PolicyLookup | None,
+    provider: str | None,
+) -> tuple[list[ModelMessage], int]:
+    return apply(list(messages), planned, lookup=lookup, provider=provider)
 
 
-def _cutoff(original: Sequence[ModelMessage], fitted: Sequence[ModelMessage]) -> int:
-    retained = {
-        (m.metadata or {}).get(POSITION_KEY) for m in fitted if any(isinstance(p, ThinkingPart) for p in m.parts)
-    }
-    steps = step_of_message(original)
-    return max(
-        (
-            steps[i]
-            for i, m in enumerate(original)
-            if any(isinstance(p, ThinkingPart) for p in m.parts) and i not in retained
-        ),
-        default=0,
-    )
+def _over(budget: ContextBudget, working: Sequence[ModelMessage], percent: int) -> bool:
+    """Whether instructions, schemas and history together cross a share of the window."""
+    if budget.window is None:
+        return False
+    return estimate_input(working, budget).total * 100 > budget.window * percent
+
+
+def _exceeds_budget(budget: ContextBudget, working: Sequence[ModelMessage]) -> bool:
+    return budget.fits(max(0, estimate_input(working, budget).total - budget.fixed)) is False
 
 
 def _thinking_count(messages: Sequence[ModelMessage]) -> int:
@@ -173,17 +199,17 @@ def _thinking_count(messages: Sequence[ModelMessage]) -> int:
 def _event(
     original: Sequence[ModelMessage],
     working: Sequence[ModelMessage],
+    planned: CompactionPlan,
     reason: CompactionReason,
-    *,
-    dropped: int = 0,
 ) -> CompactionEvent:
-    kept = sum(isinstance(m, ModelResponse) and any(isinstance(p, ThinkingPart) for p in m.parts) for m in working)
+    kept = sum(isinstance(p, ThinkingPart) for m in working for p in m.parts)
     return CompactionEvent(
         step_count(original),
         reason=reason,
         reasoning_kept=kept,
+        compacted_calls=len(planned.state.compacted_calls),
+        summary_chars=len(planned.state.summary or ''),
         detail={
-            'dropped_messages': dropped,
             'reasoning_after': kept,
             'reasoning_tokens_after': sum(
                 estimate_tokens(p.content or '') for m in working for p in m.parts if isinstance(p, ThinkingPart)
@@ -198,45 +224,44 @@ def metrics(
     planned: CompactionPlan,
     policy: CompactionPolicy,
     budget: ContextBudget,
-    lookup: PolicyLookup | None,
 ) -> dict[str, object]:
     """No argument values, tool names, ids or conversation text enter diagnostics."""
     reasoning = [p for m in working for p in m.parts if isinstance(p, ThinkingPart)]
     unknown = sum(bool(p.signature) and not p.content for p in reasoning)
-    calls = {part.tool_call_id for message in working for part in message.parts if isinstance(part, ToolCallPart)}
-    counts = {
-        str(int(level)): sum(item is level for call, item in planned.lod.items() if call in calls) for level in ToolLOD
-    }
+    estimate = estimate_input(working, budget)
     before_args = sum(part_tokens(p) for m in original for p in m.parts if isinstance(p, ToolCallPart))
     after_args = sum(part_tokens(p) for m in working for p in m.parts if isinstance(p, ToolCallPart))
     before_output = sum(part_tokens(p) for m in original for p in m.parts if isinstance(p, ToolReturnPart))
     after_output = sum(part_tokens(p) for m in working for p in m.parts if isinstance(p, ToolReturnPart))
     return {
-        'reasoning_steps': sum(
-            isinstance(m, ModelResponse) and any(isinstance(p, ThinkingPart) for p in m.parts) for m in working
-        ),
-        'reasoning_target_steps': policy.reasoning_steps,
-        'reasoning_ceiling_steps': policy.reasoning_trigger_steps,
-        'reasoning_target_percent': policy.reasoning_max_percent,
-        'reasoning_ceiling_percent': policy.reasoning_trigger_percent,
+        'reasoning_blocks': len(reasoning),
         'reasoning_known_tokens': sum(estimate_tokens(p.content or '') for p in reasoning),
         'reasoning_unknown_blocks': unknown,
         'reasoning_size': 'partial' if unknown else 'estimated',
-        'lod_calls': counts,
+        'compacted_calls': len(planned.state.compacted_calls),
+        'dropped_parts': len(planned.state.dropped_parts),
+        'summary_chars': len(planned.state.summary or ''),
         'input_reduction_tokens': max(0, before_args - after_args),
         'output_reduction_tokens': max(0, before_output - after_output),
+        'trigger_percent': policy.trigger_percent,
+        'target_percent': policy.target_percent,
         'exceptions': planned.exceptions,
         'window': budget.window,
+        'projected_input_tokens': estimate.total,
+        'input_estimate_source': estimate.source,
+        'safety_reserve': budget.safety_reserve,
+        'opaque_reasoning_reserve': estimate.opaque_reserve,
         'events': 'recorded plus projected; legacy prefix reconstructed',
-        'tools_pending_chars': pending_tool_chars(original, planned.state, step_count(original), policy, lookup),
-        'tools_ceiling_chars': policy.tool_trigger_chars,
-        'tools_target_chars': policy.tool_target_chars,
     }
 
 
 def _coalesce(events: Sequence[CompactionEvent]) -> list[CompactionEvent]:
     """A prepared request records one event per boundary, with its strongest reason."""
-    severity = {CompactionReason.OPERATIONAL: 0, CompactionReason.BUDGET: 1, CompactionReason.EMERGENCY: 2}
+    severity = {
+        CompactionReason.DETERMINISTIC: 0,
+        CompactionReason.SUMMARY: 1,
+        CompactionReason.EMERGENCY: 2,
+    }
     merged: dict[int, CompactionEvent] = {}
     for event in events:
         previous = merged.get(event.step)
@@ -246,8 +271,12 @@ def _coalesce(events: Sequence[CompactionEvent]) -> list[CompactionEvent]:
         merged[event.step] = replace(
             event,
             reason=max((previous.reason, event.reason), key=severity.__getitem__),
-            max_lod=max(previous.max_lod, event.max_lod),
+            compacted_calls=max(previous.compacted_calls, event.compacted_calls),
+            summary_chars=max(previous.summary_chars, event.summary_chars),
             unmet=tuple(sorted({*previous.unmet, *event.unmet})),
             detail={**previous.detail, **event.detail},
         )
     return list(merged.values())
+
+
+__all__ = ['finish', 'metrics', 'prepare']

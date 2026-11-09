@@ -30,12 +30,12 @@ from pydantic_ai import RunContext
 from src.engine.agents.tree.rendering import SUMMON_GROUP, SUMMON_TOOL
 from src.engine.agents.tree.summoner import SigilDeps, SubagentSummoner, SummonMode
 from src.engine.tooling.catalog import ToolCatalog
-from src.engine.tooling.lod_policies import (
-    ACK_NOTIFICATIONS_LOD,
-    KILL_SUBAGENT_LOD,
-    LIST_AGENTS_LOD,
-    SEND_MESSAGE_LOD,
-    SUMMON_LOD,
+from src.engine.tooling.compaction_policies import (
+    ACK_NOTIFICATIONS_COMPACTOR,
+    KILL_SUBAGENT_COMPACTOR,
+    LIST_AGENTS_COMPACTOR,
+    SEND_MESSAGE_COMPACTOR,
+    SUMMON_COMPACTOR,
 )
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.permission import ToolPermission
@@ -180,7 +180,7 @@ def register_tree_tools(
         name=SUMMON_TOOL,
         description=SUMMON_DESCRIPTION,
         permission=ToolPermission(groups=SUMMON_GROUP, resource='agent'),
-        lod=SUMMON_LOD,
+        compaction=SUMMON_COMPACTOR,
     )
     registrar.register(
         send_message,
@@ -188,7 +188,7 @@ def register_tree_tools(
         name='send_message',
         description=SEND_DESCRIPTION,
         permission=_SUMMON,
-        lod=SEND_MESSAGE_LOD,
+        compaction=SEND_MESSAGE_COMPACTOR,
     )
     registrar.register(
         ack_notifications,
@@ -196,7 +196,7 @@ def register_tree_tools(
         name='ack_notifications',
         description=ACK_DESCRIPTION,
         permission=_SUMMON,
-        lod=ACK_NOTIFICATIONS_LOD,
+        compaction=ACK_NOTIFICATIONS_COMPACTOR,
     )
     registrar.register(
         kill_subagent,
@@ -204,7 +204,7 @@ def register_tree_tools(
         name='kill_subagent',
         description=KILL_DESCRIPTION,
         permission=_SUMMON,
-        lod=KILL_SUBAGENT_LOD,
+        compaction=KILL_SUBAGENT_COMPACTOR,
     )
     registrar.register(
         list_agents,
@@ -212,7 +212,7 @@ def register_tree_tools(
         name='list_agents',
         description=LIST_DESCRIPTION,
         permission=_SUMMON,
-        lod=LIST_AGENTS_LOD,
+        compaction=LIST_AGENTS_COMPACTOR,
     )
 
 

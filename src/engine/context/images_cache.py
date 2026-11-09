@@ -61,11 +61,12 @@ class ImageOccurrence:
     turn_index: int
     tokens: int
     message_index: int
+    part_index: int
     item_index: int
 
     @property
-    def position(self) -> tuple[int, int]:
-        return (self.message_index, self.item_index)
+    def position(self) -> tuple[int, int, int]:
+        return (self.message_index, self.part_index, self.item_index)
 
 
 def occurrences(messages: Sequence[ModelMessage]) -> list[ImageOccurrence]:
@@ -109,7 +110,7 @@ def _scan(messages: Sequence[ModelMessage]) -> tuple[list[ImageOccurrence], int]
         if key not in turn_keys:
             turn_keys.append(key)
         turn_index = turn_keys.index(key)
-        for part in message.parts:
+        for part_index, part in enumerate(message.parts):
             if not isinstance(part, (UserPromptPart, ToolReturnPart)):
                 continue
             if not isinstance(part.content, list):
@@ -124,6 +125,7 @@ def _scan(messages: Sequence[ModelMessage]) -> tuple[list[ImageOccurrence], int]
                         turn_index=turn_index,
                         tokens=image_part_tokens(item),
                         message_index=message_index,
+                        part_index=part_index,
                         item_index=item_index,
                     )
                 )
@@ -141,7 +143,7 @@ def decide(
     *,
     turn_window: int,
     max_tokens: int | None,
-) -> dict[tuple[int, int], ImageVerdict]:
+) -> dict[tuple[int, int, int], ImageVerdict]:
     """The verdict for every image occurrence, keyed by its position.
 
     Args:
@@ -155,7 +157,7 @@ def decide(
     if not found:
         return {}
 
-    verdicts: dict[tuple[int, int], ImageVerdict] = {}
+    verdicts: dict[tuple[int, int, int], ImageVerdict] = {}
 
     # The last occurrence of an id is the live one: fetching a picture again is what
     # moves it forward, and that is the copy the conversation is about.

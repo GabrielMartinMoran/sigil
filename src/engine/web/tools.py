@@ -9,7 +9,7 @@ from typing import Any, Literal
 from ddgs import DDGS
 
 from src.engine.tooling.catalog import ToolCatalog
-from src.engine.tooling.lod_policies import READ_URL_LOD, WEB_SEARCH_LOD
+from src.engine.tooling.compaction_policies import READ_URL_COMPACTOR, WEB_SEARCH_COMPACTOR
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.permission import ToolGroup, ToolPermission
 from src.engine.tooling.registrar import ToolRegistrar
@@ -70,7 +70,7 @@ def register_web_tools(agent: Any, logger: ToolLogger | None = None, catalog: To
     """Registers the web tools on a pydantic-ai agent."""
     tools = ToolRegistrar(agent, logger, catalog)
 
-    @tools.tool(permission=_SEARCH, lod=WEB_SEARCH_LOD)
+    @tools.tool(permission=_SEARCH, compaction=WEB_SEARCH_COMPACTOR)
     async def web_search(
         query: str,
         max_results: int = 8,
@@ -97,7 +97,7 @@ def register_web_tools(agent: Any, logger: ToolLogger | None = None, catalog: To
         results = [_as_result(item) for item in raw]
         return SearchResponse(query=query, count=len(results), results=results)
 
-    @tools.tool(permission=_FETCH, lod=READ_URL_LOD)
+    @tools.tool(permission=_FETCH, compaction=READ_URL_COMPACTOR)
     async def read_url(
         url: str,
         fmt: str = 'text_markdown',

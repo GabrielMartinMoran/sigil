@@ -12,7 +12,10 @@ is always sent and what the model needs in order to answer:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+
+DEFAULT_SAFETY_MARGIN_PERCENT = 5
+"""Uncalibrated allowance for tokenizer, protocol and opaque-content uncertainty."""
 
 DEFAULT_OUTPUT_RESERVE = 8_000
 """Tokens left free for the model response."""
@@ -34,6 +37,20 @@ class ContextBudget:
     output_reserve: int = DEFAULT_OUTPUT_RESERVE
     """Tokens reserved for the model response."""
 
+    safety_margin_percent: int = 0
+    """Additional uncertainty reservation; runtime settings default to five percent."""
+
+    model_name: str | None = None
+    """Only this model's previous measurement may seed the next request estimate."""
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.safety_margin_percent < 100:
+            raise ValueError('safety_margin_percent must be between 0 and 99')
+
+    @property
+    def safety_reserve(self) -> int:
+        return 0 if self.window is None else (self.window * self.safety_margin_percent + 99) // 100
+
     @property
     def fixed(self) -> int:
         """What is sent on every request regardless of the conversation."""
@@ -44,20 +61,19 @@ class ContextBudget:
         """Tokens left for the history, or ``None`` if there is no window."""
         if self.window is None:
             return None
-        return max(0, self.window - self.fixed - self.output_reserve)
+        return max(0, self.window - self.fixed - self.output_reserve - self.safety_reserve)
 
     def fits(self, history_tokens: int) -> bool | None:
         """Whether a history fits in the budget. ``None`` if there is no window."""
         available = self.available_for_history
-        if available is None:
+        if available is None or self.window is None:
             return None
-        return self.fixed + self.output_reserve <= self.window and history_tokens <= available
+        return self.fixed + self.output_reserve + self.safety_reserve <= self.window and history_tokens <= available
 
     def with_measurements(self, *, tools: int | None = None, instructions: int | None = None) -> ContextBudget:
         """Copy with the measurements updated."""
-        return ContextBudget(
-            window=self.window,
+        return replace(
+            self,
             tools=self.tools if tools is None else tools,
             instructions=self.instructions if instructions is None else instructions,
-            output_reserve=self.output_reserve,
         )

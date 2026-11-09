@@ -10,7 +10,7 @@ from src.engine.interaction.hub import QuestionHub
 from src.engine.interaction.models.question_item import QuestionItem
 from src.engine.interaction.models.question_result import QuestionResult
 from src.engine.tooling.catalog import ToolCatalog
-from src.engine.tooling.lod_policies import ASK_USER_LOD
+from src.engine.tooling.compaction_policies import ASK_USER_COMPACTOR
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.permission import ToolGroup, ToolPermission
 from src.engine.tooling.registrar import ToolRegistrar
@@ -29,7 +29,7 @@ def register_interaction_tools(
 
     # `ctx` defaults to None so the tool stays callable from code (tests) where
     # there is no run: pydantic-ai always passes the real context inside a run.
-    @tools.context_tool(permission=_ASK, lod=ASK_USER_LOD)
+    @tools.context_tool(permission=_ASK, compaction=ASK_USER_COMPACTOR)
     async def ask_user(ctx: RunContext[Any] = None, *, questions: list[QuestionItem]) -> QuestionResult:  # type: ignore[assignment]
         """Ask the user one or more multiple-choice questions in the UI.
 

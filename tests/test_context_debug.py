@@ -243,7 +243,7 @@ def _report(messages, *, view_result=None):
 
 def test_report_measures_log_against_view():
     messages = _session()
-    dropped = ViewResult(messages=[messages[0]], estimated_tokens=5, dropped_messages=1)
+    dropped = ViewResult(messages=[messages[0]], estimated_tokens=5, dropped_thinking=1)
     report = _report(messages, view_result=dropped)
 
     assert report.model == 'test/model'
@@ -253,7 +253,7 @@ def test_report_measures_log_against_view():
     assert report.dropped_tokens > 0
     assert report.dropped_tokens == report.log_tokens - report.view_tokens
     assert report.reduction_percent is not None
-    assert 'dropped messages: 1' in report.strategies_note
+    assert 'dropped reasoning: 1' in report.strategies_note
 
 
 def test_report_without_view_sends_everything():

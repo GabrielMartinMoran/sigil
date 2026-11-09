@@ -78,9 +78,8 @@ def render_report(report: ContextReport) -> str:
             [
                 '',
                 'Applied view',
-                f'  dropped turns        : {view.dropped_messages} messages',
                 f'  dropped reasoning    : {view.dropped_thinking} parts',
-                f'  truncated results    : {view.truncated_results}',
+                f'  compacted parts      : {view.compacted_parts}',
                 f'  estimated tokens     : {_fmt_tokens(view.estimated_tokens)}',
             ]
         )

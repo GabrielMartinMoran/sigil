@@ -157,15 +157,14 @@ def test_loaded_skills_block_is_rewritten_not_appended():
         assert not any(type(part).__name__ == 'InstructionDeltaPart' for part in request.parts)
 
 
-def test_node_context_is_registered_after_all_other_dynamic_instructions(tmp_path):
+def test_node_context_is_not_registered_as_an_instruction(tmp_path):
     registry = SkillRegistry([('project', tmp_path)])
     agent = create_agent(
         registry, workspace=WorkspaceInstructions(tmp_path), scope=ScopeTracker(tmp_path), node_blocks=lambda _: 'state'
     )
     names = _instruction_names(agent)
-    assert names[-1] == 'node-context'
-    assert names.index('workspace') < names.index('node-context')
-    assert names.index('skills') < names.index('node-context')
+    assert 'node-context' not in names
+    assert names.index('workspace') < names.index('skills')
 
 
 def test_workspace_changes_replace_prior_instructions(tmp_path):

@@ -4,24 +4,30 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from pydantic_ai.messages import ModelRequest, ModelResponse, ThinkingPart, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 
-from src.engine.context.budget import ContextBudget
 from src.engine.context.meter.context_meter import ContextMeter
 from src.engine.context.meter.debug import build_debug_report
 from src.engine.context.meter.debug_render import render_debug_report
 from src.engine.context.meter.request import RequestSnapshot
-from src.engine.context.strategy.windowed import WindowedStrategy
-from tests.test_context_compaction_records import history, run_recorded
+from src.engine.context.strategy.append_only import AppendOnlyStrategy
+from tests.test_context_compaction_records import history, pressured_window, run_recorded
 
 
-def report(messages: list):
-    meter = ContextMeter(window=100000)
-    view = WindowedStrategy().view(messages, meter.budget())
+def report(messages: list, *, window: int = 100000):
+    meter = ContextMeter(window=window, output_reserve=0)
+    view = AppendOnlyStrategy().view(messages, meter.budget())
     return build_debug_report(messages, snapshot=meter.snapshot(messages), request=RequestSnapshot(), view_result=view)
 
 
-def test_unknown_reasoning_size_and_operational_bands_are_visible_without_content():
+def test_unknown_reasoning_size_and_thresholds_are_visible_without_content():
     messages = [
         ModelRequest(parts=[UserPromptPart(content='PRIVATE text')]),
         ModelResponse(parts=[ThinkingPart(content='', signature='SECRET signature')]),
@@ -29,7 +35,7 @@ def test_unknown_reasoning_size_and_operational_bands_are_visible_without_conten
     text = render_debug_report(report(messages))
     assert 'unknown signed blocks 1' in text
     assert 'partial' in text
-    assert 'target 10; ceiling 20' in text
+    assert 'trigger 75%; target 60%' in text
     assert '0 + ? (1 unknown)' in text
     assert 'SECRET' not in text and 'PRIVATE' not in text
 
@@ -55,13 +61,15 @@ def test_skill_metrics_render_in_text_and_debug_view():
 
 
 def test_projected_events_do_not_masquerade_as_observed_turn_history():
-    projected = report(history(20))
+    messages = history(30)
+    window = pressured_window(messages)
+    projected = report(messages, window=window)
     assert projected.view_result.events
     assert not any(turn.events for turn in projected.turns)
-    assert 'projected/reconstructed: step 20' in render_debug_report(projected)
-    recorded = report(run_recorded(history(20)))
+    assert 'projected/reconstructed: step 30' in render_debug_report(projected)
+    recorded = report(run_recorded(messages, window=window), window=window)
     assert any(turn.events for turn in recorded.turns)
-    assert 'recorded: step 20' in render_debug_report(recorded)
+    assert 'recorded: step 30' in render_debug_report(recorded)
 
 
 def test_generic_exceptions_are_content_free_and_visible():
@@ -72,9 +80,8 @@ def test_generic_exceptions_are_content_free_and_visible():
         ),
     ]
     messages += history(30)
-    budget = ContextBudget(window=100000)
+    view = AppendOnlyStrategy().view(messages, ContextMeter(window=pressured_window(messages)).budget())
     # The large failure is indispensable; do not silently delete it to hit a target.
-    view = WindowedStrategy().view(messages, budget)
     assert 'indispensable_generic_metadata' in view.diagnostics['exceptions']
     diagnostics = str(view.diagnostics)
     assert 'PRIVATE' not in diagnostics

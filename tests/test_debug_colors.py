@@ -122,10 +122,10 @@ def test_real_agent_snapshot_excludes_the_response_it_has_not_received_yet():
     from pydantic_ai.models.test import TestModel
 
     from src.engine.context.capability import ContextViewCapability
-    from src.engine.context.strategy.windowed import WindowedStrategy
+    from src.engine.context.strategy.append_only import AppendOnlyStrategy
 
     async def run():
-        cap = ContextViewCapability(strategy=WindowedStrategy(), meter=ContextMeter(window=100000))
+        cap = ContextViewCapability(strategy=AppendOnlyStrategy(), meter=ContextMeter(window=100000))
         agent = Agent(TestModel(custom_output_text='PRIVATE'), capabilities=[cap])
         first = await agent.run('PRIVATE')
         first_snapshot = cap.last_request
@@ -211,11 +211,11 @@ def test_timeline_marks_compaction_at_its_step():
         messages,
         snapshot=meter.snapshot(messages),
         request=snapshot_request(None),
-        events=[CompactionEvent(step=3, reason=CompactionReason.BUDGET)],
+        events=[CompactionEvent(step=3, reason=CompactionReason.EMERGENCY)],
     )
     text = ui._turn_timeline(r).plain
-    assert 'compaction' in text.lower() and 'budget' in text
-    assert text.index('Step 2') < text.index('budget')
+    assert 'compaction' in text.lower() and 'emergency' in text.lower()
+    assert text.index('Step 2') < text.index('emergency')
 
 
 def test_timeline_handles_missing_window_and_invalid_cache_counts():

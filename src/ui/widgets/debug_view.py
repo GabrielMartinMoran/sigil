@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from rich.console import Group, RenderableType
+from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from textual.app import ComposeResult
@@ -83,6 +84,32 @@ def _last_request_table(report: DebugReport) -> RenderableType:
         else 'History not captured; fixed sections only.'
     )
     return table
+
+
+def _prompt_stack(report: DebugReport) -> RenderableType:
+    """Show the captured request's logical blocks, without retaining their content."""
+    request = report.request
+    if not request.captured:
+        return Text('Last request · prompt stack\n  No request captured in this process yet.', style='dim')
+
+    blocks: list[tuple[str, str, int | None]] = []
+    blocks.extend(
+        (block.name, 'dynamic' if block.dynamic else 'static', block.tokens) for block in request.instructions
+    )
+    if request.tools:
+        blocks.append(('Tool schemas', 'schema', request.tools_tokens))
+    if request.native_tools:
+        blocks.append((f'{request.native_tools} native tool schemas', 'schema', None))
+    blocks.extend((part.label, part.kind, part.tokens) for part in request.sections)
+
+    panels: list[RenderableType] = [Text('Last request · prompt stack · estimated tokens', style='bold')]
+    for label, kind, tokens in blocks:
+        style = DYNAMIC_STYLE if kind == 'dynamic' else PART_STYLES['schema'] if kind == 'schema' else 'white'
+        panels.append(Panel(Text(f'{label}  ·  {_n(tokens)} tokens'), border_style=style, padding=(0, 1)))
+    if not request.history_captured:
+        panels.append(Text('History not captured; fixed sections only.', style='dim'))
+    panels.append(Text('Logical order; provider wire order can differ. ? = unknown.', style='dim'))
+    return Group(*panels)
 
 
 def _fixed_cost_table(report: DebugReport) -> RenderableType:
@@ -227,7 +254,7 @@ def build_debug_body(report: DebugReport) -> RenderableType:
         Text(''),
         _cache_table(report),
         Text(''),
-        _last_request_table(report),
+        _prompt_stack(report),
         Text(''),
         _turns_table(report),
         Text(''),

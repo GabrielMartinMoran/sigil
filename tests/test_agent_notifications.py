@@ -149,7 +149,7 @@ def test_should_refresh_table_without_user_message_when_model_acks(env: Env) -> 
     snapshots: list[str] = []
 
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        snapshots.append(info.instructions or '')
+        snapshots.append(str(messages[-1].parts[-1].content))
         if len(snapshots) == 1:
             return ModelResponse(parts=[ToolCallPart('ack_notifications', {'notification_ids': [notice.id]})])
         return ModelResponse(parts=[TextPart('done')])

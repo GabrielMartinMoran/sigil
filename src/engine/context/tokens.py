@@ -132,7 +132,9 @@ def tool_return_text(part: Any) -> str:
     if callable(model_response_str):
         # Estimation must never break the request.
         with contextlib.suppress(Exception):
-            return model_response_str()
+            text = model_response_str()
+            if isinstance(text, str):
+                return text
     return _as_text(getattr(part, 'content', ''))
 
 

@@ -8,7 +8,6 @@ from decimal import Decimal
 from pathlib import Path
 
 from pydantic_ai.messages import (
-    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -26,10 +25,9 @@ from src.engine.context.instructions.workspace_instructions import WorkspaceInst
 from src.engine.context.meter.context_meter import ContextMeter
 from src.engine.context.meter.render import render_report
 from src.engine.context.scope import ScopeSink, ScopeTracker
-from src.engine.context.strategy.compacting import CompactingStrategy
+from src.engine.context.strategy.append_only import AppendOnlyStrategy
 from src.engine.context.strategy.passthrough import PassthroughStrategy
 from src.engine.context.strategy.turns import split_prompts
-from src.engine.context.strategy.windowed import WindowedStrategy
 from src.engine.context.tokens import estimate_tokens, measured_tokens, projected_tokens
 from src.engine.context.working_set import render_working_set, touched_files
 
@@ -151,33 +149,6 @@ def test_estimate_history_does_not_grow_with_replayed_instructions():
     assert estimate_messages_tokens(flat_replayed) == estimate_messages_tokens(flat_plain)
 
 
-def test_turns_survive_when_only_replayed_instructions_are_oversized():
-    """The regression: a long conversation loses its old turns to phantom tokens.
-
-    The real session: 451 requests carrying 34,520 characters of instructions each
-    (8,630 tokens, replayed 451 times). The content fits in the window; the
-    recorded instructions, which are never resent, made the estimate 12x its real
-    weight at the point where the trimming ran and the strategy discarded whole
-    turns.
-    """
-    from src.engine.context.tokens import estimate_tokens, part_text
-
-    body = 'system prompt ' * 1_500  # ~22k chars of instructions per request
-    messages: list[ModelMessage] = []
-    for index in range(10):
-        messages.append(_with_instructions(f'request {index}', body))
-        messages.append(_assistant(f'done {index}'))
-
-    # What actually travels: the parts, without the replayed instructions.
-    content_tokens = sum(estimate_tokens(part_text(part)) for message in messages for part in message.parts)
-    budget = ContextBudget(window=content_tokens * 2, output_reserve=0)
-
-    result = WindowedStrategy(keep_recent_prompts=3).view(messages, budget)
-
-    assert result.dropped_messages == 0
-    assert len(result.messages) == len(messages)
-
-
 def test_projected_tokens_ignores_replayed_instructions():
     """The panel's number does not take the instructions of past requests into account."""
     from src.engine.context.tokens import projected_tokens
@@ -247,78 +218,10 @@ def test_passthrough_returns_everything():
     assert not result.changed
 
 
-def test_windowed_drops_thinking():
-    """Past turns' reasoning is a record, not working memory: it goes."""
-    messages = [*_turn(1, thinking='long reasoning'), *_turn(2, thinking='more reasoning')]
-    result = WindowedStrategy(reasoning_steps=0).view(messages, ContextBudget(window=None))
-    assert result.dropped_thinking == 2
-    assert not any(isinstance(part, ThinkingPart) for message in result.messages for part in message.parts)
-
-
-def test_windowed_keeps_the_reasoning_of_the_round_in_progress():
-    """Only the current turn's reasoning is kept, and only its last steps."""
-    messages = [*_turn(1, thinking='from a finished turn'), *_turn(2, thinking='current turn')]
-
-    result = WindowedStrategy(reasoning_steps=1).view(messages, ContextBudget(window=None))
-
-    contents = [part.content for message in result.messages for part in message.parts if isinstance(part, ThinkingPart)]
-    assert contents == ['current turn']
-    assert result.dropped_thinking == 1
-
-
-def test_windowed_keeps_the_thinking_inside_the_window():
-    """There is no mode that keeps everything: the window is the only policy."""
-    messages = [*_turn(1, thinking='reasoning')]
-    result = WindowedStrategy(reasoning_steps=1).view(messages, ContextBudget(window=None))
-    assert result.dropped_thinking == 0
-    assert any(isinstance(part, ThinkingPart) for message in result.messages for part in message.parts)
-
-
-def test_detail_follows_the_age_of_the_call_not_the_turn():
-    """At 25 steps a result is a reference, not the thing being read."""
-    # The turn contributes two steps; the pad puts the call at age 25, the first fence.
-    messages = [*_turn(1, result_chars=20_000), *_pad(24)]
-    result = WindowedStrategy().view(messages, ContextBudget(window=None))
-    assert result.truncated_results == 1
-
-    returned = next(
-        part
-        for message in result.messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, ToolReturnPart)
-    )
-    assert 'truncated' in returned.content
-    assert len(returned.content) <= 2_000
-
-
-def test_a_young_call_is_not_touched_at_all():
-    messages = [*_turn(1, result_chars=20_000), *_pad(23)]
-    result = WindowedStrategy().view(messages, ContextBudget(window=None))
-    assert result.truncated_results == 0
-
-
-def test_the_call_of_the_step_in_progress_keeps_its_full_result():
-    """The result the agent is about to read is not reduced under it."""
-    messages = [*_turn(1, result_chars=20_000), *_pad(30), _user('again')]
-    messages.append(_tool_call('read_file', {'path': 'f9.py'}, 'c9'))
-    messages.append(_tool_return('read_file', 'x' * 20_000, 'c9'))
-    result = WindowedStrategy().view(messages, ContextBudget(window=None))
-    returns = [
-        part
-        for message in result.messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, ToolReturnPart)
-    ]
-    assert len(returns[-1].content) == 20_000
-    assert len(returns[0].content) <= 2_000
-
-
-def test_windowed_keeps_tool_call_and_return_paired():
+def test_append_only_keeps_tool_call_and_return_paired():
     """Un `ToolReturnPart` sin su `ToolCallPart` es un 400 del provider."""
     messages = [*_turn(1, result_chars=20_000), *_pad(30), *_turn(2)]
-    result = WindowedStrategy(keep_recent_prompts=1).view(messages, ContextBudget(window=None))
+    result = AppendOnlyStrategy().view(messages, ContextBudget(window=None))
     call_ids = {
         part.tool_call_id
         for message in result.messages
@@ -334,50 +237,6 @@ def test_windowed_keeps_tool_call_and_return_paired():
         if isinstance(part, ToolReturnPart)
     }
     assert return_ids <= call_ids
-
-
-def test_windowed_drops_oldest_turns_to_fit_budget():
-    messages = [*_turn(1), *_turn(2), *_turn(3), *_turn(4)]
-    result = WindowedStrategy(keep_recent_prompts=4).view(messages, ContextBudget(window=100, output_reserve=0))
-    assert result.dropped_messages > 0
-    assert len(result.messages) < len(messages)
-    # There is always at least one turn left.
-    assert result.messages
-
-
-def test_windowed_never_drops_the_last_turn():
-    messages = [*_turn(1, result_chars=50_000)]
-    result = WindowedStrategy(keep_recent_prompts=1).view(messages, ContextBudget(window=10, output_reserve=0))
-    assert result.messages
-
-
-def test_compacting_collapses_old_turns_into_summary():
-    messages = [*_turn(1), *_turn(2), *_turn(3), *_turn(4)]
-    result = CompactingStrategy(keep_recent_prompts=2).view(messages, ContextBudget(window=None))
-
-    assert result.compacted_prompts == 2
-    first = result.messages[0]
-    assert isinstance(first, ModelRequest)
-    compaction = [part for part in first.parts if isinstance(part, CompactionPart)]
-    assert len(compaction) == 1
-    assert 'request 1' in compaction[0].content
-    assert 'read_file' in compaction[0].content
-    # Recent turns stay whole.
-    assert len(result.messages) == 1 + 2 * 4
-
-
-def test_compacting_keeps_summary_when_over_budget():
-    messages = [*_turn(1), *_turn(2), *_turn(3), *_turn(4)]
-    result = CompactingStrategy(keep_recent_prompts=2).view(messages, ContextBudget(window=50, output_reserve=0))
-    assert isinstance(result.messages[0], ModelRequest)
-    assert any(isinstance(part, CompactionPart) for part in result.messages[0].parts)
-
-
-def test_compacting_without_old_turns_is_passthrough():
-    messages = [*_turn(1), *_turn(2)]
-    result = CompactingStrategy(keep_recent_prompts=5).view(messages, ContextBudget(window=None))
-    assert result.compacted_prompts == 0
-    assert len(result.messages) == len(messages)
 
 
 # --- scope -----------------------------------------------------------------
@@ -549,7 +408,7 @@ def test_meter_snapshot_and_report():
     snapshot = meter.snapshot(messages)
     assert snapshot.window == 100_000
     assert snapshot.budget.fixed == 2_000
-    assert snapshot.budget.available_for_history == 97_000
+    assert snapshot.budget.available_for_history == 92_000
 
     report = meter.report(messages)
     assert report.instructions == 500
@@ -623,7 +482,7 @@ def test_capability_is_not_destructive():
 
     messages = [*_turn(1, thinking='reasoning'), *_turn(2, thinking='more')]
     meter = ContextMeter(window=100_000)
-    capability = ContextViewCapability(strategy=WindowedStrategy(reasoning_steps=1), meter=meter)
+    capability = ContextViewCapability(strategy=AppendOnlyStrategy(), meter=meter)
 
     model = TestModel()
     ctx = RunContext(deps=None, model=model, usage=RunUsage())
@@ -638,10 +497,10 @@ def test_capability_is_not_destructive():
 
     result = asyncio.run(capability.before_model_request(ctx, request_context))
 
-    # The request lost the reasoning of the finished steps...
+    # Ordinary operation appends: nothing below the trigger is rewritten.
     kept = [part for message in result.messages for part in message.parts if isinstance(part, ThinkingPart)]
-    assert len(kept) == 1
-    # ...but the persistent history stays intact.
+    assert len(kept) == 2
+    # The persistent history stays intact either way.
     assert any(isinstance(part, ThinkingPart) for message in ctx.messages for part in message.parts)
     assert capability.last_view is not None
 
@@ -684,97 +543,6 @@ def test_tool_return_text_uses_model_response_str():
     text = tool_return_text(part)
     assert len(text) > 5_000
     assert text.startswith('{')
-
-
-def test_windowed_truncates_pydantic_tool_results():
-    """Regression: comparing against `isinstance(content, str)` left the truncation without effect."""
-    messages = [*_pydantic_turn(1), *_pad(30)]
-    result = WindowedStrategy().view(messages, ContextBudget(window=None))
-    assert result.truncated_results == 1
-
-    returns = [
-        part
-        for message in result.messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, ToolReturnPart)
-    ]
-    assert len(returns[0].model_response_str()) < 2_500
-    assert len(messages[2].parts[0].model_response_str()) > 200_000
-
-
-def test_windowed_reduces_historical_skill_payloads_without_mutating_the_log():
-    """A skill body is instruction: truncating it takes the task away from the agent."""
-    body = 'y' * 30_000
-    messages = [
-        _user('load the skill'),
-        _tool_call('load_skill', {'name': 'clean-code'}, 's1'),
-        ModelRequest(parts=[ToolReturnPart(tool_name='load_skill', content=body, tool_call_id='s1')]),
-        _assistant('loaded'),
-        *_pad(40),
-    ]
-    result = WindowedStrategy(keep_recent_prompts=1).view(messages, ContextBudget(window=None))
-    skill_return = next(
-        part
-        for message in result.messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'load_skill'
-    )
-    assert len(skill_return.content) < len(body)
-    assert messages[2].parts[0].content == body
-
-
-def test_compacting_keeps_pinned_turns_intact():
-    body = 'y' * 10_000
-    messages = [
-        _user('load the skill'),
-        _tool_call('load_skill', {'name': 'clean-code'}, 's1'),
-        ModelRequest(parts=[ToolReturnPart(tool_name='load_skill', content=body, tool_call_id='s1')]),
-        _assistant('loaded'),
-        *_turn(2),
-        *_turn(3),
-        *_turn(4),
-    ]
-    result = CompactingStrategy(keep_recent_prompts=1).view(messages, ContextBudget(window=None))
-
-    # The skill turn survives whole; the other old turns get compacted.
-    assert any(
-        isinstance(part, ToolReturnPart) and part.tool_name == 'load_skill' and part.content == body
-        for message in result.messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-    )
-    assert result.compacted_prompts == 2
-
-
-def test_fit_to_budget_prefers_dropping_unpinned_turns():
-    """If you have to choose, an old read_file is lost before the instructions."""
-    body = 'y' * 4_000
-    messages = [
-        _user('load the skill'),
-        _tool_call('load_skill', {'name': 'x'}, 's1'),
-        ModelRequest(parts=[ToolReturnPart(tool_name='load_skill', content=body, tool_call_id='s1')]),
-        _assistant('loaded'),
-        *_turn(2, result_chars=4_000),
-        *_turn(3, result_chars=4_000),
-    ]
-    from src.engine.context.tokens import estimate_messages_tokens
-
-    # Budget just enough to fit by discarding the turn without instructions.
-    total = estimate_messages_tokens(messages)
-    unpinned = estimate_messages_tokens(_turn(2, result_chars=4_000))
-    window = total - unpinned + 50
-
-    result = WindowedStrategy(keep_recent_prompts=1).view(messages, ContextBudget(window=window, output_reserve=0))
-
-    assert result.dropped_messages == len(_turn(2, result_chars=4_000))
-    assert any(
-        isinstance(part, ToolReturnPart) and part.tool_name == 'load_skill'
-        for message in result.messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-    )
 
 
 # --- working set -----------------------------------------------------------
@@ -865,61 +633,3 @@ def test_touched_files_respects_limit():
 
 def test_render_working_set_is_empty_without_files():
     assert render_working_set([]) == ''
-
-
-def test_compacting_summary_includes_working_set():
-    messages = [*_turn(1), *_turn(2), *_turn(3), *_turn(4)]
-    result = CompactingStrategy(keep_recent_prompts=2).view(messages, ContextBudget(window=None))
-
-    summary = next(part.content for part in result.messages[0].parts if isinstance(part, CompactionPart))
-    assert 'Files touched so far' in summary
-    # The four turns touched f1..f4; the most recent one goes first.
-    working_set = summary[summary.index('Files touched so far') :]
-    assert working_set.index('f4.py') < working_set.index('f1.py')
-
-
-def test_compacting_working_set_can_be_disabled():
-    messages = [*_turn(1), *_turn(2), *_turn(3), *_turn(4)]
-    result = CompactingStrategy(keep_recent_prompts=2, include_working_set=False).view(
-        messages, ContextBudget(window=None)
-    )
-    summary = next(part.content for part in result.messages[0].parts if isinstance(part, CompactionPart))
-    assert 'Files touched' not in summary
-
-
-def test_compacting_without_compaction_has_no_working_set():
-    """With no old turns there is no summary, and therefore no working set either."""
-    messages = [*_turn(1), *_turn(2)]
-    result = CompactingStrategy(keep_recent_prompts=5).view(messages, ContextBudget(window=None))
-    assert not any(isinstance(part, CompactionPart) for message in result.messages for part in message.parts)
-
-
-def test_a_foreign_tool_uses_the_fixed_size_ladder_and_the_log_is_untouched():
-    """A tool from outside this project has no semantic policy: sizes, and only sizes."""
-    messages = [
-        _user('call the server'),
-        _tool_call('mcp_echo', {'q': 'x' * 20_000}, 'm1'),
-        _tool_return('mcp_echo', 'x' * 20_000, 'm1'),
-        *_pad(25),
-    ]
-    result = WindowedStrategy().view(messages, ContextBudget(window=None))
-    returned = next(
-        part
-        for message in result.messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, ToolReturnPart)
-    )
-    called = next(
-        part
-        for message in result.messages
-        if isinstance(message, ModelResponse)
-        for part in message.parts
-        if isinstance(part, ToolCallPart)
-    )
-    # The first fence is 2.000 characters, for the argument and for the result.
-    assert len(returned.content) <= 2_000
-    assert len(called.args_as_json_str()) <= 2_000
-    assert 'truncated' in returned.content
-    # Compaction is a projection: the transcript keeps what the tool returned.
-    assert len(messages[2].parts[0].content) == 20_000

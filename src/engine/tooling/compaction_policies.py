@@ -1,4 +1,4 @@
-"""What each Sigil tool keeps of its arguments and of its result, level by level.
+"""What each Sigil tool keeps of its arguments and of its result when compacted.
 
 Every tool this project owns declares a policy here and passes it to its registration.
 The declaration is mandatory: the agent build fails when one is missing, because a tool
@@ -6,13 +6,13 @@ without a policy is a cost nobody decided, and the moment to notice is not the b
 
 Rules the functions keep:
 
-- **Identity survives every level.** A path, a URL, a server name, an exit code, a status
-  and an error are what let the model decide whether it needs the call again. Only the
-  payload shrinks.
+- **Identity survives.** A path, a URL, a server name, an exit code, a status and an
+  error are what let the model decide whether it needs the call again. Only the payload
+  shrinks.
 - **A failure never reads like a success.** The error text is shortened, never dropped,
   and the same goes for a partial result and its reason.
 - **Both sides matter.** The argument carries the path or the query; the result carries
-  the body. A level applies to the two, which is why each tool declares two functions.
+  the body, which is why each tool declares two functions.
 - **Nothing is invented.** A compacted value is a projection of the original, never a
   summary written by a model and never a guess about what it said.
 """
@@ -22,12 +22,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from src.engine.tooling.lod import Compact, ToolLOD, ToolLODPolicy, contains_binary, limit_for, shorten
-from src.engine.tooling.lod_constants import SCRIPT_ARGUMENT_COUNTS, SEMANTIC_LOD_CHARS
+from src.engine.tooling.compaction import Compactor, ToolCompactor, contains_binary, shorten
+from src.engine.tooling.compaction_constants import SEMANTIC_COMPACT_CHARS
 
 
-def _limit(name: str, level: ToolLOD) -> int:
-    return SEMANTIC_LOD_CHARS[name][int(level) - 1]
+def _limit(name: str) -> int:
+    return SEMANTIC_COMPACT_CHARS[name]
 
 
 # --- helpers --------------------------------------------------------------
@@ -87,38 +87,33 @@ def _compact_fields(value: Any, keep: Sequence[str], limit: int, *, text_keys: S
     return result
 
 
-def _stub(value: Any, keep: Sequence[str], label: str) -> Any:
-    """The last level: what the call was, nothing of its payload."""
+def _binary_stub(value: Any, keep: Sequence[str], label: str) -> Any:
+    """An opaque payload keeps only its handles: it cannot be partially decoded."""
     if isinstance(value, str):
-        return shorten(value, limit_for(ToolLOD.LOD_3), label='tool result')
+        return shorten(value, _limit('resource_note'), label='tool result')
     data = _as_mapping(value)
-    result = {name: data[name] for name in (*keep, 'error', 'status', 'outcome', 'omitted_fields') if name in data}
+    result = {name: data[name] for name in (*keep, 'error', 'status', 'outcome') if name in data}
     result.setdefault('omitted', label)
     return result
 
 
-def _policy(
-    input_fn: Compact,
-    output_fn: Compact,
-    *,
-    preserve: Sequence[str] = (),
-) -> ToolLODPolicy:
-    return ToolLODPolicy(input=input_fn, output=output_fn, preserve=frozenset(preserve))
+def _policy(input_fn: Compactor, output_fn: Compactor, *, preserve: Sequence[str] = ()) -> ToolCompactor:
+    return ToolCompactor(input=input_fn, output=output_fn, preserve=frozenset(preserve))
 
 
 # --- shell ----------------------------------------------------------------
 
 
-def _run_input(args: dict[str, Any], level: ToolLOD) -> dict[str, Any]:
+def _run_input(args: dict[str, Any]) -> dict[str, Any]:
     """Commands are what the call was: they shrink, they never disappear."""
-    limit = _limit('process_input', level)
+    limit = _limit('process_input')
     cmds = [shorten(str(command), limit) for command in _items(args.get('cmds', []))]
     return {'cmds': cmds, 'timeout_seconds': args.get('timeout_seconds')}
 
 
-def _run_output(value: Any, level: ToolLOD) -> Any:
+def _run_output(value: Any) -> Any:
     """Keeps exit code, timeout and error; the streams are what shrink."""
-    limit = _limit('process_output', level)
+    limit = _limit('process_output')
     results = []
     for item in _items(value):
         compacted = _compact_fields(
@@ -136,35 +131,27 @@ def _run_output(value: Any, level: ToolLOD) -> Any:
     return results
 
 
-RUN_LOD = _policy(_run_input, _run_output, preserve=('timeout_seconds',))
+RUN_COMPACTOR = _policy(_run_input, _run_output, preserve=('timeout_seconds',))
 
 
 # --- files ----------------------------------------------------------------
 
 
-def _path_input(args: dict[str, Any], level: ToolLOD) -> dict[str, Any]:
-    """The path is the identity of the call: every level keeps it."""
+def _path_input(args: dict[str, Any]) -> dict[str, Any]:
+    """The path is the identity of the call: it always survives."""
     kept = {'path': args.get('path')}
     for name in ('start_line', 'end_line', 'max_bytes', 'append', 'replace_all'):
         if args.get(name) is not None:
             kept[name] = args[name]
-    if level is ToolLOD.LOD_1:
-        for name in ('content', 'new_string', 'old_string', 'expected_text'):
-            if args.get(name) is not None:
-                kept[name] = shorten(str(args[name]), _limit('file_edit_input', level))
-    elif level is ToolLOD.LOD_2:
-        for name in ('content', 'new_string'):
-            if args.get(name) is not None:
-                kept[name] = shorten(str(args[name]), _limit('file_edit_input', level))
-    elif level is ToolLOD.LOD_3:
-        kept = {name: kept[name] for name in ('path', 'start_line', 'end_line') if name in kept}
-        kept.setdefault('omitted', 'edit payload')
+    for name in ('content', 'new_string', 'old_string', 'expected_text'):
+        if args.get(name) is not None:
+            kept[name] = shorten(str(args[name]), _limit('file_edit_input'))
     return kept
 
 
-def _file_output(value: Any, level: ToolLOD) -> Any:
+def _file_output(value: Any) -> Any:
     """A read keeps its path and range; the text is the payload."""
-    limit = _limit('file_output', level)
+    limit = _limit('file_output')
     keep = (
         'path',
         'size',
@@ -182,25 +169,21 @@ def _file_output(value: Any, level: ToolLOD) -> Any:
         'bytes_before',
         'bytes_after',
     )
-    data = _as_mapping(value) if not isinstance(value, str) else value
-    if isinstance(data, dict) and contains_binary(data):
-        return _stub(data, keep, 'binary file content')
-    result = _compact_fields(value, keep, limit, text_keys=('content', 'text', 'preview'))
-    if level is ToolLOD.LOD_3:
-        result = _stub(result, keep, 'file content')
-    return result
+    if isinstance(value, Mapping) and contains_binary(value):
+        return _binary_stub(value, keep, 'binary file content')
+    return _compact_fields(value, keep, limit, text_keys=('content', 'text', 'preview'))
 
 
-READ_FILE_LOD = _policy(_path_input, _file_output, preserve=('path',))
-WRITE_FILE_LOD = _policy(_path_input, _file_output, preserve=('path',))
-PATCH_FILE_LOD = _policy(_path_input, _file_output, preserve=('path',))
+READ_FILE_COMPACTOR = _policy(_path_input, _file_output, preserve=('path',))
+WRITE_FILE_COMPACTOR = _policy(_path_input, _file_output, preserve=('path',))
+PATCH_FILE_COMPACTOR = _policy(_path_input, _file_output, preserve=('path',))
 
 
 # --- web ------------------------------------------------------------------
 
 
-def _search_input(args: dict[str, Any], level: ToolLOD) -> dict[str, Any]:
-    limit = _limit('search_input', level)
+def _search_input(args: dict[str, Any]) -> dict[str, Any]:
+    limit = _limit('search_input')
     kept = {'query': shorten(str(args.get('query', '')), limit)}
     for name in ('max_results', 'region', 'safesearch', 'timelimit'):
         if args.get(name) is not None:
@@ -208,21 +191,21 @@ def _search_input(args: dict[str, Any], level: ToolLOD) -> dict[str, Any]:
     return kept
 
 
-def _search_output(value: Any, level: ToolLOD) -> Any:
+def _search_output(value: Any) -> Any:
     """Title and URL before snippet: they are what makes a result worth reading."""
     data = _as_mapping(value)
-    limit = _limit('search_snippet', level)
+    limit = _limit('search_snippet')
     results = []
     for item in _items(data.get('results', [])):
         entry = _as_mapping(item)
         compacted = {name: entry[name] for name in ('title', 'url') if name in entry}
-        if level is ToolLOD.LOD_1 and 'snippet' in entry:
+        if 'snippet' in entry:
             compacted['snippet'] = shorten(str(entry['snippet']), limit)
         results.append(compacted)
     return {'query': data.get('query'), 'count': data.get('count'), 'results': results}
 
 
-def _url_input(args: dict[str, Any], level: ToolLOD) -> dict[str, Any]:
+def _url_input(args: dict[str, Any]) -> dict[str, Any]:
     return {
         'url': args.get('url', ''),
         'fmt': args.get('fmt'),
@@ -230,60 +213,52 @@ def _url_input(args: dict[str, Any], level: ToolLOD) -> dict[str, Any]:
     }
 
 
-def _page_output(value: Any, level: ToolLOD) -> Any:
-    limit = _limit('page_output', level)
+def _page_output(value: Any) -> Any:
+    limit = _limit('page_output')
     if contains_binary(value):
-        return _stub(value, ('url', 'format', 'truncated'), 'binary page content')
-    result = _compact_fields(value, ('url', 'format', 'truncated'), limit, text_keys=('content',))
-    if level is ToolLOD.LOD_3:
-        result = _stub(result, ('url', 'format', 'truncated'), 'page text')
-    return result
+        return _binary_stub(value, ('url', 'format', 'truncated'), 'binary page content')
+    return _compact_fields(value, ('url', 'format', 'truncated'), limit, text_keys=('content',))
 
 
-WEB_SEARCH_LOD = _policy(_search_input, _search_output)
-READ_URL_LOD = _policy(_url_input, _page_output)
+WEB_SEARCH_COMPACTOR = _policy(_search_input, _search_output)
+READ_URL_COMPACTOR = _policy(_url_input, _page_output)
 
 
 # --- skills ---------------------------------------------------------------
 
 
-def _name_input(args: dict[str, Any], level: ToolLOD) -> dict[str, Any]:
-    """The name and the path name the artifact: both survive every level."""
+def _name_input(args: dict[str, Any]) -> dict[str, Any]:
+    """The name and the path name the artifact: both survive."""
     kept = {name: args[name] for name in ('name', 'path', 'script', 'timeout_seconds') if args.get(name) is not None}
     if args.get('args'):
-        count = SCRIPT_ARGUMENT_COUNTS[int(level) - 1]
-        items = _items(args['args'])
-        kept['args'] = [shorten(str(item), _limit('script_argument', level)) for item in items[:count]]
-        if count is not None and len(items) > count:
-            kept['omitted_arguments'] = len(items) - count
+        limit = _limit('script_argument')
+        kept['args'] = [shorten(str(item), limit) for item in _items(args['args'])]
     if args.get('query'):
-        kept['query'] = shorten(str(args['query']), _limit('search_input', level))
+        kept['query'] = shorten(str(args['query']), _limit('search_input'))
     if args.get('max_bytes') is not None:
         kept['max_bytes'] = args['max_bytes']
     return kept
 
 
-def _skill_list_output(value: Any, level: ToolLOD) -> Any:
-    limit = _limit('skill_description', level)
+def _skill_list_output(value: Any) -> Any:
+    limit = _limit('skill_description')
     return [
         _compact_fields(item, ('name', 'source', 'path'), limit, text_keys=('description',)) for item in _items(value)
     ]
 
 
-def _loaded_skill_output(value: Any, level: ToolLOD) -> Any:
+def _loaded_skill_output(value: Any) -> Any:
     """The instructions are injected elsewhere; here only the inventory matters."""
     data = _as_mapping(value)
-    limit = _limit('loaded_skill_description', level)
+    limit = _limit('loaded_skill_description')
     resources = [_compact_fields(item, ('path', 'size', 'kind'), limit) for item in _items(data.get('resources', []))]
     kept = _compact_fields(data, ('name', 'source', 'path'), limit, text_keys=('description',))
     kept['resources'] = resources
-    if level is ToolLOD.LOD_3:
-        kept['resources'] = [item.get('path') for item in resources]
     return kept
 
 
-def _script_output(value: Any, level: ToolLOD) -> Any:
-    result = _run_output(value, level)[0]
+def _script_output(value: Any) -> Any:
+    result = _run_output(value)[0]
     if isinstance(result, dict):
         data = _as_mapping(value)
         for key in ('skill', 'script'):
@@ -292,64 +267,62 @@ def _script_output(value: Any, level: ToolLOD) -> Any:
     return result
 
 
-def _resource_output(value: Any, level: ToolLOD) -> Any:
-    return _compact_fields(
-        value, ('skill', 'path', 'size', 'truncated', 'binary', 'note'), _limit('resource_note', level)
-    )
+def _resource_output(value: Any) -> Any:
+    return _compact_fields(value, ('skill', 'path', 'size', 'truncated', 'binary', 'note'), _limit('resource_note'))
 
 
-LIST_SKILLS_LOD = _policy(_name_input, _skill_list_output)
-LOAD_SKILL_LOD = _policy(_name_input, _loaded_skill_output)
-READ_SKILL_RESOURCE_LOD = _policy(_name_input, _resource_output)
-RUN_SKILL_SCRIPT_LOD = _policy(_name_input, _script_output)
+LIST_SKILLS_COMPACTOR = _policy(_name_input, _skill_list_output)
+LOAD_SKILL_COMPACTOR = _policy(_name_input, _loaded_skill_output)
+READ_SKILL_RESOURCE_COMPACTOR = _policy(_name_input, _resource_output)
+RUN_SKILL_SCRIPT_COMPACTOR = _policy(_name_input, _script_output)
 
 
 # --- interaction and roadmap ---------------------------------------------
 
 
-def _questions_input(args: dict[str, Any], level: ToolLOD) -> dict[str, Any]:
-    limit = _limit('question_input', level)
+def _questions_input(args: dict[str, Any]) -> dict[str, Any]:
+    limit = _limit('question_input')
     questions = []
     for item in _items(args.get('questions', [])):
         entry = _as_mapping(item)
         compacted = {}
         if 'question' in entry:
             compacted['question'] = shorten(str(entry['question']), limit)
-        if level is ToolLOD.LOD_1:
-            compacted['options'] = [
-                shorten(str(_as_mapping(option).get('label', '')), _limit('question_option', level))
-                for option in _items(entry.get('options', []))
-            ]
+        compacted['options'] = [
+            shorten(str(_as_mapping(option).get('label', '')), _limit('question_option'))
+            for option in _items(entry.get('options', []))
+        ]
         questions.append(compacted)
     return {'questions': questions}
 
 
-def _question_result_output(value: Any, level: ToolLOD) -> Any:
+def _question_result_output(value: Any) -> Any:
     """An answer is the user's decision: it shrinks last and never disappears."""
-    limit = _limit('question_result_note', level)
     # User decisions are protected verbatim: even a truncated negation changes authority.
-    return _compact_fields(value, ('answers', 'cancelled'), limit, text_keys=('note', 'reason'))
+    return _compact_fields(
+        value, ('answers', 'cancelled'), _limit('question_result_note'), text_keys=('note', 'reason')
+    )
 
 
-ASK_USER_LOD = _policy(_questions_input, _question_result_output)
+ASK_USER_COMPACTOR = _policy(_questions_input, _question_result_output)
 
 
-def _roadmap_input(args: dict[str, Any], level: ToolLOD) -> dict[str, Any]:
+def _roadmap_input(args: dict[str, Any]) -> dict[str, Any]:
     kept = {name: args[name] for name in ('action', 'item_id', 'status') if args.get(name) is not None}
-    limit = _limit('roadmap_input', level)
+    limit = _limit('roadmap_input')
     if args.get('title'):
         kept['title'] = shorten(str(args['title']), limit)
     if args.get('notes'):
         kept['notes'] = shorten(str(args['notes']), limit)
-    if args.get('items') and level is not ToolLOD.LOD_3:
+    if args.get('items'):
         kept['items'] = [
             _compact_fields(item, ('id', 'status'), limit, text_keys=('title',)) for item in _items(args['items'])
         ]
     return kept
 
 
-def _roadmap_output(value: Any, level: ToolLOD) -> Any:
-    limit = _limit('roadmap_output', level)
+def _roadmap_output(value: Any) -> Any:
+    limit = _limit('roadmap_output')
     data = _as_mapping(value)
     items = [
         _compact_fields(item, ('id', 'status'), limit, text_keys=('title',)) for item in _items(data.get('items', []))
@@ -357,37 +330,33 @@ def _roadmap_output(value: Any, level: ToolLOD) -> Any:
     return {**_compact_fields(data, ('counts', 'persistence_error'), limit), 'items': items}
 
 
-UPDATE_ROADMAP_LOD = _policy(_roadmap_input, _roadmap_output)
+UPDATE_ROADMAP_COMPACTOR = _policy(_roadmap_input, _roadmap_output)
 
 
 # --- images ---------------------------------------------------------------
 
 
-def _image_input(args: dict[str, Any], level: ToolLOD) -> dict[str, Any]:
+def _image_input(args: dict[str, Any]) -> dict[str, Any]:
     return {'source': args.get('source', '')}
 
 
-def _image_output(value: Any, level: ToolLOD) -> Any:
+def _image_output(value: Any) -> Any:
     """The picture itself is never part of this text: the id is the handle."""
     if isinstance(value, str):
         # The return value is already a short sentence with the recoverable image id.
         return value
-    limit = _limit('image_note', level)
-    result = _compact_fields(value, ('image_id', 'width', 'height'), limit, text_keys=('note', 'error'))
-    if level is ToolLOD.LOD_3:
-        result = _stub(result, ('image_id',), 'image')
-    return result
+    return _compact_fields(value, ('image_id', 'width', 'height'), _limit('image_note'), text_keys=('note', 'error'))
 
 
-VIEW_IMAGE_LOD = _policy(_image_input, _image_output)
+VIEW_IMAGE_COMPACTOR = _policy(_image_input, _image_output)
 
 
 # --- agent tree -----------------------------------------------------------
 
 
-def _tree_input(args: dict[str, Any], level: ToolLOD) -> dict[str, Any]:
+def _tree_input(args: dict[str, Any]) -> dict[str, Any]:
     kept = {name: args[name] for name in ('agent', 'agent_id', 'mode') if args.get(name) is not None}
-    limit = _limit('agent_input', level)
+    limit = _limit('agent_input')
     if args.get('task'):
         kept['task'] = shorten(str(args['task']), limit)
     if args.get('message'):
@@ -397,16 +366,16 @@ def _tree_input(args: dict[str, Any], level: ToolLOD) -> dict[str, Any]:
     return kept
 
 
-def _text_output(value: Any, level: ToolLOD) -> Any:
-    limit = _limit('agent_output', level)
+def _text_output(value: Any) -> Any:
+    limit = _limit('agent_output')
     if isinstance(value, str):
         header, separator, body = value.partition('\n')
         return header + (separator + shorten(body, limit) if separator else '')
     return _compact_fields(value, ('agent_id', 'name', 'status', 'delivered'), limit, text_keys=('result', 'error'))
 
 
-def _agents_list_output(value: Any, level: ToolLOD) -> Any:
-    limit = _limit('agent_task', level)
+def _agents_list_output(value: Any) -> Any:
+    limit = _limit('agent_task')
     if isinstance(value, str):
         # Preserve every row's identifiers and state; only the free-form task shrinks.
         rows = []
@@ -417,24 +386,24 @@ def _agents_list_output(value: Any, level: ToolLOD) -> Any:
     return [_compact_fields(item, ('id', 'name', 'status', 'role'), limit) for item in _items(value)]
 
 
-SUMMON_LOD = _policy(_tree_input, _text_output)
-SEND_MESSAGE_LOD = _policy(_tree_input, _text_output)
-ACK_NOTIFICATIONS_LOD = _policy(_tree_input, _text_output)
-KILL_SUBAGENT_LOD = _policy(_tree_input, _text_output)
-LIST_AGENTS_LOD = _policy(_tree_input, _agents_list_output)
+SUMMON_COMPACTOR = _policy(_tree_input, _text_output)
+SEND_MESSAGE_COMPACTOR = _policy(_tree_input, _text_output)
+ACK_NOTIFICATIONS_COMPACTOR = _policy(_tree_input, _text_output)
+KILL_SUBAGENT_COMPACTOR = _policy(_tree_input, _text_output)
+LIST_AGENTS_COMPACTOR = _policy(_tree_input, _agents_list_output)
 
 
 # --- mcp ------------------------------------------------------------------
 
 
-def _mcp_output(value: Any, level: ToolLOD) -> Any:
-    limit = _limit('mcp_output', level)
+def _mcp_output(value: Any) -> Any:
+    limit = _limit('mcp_output')
     if isinstance(value, str):
         return shorten(value, limit)
     data = _as_mapping(value)
     keep = ('server', 'uri', 'name', 'status', 'error', 'binary', 'encoding', 'mime_type')
     if contains_binary(data):
-        return _stub(data, keep, 'binary resource content')
+        return _binary_stub(data, keep, 'binary resource content')
     result = _compact_fields(data, keep, limit, text_keys=('content', 'description'))
     if 'messages' in data:
         result['messages'] = [
@@ -443,8 +412,8 @@ def _mcp_output(value: Any, level: ToolLOD) -> Any:
     return result
 
 
-def _mcp_list_output(value: Any, level: ToolLOD) -> Any:
-    limit = _limit('mcp_description', level)
+def _mcp_list_output(value: Any) -> Any:
+    limit = _limit('mcp_description')
     return [
         _compact_fields(
             item,
@@ -468,51 +437,50 @@ def _mcp_list_output(value: Any, level: ToolLOD) -> Any:
     ]
 
 
-def _mcp_prompt_input(args: dict[str, Any], level: ToolLOD) -> dict[str, Any]:
+def _mcp_prompt_input(args: dict[str, Any]) -> dict[str, Any]:
     kept = {name: args[name] for name in ('server', 'name', 'connect') if args.get(name) is not None}
     if args.get('uri'):
         kept['uri'] = args['uri']
-    if args.get('arguments') and level is not ToolLOD.LOD_3:
+    if args.get('arguments'):
         kept['arguments'] = {
-            str(key): shorten(str(item), _limit('mcp_argument', level))
-            for key, item in _as_mapping(args['arguments']).items()
+            str(key): shorten(str(item), _limit('mcp_argument')) for key, item in _as_mapping(args['arguments']).items()
         }
     return kept
 
 
-LIST_MCP_SERVERS_LOD = _policy(_mcp_prompt_input, _mcp_list_output)
-LIST_MCP_RESOURCES_LOD = _policy(_mcp_prompt_input, _mcp_list_output)
-READ_MCP_RESOURCE_LOD = _policy(_mcp_prompt_input, _mcp_output)
-LIST_MCP_PROMPTS_LOD = _policy(_mcp_prompt_input, _mcp_list_output)
-GET_MCP_PROMPT_LOD = _policy(_mcp_prompt_input, _mcp_output)
+LIST_MCP_SERVERS_COMPACTOR = _policy(_mcp_prompt_input, _mcp_list_output)
+LIST_MCP_RESOURCES_COMPACTOR = _policy(_mcp_prompt_input, _mcp_list_output)
+READ_MCP_RESOURCE_COMPACTOR = _policy(_mcp_prompt_input, _mcp_output)
+LIST_MCP_PROMPTS_COMPACTOR = _policy(_mcp_prompt_input, _mcp_list_output)
+GET_MCP_PROMPT_COMPACTOR = _policy(_mcp_prompt_input, _mcp_output)
 
 
-ALL_POLICIES: dict[str, ToolLODPolicy] = {
-    'run': RUN_LOD,
-    'read_file': READ_FILE_LOD,
-    'write_file': WRITE_FILE_LOD,
-    'patch_file': PATCH_FILE_LOD,
-    'web_search': WEB_SEARCH_LOD,
-    'read_url': READ_URL_LOD,
-    'list_skills': LIST_SKILLS_LOD,
-    'load_skill': LOAD_SKILL_LOD,
-    'read_skill_resource': READ_SKILL_RESOURCE_LOD,
-    'run_skill_script': RUN_SKILL_SCRIPT_LOD,
-    'ask_user': ASK_USER_LOD,
-    'update_roadmap': UPDATE_ROADMAP_LOD,
-    'view_image': VIEW_IMAGE_LOD,
-    'summon': SUMMON_LOD,
-    'send_message': SEND_MESSAGE_LOD,
-    'ack_notifications': ACK_NOTIFICATIONS_LOD,
-    'kill_subagent': KILL_SUBAGENT_LOD,
-    'list_agents': LIST_AGENTS_LOD,
-    'list_mcp_servers': LIST_MCP_SERVERS_LOD,
-    'list_mcp_resources': LIST_MCP_RESOURCES_LOD,
-    'read_mcp_resource': READ_MCP_RESOURCE_LOD,
-    'list_mcp_prompts': LIST_MCP_PROMPTS_LOD,
-    'get_mcp_prompt': GET_MCP_PROMPT_LOD,
+ALL_COMPACTORS: dict[str, ToolCompactor] = {
+    'run': RUN_COMPACTOR,
+    'read_file': READ_FILE_COMPACTOR,
+    'write_file': WRITE_FILE_COMPACTOR,
+    'patch_file': PATCH_FILE_COMPACTOR,
+    'web_search': WEB_SEARCH_COMPACTOR,
+    'read_url': READ_URL_COMPACTOR,
+    'list_skills': LIST_SKILLS_COMPACTOR,
+    'load_skill': LOAD_SKILL_COMPACTOR,
+    'read_skill_resource': READ_SKILL_RESOURCE_COMPACTOR,
+    'run_skill_script': RUN_SKILL_SCRIPT_COMPACTOR,
+    'ask_user': ASK_USER_COMPACTOR,
+    'update_roadmap': UPDATE_ROADMAP_COMPACTOR,
+    'view_image': VIEW_IMAGE_COMPACTOR,
+    'summon': SUMMON_COMPACTOR,
+    'send_message': SEND_MESSAGE_COMPACTOR,
+    'ack_notifications': ACK_NOTIFICATIONS_COMPACTOR,
+    'kill_subagent': KILL_SUBAGENT_COMPACTOR,
+    'list_agents': LIST_AGENTS_COMPACTOR,
+    'list_mcp_servers': LIST_MCP_SERVERS_COMPACTOR,
+    'list_mcp_resources': LIST_MCP_RESOURCES_COMPACTOR,
+    'read_mcp_resource': READ_MCP_RESOURCE_COMPACTOR,
+    'list_mcp_prompts': LIST_MCP_PROMPTS_COMPACTOR,
+    'get_mcp_prompt': GET_MCP_PROMPT_COMPACTOR,
 }
 """Every tool this project owns, by name. The build checks the catalogue against it."""
 
 
-__all__ = ['ALL_POLICIES']
+__all__ = ['ALL_COMPACTORS']

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from pydantic_ai.messages import ModelMessage, ModelResponse, ThinkingPart
+from pydantic_ai.messages import ModelMessage, ModelResponse
 
 
 def step_of_message(messages: Sequence[ModelMessage]) -> list[int]:
@@ -37,19 +37,6 @@ def step_count(messages: Sequence[ModelMessage]) -> int:
     return sum(1 for message in messages if isinstance(message, ModelResponse))
 
 
-def reasoning_step_count(messages: Sequence[ModelMessage]) -> int:
-    """How many steps produced reasoning.
-
-    It is the clock the reasoning window is measured against as well, but it is a
-    different number: a step that only answers with text does not renew the window.
-    """
-    return sum(
-        1
-        for message in messages
-        if isinstance(message, ModelResponse) and any(isinstance(part, ThinkingPart) for part in message.parts)
-    )
-
-
 def tool_call_steps(messages: Sequence[ModelMessage]) -> dict[str, int]:
     """The step each tool call belongs to, by ``tool_call_id``.
 
@@ -68,4 +55,4 @@ def tool_call_steps(messages: Sequence[ModelMessage]) -> dict[str, int]:
     return ages
 
 
-__all__ = ['reasoning_step_count', 'step_count', 'step_of_message', 'tool_call_steps']
+__all__ = ['step_count', 'step_of_message', 'tool_call_steps']

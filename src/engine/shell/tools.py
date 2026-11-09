@@ -10,7 +10,7 @@ from src.engine.shell.limits import DEFAULT_TIMEOUT
 from src.engine.shell.models.run_tool_output import RunToolOutput
 from src.engine.shell.runner import execute_commands
 from src.engine.tooling.catalog import ToolCatalog
-from src.engine.tooling.lod_policies import RUN_LOD
+from src.engine.tooling.compaction_policies import RUN_COMPACTOR
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.permission import ResourceKind, ToolGroup, ToolPermission
 from src.engine.tooling.presentation import ToolSummary
@@ -67,7 +67,7 @@ def register_shell_tools(agent: Any, logger: ToolLogger | None = None, catalog: 
     """Registers the shell tool on a pydantic-ai agent."""
     tools = ToolRegistrar(agent, logger, catalog)
 
-    @tools.tool(permission=_SHELL, describe=describe_run, lod=RUN_LOD)
+    @tools.tool(permission=_SHELL, describe=describe_run, compaction=RUN_COMPACTOR)
     async def run(
         cmds: list[str],
         timeout_seconds: int = DEFAULT_TIMEOUT,

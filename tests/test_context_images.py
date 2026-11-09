@@ -18,8 +18,8 @@ from pydantic_ai.messages import BinaryImage, ModelRequest, TextPart, ToolReturn
 
 from src.engine.attachments.image_attachment import image_tokens
 from src.engine.context.images import image_part_tokens
+from src.engine.context.strategy.append_only import AppendOnlyStrategy
 from src.engine.context.strategy.rewriting import IMAGE_OMITTED, drop_stale_images
-from src.engine.context.strategy.windowed import WindowedStrategy
 from src.engine.context.tokens import estimate_message_tokens, part_tokens
 
 
@@ -147,8 +147,10 @@ def test_the_window_drops_images_only_from_the_old_turns():
         turns.append(_prompt(f'turno {index}', _image()))
         turns.append(ModelRequest(parts=[TextPart(content='sigo')]))
 
-    strategy = WindowedStrategy(keep_recent_prompts=1, image_turns=1, reasoning_steps=1000)
-    result = strategy.view(turns, ContextBudget(window=200_000, output_reserve=0))
+    strategy = AppendOnlyStrategy(
+        image_turns=1,
+    )
+    result = strategy.view(turns, ContextBudget(window=200_000, instructions=160_000, output_reserve=0))
 
     # Four turns, the last one kept whole.
     assert result.dropped_images == 3
@@ -165,9 +167,8 @@ def test_the_window_drops_images_only_from_the_old_turns():
 def test_images_have_their_own_window_of_turns():
     """A picture outlives the turn it came in: three turns by default, not one.
 
-    The text of a turn can be truncated long before the image stops being useful, so
-    the two windows are separate: `keep_recent_prompts` decides what text survives and
-    `image_turns` what pixels travel.
+    Image retention counts turns independently of the reasoning-block and tool-call
+    tail. `image_turns` is evaluated only at a compaction boundary.
     """
     from src.engine.context.budget import ContextBudget
 
@@ -176,9 +177,7 @@ def test_images_have_their_own_window_of_turns():
         turns.append(_prompt(f'turno {index}', _image()))
         turns.append(ModelRequest(parts=[TextPart(content='sigo')]))
 
-    result = WindowedStrategy(keep_recent_prompts=1, reasoning_steps=1000).view(
-        turns, ContextBudget(window=200_000, output_reserve=0)
-    )
+    result = AppendOnlyStrategy().view(turns, ContextBudget(window=200_000, instructions=160_000, output_reserve=0))
 
     assert result.dropped_images == 2
     kept = [
@@ -198,9 +197,9 @@ def test_the_note_names_the_id_that_brings_the_image_back():
     image = _image()
     turns = [_prompt('vieja', image), _prompt('reciente')]
 
-    result = WindowedStrategy(keep_recent_prompts=1, image_turns=1, reasoning_steps=1000).view(
-        turns, ContextBudget(window=200_000, output_reserve=0)
-    )
+    result = AppendOnlyStrategy(
+        image_turns=1,
+    ).view(turns, ContextBudget(window=200_000, instructions=160_000, output_reserve=0))
 
     text = ' '.join(
         item
@@ -220,9 +219,10 @@ def test_the_pixel_cap_bounds_what_stays():
     turns = [_prompt(f'turno {index}', _image(2000, 2000)) for index in range(3)]
 
     # 10% of 100k is 10k, and one of these costs 5,184: only one fits.
-    result = WindowedStrategy(keep_recent_prompts=3, image_turns=3, image_max_percent=10, reasoning_steps=1000).view(
-        turns, ContextBudget(window=100_000, output_reserve=0)
-    )
+    result = AppendOnlyStrategy(
+        image_turns=3,
+        image_max_percent=10,
+    ).view(turns, ContextBudget(window=100_000, instructions=80_000, output_reserve=0))
 
     kept = [
         item
@@ -238,40 +238,17 @@ def test_the_pixel_cap_bounds_what_stays():
 def test_a_message_without_images_reports_nothing_dropped():
     from src.engine.context.budget import ContextBudget
 
-    strategy = WindowedStrategy(keep_recent_prompts=1, reasoning_steps=1000)
+    strategy = AppendOnlyStrategy()
 
     result = strategy.view(
         [_prompt('hola'), ModelRequest(parts=[TextPart(content='chau')])],
-        ContextBudget(window=200_000, output_reserve=0),
+        ContextBudget(window=200_000, instructions=160_000, output_reserve=0),
     )
 
     assert result.dropped_images == 0
 
 
 # --- compaction reports what it drops ---------------------------------------
-
-
-def test_compaction_reports_the_images_it_drops_with_the_turn():
-    """A compacted turn loses its pixels, and the report says so.
-
-    The summary keeps the intent and the tool trail, not the screenshots. Without
-    counting them here, `/context` would show fewer drops than actually happened and
-    an image-heavy session would look cheaper than it is.
-    """
-    from src.engine.context.budget import ContextBudget
-    from src.engine.context.strategy.compacting import CompactingStrategy
-
-    messages = [
-        _prompt('look at [Image #1]', _image()),
-        _prompt('thanks'),
-        _prompt('look at [Image #1]', _image()),
-        _prompt('thanks'),
-        _prompt('last one [Image #1]', _image()),
-    ]
-
-    result = CompactingStrategy(keep_recent_prompts=1, reasoning_steps=1000).view(messages, ContextBudget(window=None))
-
-    assert result.dropped_images == 2
 
 
 # --- an image a tool brought back -------------------------------------------
@@ -301,9 +278,9 @@ def test_an_image_inside_a_tool_result_is_dropped_like_any_other():
     image = _image(400, 400)
     turns = [_tool_result(image), _prompt('reciente')]
 
-    result = WindowedStrategy(keep_recent_prompts=1, image_turns=1, reasoning_steps=1000).view(
-        turns, ContextBudget(window=200_000, output_reserve=0)
-    )
+    result = AppendOnlyStrategy(
+        image_turns=1,
+    ).view(turns, ContextBudget(window=200_000, instructions=160_000, output_reserve=0))
 
     assert result.dropped_images == 1
     left = [
@@ -353,8 +330,8 @@ def test_the_same_picture_is_not_paid_twice():
     ]
 
     flat = [message for turn in turns for message in turn]
-    result = WindowedStrategy(keep_recent_prompts=2, image_turns=3, reasoning_steps=1000).view(
-        flat, ContextBudget(window=None)
+    result = AppendOnlyStrategy(image_turns=3).view(
+        flat, ContextBudget(window=200_000, instructions=160_000, output_reserve=0)
     )
 
     carried = _images_in(result.messages)
@@ -373,8 +350,8 @@ def test_the_copy_that_survives_is_the_newest_one():
     ]
 
     flat = [message for turn in turns for message in turn]
-    result = WindowedStrategy(keep_recent_prompts=2, image_turns=3, reasoning_steps=1000).view(
-        flat, ContextBudget(window=None)
+    result = AppendOnlyStrategy(image_turns=3).view(
+        flat, ContextBudget(window=200_000, instructions=160_000, output_reserve=0)
     )
 
     # The surviving copy sits in the last turn, next to the call that asked for it.
@@ -397,8 +374,8 @@ def test_viewing_an_image_resets_its_clock():
     turns = [[_prompt('aca esta', image)], *[[_prompt(f'charla {n}')] for n in range(5)], _viewed_image('img_aaaaaaaa')]
 
     flat = [message for turn in turns for message in turn]
-    result = WindowedStrategy(keep_recent_prompts=6, image_turns=3, reasoning_steps=1000).view(
-        flat, ContextBudget(window=None)
+    result = AppendOnlyStrategy(image_turns=3).view(
+        flat, ContextBudget(window=200_000, instructions=160_000, output_reserve=0)
     )
 
     carried = _images_in(result.messages)
@@ -415,8 +392,8 @@ def test_a_superseded_copy_says_where_the_live_one_is():
     turns = [[_prompt('aca esta', image)], _viewed_image('img_aaaaaaaa')]
 
     flat = [message for turn in turns for message in turn]
-    result = WindowedStrategy(keep_recent_prompts=2, image_turns=3, reasoning_steps=1000).view(
-        flat, ContextBudget(window=None)
+    result = AppendOnlyStrategy(image_turns=3).view(
+        flat, ContextBudget(window=200_000, instructions=160_000, output_reserve=0)
     )
 
     text = ' '.join(

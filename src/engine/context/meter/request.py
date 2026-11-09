@@ -125,6 +125,7 @@ def snapshot_request(
             preview=_preview(getattr(part, 'content', '') or '', preview_chars),
         )
         for part in parts
+        if (getattr(part, 'content', '') or '').strip()
     )
 
     definitions = getattr(parameters, 'function_tools', None) or ()
@@ -184,8 +185,12 @@ def _skill_metrics(parts: Sequence[object]) -> dict[str, int]:
 
 
 def _prompt_sections(messages: Sequence[ModelMessage]) -> tuple[PromptSection, ...]:
+    from src.engine.agents.tree.prompt_tail import TAIL_MARKER
+
     return tuple(
-        _prompt_section(part, message_index + 1, part_index + 1)
+        PromptSection('dynamic', 'Agent context', part_tokens(part))
+        if (message.metadata or {}).get(TAIL_MARKER) and part_index == len(message.parts) - 1
+        else _prompt_section(part, message_index + 1, part_index + 1)
         for message_index, message in enumerate(messages)
         for part_index, part in enumerate(message.parts)
     )
