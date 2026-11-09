@@ -378,11 +378,10 @@ def build_debug_report(
         view = debug_messages(view_result.messages, part_chars=part_chars, part_lines=part_lines)
         view_tokens = sum(row.tokens for row in view)
         strategies_note = (
-            f'dropped thinking: {view_result.dropped_thinking} · '
-            f'truncated results: {view_result.truncated_results} · '
-            f'compacted prompts: {view_result.compacted_prompts} · '
-            f'dropped messages: {view_result.dropped_messages} · '
-            f'dropped images: {view_result.dropped_images}'
+            f'dropped reasoning: {view_result.dropped_thinking} · '
+            f'compacted parts: {view_result.compacted_parts} · '
+            f'dropped images: {view_result.dropped_images} · '
+            f'awaiting summary: {view_result.summary_request is not None}'
         )
     else:
         view = []

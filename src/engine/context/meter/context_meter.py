@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic_ai.messages import ModelMessage
 
-from src.engine.context.budget import DEFAULT_OUTPUT_RESERVE, ContextBudget
+from src.engine.context.budget import DEFAULT_OUTPUT_RESERVE, DEFAULT_SAFETY_MARGIN_PERCENT, ContextBudget
 from src.engine.context.meter.cost import session_cost
 from src.engine.context.meter.report import ContextReport
 from src.engine.context.meter.snapshot import ContextSnapshot
@@ -19,9 +19,16 @@ from src.engine.context.tokens import estimate_messages_tokens, measured_tokens,
 class ContextMeter:
     """Measures the context of a session and builds the budget."""
 
-    def __init__(self, *, window: int | None = None, output_reserve: int = DEFAULT_OUTPUT_RESERVE) -> None:
+    def __init__(
+        self,
+        *,
+        window: int | None = None,
+        output_reserve: int = DEFAULT_OUTPUT_RESERVE,
+        safety_margin_percent: int = DEFAULT_SAFETY_MARGIN_PERCENT,
+    ) -> None:
         self._window = window if window and window > 0 else None
         self._output_reserve = output_reserve
+        self._safety_margin_percent = safety_margin_percent
         self._instructions = 0
         self._tools = 0
 
@@ -65,6 +72,7 @@ class ContextMeter:
             tools=self._tools,
             instructions=self._instructions,
             output_reserve=self._output_reserve,
+            safety_margin_percent=self._safety_margin_percent,
         )
 
     def snapshot(self, messages: Sequence[ModelMessage]) -> ContextSnapshot:

@@ -28,7 +28,7 @@ from src.server.runtime import ServerRuntime
 @pytest.fixture
 def composition(tmp_path: Path) -> Composition:
     """A real composition with a stub model and its storage in a temporary directory."""
-    return Composition(
+    composition = Composition(
         tmp_path,
         settings=load_settings(),
         # `call_tools=[]` on purpose: `TestModel` calls every tool by default, and one
@@ -38,6 +38,9 @@ def composition(tmp_path: Path) -> Composition:
         model=TestModel(custom_output_text='done', call_tools=[]),
         provider_paths=_paths(tmp_path),
     )
+    # The guarded append-only path needs a known window; TestModel has no catalogue entry.
+    composition.meter.set_window(100_000)
+    return composition
 
 
 def _paths(tmp_path: Path):
@@ -227,3 +230,16 @@ def test_logout_clears_the_cookie(tmp_path: Path, composition: Composition) -> N
     logout = client.post('/api/logout')
     assert 'Max-Age=0' in logout.headers['set-cookie']
     assert client.get('/api/state').status_code == 401
+
+
+def test_unknown_context_window_is_reported_as_turn_error(runtime: ServerRuntime) -> None:
+    runtime.composition.meter.set_window(None)
+
+    async def go() -> None:
+        await runtime.send('work')
+        await runtime.wait()
+
+    asyncio.run(go())
+    finished = next(event for event in runtime.hub.replay() if event.type == 'turn_finished')
+    assert finished.data['status'] == 'error'
+    assert 'unknown' in finished.data['error']

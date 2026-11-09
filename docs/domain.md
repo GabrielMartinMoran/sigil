@@ -148,23 +148,18 @@ thing in the other's file. A turn with three steers is one turn and four
 prompts, so the two settings differ by a factor the user cannot see. Naming them
 for what they count is the fix; the values do not change.
 
-The env vars keep their published names — `SIGIL_CONTEXT_KEEP_RECENT_TURNS` and
-`SIGIL_CONTEXT_IMAGE_ROUNDS` — and are mapped onto the honest fields at startup.
-A configuration file that worked yesterday keeps working; only the field it
-lands in is renamed.
+These names describe the historical rename. The append-only context policy has
+since removed `keep_recent_prompts` and `SIGIL_CONTEXT_KEEP_RECENT_TURNS`; it no
+longer drops whole prompts to fit a budget. An LLM checkpoint can replace an older
+span only at a complete-exchange boundary, while the raw transcript stays intact.
 
-After the rename the two settings are `keep_recent_prompts` and `image_turns`,
-and they still count different units. That is correct, and it deserves a comment
-in the code, because it looks like an inconsistency and someone will "fix" it
-otherwise:
+`image_turns` still counts turns and is configured through
+`SIGIL_CONTEXT_IMAGE_ROUNDS`. Reasoning retention counts individual blocks, and
+tool retention counts individual calls, including parallel calls. Both counts
+are independent settings. Image age is evaluated only at a compaction boundary;
+the resulting omission is then replayed, not recomputed on every request.
 
-- **A prompt is dropped whole** because a `ToolReturnPart` without its call is a
-  400 from the provider. The unit that can be cut is the prompt.
-- **An image ages by turn** because what matters is how many things the user
-  asked since the picture arrived, not how many times it was steered. A session
-  steered ten times in one turn should not lose its screenshots.
-
-Two windows, two units, one rule each.
+See [context management](context.md) for the current settings and safety policy.
 
 #### Turn, Prompt and Step
 
@@ -631,7 +626,7 @@ gets now is the name it keeps.
 | `ModelCapability` | `ModelSpec` | Type only |
 | `Selection` | `ModelChoice` | Type only; MCP's becomes `ServerSelection` |
 | `split_turns` | `split_prompts` | Function only. It cuts prompts, not turns |
-| `keep_recent_turns` | `keep_recent_prompts` | Field only. **Semantics are preserved**, because it always counted prompts; the env var `SIGIL_CONTEXT_KEEP_RECENT_TURNS` keeps its name and is mapped at startup |
+| `keep_recent_turns` | `keep_recent_prompts` (historical) | Both the field and `SIGIL_CONTEXT_KEEP_RECENT_TURNS` were later removed with prompt dropping; see [context management](context.md) |
 | `TurnUsage`, `TurnSummary` | `PromptUsage`, `PromptSummary` | Types only: the meter measures prompts. The freed name `TurnUsage` is then the real per-turn cost |
 | `image_rounds`, `DEFAULT_IMAGE_ROUNDS`, `current_round`, `round_index` | `image_turns`, `DEFAULT_IMAGE_TURNS`, `current_turn`, `turn_index` | It always counted turns; `SIGIL_CONTEXT_IMAGE_ROUNDS` keeps its name and is mapped |
 | `the round` in the context strategy's prose | `the turn` | `strategy/constants.py`, `rewriting.py`, `images_cache.py` |

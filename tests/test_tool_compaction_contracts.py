@@ -1,4 +1,4 @@
-"""Real tool models have monotonic, loss-aware input and output projections."""
+"""Real tool models have loss-aware, idempotent input and output projections."""
 
 from __future__ import annotations
 
@@ -26,8 +26,15 @@ from src.engine.skills.tool_models.loaded_skill import LoadedSkill
 from src.engine.skills.tool_models.resource_content import ResourceContent as SkillResourceContent
 from src.engine.skills.tool_models.script_run_result import ScriptRunResult
 from src.engine.skills.tool_models.skill_summary import SkillSummary
-from src.engine.tooling.lod import GENERIC_LOD, ToolLOD, compact_json, encoded, normalize, shorten
-from src.engine.tooling.lod_policies import ALL_POLICIES
+from src.engine.tooling.compaction import (
+    GENERIC_COMPACTOR,
+    ToolCompactor,
+    compact_json,
+    encoded,
+    normalize,
+    shorten,
+)
+from src.engine.tooling.compaction_policies import ALL_COMPACTORS
 from src.engine.web.models.page_content import PageContent
 from src.engine.web.models.search_response import SearchResponse
 from src.engine.web.models.search_result import SearchResult
@@ -78,24 +85,22 @@ def samples() -> dict:
     }
 
 
-@pytest.mark.parametrize('name', sorted(ALL_POLICIES))
-def test_every_registered_policy_handles_real_output_and_stored_json_monotonically(name):
+@pytest.mark.parametrize('name', sorted(ALL_COMPACTORS))
+def test_every_registered_compactor_handles_real_output_and_stored_json_identically(name):
     value = samples()[name]
-    policy = ALL_POLICIES[name]
+    compactor = ALL_COMPACTORS[name]
     stored = normalize(value)
-    sizes = []
-    for level in ToolLOD:
-        live = policy.compact_output(value, level)
-        replay = policy.compact_output(stored, level)
-        assert encoded(live) == encoded(replay)
-        assert encoded(policy.compact_output(live, level)) == encoded(live)
-        sizes.append(len(encoded(live)))
-    assert sizes == sorted(sizes, reverse=True)
+    live = compactor.compact_output(value)
+    replay = compactor.compact_output(stored)
+    assert encoded(live) == encoded(replay)
+    # Compacting a compacted value is a no-op, and the original is never mutated.
+    assert encoded(compactor.compact_output(live)) == encoded(live)
+    assert len(encoded(live)) <= len(encoded(stored))
     assert encoded(value) == encoded(stored)
 
 
-@pytest.mark.parametrize('name', sorted(ALL_POLICIES))
-def test_every_policy_handles_its_arguments_at_all_levels(name):
+@pytest.mark.parametrize('name', sorted(ALL_COMPACTORS))
+def test_every_compactor_handles_its_arguments(name):
     args = {
         'cmds': [LONG],
         'path': 'file.py',
@@ -119,20 +124,18 @@ def test_every_policy_handles_its_arguments_at_all_levels(name):
         'arguments': {'topic': LONG},
         'max_bytes': 100,
     }
-    policy = ALL_POLICIES[name]
-    sizes = [len(encoded(policy.compact_input(args, level))) for level in ToolLOD]
-    assert sizes == sorted(sizes, reverse=True)
-    for level in ToolLOD:
-        assert isinstance(policy.compact_input(args, level), dict)
+    compactor = ALL_COMPACTORS[name]
+    reduced = compactor.compact_input(args)
+    assert isinstance(reduced, dict)
+    assert len(encoded(reduced)) <= len(encoded(args))
 
 
-@pytest.mark.parametrize('level', [ToolLOD.LOD_1, ToolLOD.LOD_2, ToolLOD.LOD_3])
-def test_generic_json_preserves_validity_and_aggregate_budget_with_escaping(level):
+def test_generic_json_preserves_validity_and_aggregate_budget_with_escaping():
     value = {'rows': ['"\\\n' * 1000 for _ in range(20)]}
     for original in (value, '"\\\n' * 2000):
-        result = compact_json(original, level)
+        result = compact_json(original, 500)
         assert json.loads(result) is not None
-        assert len(result) <= {1: 2000, 2: 500, 3: 100}[level]
+        assert len(result) <= 500
 
 
 def test_failed_structured_tool_returns_are_not_interpreted_as_success_models():
@@ -150,9 +153,8 @@ def test_failed_structured_tool_returns_are_not_interpreted_as_success_models():
         ),
         ModelResponse(parts=[TextPart(content='ok')]),
     ]
-    policy = CompactionPolicy(lod_ages=(0, 1, 2))
-    planned = plan(messages, policy=policy, pressure=True, lookup=ALL_POLICIES.get)
-    reduced, _ = apply(messages, planned, lookup=ALL_POLICIES.get)
+    planned = plan(messages, pressure=True, lookup=ALL_COMPACTORS.get)
+    reduced, _ = apply(messages, planned, lookup=ALL_COMPACTORS.get)
     result = reduced[1].parts[0]
     assert result.outcome == 'failed'
     assert 'SearchError' in result.content
@@ -166,14 +168,15 @@ def test_opaque_external_binary_is_preserved_and_reported():
         ModelRequest(parts=[ToolReturnPart(tool_name='foreign', content=[binary], tool_call_id='c')]),
         ModelResponse(parts=[TextPart(content='ok')]),
     ]
-    planned = plan(messages, policy=CompactionPolicy(lod_ages=(0, 1, 2)), pressure=True)
+    policy = CompactionPolicy(recent_tool_calls=0, recent_reasoning_blocks=0)
+    planned = plan(messages, policy=policy, pressure=True)
     reduced, _ = apply(messages, planned)
     assert reduced[1].parts[0].content == [binary]
     assert 'opaque_binary_or_multimodal' in exceptions(messages, planned, None)
 
 
 def test_stream_truncation_flags_and_exact_omitted_count_are_honest():
-    result = ALL_POLICIES['run'].compact_output([RunToolOutput(returncode=1, stdout=LONG)], ToolLOD.LOD_3)[0]
+    result = ALL_COMPACTORS['run'].compact_output([RunToolOutput(returncode=1, stdout=LONG)])[0]
     assert result['stdout_truncated'] is True
     shortened = shorten('a' * 1000, 100)
     prefix, notice = shortened.split('\n\n', 1)
@@ -183,29 +186,30 @@ def test_stream_truncation_flags_and_exact_omitted_count_are_honest():
 
 def test_user_decisions_and_identity_are_not_cut_to_hit_own_semantic_sizes():
     value = QuestionResult(answers=[QuestionAnswer(question='Confirm?', answer='Do not ' + LONG)])
-    assert ALL_POLICIES['ask_user'].compact_output(value, ToolLOD.LOD_3)['answers'][0]['answer'] == 'Do not ' + LONG
+    assert ALL_COMPACTORS['ask_user'].compact_output(value)['answers'][0]['answer'] == 'Do not ' + LONG
     source = 'https://test/' + 'long/path/' * 100
-    assert ALL_POLICIES['view_image'].compact_input({'source': source}, ToolLOD.LOD_3)['source'] == source
+    assert ALL_COMPACTORS['view_image'].compact_input({'source': source})['source'] == source
 
 
 def test_generic_nested_failure_metadata_survives_even_when_it_exceeds_the_target():
     value = {'rows': ['x' * 10000], 'envelope': {'error': 'nested failure ' * 100, 'status': 'failed'}}
-    reduced = GENERIC_LOD.compact_output(value, ToolLOD.LOD_3)
+    reduced = GENERIC_COMPACTOR.compact_output(value)
     assert reduced['metadata']['envelope']['error'] == value['envelope']['error']
     assert reduced['metadata']['envelope']['status'] == 'failed'
 
 
 def test_generic_policy_accepts_json_schema_type_arrays_without_treating_them_as_binary():
     value = {'type': ['string', 'null'], 'examples': ['x' * 5000]}
-    reduced = GENERIC_LOD.compact_output(value, ToolLOD.LOD_3)
+    reduced = GENERIC_COMPACTOR.compact_output(value)
     assert reduced['truncated'] is True
-    assert len(json.dumps(reduced)) <= 100
+    assert len(json.dumps(reduced)) <= 500
 
 
-def test_policy_contract_requires_explicit_callable_formatters_for_both_sides():
-    from src.engine.tooling.lod import ToolLODPolicy
-
-    with pytest.raises(TypeError):
-        ToolLODPolicy()
+def test_compactor_contract_requires_explicit_callable_formatters_for_both_sides():
     with pytest.raises(TypeError, match='callable'):
-        ToolLODPolicy(input=None, output=lambda value, level: value)
+        ToolCompactor(input=None, output=lambda value: value)
+
+
+def test_a_compactor_never_expands_a_value_that_it_cannot_shrink():
+    assert GENERIC_COMPACTOR.compact_output('short') == 'short'
+    assert ALL_COMPACTORS['read_file'].compact_output({'path': 'a.py'}) == {'path': 'a.py'}

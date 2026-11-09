@@ -1,38 +1,21 @@
-"""Levers that rewrite the history: reasoning, tool results and turns."""
+"""What the view is allowed to rewrite: image attachments and foreign reasoning."""
 
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
-    ModelResponse,
     ThinkingPart,
     ToolReturnPart,
     UserPromptPart,
 )
 
-from src.engine.agents.turn_map import library_run_id
+from src.engine.context.compaction.identity import part_key
 from src.engine.context.images import is_image_part
 from src.engine.context.images_cache import ImageVerdict, decide
-from src.engine.context.strategy.turns import has_pinned_result, split_prompts
-from src.engine.context.tokens import estimate_messages_tokens, estimate_tokens, tool_return_text
-
-
-def drop_thinking(messages: list[ModelMessage]) -> tuple[list[ModelMessage], int]:
-    """Strips `ThinkingPart` from the assistant responses."""
-    result: list[ModelMessage] = []
-    dropped = 0
-    for message in messages:
-        if not isinstance(message, ModelResponse):
-            result.append(message)
-            continue
-        kept = [part for part in message.parts if not isinstance(part, ThinkingPart)]
-        dropped += len(message.parts) - len(kept)
-        result.append(message if len(kept) == len(message.parts) else dataclasses.replace(message, parts=kept))
-    return result, dropped
 
 
 def accepts_replayed_reasoning(part: ThinkingPart, provider: str | None) -> bool:
@@ -52,122 +35,6 @@ def accepts_replayed_reasoning(part: ThinkingPart, provider: str | None) -> bool
     if part.provider_name is None or provider is None:
         return True
     return part.provider_name == provider
-
-
-def thinking_labels(messages: Sequence[ModelMessage]) -> list[str | None]:
-    """The turn each step with reasoning belonged to, in order.
-
-    A turn is pydantic-ai's run: the library stamps the same identifier on every
-    message of one, and a prompt typed while the agent works is enqueued into the
-    same one, so steering does not open a second turn. The identifier itself is named
-    in exactly one module, `agents/turn_map.py`; here the domain word is enough.
-    """
-    return [
-        library_run_id(message)
-        for message in messages
-        if isinstance(message, ModelResponse) and any(isinstance(part, ThinkingPart) for part in message.parts)
-    ]
-
-
-def steps_with_reasoning(messages: Sequence[ModelMessage], *, provider: str | None = None) -> int:
-    """How many responses contain compatible reasoning across the execution."""
-    return sum(
-        isinstance(message, ModelResponse)
-        and any(isinstance(part, ThinkingPart) and accepts_replayed_reasoning(part, provider) for part in message.parts)
-        for message in messages
-    )
-
-
-def keep_fitting_steps(
-    messages: list[ModelMessage],
-    available: int,
-    *,
-    provider: str | None = None,
-) -> list[ModelMessage] | None:
-    """Rewrites the history keeping as many reasoning steps as fit in `available`.
-
-    It starts from the most the execution can keep and shrinks one step at a
-    time, so the result is the largest window that fits. Returns ``None`` when not
-    even dropping all the reasoning makes it fit: the caller then has to truncate
-    tool results or discard turns, which costs more than reasoning does.
-    """
-    if estimate_messages_tokens(messages) <= available:
-        return messages
-    for steps in range(steps_with_reasoning(messages, provider=provider) - 1, -1, -1):
-        shrunk, _, _ = keep_recent_steps(messages, steps=steps, provider=provider)
-        if estimate_messages_tokens(shrunk) <= available:
-            return shrunk
-    return None
-
-
-def keep_recent_steps(
-    messages: list[ModelMessage],
-    *,
-    steps: int,
-    provider: str | None = None,
-    max_tokens: int | None = None,
-) -> tuple[list[ModelMessage], int, int]:
-    """Keep the newest compatible reasoning steps across turns, within a token cap.
-
-    This is the budget lever, not the operational retention policy. The coordinator
-    controls when a frontier advances; a view always starts from the original log.
-    """
-    if steps <= 0 or max_tokens == 0:
-        result, dropped = drop_thinking(messages)
-        return result, 0, dropped
-
-    # Budget fitting can retain reasoning across user turns. Operational hysteresis
-    # is handled by the coordinator; this helper only selects the newest steps.
-    keep: set[int] = set()
-    kept = 0
-    spent = 0
-    for order in range(len(messages) - 1, -1, -1):
-        if kept >= steps:
-            break
-        message = messages[order]
-        if not isinstance(message, ModelResponse):
-            continue
-        parts = [part for part in message.parts if isinstance(part, ThinkingPart)]
-        if not parts:
-            continue
-        if not all(accepts_replayed_reasoning(part, provider) for part in parts):
-            continue
-        cost = sum(estimate_tokens(part.content or '') for part in parts)
-        if max_tokens is not None and spent + cost > max_tokens:
-            # A block that does not fit is not kept, and the ones further back cost
-            # the same or more: the budget is spent.
-            break
-        keep.add(order)
-        kept += 1
-        spent += cost
-
-    result: list[ModelMessage] = []
-    dropped = 0
-    for order, message in enumerate(messages):
-        if not isinstance(message, ModelResponse):
-            result.append(message)
-            continue
-        if order in keep:
-            result.append(message)
-            continue
-        kept_parts = [part for part in message.parts if not isinstance(part, ThinkingPart)]
-        dropped += len(message.parts) - len(kept_parts)
-        result.append(
-            message if len(kept_parts) == len(message.parts) else dataclasses.replace(message, parts=kept_parts)
-        )
-    return result, kept, dropped
-
-
-def _truncate_text(text: str, head_chars: int) -> str:
-    tokens = estimate_tokens(text)
-    kept = min(len(text), head_chars)
-    while True:
-        omitted = len(text) - kept
-        notice = f'\n\n[tool result truncated: {omitted:,} chars omitted, ~{tokens:,} tokens total]'
-        adjusted = max(0, min(kept, head_chars - len(notice)))
-        if adjusted == kept:
-            return (text[:kept] + notice)[:head_chars]
-        kept = adjusted
 
 
 IMAGE_OMITTED = '[image {image_id} from an earlier turn: not attached here, use view_image to look at it]'
@@ -214,26 +81,43 @@ def drop_stale_images(
     Returns:
         The rewritten messages and how many images were dropped.
     """
+    removals = image_removals(messages, turn_window=turn_window, max_tokens=max_tokens)
+    return apply_image_removals(messages, removals)
+
+
+def image_removals(messages: Sequence[ModelMessage], *, turn_window: int, max_tokens: int | None) -> dict[str, str]:
+    """Decide once at a boundary; persist keys rather than transient message positions."""
     verdicts = decide(messages, turn_window=turn_window, max_tokens=max_tokens)
-    if not verdicts:
-        return messages, 0
+    return {
+        f'{part_key(messages[mi], messages[mi].parts[pi], pi)}:image:{ii}': str(verdict)
+        for (mi, pi, ii), verdict in verdicts.items()
+        if not verdict.travels
+    }
+
+
+def apply_image_removals(
+    messages: Sequence[ModelMessage], removals: Mapping[str, str]
+) -> tuple[list[ModelMessage], int]:
+    """Replay the same image notes even when the current request is not under pressure."""
 
     result: list[ModelMessage] = []
     dropped = 0
-    for message_index, message in enumerate(messages):
+    for message in messages:
         if not isinstance(message, ModelRequest):
             result.append(message)
             continue
         parts: list[object] = []
         count = 0
-        for part in message.parts:
+        for part_index, part in enumerate(message.parts):
             if not (isinstance(part, (UserPromptPart, ToolReturnPart)) and isinstance(part.content, list)):
                 parts.append(part)
                 continue
             kept: list[object] = []
             notes: list[str] = []
             for item_index, item in enumerate(part.content):
-                verdict = verdicts.get((message_index, item_index)) if is_image_part(item) else None
+                key = f'{part_key(message, part, part_index)}:image:{item_index}'
+                reason = removals.get(key) if is_image_part(item) else None
+                verdict = ImageVerdict(reason) if reason else None
                 if verdict is None or verdict.travels:
                     kept.append(item)
                     continue
@@ -274,103 +158,3 @@ def _identifier_of(item: object) -> str:
     if isinstance(identifier, str) and identifier:
         return identifier
     return '(no id)'
-
-
-def count_images(messages: Sequence[ModelMessage]) -> int:
-    """How many image parts a group of messages carries."""
-    return sum(
-        1
-        for message in messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, UserPromptPart) and isinstance(part.content, list)
-        for item in part.content
-        if is_image_part(item)
-    )
-
-
-def truncate_old_tool_results(
-    turns: list[list[ModelMessage]],
-    *,
-    recent_start: int,
-    max_chars: int,
-    head_chars: int,
-    pinned_tools: frozenset[str] = frozenset(),
-) -> tuple[list[ModelMessage], int]:
-    """Truncates the tool results of the old turns, leaving the recent ones intact.
-
-    It measures the text the model actually sees (`model_response_str()`), not the
-    object's `str()`: Sigil tools return pydantic models, and comparing
-    against `isinstance(content, str)` left the truncation without effect.
-    """
-    result: list[ModelMessage] = []
-    truncated = 0
-    for index, turn in enumerate(turns):
-        if index >= recent_start:
-            result.extend(turn)
-            continue
-        for message in turn:
-            if not isinstance(message, ModelRequest):
-                result.append(message)
-                continue
-            parts = []
-            changed = False
-            for part in message.parts:
-                if isinstance(part, ToolReturnPart) and part.tool_name not in pinned_tools:
-                    text = tool_return_text(part)
-                    if len(text) > max_chars:
-                        parts.append(
-                            dataclasses.replace(part, content=_truncate_text(text, min(head_chars, max_chars)))
-                        )
-                        truncated += 1
-                        changed = True
-                        continue
-                parts.append(part)
-            result.append(dataclasses.replace(message, parts=parts) if changed else message)
-    return result, truncated
-
-
-def fit_to_budget(
-    messages: list[ModelMessage],
-    available: int,
-    *,
-    pinned_tools: frozenset[str] = frozenset(),
-    keep_head: Sequence[ModelMessage] = (),
-    keep_recent: int = 1,
-) -> tuple[list[ModelMessage], int]:
-    """Discards whole turns until it fits in the budget.
-
-    It prefers discarding turns without pinned results: if you have to choose between
-    losing an old `read_file` and losing a skill's instructions, the
-    `read_file` is what gets lost.
-
-    ``keep_head`` are the messages that are never discarded (the compaction
-    summary). ``keep_recent`` is how many turns at the end are protected: the
-    caller decides the floor, and a floor of one means the turn in progress always
-    survives.
-    """
-    head = list(keep_head)
-    turns = split_prompts(list(messages))
-    dropped = 0
-    floor = max(1, keep_recent)
-
-    def total() -> int:
-        return estimate_messages_tokens([*head, *(message for turn in turns for message in turn)])
-
-    if estimate_messages_tokens([*head, *messages]) <= available:
-        return [*head, *messages], 0
-
-    while len(turns) > floor and total() > available:
-        # Only the turns outside the protected tail are candidates.
-        candidates = range(len(turns) - floor)
-        victim = next(
-            (index for index in candidates if not has_pinned_result(turns[index], pinned_tools)),
-            None,
-        )
-        if victim is None:
-            # Everything discardable carries instructions: the oldest one goes anyway.
-            victim = 0
-        dropped += len(turns[victim])
-        turns.pop(victim)
-
-    return [*head, *(message for turn in turns for message in turn)], dropped

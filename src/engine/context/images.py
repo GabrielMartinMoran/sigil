@@ -14,6 +14,7 @@ decode, which matters because the meter walks the whole history on every step.
 from __future__ import annotations
 
 import io
+from typing import TypeGuard
 
 from PIL import Image
 from pydantic_ai.messages import BinaryContent
@@ -40,6 +41,6 @@ def image_part_tokens(part: BinaryContent) -> int:
     return image_tokens(width, height)
 
 
-def is_image_part(item: object) -> bool:
+def is_image_part(item: object) -> TypeGuard[BinaryContent]:
     """Whether ``item`` is a binary image, as opposed to a document or audio."""
     return isinstance(item, BinaryContent) and item.is_image

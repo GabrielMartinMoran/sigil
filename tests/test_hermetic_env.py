@@ -15,9 +15,6 @@ from pathlib import Path
 import dotenv
 import pytest
 
-from src.engine.context.compaction.constants import (
-    REASONING_TARGET_STEPS,
-)
 from src.engine.settings import (
     DEFAULT_CONTEXT_STRATEGY,
     DEFAULT_MAX_STEPS,
@@ -68,32 +65,21 @@ def test_an_unknown_context_strategy_is_rejected():
         load_settings({'SIGIL_CONTEXT_STRATEGY': 'magic'})
 
 
-@pytest.mark.parametrize('raw', ['off', 'all'])
-def test_removed_reasoning_modes_do_not_change_context_strategy(raw):
-    import dataclasses
+def test_the_compaction_thresholds_come_from_the_environment():
+    settings = load_settings({'SIGIL_CONTEXT_TRIGGER_PERCENT': '80', 'SIGIL_CONTEXT_TARGET_PERCENT': '55'})
+    assert settings.context_trigger_percent == 80
+    assert settings.context_target_percent == 55
 
-    from src.engine.bootstrap import build_strategy
 
-    settings = load_settings({'SIGIL_CONTEXT_REASONING': raw, 'SIGIL_CONTEXT_KEEP_THINKING': '1'})
+def test_a_target_at_or_above_the_trigger_is_rejected():
+    with pytest.raises(ValueError):
+        load_settings({'SIGIL_CONTEXT_TRIGGER_PERCENT': '60', 'SIGIL_CONTEXT_TARGET_PERCENT': '60'})
+
+
+def test_removed_reasoning_modes_do_not_change_context_strategy():
+    settings = load_settings({'SIGIL_CONTEXT_REASONING': 'off', 'SIGIL_CONTEXT_KEEP_THINKING': '1'})
     assert not hasattr(settings, 'reasoning')
-    strategy = build_strategy(settings)
-    assert 'reasoning' not in {field.name for field in dataclasses.fields(strategy)}
-    assert strategy.reasoning_steps == REASONING_TARGET_STEPS
-
-
-def test_the_default_policy_keeps_the_recent_steps():
-    settings = load_settings({})
-    assert settings.reasoning_steps == REASONING_TARGET_STEPS
-
-
-def test_the_step_count_is_its_own_number():
-    assert load_settings({'SIGIL_CONTEXT_REASONING_STEPS': '9'}).reasoning_steps == 9
-
-
-def test_a_step_count_below_one_is_rejected():
-    with pytest.raises(ValueError) as error:
-        load_settings({'SIGIL_CONTEXT_REASONING_STEPS': '0'})
-    assert 'reasoning_steps' in str(error.value)
+    assert settings.context_strategy == DEFAULT_CONTEXT_STRATEGY
 
 
 def test_settings_are_immutable():

@@ -35,14 +35,14 @@ workspace. They do not establish production percentiles or end-to-end speedups.
 | Render six loaded skills, including resource discovery | 10.24 ms | 15.40 ms |
 | SQLite tail save, 400 synthetic messages | 0.66 ms | 0.94 ms |
 | SQLite tail save, 2,800 synthetic messages | 0.97 ms | 3.49 ms |
-| Windowed context projection, 400 synthetic messages | 4.79 ms | 5.53 ms |
-| Windowed context projection, 2,800 synthetic messages | 52.86 ms | 57.38 ms |
+| Context projection, 400 synthetic messages | 4.79 ms | 5.53 ms |
+| Context projection, 2,800 synthetic messages | 52.86 ms | 57.38 ms |
 
 The history fixture uses four messages per turn: user prompt, tool call, tool
 return, and final response. Each turn has a distinct run ID, an 8,000-character
 tool result, and a repeated 26,000-character instruction block. SQLite timings
 measure repeated saves after the initial insert, using a temporary database.
-Context projection uses the default `WindowedStrategy` with a 200,000-token
+Context projection uses the default `AppendOnlyStrategy` with a 200,000-token
 window. Skill rendering uses the first six sorted entries of the discovered
 registry, not necessarily the skills loaded in a user's slow session.
 

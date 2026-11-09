@@ -63,14 +63,14 @@ def _flat(*turns: list) -> list:
     return [message for turn in turns for message in turn]
 
 
-def _position_of_viewed(messages: list) -> tuple[int, int]:
+def _position_of_viewed(messages: list) -> tuple[int, int, int]:
     """Where the image inside the `view_image` result sits."""
     for message_index, message in enumerate(messages):
-        for part in message.parts:
+        for part_index, part in enumerate(message.parts):
             if isinstance(part, ToolReturnPart) and isinstance(part.content, list):
                 for item_index, item in enumerate(part.content):
                     if isinstance(item, BinaryImage):
-                        return (message_index, item_index)
+                        return (message_index, part_index, item_index)
     raise AssertionError('no image in a tool result')
 
 

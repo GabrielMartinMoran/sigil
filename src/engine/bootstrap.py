@@ -42,13 +42,13 @@ from src.engine.agents.tree.tools import register_tree_tools
 from src.engine.attachments.tools import register_image_tools
 from src.engine.context.capability import ContextViewCapability
 from src.engine.context.compaction.coordinator import PolicyLookup
+from src.engine.context.compaction.policy import CompactionPolicy
 from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
 from src.engine.context.meter.context_meter import ContextMeter
 from src.engine.context.scope import ScopeSink, ScopeTracker
-from src.engine.context.strategy.compacting import CompactingStrategy
+from src.engine.context.strategy.append_only import AppendOnlyStrategy
 from src.engine.context.strategy.passthrough import PassthroughStrategy
 from src.engine.context.strategy.protocol import ContextStrategy
-from src.engine.context.strategy.windowed import WindowedStrategy
 from src.engine.files.tools import register_file_tools
 from src.engine.interaction.hub import QuestionHub
 from src.engine.interaction.tools import register_interaction_tools
@@ -79,32 +79,21 @@ from src.engine.workspace.manager import WorkspaceManager
 
 
 def build_strategy(settings: SigilSettings, *, lookup: PolicyLookup | None = None) -> ContextStrategy:
-    """View strategy, with the level of detail each tool declared.
+    """View strategy, with the compactor each tool declared.
 
-    - `windowed` (default): the coordinator's events — reasoning window, tool detail by
-      age, and turns only under budget pressure.
-    - `compacting`: the same levers, plus old turns collapsed into a deterministic
-      summary.
+    - `append-only` (default): the history grows untouched and is rewritten only when the
+      projected input crosses the trigger; a summary stage covers what reduction cannot.
     - `passthrough`: sends the history as is, for diagnostics.
-
-    The modes that retain all reasoning or none of it are gone: the window is always the
-    configured number of steps, and an event is what records that maintenance happened.
     """
     if settings.context_strategy == 'passthrough':
         return PassthroughStrategy()
-    if settings.context_strategy == 'compacting':
-        return CompactingStrategy(
-            keep_recent_prompts=settings.keep_recent_prompts,
-            reasoning_steps=settings.reasoning_steps,
-            reasoning_max_percent=settings.reasoning_max_percent,
-            image_turns=settings.image_turns,
-            image_max_percent=settings.image_max_percent,
-            lookup=lookup,
-        )
-    return WindowedStrategy(
-        keep_recent_prompts=settings.keep_recent_prompts,
-        reasoning_steps=settings.reasoning_steps,
-        reasoning_max_percent=settings.reasoning_max_percent,
+    return AppendOnlyStrategy(
+        policy=CompactionPolicy(
+            trigger_percent=settings.context_trigger_percent,
+            target_percent=settings.context_target_percent,
+            recent_reasoning_blocks=settings.context_recent_reasoning_blocks,
+            recent_tool_calls=settings.context_recent_tool_calls,
+        ),
         image_turns=settings.image_turns,
         image_max_percent=settings.image_max_percent,
         lookup=lookup,
@@ -174,7 +163,9 @@ class Composition:
         self.workspace = WorkspaceInstructions(self.root)
         self.tool_logger.add_sink(ScopeSink(self.scope))
 
-        self.meter = ContextMeter(output_reserve=settings.output_reserve)
+        self.meter = ContextMeter(
+            output_reserve=settings.output_reserve, safety_margin_percent=settings.context_safety_margin_percent
+        )
         # Active session: the roadmap and the history hang off it.
         self.store = SessionStore(cwd=self.root)
         self.session = session if session is not None else self._open_session()
@@ -220,7 +211,7 @@ class Composition:
         # The context strategy is built once but the provider can be swapped
         # mid-session, so it reads the active one per request.
         self.context_capability = ContextViewCapability(
-            strategy=build_strategy(settings, lookup=self.tool_catalog.lod),
+            strategy=build_strategy(settings, lookup=self.tool_catalog.compactor),
             meter=self.meter,
             provider=lambda: active_provider(self.model_service),
         )
@@ -282,13 +273,13 @@ class Composition:
         self.factory = self._build_factory()
         self.agent = self.factory.root()
 
-    def _require_declared_lod(self) -> None:
+    def _require_declared_compactors(self) -> None:
         # A missing declaration is not a fallback to the generic policy: it is a tool
         # nobody decided the cost of, and the place to notice is the build, not a bill.
         missing = self.tool_catalog.uncovered()
         if missing:
             listed = ', '.join(missing)
-            raise RuntimeError(f'tools without a level-of-detail policy: {listed}')
+            raise RuntimeError(f'tools without a declared compactor: {listed}')
 
     # --- the built pieces ---------------------------------------------------
 
@@ -387,7 +378,7 @@ class Composition:
         return frozenset(features)
 
     def node_blocks(self, node_id: str | None) -> str:
-        """The instructions of one execution: the agents around it.
+        """The request context of one execution: the agents around it.
 
         Rendered per request from the node id of the run, because the tree moves
         under it: a sibling that was running when the subagent was summoned may
@@ -418,7 +409,7 @@ class Composition:
         register_interaction_tools(target, self.question_hub, logger=logger, catalog=catalog)
         register_roadmap_tools(target, self.roadmap_store, logger=logger, catalog=catalog)
         register_tree_tools(target, self.summoner, logger=logger, catalog=catalog)
-        self._require_declared_lod()
+        self._require_declared_compactors()
 
     # --- tree listeners -----------------------------------------------------
     #

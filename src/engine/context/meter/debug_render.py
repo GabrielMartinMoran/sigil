@@ -144,31 +144,32 @@ def maintenance_lines(report: DebugReport) -> list[str]:
     if view is None or view.diagnostics is None:
         return [*lines, '  No maintenance projection available.']
     data = view.diagnostics
+    exceptions = data.get('exceptions')
+    reasons = ', '.join(str(reason) for reason in exceptions) if isinstance(exceptions, (list, tuple)) else 'none'
     lines.extend(
         [
             (
-                f'  reasoning steps: {data["reasoning_steps"]}; target {data["reasoning_target_steps"]}; '
-                f'ceiling {data["reasoning_ceiling_steps"]}'
-            ),
-            (
-                f'  reasoning share: target {data["reasoning_target_percent"]}%; '
-                f'ceiling {data["reasoning_ceiling_percent"]}%'
-            ),
-            (
-                f'  reasoning size: {data["reasoning_size"]}; known ~{data["reasoning_known_tokens"]} tokens; '
+                f'  reasoning blocks kept: {data["reasoning_blocks"]}; '
+                f'size {data["reasoning_size"]} ~{data["reasoning_known_tokens"]} tokens; '
                 f'unknown signed blocks {data["reasoning_unknown_blocks"]}'
             ),
             (
-                f'  tool pending reduction: {data["tools_pending_chars"]} chars; target {data["tools_target_chars"]} chars; '
-                f'ceiling {data["tools_ceiling_chars"]} chars'
+                f'  compacted calls: {data["compacted_calls"]}; '
+                f'dropped reasoning parts: {data["dropped_parts"]}; '
+                f'summary: {data["summary_chars"]} chars'
             ),
-            f'  calls by LOD (0=full): {data["lod_calls"]}',
+            (f'  thresholds: trigger {data["trigger_percent"]}%; target {data["target_percent"]}%'),
             (
                 f'  estimated reductions: arguments ~{data["input_reduction_tokens"]} tokens; '
                 f'results ~{data["output_reduction_tokens"]} tokens'
             ),
-            f'  exceptions: {", ".join(data["exceptions"]) or "none"}',
+            f'  exceptions: {reasons or "none"}',
             f'  over budget: {view.budget_exceeded}',
+            f'  last checkpoint failure: {view.summary_error or "none"}',
+            (
+                f'  safety reserve: {data.get("safety_reserve", 0)} tokens; '
+                f'input source: {data.get("input_estimate_source", "local")}'
+            ),
         ]
     )
     recorded = view.plan.recorded_events if view.plan is not None else 0

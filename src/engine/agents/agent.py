@@ -12,6 +12,7 @@ from src.engine.agents.profile.source import ProfileSource
 from src.engine.agents.prompts.render import render
 from src.engine.agents.retry import RetryTransientModelErrors
 from src.engine.agents.tool_errors import ToolErrorRecovery
+from src.engine.agents.tree.prompt_tail import AgentContextTail
 from src.engine.agents.tree.rendering import render_subagents
 from src.engine.agents.tree.summoner import SigilDeps
 from src.engine.providers.factory.unconfigured import UnconfiguredModel
@@ -66,10 +67,9 @@ def create_agent(
             registry. A subagent pins the profile that summoned it for its whole
             run; the root leaves it out and follows `/agent`. When given, the
             registry is only used to know which subagents exist.
-        node_blocks: The part of the instructions that belongs to one *execution*
-            and not to a profile: the agents around it, the messages waiting for
-            it. It receives the node id of the run — ``None`` for the root — and
-            is rendered per request, because the tree changes under it.
+        node_blocks: Request-only context for one execution: the agents around it
+            and informational notices. It receives the node id of the run — ``None``
+            for the root — and is rendered after the history on each request.
     """
     # Provider 502/429/timeouts are retried before bringing the turn down.
     if model_retry is None:
@@ -88,6 +88,9 @@ def create_agent(
         # conversation. It goes right after the base prompt, before everything
         # that describes the session.
         capabilities.append(ToolPermissionsCapability(source=source))
+
+    if node_blocks is not None:
+        capabilities.append(AgentContextTail(node_blocks=node_blocks))
 
     prompt_template = _load_prompt()
 
@@ -158,12 +161,5 @@ def create_agent(
         @agent.instructions(name='skills')
         def _skills_metadata() -> str:
             return render_available_skills(skill_registry)
-
-    if node_blocks is not None:
-        # Per run, not per profile: one agent object serves every execution of its
-        # profile, and the block it contributes depends on which node is running.
-        @agent.instructions(name='node-context')
-        def _node_context(ctx: RunContext[SigilDeps]) -> str:
-            return node_blocks(ctx.deps.node_id if ctx.deps is not None else None)
 
     return agent

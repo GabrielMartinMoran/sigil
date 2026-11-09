@@ -27,11 +27,11 @@ from src.engine.skills.tool_models.script_run_result import ScriptRunResult
 from src.engine.skills.tool_models.skill_resource_info import SkillResourceInfo
 from src.engine.skills.tool_models.skill_summary import SkillSummary
 from src.engine.tooling.catalog import ToolCatalog
-from src.engine.tooling.lod_policies import (
-    LIST_SKILLS_LOD,
-    LOAD_SKILL_LOD,
-    READ_SKILL_RESOURCE_LOD,
-    RUN_SKILL_SCRIPT_LOD,
+from src.engine.tooling.compaction_policies import (
+    LIST_SKILLS_COMPACTOR,
+    LOAD_SKILL_COMPACTOR,
+    READ_SKILL_RESOURCE_COMPACTOR,
+    RUN_SKILL_SCRIPT_COMPACTOR,
 )
 from src.engine.tooling.logging import ToolLogger
 from src.engine.tooling.permission import ToolGroup, ToolPermission
@@ -95,7 +95,7 @@ def register_skill_tools(
     """
     tools = ToolRegistrar(agent, logger, catalog)
 
-    @tools.tool(permission=_SKILLS, lod=LIST_SKILLS_LOD)
+    @tools.tool(permission=_SKILLS, compaction=LIST_SKILLS_COMPACTOR)
     def list_skills(query: str | None = None) -> list[SkillSummary]:
         """List installed Agent Skills (metadata only).
 
@@ -115,7 +115,7 @@ def register_skill_tools(
             skills = [skill for skill in skills if _matches(skill, needle)]
         return [_summary(skill) for skill in skills]
 
-    @tools.tool(permission=_SKILL_RESOURCE, lod=LOAD_SKILL_LOD)
+    @tools.tool(permission=_SKILL_RESOURCE, compaction=LOAD_SKILL_COMPACTOR)
     def load_skill(name: str) -> LoadedSkill:
         """Load a skill and list its bundled resources.
 
@@ -148,7 +148,7 @@ def register_skill_tools(
             ),
         )
 
-    @tools.tool(permission=_SKILL_RESOURCE, lod=READ_SKILL_RESOURCE_LOD)
+    @tools.tool(permission=_SKILL_RESOURCE, compaction=READ_SKILL_RESOURCE_COMPACTOR)
     def read_skill_resource(
         name: str,
         path: str,
@@ -182,7 +182,7 @@ def register_skill_tools(
             note=note,
         )
 
-    @tools.tool(permission=_SKILL_SCRIPT, lod=RUN_SKILL_SCRIPT_LOD)
+    @tools.tool(permission=_SKILL_SCRIPT, compaction=RUN_SKILL_SCRIPT_COMPACTOR)
     async def run_skill_script(
         name: str,
         script: str,

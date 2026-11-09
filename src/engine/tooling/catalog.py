@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from src.engine.tooling.lod import ToolLODPolicy
+from src.engine.tooling.compaction import ToolCompactor
 from src.engine.tooling.permission import ToolPermission
 
 
@@ -32,8 +32,8 @@ class ToolDeclaration:
     requires: frozenset[str] = frozenset()
     """Model features the tool needs. Empty means every route can use it."""
 
-    lod: ToolLODPolicy | None = None
-    """How the tool's arguments and results shrink as they age.
+    compaction: ToolCompactor | None = None
+    """How the tool's arguments and results are reduced when history is compacted.
 
     ``None`` means the tool did not declare one, which is allowed only for tools this
     project does not own (MCP servers, external tools). `uncovered()` is what turns
@@ -57,13 +57,13 @@ class ToolCatalog:
         *,
         permission: ToolPermission | None = None,
         requires: Iterable[str] = (),
-        lod: ToolLODPolicy | None = None,
+        compaction: ToolCompactor | None = None,
     ) -> None:
         self._tools[name] = ToolDeclaration(
             name=name,
             permission=permission,
             requires=frozenset(requires),
-            lod=lod,
+            compaction=compaction,
         )
 
     def get(self, name: str) -> ToolDeclaration | None:
@@ -79,16 +79,16 @@ class ToolCatalog:
         declaration = self._tools.get(name)
         return frozenset() if declaration is None else declaration.requires
 
-    def lod(self, name: str) -> ToolLODPolicy | None:
-        """The level-of-detail policy the tool declared, if any."""
+    def compactor(self, name: str) -> ToolCompactor | None:
+        """The compactor the tool declared, if any."""
         declaration = self._tools.get(name)
-        return None if declaration is None else declaration.lod
+        return None if declaration is None else declaration.compaction
 
     def uncovered(self) -> tuple[str, ...]:
-        """Tools registered without a level-of-detail policy.
+        """Tools registered without a compactor.
 
         Every tool this project owns declares one, so a name here is a missing
         declaration, not a tool from outside: the agent factory refuses to build with
         a non-empty answer.
         """
-        return tuple(name for name, declaration in self._tools.items() if declaration.lod is None)
+        return tuple(name for name, declaration in self._tools.items() if declaration.compaction is None)

@@ -51,8 +51,8 @@ def test_the_turns_table_shows_context_and_cache_per_turn():
 
 def test_each_event_is_attributed_to_the_turn_that_contains_its_step():
     events = (
-        CompactionEvent(step=1, reason=CompactionReason.OPERATIONAL),
-        CompactionEvent(step=3, reason=CompactionReason.BUDGET),
+        CompactionEvent(step=1, reason=CompactionReason.DETERMINISTIC),
+        CompactionEvent(step=3, reason=CompactionReason.EMERGENCY),
     )
     report = _report(_turns(), events)
     assert [event.step for event in report.turns[0].events] == [1]
@@ -60,10 +60,10 @@ def test_each_event_is_attributed_to_the_turn_that_contains_its_step():
 
 
 def test_the_plain_text_debug_names_the_events_and_never_the_conversation():
-    report = _report(_turns(), (CompactionEvent(step=2, reason=CompactionReason.OPERATIONAL),))
+    report = _report(_turns(), (CompactionEvent(step=2, reason=CompactionReason.DETERMINISTIC),))
     text = render_debug_report(report)
     assert 'Turns' in text
-    assert 'step 2 operational' in text
+    assert 'step 2 deterministic' in text
     assert 'secret' not in text
 
 

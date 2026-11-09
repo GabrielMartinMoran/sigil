@@ -609,7 +609,8 @@ this codebase:
    opens it. A turn row that arrives late would need a nullable column and a
    backfill, which is how inconsistent data starts.
 4. **Truncate when the list shrinks.** A history that comes back shorter than
-   what is stored is a history that was compacted or discarded: `DELETE FROM
+   what is stored is a history that was rolled back or truncated explicitly, not
+   an append-only context projection: `DELETE FROM
    messages WHERE execution_id = ? AND seq >= ?`, then append. Truncating a
    whole turn deletes its `turns` row and lets the cascade take the messages, so
    a discarded prompt never leaves an open turn behind — `turns_one_open` would
@@ -886,7 +887,7 @@ it is at `2` as of the context measurement described in [Schema steps](#schema-s
 | `src/engine/providers/store/` | ✅ `FileAccountStore` → `SqliteAccountStore` and `FileStateStore` → `SqliteStateStore`, on `accounts` and `app_state`. `SecretStore` untouched: credentials stay a `0600` file |
 | `src/engine/paths.py` | unchanged: the database path is resolved by `storage.database_path()` from `sigil_home()`. The old session directories stay on disk, unread and undeleted |
 | `src/ui/commands_mixin.py` | `catalog()` returns summaries; `load_session` unchanged otherwise |
-| `src/engine/settings.py` | `keep_recent_turns` → `keep_recent_prompts` and `image_rounds` → `image_turns`, because each counted a different unit under the same sentence. The environment variables keep their published names |
+| `src/engine/settings.py` | `keep_recent_turns` → `keep_recent_prompts` and `image_rounds` → `image_turns`, because each counted a different unit under the same sentence. The environment variables keep their published names. `keep_recent_prompts` was later removed with prompt dropping; only `image_turns` remains |
 | `src/ui/widgets/session_picker.py` | reads the summary fields it already uses |
 | `tests/` | the store tests move to a temporary database; the round-trip test becomes the contract |
 

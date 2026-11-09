@@ -470,7 +470,7 @@ def test_context_command_shows_breakdown_and_scope(monkeypatch):
     from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
     from src.engine.context.meter.context_meter import ContextMeter
     from src.engine.context.scope import ScopeTracker
-    from src.engine.context.strategy.windowed import WindowedStrategy
+    from src.engine.context.strategy.append_only import AppendOnlyStrategy
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
@@ -485,7 +485,7 @@ def test_context_command_shows_breakdown_and_scope(monkeypatch):
             scope = ScopeTracker(root)
             workspace = WorkspaceInstructions(root)
             meter = ContextMeter(window=200_000)
-            capability = ContextViewCapability(strategy=WindowedStrategy(), meter=meter)
+            capability = ContextViewCapability(strategy=AppendOnlyStrategy(), meter=meter)
 
             app = SigilApp(
                 agent=agent,

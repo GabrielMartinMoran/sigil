@@ -7,7 +7,10 @@ budget enforcement. No original part, instructions, or tool payload is rewritten
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import hashlib
+import json
 from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import KW_ONLY, dataclass, field, replace
@@ -16,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 from pydantic_ai.capabilities import AbstractCapability
 
 from src.engine.agents.turn_map import request_id_of
+from src.engine.context.compaction.maintenance import MaintenanceAttempt, receipts, restore_receipts
+from src.engine.context.input_estimate import history_fingerprint
 from src.engine.context.meter.context_meter import ContextMeter
 from src.engine.context.meter.request import RequestSnapshot, snapshot_request
 from src.engine.context.overhead import measure_request_parameters
@@ -66,6 +71,11 @@ class ContextViewCapability(AbstractCapability[Any]):
     _snapshot: RequestSnapshot | None = field(default=None, init=False, repr=False)
 
     @property
+    def summary_error(self) -> str | None:
+        """Failure of the last root projection, never another concurrent agent's request."""
+        return self._last.summary_error if self._last is not None else None
+
+    @property
     def last_view(self) -> ViewResult | None:
         return self._last
 
@@ -100,7 +110,7 @@ class ContextViewCapability(AbstractCapability[Any]):
         """
         if self.provider is None:
             return self.strategy
-        return replace(self.strategy, provider=self.provider())
+        return self.strategy.with_provider(self.provider())
 
     async def before_run(self, ctx: RunContext[Any]) -> None:
         """Capture application records before pydantic-ai merges request envelopes.
@@ -109,11 +119,14 @@ class ContextViewCapability(AbstractCapability[Any]):
         scoped by ContextVar lets graph tasks consume recovery once without sharing
         frontiers across concurrent runs or nested child agents.
         """
-        from src.engine.context.compaction.coordinator import recorded_state
         from src.engine.context.compaction.events import POLICY_VERSION
+        from src.engine.context.compaction.records import recorded_state
 
         state, events = recorded_state(ctx.messages)
-        holder: dict[str, Any] = {}
+        holder: dict[str, Any] = {
+            'maintenance': receipts(ctx.messages),
+            'instruction_fingerprint': _last_instruction_fingerprint(ctx.messages),
+        }
         if ctx.messages and (state.evaluated_steps or events):
             holder['record'] = {
                 'version': POLICY_VERSION,
@@ -126,10 +139,14 @@ class ContextViewCapability(AbstractCapability[Any]):
         self._recovery.set(holder)
 
     def _restore_records(self, ctx: RunContext[Any], request_context: ModelRequestContext) -> None:
-        from src.engine.context.compaction.coordinator import part_key, recorded_state
         from src.engine.context.compaction.events import RECORD_KEY, CompactionState
+        from src.engine.context.compaction.identity import part_key
+        from src.engine.context.compaction.records import recorded_state
 
         holder = self._recovery.get()
+        rows = holder.pop('maintenance', ()) if holder is not None else ()
+        for messages in (ctx.messages, request_context.messages):
+            restore_receipts(messages, rows)
         record = holder.pop('record', None) if holder is not None else None
         if record is None:
             return
@@ -157,11 +174,23 @@ class ContextViewCapability(AbstractCapability[Any]):
         parameters = request_context.model_request_parameters
         instructions, tools = measure_request_parameters(parameters)
         budget = self.meter.budget().with_measurements(instructions=instructions, tools=tools)
+        output = (request_context.model_settings or {}).get('max_tokens', budget.output_reserve)
+        budget = replace(
+            budget, model_name=request_context.model.model_name, output_reserve=max(budget.output_reserve, output)
+        )
         is_root = getattr(ctx.deps, 'node_id', None) is None
         if is_root:
             self.meter.set_overhead(instructions=instructions, tools=tools)
 
-        result = self._strategy_for_now().view(request_context.messages, budget)
+        fingerprint = _instruction_fingerprint(parameters)
+        holder = self._recovery.get() or {}
+        previous = _last_instruction_fingerprint(ctx.messages) or holder.get('instruction_fingerprint')
+        strategy = self._strategy_for_now()
+        if previous is not None and fingerprint != previous:
+            result = strategy.view(request_context.messages, budget, compact_opportunistically=True)
+        else:
+            result = strategy.view(request_context.messages, budget)
+        result = await self._with_summary(result, ctx, request_context, budget)
         # Assigning the sequence is request-only; mutating a message in place
         # would affect the persistent history.
         request_context.messages = compatible_model_history(result.messages, request_context.model.model_name)
@@ -170,14 +199,60 @@ class ContextViewCapability(AbstractCapability[Any]):
         _require_budget(result, budget)
         if is_root:
             self._snapshot = snapshot_request(parameters, messages=request_context.messages, preview_chars=0)
-        self._record_decision(ctx, result, budget)
+        self._record_decision(ctx, result, budget, fingerprint)
         if self.on_view is not None:
             # Diagnostics never break the turn.
             with contextlib.suppress(Exception):
                 self.on_view(result)
         return request_context
 
-    def _record_decision(self, ctx: RunContext[Any], result: ViewResult, budget: ContextBudget) -> None:
+    async def _with_summary(
+        self,
+        result: ViewResult,
+        ctx: RunContext[Any],
+        request_context: ModelRequestContext,
+        budget: ContextBudget,
+    ) -> ViewResult:
+        """Obtain the checkpoint the projection asked for, then project again.
+
+        The projection is pure and cannot call a model, so it reports what a summary
+        would cover and leaves the request to this hook. A failure is never fatal and
+        never becomes a stored decision: the deterministic projection is sent and the
+        reason is reported.
+        """
+        from src.engine.context.compaction.summary import Summary
+        from src.engine.context.compaction.summary_generator import generate_summary
+
+        request = result.summary_request
+        if request is None:
+            return result
+        attempt = MaintenanceAttempt(ctx.messages, ctx.usage, request_context.model.model_name)
+        try:
+            text = await generate_summary(
+                request_context.model,
+                request.messages,
+                previous=request.previous,
+                budget=budget,
+                model_settings=request_context.model_settings,
+                on_start=attempt.start,
+                on_response=attempt.observe,
+            )
+        except asyncio.CancelledError:
+            attempt.finish('cancelled', error_type='CancelledError')
+            raise
+        except Exception as error:  # noqa: BLE001 - a failed checkpoint must not break the turn
+            attempt.finish('failed', error_type=type(error).__name__)
+            return _failed_summary(result, error_name=type(error).__name__)
+        attempt.finish('complete')
+        return self._strategy_for_now().view(
+            request_context.messages,
+            budget,
+            summary=Summary(text=text, boundary=request.boundary),
+        )
+
+    def _record_decision(
+        self, ctx: RunContext[Any], result: ViewResult, budget: ContextBudget, fingerprint: str
+    ) -> None:
         from src.engine.context.compaction.events import POLICY_VERSION, RECORD_KEY
 
         planned = result.plan
@@ -193,6 +268,10 @@ class ContextViewCapability(AbstractCapability[Any]):
                 for event in planned.events[planned.recorded_events :]
             ],
             'effective_policy': dict(planned.effective_policy),
+            'input_fingerprint': history_fingerprint(result.messages),
+            'instruction_fingerprint': fingerprint,
+            'fixed_tokens': budget.fixed,
+            'summary_error': result.summary_error,
             'window': budget.window,
             'status': 'prepared',
             'request_id': request_id_of(ctx),
@@ -215,12 +294,50 @@ class ContextViewCapability(AbstractCapability[Any]):
         return replace(response, metadata={**(response.metadata or {}), RECORD_KEY: record}) if record else response
 
 
+def _instruction_fingerprint(parameters: Any) -> str:
+    """Fingerprint the resolved instruction content without persisting prompt text."""
+    parts = getattr(parameters, 'instruction_parts', None) or ()
+    content = [getattr(part, 'content', '') or '' for part in parts]
+    return hashlib.sha256(json.dumps(content, ensure_ascii=False).encode('utf-8')).hexdigest()
+
+
+def _last_instruction_fingerprint(messages: Sequence[ModelMessage]) -> str | None:
+    """Use the last completed response, never an uncommitted preparation."""
+    from pydantic_ai.messages import ModelResponse
+
+    from src.engine.context.compaction.events import RECORD_KEY
+
+    for message in reversed(messages):
+        if isinstance(message, ModelResponse):
+            record = (message.metadata or {}).get(RECORD_KEY)
+            if isinstance(record, dict) and isinstance(record.get('instruction_fingerprint'), str):
+                return record['instruction_fingerprint']
+            return None
+    return None
+
+
+def _failed_summary(result: ViewResult, *, error_name: str | None = None) -> ViewResult:
+    """Mark the projection as awaiting a checkpoint that could not be produced."""
+    planned = result.plan
+    reasons = tuple(sorted(({*planned.exceptions} if planned else set()) - {'summary_pending'} | {'summary_failed'}))
+    updated = planned if planned is None else replace(planned, exceptions=reasons)
+    if updated is None:
+        return replace(result, summary_request=None)
+    diagnostics = {**(result.diagnostics or {}), 'exceptions': reasons}
+    return replace(result, plan=updated, diagnostics=diagnostics, summary_request=None, summary_error=error_name)
+
+
 class ContextBudgetExceeded(ValueError):
     """The protected request cannot fit; never send it to the provider."""
 
 
 def _require_budget(result: ViewResult, budget: ContextBudget) -> None:
-    if budget.fits(result.estimated_tokens) is False:
+    if result.plan is not None and budget.window is None:
+        raise ContextBudgetExceeded(
+            'Context window is unknown; select a model with a known window. '
+            'Passthrough is available only for unguarded diagnostics.'
+        )
+    if result.budget_exceeded or budget.fits(result.estimated_tokens) is False:
         raise ContextBudgetExceeded(
             f'Context needs approximately {result.estimated_tokens:,} history tokens, '
             f'but only {budget.available_for_history:,} are available. '
@@ -229,7 +346,7 @@ def _require_budget(result: ViewResult, budget: ContextBudget) -> None:
 
 
 def _last_part_key(messages: Sequence[ModelMessage]) -> str | None:
-    from src.engine.context.compaction.coordinator import part_key
+    from src.engine.context.compaction.identity import part_key
 
     for message in reversed(messages):
         if message.parts:

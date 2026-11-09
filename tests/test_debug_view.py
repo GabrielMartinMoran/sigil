@@ -11,7 +11,7 @@ from pydantic_ai.models.test import TestModel
 
 from src.engine.context.capability import ContextViewCapability
 from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.context.strategy.windowed import WindowedStrategy
+from src.engine.context.strategy.append_only import AppendOnlyStrategy
 from src.engine.sessions.session_store import SessionStore
 from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
@@ -22,7 +22,7 @@ def _make_app(tmp: str) -> SigilApp:
     store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
     session = store.create_session()
     meter = ContextMeter(window=200_000)
-    capability = ContextViewCapability(strategy=WindowedStrategy(), meter=meter)
+    capability = ContextViewCapability(strategy=AppendOnlyStrategy(), meter=meter)
     agent = Agent(TestModel(custom_output_text='ok'), instructions='x')
     return SigilApp(
         agent=agent,

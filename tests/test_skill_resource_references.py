@@ -48,7 +48,7 @@ def test_missing_loaded_skill_is_reported(tmp_path):
     assert 'unavailable' in block.lower()
 
 
-def test_partial_resource_rebuilds_after_lod_and_multiple_sqlite_resumes(tmp_path):
+def test_partial_resource_rebuilds_after_compaction_and_multiple_sqlite_resumes(tmp_path):
     import asyncio
 
     from pydantic_ai.messages import TextPart
@@ -57,9 +57,9 @@ def test_partial_resource_rebuilds_after_lod_and_multiple_sqlite_resumes(tmp_pat
     from src.engine.agents.agent import create_agent
     from src.engine.context.capability import ContextViewCapability
     from src.engine.context.meter.context_meter import ContextMeter
-    from src.engine.context.strategy.compacting import CompactingStrategy
+    from src.engine.context.strategy.append_only import AppendOnlyStrategy
     from src.engine.sessions.session_store import SessionStore
-    from src.engine.tooling.lod_policies import ALL_POLICIES
+    from src.engine.tooling.compaction_policies import ALL_COMPACTORS
 
     write_skill(tmp_path, 'demo', files={'references/doc.md': 'ABCDEFGHIJ'})
     registry = SkillRegistry([('project', tmp_path)])
@@ -81,7 +81,7 @@ def test_partial_resource_rebuilds_after_lod_and_multiple_sqlite_resumes(tmp_pat
     ]
     history += [ModelResponse(parts=[TextPart(content='step')]) for _ in range(80)]
     capability = ContextViewCapability(
-        strategy=CompactingStrategy(lookup=ALL_POLICIES.get), meter=ContextMeter(window=100000)
+        strategy=AppendOnlyStrategy(lookup=ALL_COMPACTORS.get), meter=ContextMeter(window=100000)
     )
     agent = create_agent(registry, model=TestModel(), extra_capabilities=[capability])
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'sessions')

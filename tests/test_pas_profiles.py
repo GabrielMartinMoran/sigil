@@ -410,8 +410,8 @@ def test_the_pair_delivers_a_delegation_through_the_channel(squad_env):
     assert len(peer_channel) == 1 and 'ready_for_review' in peer_channel[0].text
     assert not any('approved unit 1' in text for text in prompts_of(engineer.messages))
     assert not any('ready_for_review' in text for text in prompts_of(copilot.messages))
-    assert any('approved unit 1' in (getattr(message, 'instructions', '') or '') for message in engineer.messages)
-    assert any('ready_for_review' in (getattr(message, 'instructions', '') or '') for message in copilot.messages)
+    assert not any('## Notifications' in (getattr(message, 'instructions', '') or '') for message in engineer.messages)
+    assert not any('## Notifications' in (getattr(message, 'instructions', '') or '') for message in copilot.messages)
 
     # Both async results waited for the next turn, and the Lead adjudicated them.
     assert len(pending) == 2

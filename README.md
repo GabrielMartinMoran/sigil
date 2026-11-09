@@ -1737,14 +1737,22 @@ the prompt cache.
 
 ### View strategies
 
+Choose the guarded default for normal use, or passthrough for diagnostics:
+
 | Strategy | What it does |
 | --- | --- |
-| `windowed` (default) | Drops reasoning, truncates old tool results and discards old turns if they do not fit in the window. |
-| `compacting` | Also collapses old turns into a deterministic summary (`CompactionPart`), without calling the model. |
-| `passthrough` | Sends the history as is. |
+| `append-only` (default) | Appends during ordinary work. At 75% of the window it reduces old payloads in one batch; above 60% the session's model writes a checkpoint. |
+| `passthrough` | Sends the history as is. Diagnostics only; it never compacts. |
 
-Recent turns stay intact: the model usually needs the exact details of the last
-turn on the next one.
+By default, the newest five reasoning blocks and twenty tool calls stay intact.
+Both counts are independently configurable. Checkpoint updates use only the new
+eligible span plus the previous checkpoint, and their requests are budgeted and
+included in session cost, even when a returned checkpoint is rejected.
+
+The runtime reserves an additional 5% of the window for estimation uncertainty.
+Append-only requests require a known model window; Sigil refuses an unknown or
+overfull budget instead of deleting user history. These estimates and defaults
+are not a measured model-quality guarantee.
 
 ### Measurement
 
@@ -1762,19 +1770,23 @@ recorded maintenance events, and the next request projection. Dynamic instructio
 blocks retain their yellow highlighting. `/debug --text` returns the same numeric
 report without prompt, tool payload, or conversation previews.
 
-Maintenance reports reasoning targets/ceilings, partial or unknown encrypted
-sizes, calls by LOD, separate argument/result reductions, exceptions, and skill
-resource states. Historical records and projected events are labeled separately.
-Cache writes are not hits; missing cache reporting is not evidence of zero reuse.
+Maintenance reports the reasoning blocks kept, partial or unknown encrypted
+sizes, compacted calls, separate argument/result reductions, exceptions, and
+skill resource states. Historical records and projected events are labeled
+separately. Cache writes are not hits; missing cache reporting is not evidence of
+zero reuse.
 
-The shared pipeline preserves recent reasoning across user turns and reduces it
-in batches (default ceiling 20, target 10). External tool inputs and outputs use
-aggregate 2,000/500/100-character LOD targets; own tools declare semantic policies.
-If the protected request still exceeds its estimated budget, Sigil stops before
-calling the provider with an actionable error.
+The shared pipeline appends during ordinary work and rewrites the history only at
+a compaction boundary. Crossing 75% of the window runs one deterministic batch
+that keeps the newest five reasoning blocks and twenty tool calls; if the result
+is still above 60%, the session's own model writes a structured checkpoint.
+External tools use a single 500-character size policy; own tools declare what
+they keep. If the protected request still exceeds its estimated budget, Sigil
+stops before calling the provider with an actionable error instead of deleting
+user history.
 
-See [context maintenance and calibration](docs/context.md) for recovery rules,
-known estimation limits, and the read-only simulation command.
+See [how context works](docs/context.md) for the three sections of a projection,
+the persisted decision, and the known estimation limits.
 
 ### Configuration
 
@@ -1787,18 +1799,20 @@ change behaviour behind your back.
 | `SIGIL_MAX_STEPS` | `256` | Model calls per turn when the profile declares no `max_steps`; running out ends it with a last tool-less answer. |
 | `SIGIL_MODEL_MAX_ATTEMPTS` | `5` | Attempts per model request on transient failures. |
 | `SIGIL_HOME` | `~/.sigil` | Where sessions, roadmaps and provider credentials live. |
-| `SIGIL_CONTEXT_STRATEGY` | `windowed` | `windowed`, `compacting` or `passthrough`. |
-| `SIGIL_CONTEXT_REASONING_STEPS` | `10` | Reasoning step target across turns; ceiling is twice the target. |
-| `SIGIL_CONTEXT_REASONING_MAX_PERCENT` | `5` | Reasoning size target; ceiling is twice the target, at least 10%. |
+| `SIGIL_CONTEXT_STRATEGY` | `append-only` | `append-only` or `passthrough`. |
+| `SIGIL_CONTEXT_TRIGGER_PERCENT` | `75` | Share of the window that starts a deterministic compaction. |
+| `SIGIL_CONTEXT_TARGET_PERCENT` | `60` | Share the deterministic batch should leave behind; above it, a checkpoint is requested. |
+| `SIGIL_CONTEXT_RECENT_REASONING_BLOCKS` | `5` | Individual recent reasoning parts kept intact at compaction. |
+| `SIGIL_CONTEXT_RECENT_TOOL_CALLS` | `20` | Individual recent tool calls kept intact at compaction. |
+| `SIGIL_CONTEXT_SAFETY_MARGIN_PERCENT` | `5` | Additional window reservation for uncertainty; 0 to 99. |
 | `SIGIL_CONTEXT_IMAGE_ROUNDS` | `3` | Rounds an image stays loaded. Older ones leave their id behind. |
 | `SIGIL_CONTEXT_IMAGE_MAX_PERCENT` | `10` | Ceiling for the pixels that stay, as a percentage of the model window. |
-| `SIGIL_CONTEXT_KEEP_RECENT_TURNS` | `3` | Turns kept intact before trimming. |
 | `SIGIL_CONTEXT_OUTPUT_RESERVE` | `8000` | Tokens reserved for the response. |
 | `SIGIL_WORKTREES_DIR` | `<SIGIL_HOME>/worktrees` | Where `/new --worktree` creates the worktrees. |
 | `SIGIL_MCP_SHUTDOWN_TIMEOUT` | `0.2` | Seconds a stdio MCP server has to exit on EOF when quitting. |
 
 A value that cannot be parsed fails loudly at startup instead of silently falling
-back to the default. `.env.example` lists all of them.
+back to the default. Use the table above as the current configuration reference.
 
 The full design and the verifications against the provider are in
 [`proposals/context-management.md`](proposals/context-management.md). The provider

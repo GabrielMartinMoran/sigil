@@ -35,6 +35,8 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from genai_prices import calc_price
 from pydantic_ai.messages import ModelMessage, ModelResponse
 
+from src.engine.context.compaction.maintenance import maintenance_responses
+
 EXACT_DECIMALS = 4
 """Decimals of `/context`. One request can cost a fraction of a cent."""
 
@@ -150,7 +152,10 @@ def _table_price(response: ModelResponse) -> Decimal | None:
     return amount
 
 
-def _price_key(response: ModelResponse) -> tuple | None:
+type PriceKey = tuple[str, tuple[tuple[str, object], ...]]
+
+
+def _price_key(response: ModelResponse) -> PriceKey | None:
     """The inputs of one price, or ``None`` when they cannot be hashed.
 
     The panel recomputes the bill at every checkpoint of a turn, so the same
@@ -159,6 +164,8 @@ def _price_key(response: ModelResponse) -> tuple | None:
     field the response carries except the ones pricing ignores, so a usage
     dimension added by a future pydantic-ai is a new key, never a stale hit.
     """
+    if response.model_name is None:
+        return None
     items: list[tuple[str, object]] = []
     for name, value in response.usage.__dict__.items():
         if name in _NOT_PRICED:
@@ -171,7 +178,7 @@ def _price_key(response: ModelResponse) -> tuple | None:
     return (response.model_name, tuple(sorted(items)))
 
 
-_PRICE_CACHE: dict[tuple, Decimal | None] = {}
+_PRICE_CACHE: dict[PriceKey, Decimal | None] = {}
 _PRICE_CACHE_LIMIT = 1024
 
 _NOT_PRICED = frozenset({'details', 'cost', 'unmeasured_requests'})
@@ -190,9 +197,8 @@ def session_cost(messages: Sequence[ModelMessage]) -> SessionCost:
     """
     total = Decimal(0)
     reported = estimated = unpriced = unmeasured = sent = 0
-    for message in messages:
-        if not isinstance(message, ModelResponse):
-            continue
+    responses = [message for message in messages if isinstance(message, ModelResponse)]
+    for message in (*responses, *maintenance_responses(messages)):
         sent += 1
         usage = message.usage
         if not usage.has_values() or usage.unmeasured_requests:
