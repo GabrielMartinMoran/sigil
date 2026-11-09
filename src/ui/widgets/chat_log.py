@@ -818,7 +818,7 @@ class SummonBlock(ToolCallBlock):
             'agent': str(args.get('agent') or ''),
             'task': str(args.get('task') or ''),
             'mode': str(args.get('mode') or 'sync'),
-            'agent_id': str(args.get('agent_id') or ''),
+            'agent_id': str(args.get('agent_id') or '').lstrip('#'),
         }
 
     def set_result(self, output: Any, *, ok: bool = True) -> None:
@@ -887,9 +887,7 @@ class SummonBlock(ToolCallBlock):
                 if self._clickable
                 else f'bold {color(self, "tool-title")}',
             )
-        else:
-            # Nothing to go on: the block still has to say *what* this is, and the
-            # arrow already says it is a spawn. No invented agent name.
+        elif not resumed:
             text.append('(unknown agent)', style=color(self, 'muted'))
         if resumed:
             text.append(f'  resume #{self._spawn["agent_id"][:8]}', style=color(self, 'muted'))
@@ -1120,7 +1118,7 @@ class ChatLog(ReadOnlyScroll):
         self._last_block = block
         await self._append(block)
 
-    async def add_tool_result(self, name: str, output: Any, *, ok: bool = True) -> None:
+    async def add_tool_result(self, name: str, output: Any, *, ok: bool = True, args: Any = None) -> None:
         """Closes the open block, or starts one when the call was not announced.
 
         A result can arrive without a `start` event: a tool that fails before its
@@ -1129,7 +1127,7 @@ class ChatLog(ReadOnlyScroll):
         """
         block = self._claim(name)
         if block is None:
-            block = block_for(name, {}, classes='tool-call', expanded=self._tools_expanded)
+            block = block_for(name, args or {}, classes='tool-call', expanded=self._tools_expanded)
             await self._append(block)
             self._last_block = block
         block.set_result(output, ok=ok)

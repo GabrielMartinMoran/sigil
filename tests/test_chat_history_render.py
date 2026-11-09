@@ -310,3 +310,51 @@ def test_multiple_reports_and_standalone_delivery_render_as_events():
             assert 'question' in str(users[0].render())
 
     asyncio.run(inner())
+
+
+def test_rejected_tool_without_start_uses_original_call_arguments():
+    from src.ui.widgets.chat_log import SummonBlock
+
+    async def inner():
+        app = Harness()
+        async with app.run_test():
+            chat = app.query_one(ChatLog)
+            await chat.add_tool_result(
+                'summon',
+                'PermissionDenied',
+                ok=False,
+                args={'agent_id': '#ea0c3711', 'mode': 'async', 'task': 'continue'},
+            )
+            block = chat.query_one(SummonBlock)
+            text = '\n'.join(part.plain for part in block._build().renderables)
+            assert 'resume #ea0c3711' in text
+            assert 'async' in text
+            assert 'refused' in text
+
+    asyncio.run(inner())
+
+
+def test_streamed_refusal_recovers_call_arguments_by_id():
+    from types import SimpleNamespace
+
+    from pydantic_ai.messages import FunctionToolResultEvent
+
+    from src.ui.turn_mixin import TurnMixin
+    from src.ui.widgets.chat_log import SummonBlock
+
+    async def inner():
+        app = Harness()
+        async with app.run_test():
+            chat = app.query_one(ChatLog)
+            call = ToolCallPart('summon', {'agent_id': '#ea0c3711', 'mode': 'async'}, tool_call_id='one')
+            runner = SimpleNamespace(all_messages=lambda: [ModelResponse(parts=[call])])
+            owner = SimpleNamespace(_current_run=runner, set_activity_label=lambda _: None)
+            result = ToolReturnPart('summon', 'PermissionDenied', tool_call_id='one', outcome='failed')
+            await TurnMixin.dispatch_event(owner, FunctionToolResultEvent(result), chat)
+            block = chat.query_one(SummonBlock)
+            text = '\n'.join(part.plain for part in block._build().renderables)
+            assert 'resume #ea0c3711' in text
+            assert 'async' in text
+            assert 'refused' in text
+
+    asyncio.run(inner())

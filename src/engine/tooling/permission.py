@@ -18,7 +18,7 @@ a tool's signature changes.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -138,6 +138,9 @@ class ToolPermission:
     kind: ResourceKind = ResourceKind.TEXT
     """How that value is normalized before matching."""
 
+    resolve_resource: Callable[[Mapping[str, Any]], tuple[str, ...]] | None = None
+    """Resolve resources that cannot be trusted directly from arguments."""
+
     def metadata(self) -> dict[str, Any]:
         """The declaration as tool metadata."""
         return {
@@ -145,6 +148,7 @@ class ToolPermission:
                 'groups': [str(group) for group in self.groups],
                 'resource': self.resource,
                 'kind': str(self.kind),
+                'resolve_resource': self.resolve_resource,
             }
         }
 
@@ -170,6 +174,7 @@ def permission_of(tool_def: Any) -> ToolPermission | None:
         groups=tuple(str(group) for group in raw.get('groups') or ()),
         resource=_optional_string(raw.get('resource')),
         kind=_kind(raw.get('kind')),
+        resolve_resource=raw.get('resolve_resource') if callable(raw.get('resolve_resource')) else None,
     )
 
 
@@ -179,7 +184,11 @@ def resource_values(declaration: ToolPermission | None, args: Mapping[str, Any])
     ``run`` receives several commands, so one call can carry several resources:
     the policy refuses the call when any of them is denied.
     """
-    if declaration is None or declaration.resource is None:
+    if declaration is None:
+        return ()
+    if declaration.resolve_resource is not None:
+        return declaration.resolve_resource(args)
+    if declaration.resource is None:
         return ()
     value = args.get(declaration.resource)
     if value is None:

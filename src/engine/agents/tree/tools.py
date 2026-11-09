@@ -23,12 +23,14 @@ because managing subagents is one capability and not a collection of independent
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai import RunContext
+from pydantic_ai.exceptions import ToolFailed
 
 from src.engine.agents.tree.rendering import SUMMON_GROUP, SUMMON_TOOL
-from src.engine.agents.tree.summoner import SigilDeps, SubagentSummoner, SummonMode
+from src.engine.agents.tree.summoner import SigilDeps, SubagentSummoner, SummonError, SummonMode
 from src.engine.tooling.catalog import ToolCatalog
 from src.engine.tooling.compaction_policies import (
     ACK_NOTIFICATIONS_COMPACTOR,
@@ -88,6 +90,22 @@ other tools address execution or notification IDs minted at runtime, so they
 are ruled on whole-tool: `summon: deny` closes the group, and a narrowed allow list
 narrows only what may be summoned.
 """
+
+
+def summon_permission(summoner: SubagentSummoner) -> ToolPermission:
+    """Check the actual target profile, including when resuming by execution ID."""
+
+    def resolve(args: Mapping[str, Any]) -> tuple[str, ...]:
+        agent_id = args.get('agent_id')
+        if agent_id:
+            try:
+                return (summoner.resolve(str(agent_id)).name,)
+            except SummonError as error:
+                raise ToolFailed(str(error)) from error
+        name = str(args.get('agent') or '').strip()
+        return (name,) if name else ()
+
+    return ToolPermission(groups=SUMMON_GROUP, resource='agent', resolve_resource=resolve)
 
 
 def register_tree_tools(
@@ -179,7 +197,7 @@ def register_tree_tools(
         use_context=True,
         name=SUMMON_TOOL,
         description=SUMMON_DESCRIPTION,
-        permission=ToolPermission(groups=SUMMON_GROUP, resource='agent'),
+        permission=summon_permission(summoner),
         compaction=SUMMON_COMPACTOR,
     )
     registrar.register(

@@ -500,3 +500,43 @@ def _outcomes(result: Any) -> list[str]:
         for part in getattr(message, 'parts', ())
         if hasattr(part, 'outcome')
     ]
+
+
+def test_summon_resume_permissions_use_resolved_node_identity(tmp_path):
+    from types import SimpleNamespace
+
+    from pydantic_ai.exceptions import ToolFailed
+    from pydantic_ai.tools import ToolDefinition
+
+    from src.engine.agents.profile.capability import ToolPermissionsCapability
+    from src.engine.agents.profile.models.agent_role import AgentRole
+    from src.engine.agents.profile.source import ProfileSource
+    from src.engine.agents.tree.store import AgentTreeStore
+    from src.engine.agents.tree.summoner import SubagentSummoner
+    from src.engine.agents.tree.tools import summon_permission
+
+    _write(tmp_path, 'wizard', extra="permissions:\n  summon:\n    allow: ['worker']\n")
+    registry = AgentRegistry([('project', tmp_path)], active='wizard')
+    trees = AgentTreeStore()
+    root = trees.active.ensure_root('wizard')
+    allowed = trees.active.add(parent_id=root.id, name='worker', role=AgentRole.SUBAGENT, task='work')
+    denied = trees.active.add(parent_id=root.id, name='other', role=AgentRole.SUBAGENT, task='work')
+    summoner = SubagentSummoner(trees=trees, registry=registry, builder=lambda: None)
+    definition = ToolDefinition(
+        name='summon', parameters_json_schema={'type': 'object'}, metadata=summon_permission(summoner).metadata()
+    )
+    capability = ToolPermissionsCapability(source=ProfileSource.from_registry(registry))
+
+    async def check(args):
+        return await capability.before_tool_execute(
+            SimpleNamespace(), call=ToolCallPart('summon', args), tool_def=definition, args=args
+        )
+
+    async def inner():
+        await check({'agent_id': '#' + allowed.short_id})
+        with pytest.raises(ToolFailed, match='PermissionDenied'):
+            await check({'agent': 'worker', 'agent_id': denied.id})
+        with pytest.raises(ToolFailed):
+            await check({'agent': 'worker', 'agent_id': 'missing'})
+
+    asyncio.run(inner())
