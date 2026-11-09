@@ -775,3 +775,72 @@ def _agent_with_hold(env: Env, root_model) -> Agent[Any, Any]:
     return AgentFactory(
         AgentSpec(model=_model(root_model), agent_registry=env.registry, tool_registrars=[install])
     ).root()
+
+
+def test_restricted_profile_resumes_allowed_worker_by_id_through_agent(tmp_path):
+    env = make_env(tmp_path, permissions='permissions:\n  summon:\n    allow: ["worker"]\n')
+    root = env.tree().root
+    node = env.tree().add(parent_id=root.id, name='worker', role=AgentRole.SUBAGENT, task='first')
+    node.finish('first result')
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not _tool_returns(messages):
+            return ModelResponse(parts=[ToolCallPart('summon', {'agent_id': node.short_id, 'task': 'continue'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def inner():
+        async with env.agent().iter('go', deps=SigilDeps(), model=_model(model)) as run:
+            async for _ in run:
+                pass
+        return run.all_messages()
+
+    returns = _tool_returns(asyncio.run(inner()))
+    assert returns[0].outcome == 'success'
+    assert 'The worker says 42.' in str(returns[0].content)
+
+
+def test_concurrent_subagents_tag_their_tool_events_without_leaking_to_parent(tmp_path):
+    from src.engine.tooling.events import CURRENT_NODE_ID, ToolCallEvent
+    from src.engine.tooling.logging import emit_tool_event
+    from src.engine.tooling.registrar import ToolRegistrar
+
+    env = make_env(tmp_path)
+    events = []
+    gate = asyncio.Event()
+    arrived = []
+
+    def build(profile):
+        def model(messages, info):
+            if not _tool_returns(messages):
+                return ModelResponse(parts=[ToolCallPart('probe', {})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = create_agent(model=_model(model), agent_registry=env.registry, profile=ProfileSource.fixed(profile))
+
+        @ToolRegistrar(agent, events.append).tool(name='probe')
+        async def probe() -> str:
+            arrived.append(CURRENT_NODE_ID.get())
+            if len(arrived) == 2:
+                gate.set()
+            await gate.wait()
+            return 'done'
+
+        return agent
+
+    env.summoner._builder = lambda: build
+
+    async def inner():
+        await asyncio.gather(
+            env.summoner.summon(parent_id=None, name='worker', task='one', mode='sync'),
+            env.summoner.summon(parent_id=None, name='worker', task='two', mode='sync'),
+        )
+        await emit_tool_event(events.append, ToolCallEvent('parent', 'start'))
+
+    asyncio.run(inner())
+    nodes = env.tree().nodes()[1:]
+    assert set(arrived) == {node.id for node in nodes}
+    assert {event.node_id for event in events if event.tool_name == 'probe'} == {node.id for node in nodes}
+    assert all(
+        any(getattr(part, 'tool_name', '') == 'probe' for msg in node.messages for part in msg.parts) for node in nodes
+    )
+    assert events[-1].node_id is None

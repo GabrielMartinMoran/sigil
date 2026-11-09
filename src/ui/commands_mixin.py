@@ -277,7 +277,7 @@ class CommandsMixin:
         await chat.clear()
         if switch is not None:
             await self.announce_switch(switch, chat)
-        await chat.render_history(loaded.messages)
+        await chat.render_history(loaded.messages, subagents=self.tree_nodes())
         chat.finalize()
         await chat.add_notice(f'Loaded session {loaded.short_id}.', style='green')
 

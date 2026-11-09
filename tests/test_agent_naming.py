@@ -122,3 +122,12 @@ def test_the_node_header_names_the_agent_once():
 
     assert text.count('Pulsar Researcher') == 1
     assert 'pulsar-researcher' not in text
+
+
+def test_a_refused_resume_keeps_the_id_and_mode():
+    block = SummonBlock('summon', {'agent_id': '#ea0c3711', 'mode': 'async', 'task': 'continue'})
+    block.set_result('PermissionDenied: no', ok=False)
+    text = _text_of(block)
+    assert 'resume #ea0c3711' in text
+    assert 'async' in text
+    assert '##' not in text

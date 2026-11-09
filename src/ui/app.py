@@ -298,7 +298,7 @@ class SigilApp(
             await self.query_one(ChatLog).add_notice(f'Theme skipped: {error}', style='yellow')
         if self._history:
             chat = self.query_one(ChatLog)
-            await chat.render_history(self._history)
+            await chat.render_history(self._history, subagents=self.tree_nodes())
             chat.finalize()
         self.query_one(PromptInput).focus()
         self.load_model_window()
@@ -422,6 +422,8 @@ class SigilApp(
 
     async def on_tool_log_message(self, message: ToolLogMessage) -> None:
         event = message.event
+        if event.node_id is not None:
+            return
         chat = self.query_one(ChatLog)
         if event.phase == 'start':
             await chat.add_tool_call(event.tool_name, event.args)

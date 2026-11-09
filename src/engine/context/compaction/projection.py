@@ -60,6 +60,18 @@ def prepare(
         planned = _planned(
             messages, policy, lookup, provider, pressure=pressured or compact_opportunistically, summary=summary
         )
+        triggers = tuple(
+            name
+            for enabled, name in ((pressured, 'pressure'), (compact_opportunistically, 'instruction change'))
+            if enabled
+        )
+        planned = replace(
+            planned,
+            events=(
+                *planned.events[: planned.recorded_events],
+                *(replace(event, triggers=triggers) for event in planned.events[planned.recorded_events :]),
+            ),
+        )
         working, reduced = _project(messages, planned, lookup, provider)
         working, images = apply_image_removals(working, dict(planned.state.image_removals))
     if pressured or budget.fits(estimate_messages_tokens(working)) is False:
@@ -76,7 +88,11 @@ def prepare(
             working, newly_dropped = apply_image_removals(working, removals)
             images += newly_dropped
             planned = replace(
-                planned, events=(*planned.events, _event(messages, working, planned, CompactionReason.DETERMINISTIC))
+                planned,
+                events=(
+                    *planned.events,
+                    replace(_event(messages, working, planned, CompactionReason.DETERMINISTIC), triggers=('pressure',)),
+                ),
             )
 
     request: SummaryRequest | None = None
@@ -275,6 +291,7 @@ def _coalesce(events: Sequence[CompactionEvent]) -> list[CompactionEvent]:
             summary_chars=max(previous.summary_chars, event.summary_chars),
             unmet=tuple(sorted({*previous.unmet, *event.unmet})),
             detail={**previous.detail, **event.detail},
+            triggers=tuple(dict.fromkeys((*previous.triggers, *event.triggers))),
         )
     return list(merged.values())
 

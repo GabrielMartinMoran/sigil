@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+from itertools import groupby
 from typing import Any
 
+from rich import box
 from rich.console import Group, RenderableType
-from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
 
+from src.engine.context.compaction.events import CompactionEvent
 from src.engine.context.meter.debug import DebugReport
 from src.ui.widgets.debug_styles import DYNAMIC_STYLE, PART_STYLES, cache_style, context_style
 from src.ui.widgets.reading import ReadOnlyScroll
@@ -100,16 +102,24 @@ def _prompt_stack(report: DebugReport) -> RenderableType:
         blocks.append(('Tool schemas', 'schema', request.tools_tokens))
     if request.native_tools:
         blocks.append((f'{request.native_tools} native tool schemas', 'schema', None))
-    blocks.extend((part.label, part.kind, part.tokens) for part in request.sections)
+    for dynamic, parts in groupby(request.sections, key=lambda part: part.kind == 'dynamic'):
+        group = tuple(parts)
+        if dynamic:
+            blocks.extend((part.label, part.kind, part.tokens) for part in group)
+        else:
+            tokens = None if any(part.tokens is None for part in group) else sum(part.tokens or 0 for part in group)
+            blocks.append(('History', 'history', tokens))
 
-    panels: list[RenderableType] = [Text('Last request · prompt stack · estimated tokens', style='bold')]
+    table = Table(box=box.SQUARE, show_header=False, show_lines=True, padding=(0, 1), expand=True)
+    table.add_column('Block')
     for label, kind, tokens in blocks:
         style = DYNAMIC_STYLE if kind == 'dynamic' else PART_STYLES['schema'] if kind == 'schema' else 'white'
-        panels.append(Panel(Text(f'{label}  ·  {_n(tokens)} tokens'), border_style=style, padding=(0, 1)))
+        table.add_row(Text(f'{label}  ·  {_n(tokens)} tokens'), style=style)
+    sections: list[RenderableType] = [Text('Last request · prompt stack · estimated tokens', style='bold'), table]
     if not request.history_captured:
-        panels.append(Text('History not captured; fixed sections only.', style='dim'))
-    panels.append(Text('Logical order; provider wire order can differ. ? = unknown.', style='dim'))
-    return Group(*panels)
+        sections.append(Text('History not captured; fixed sections only.', style='dim'))
+    sections.append(Text('Logical order; provider wire order can differ. ? = unknown.', style='dim'))
+    return Group(*sections)
 
 
 def _fixed_cost_table(report: DebugReport) -> RenderableType:
@@ -217,6 +227,12 @@ def _composition_table(report: DebugReport) -> RenderableType:
     return table
 
 
+def _compaction_label(event: CompactionEvent) -> str:
+    labels = {'instruction change': 'opportunistic: instruction change', 'pressure': 'pressure'}
+    triggers = ', '.join(labels.get(trigger, trigger) for trigger in event.triggers) or 'trigger unknown'
+    return f'{event.reason} ({triggers})'
+
+
 def _turn_timeline(report: DebugReport) -> Text:
     turn = next((item for item in reversed(report.turns) if item.steps), None)
     if turn is None:
@@ -240,9 +256,12 @@ def _turn_timeline(report: DebugReport) -> Text:
         text.append('  cache ')
         cache = _pct(ratio)
         text.append(cache.ljust(cache_width), style=cache_style(ratio))
+        cost = turn.step_costs[index - 1] if index <= len(turn.step_costs) else None
+        if cost is not None:
+            text.append(f'  cost ${cost:f}')
         events = turn.step_events[index - 1] if turn.step_events else ()
         for event in events:
-            text.append(f'  ◆ compaction: {event.reason}', style='bold yellow')
+            text.append(f'  ◆ compaction: {_compaction_label(event)}', style='bold yellow')
         text.append('\n')
     return text
 

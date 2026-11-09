@@ -39,6 +39,7 @@ from pydantic_ai.messages import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolCallPart,
 )
 from pydantic_ai.usage import UsageLimits
 from textual import work
@@ -206,7 +207,22 @@ class TurnMixin:
                 self.set_activity_label('Thinking')
         elif isinstance(event, FunctionToolResultEvent):
             ok = getattr(event.part, 'outcome', 'success') == 'success'
-            await chat.add_tool_result(event.part.tool_name, event.part.content, ok=ok)
+            run = getattr(self, '_current_run', None)
+            args = None
+            if run is not None:
+                for message in reversed(run.all_messages()):
+                    call = next(
+                        (
+                            part
+                            for part in message.parts
+                            if isinstance(part, ToolCallPart) and part.tool_call_id == event.part.tool_call_id
+                        ),
+                        None,
+                    )
+                    if call is not None:
+                        args = call.args
+                        break
+            await chat.add_tool_result(event.part.tool_name, event.part.content, ok=ok, args=args)
             self.set_activity_label('Thinking')
         elif isinstance(event, EnqueuedMessagesEvent):
             # The run just picked up a message typed mid-turn: its line stops

@@ -37,6 +37,14 @@ Screen {
     padding: 0 1;
 }
 
+.agent-msg {
+    margin-top: 1;
+    color: $text;
+    background: $surface;
+    border-left: thick $secondary;
+    padding: 0 1;
+}
+
 .assistant-msg {
     margin-top: 1;
 }

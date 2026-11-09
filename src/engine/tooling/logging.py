@@ -10,9 +10,10 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from typing import Any
 
-from src.engine.tooling.events import ToolCallEvent
+from src.engine.tooling.events import CURRENT_NODE_ID, ToolCallEvent
 
 ToolLogger = Callable[[ToolCallEvent], Any]
 """Event sink. It can be sync or async; the return value is ignored."""
@@ -26,6 +27,8 @@ async def emit_tool_event(logger: ToolLogger | None, event: ToolCallEvent) -> No
     """
     if logger is None:
         return
+    if event.node_id is None:
+        event = replace(event, node_id=CURRENT_NODE_ID.get())
     try:
         result = logger(event)
         if inspect.isawaitable(result):
@@ -38,6 +41,8 @@ def emit_tool_event_sync(logger: ToolLogger | None, event: ToolCallEvent) -> Non
     """Emits from a sync tool; it schedules the async sinks on the current loop."""
     if logger is None:
         return
+    if event.node_id is None:
+        event = replace(event, node_id=CURRENT_NODE_ID.get())
     try:
         result = logger(event)
         if inspect.isawaitable(result):

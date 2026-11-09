@@ -57,6 +57,7 @@ from src.engine.agents.tree.models.agent_node import AgentNode
 from src.engine.agents.tree.models.node_status import NodeStatus
 from src.engine.agents.tree.models.summon_error import SummonError
 from src.engine.sessions.recovery import recover_history
+from src.engine.tooling.events import CURRENT_NODE_ID
 
 if TYPE_CHECKING:
     from pydantic_ai import Agent
@@ -324,7 +325,11 @@ class SubagentSummoner:
         """Starts the run as a task, then decides whether to wait for it."""
         node.start()
         self._notify(node)
-        handle = asyncio.create_task(self._execute(node, profile, task), name=f'subagent-{node.short_id}')
+        token = CURRENT_NODE_ID.set(node.id)
+        try:
+            handle = asyncio.create_task(self._execute(node, profile, task), name=f'subagent-{node.short_id}')
+        finally:
+            CURRENT_NODE_ID.reset(token)
         self._tasks[node.id] = handle
         handle.add_done_callback(lambda _finished, node_id=node.id: self._tasks.pop(node_id, None))
         if mode == 'async':

@@ -7,6 +7,7 @@ duration and a summary of the result or the error.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -14,6 +15,9 @@ from src.engine.tooling.presentation import ToolSummary
 
 ToolPhase = Literal['start', 'success', 'error']
 """Phase of a call: started, finished fine or failed."""
+
+CURRENT_NODE_ID: ContextVar[str | None] = ContextVar('tool_event_node_id', default=None)
+"""Execution owning tool events in the current async task or copied thread context."""
 
 PREVIEW_LIMIT = 200
 """Characters kept in a one-line summary."""
@@ -51,5 +55,7 @@ class ToolCallEvent:
     """
     invocation_id: str = ''
     """Stable logging identity across start and finish, independent of the tool name."""
+    node_id: str | None = None
+    """Subagent execution, or None for the session root."""
     output: str | None = None
     """Human-formatted output, separate from the raw logging preview."""

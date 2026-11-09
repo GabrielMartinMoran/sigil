@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -42,6 +43,7 @@ from textual.events import Click
 from textual.timer import Timer
 from textual.widgets import Static
 
+from src.engine.agents.tree.models.agent_node import AgentNode
 from src.engine.attachments.content import describe_attachments, images_in
 from src.engine.attachments.image_attachment import ImageAttachment
 from src.engine.context.images import image_size
@@ -49,6 +51,7 @@ from src.engine.tooling.outputs import present_output
 from src.engine.tooling.presentation import ToolSummary, display_name
 from src.ui.messages import NodeOpened, RollbackRequested
 from src.ui.palette import color
+from src.ui.subagent_reports import split_reports
 from src.ui.widgets.reading import ReadOnlyScroll
 from src.ui.widgets.rows import fit
 from src.ui.widgets.status_bar import SPINNER_FRAMES, SPINNER_INTERVAL
@@ -204,6 +207,22 @@ def _describe_parts(images: Sequence[BinaryContent]) -> tuple[ImageAttachment, .
     return tuple(described)
 
 
+class SubagentReport(Static):
+    """A compact, clickable record of a report delivered to the parent."""
+
+    def __init__(self, node: AgentNode) -> None:
+        super().__init__(Text(f'↩ {node.label} #{node.short_id} sent a report.', style='cyan'))
+        self.node_id = node.id
+        self.add_class('clickable')
+
+    def on_click(self) -> None:
+        self.post_message(NodeOpened(self.node_id))
+
+
+class AgentMessageBlock(Static):
+    """An instruction delivered by another agent, not a human message."""
+
+
 class UserMessage(Static):
     """One user message, clickable when its place in the conversation is known.
 
@@ -226,7 +245,7 @@ class UserMessage(Static):
         self.post_message(RollbackRequested(self.seq))
 
 
-def _user_widget(content: str | list[Any], *, seq: int | None = None) -> Static:
+def _user_widget(content: str | list[Any], *, seq: int | None = None, from_agent: bool = False) -> Static:
     """One user line, from a plain prompt or from text plus images.
 
     Both shapes reach `render_history`: a turn typed before images existed saved
@@ -235,10 +254,16 @@ def _user_widget(content: str | list[Any], *, seq: int | None = None) -> Static:
     the images only have to be summarised back into the line under it.
     """
     if isinstance(content, str):
-        return UserMessage(_user_renderable(content, queued=False), seq=seq, classes='user-msg')
-    text = ' '.join(item for item in content if isinstance(item, str))
-    described = _describe_parts(images_in(content))
-    return UserMessage(_user_renderable(text, queued=False, attachments=described), seq=seq, classes='user-msg')
+        text, described = content, ()
+    else:
+        text = ' '.join(item for item in content if isinstance(item, str))
+        described = _describe_parts(images_in(content))
+    rendered = _user_renderable(text, queued=False, attachments=described)
+    if from_agent:
+        instruction = Text('↳ Agent: ', style='bold')
+        instruction.append_text(rendered[2:])
+        return AgentMessageBlock(instruction, classes='agent-msg')
+    return UserMessage(rendered, seq=seq, classes='user-msg')
 
 
 class AssistantBlock(Static):
@@ -793,7 +818,7 @@ class SummonBlock(ToolCallBlock):
             'agent': str(args.get('agent') or ''),
             'task': str(args.get('task') or ''),
             'mode': str(args.get('mode') or 'sync'),
-            'agent_id': str(args.get('agent_id') or ''),
+            'agent_id': str(args.get('agent_id') or '').lstrip('#'),
         }
 
     def set_result(self, output: Any, *, ok: bool = True) -> None:
@@ -862,9 +887,7 @@ class SummonBlock(ToolCallBlock):
                 if self._clickable
                 else f'bold {color(self, "tool-title")}',
             )
-        else:
-            # Nothing to go on: the block still has to say *what* this is, and the
-            # arrow already says it is a spawn. No invented agent name.
+        elif not resumed:
             text.append('(unknown agent)', style=color(self, 'muted'))
         if resumed:
             text.append(f'  resume #{self._spawn["agent_id"][:8]}', style=color(self, 'muted'))
@@ -1095,7 +1118,7 @@ class ChatLog(ReadOnlyScroll):
         self._last_block = block
         await self._append(block)
 
-    async def add_tool_result(self, name: str, output: Any, *, ok: bool = True) -> None:
+    async def add_tool_result(self, name: str, output: Any, *, ok: bool = True, args: Any = None) -> None:
         """Closes the open block, or starts one when the call was not announced.
 
         A result can arrive without a `start` event: a tool that fails before its
@@ -1104,7 +1127,7 @@ class ChatLog(ReadOnlyScroll):
         """
         block = self._claim(name)
         if block is None:
-            block = block_for(name, {}, classes='tool-call', expanded=self._tools_expanded)
+            block = block_for(name, args or {}, classes='tool-call', expanded=self._tools_expanded)
             await self._append(block)
             self._last_block = block
         block.set_result(output, ok=ok)
@@ -1164,12 +1187,12 @@ class ChatLog(ReadOnlyScroll):
         assert self._current is not None
         self._current.add_text(delta)
 
-    def finalize(self) -> None:
-        """Flushes the transcript and closes calls the run never returned."""
+    def finalize(self, *, close_pending: bool = True) -> None:
+        """Flushes the transcript and optionally closes calls without a result."""
         for child in self.children:
             if isinstance(child, AssistantBlock):
                 child.finalize()
-            elif isinstance(child, ToolCallBlock) and child.pending:
+            elif close_pending and isinstance(child, ToolCallBlock) and child.pending:
                 child.set_error('Interrupted before a result was received.')
         self._refresh_group()
 
@@ -1194,7 +1217,9 @@ class ChatLog(ReadOnlyScroll):
         # After clearing, the new history follows the bottom again.
         self.anchor()
 
-    async def render_history(self, messages: list[ModelMessage]) -> None:
+    async def render_history(
+        self, messages: list[ModelMessage], *, subagents: Sequence[AgentNode] = (), from_agent: bool = False
+    ) -> None:
         """Rebuilds the history from the pydantic-ai messages.
 
         Tool calls and their returns come in separate messages, so the return is
@@ -1257,15 +1282,25 @@ class ChatLog(ReadOnlyScroll):
                         # The transcript is read ordered by `seq`, so the position in
                         # this list *is* the seq. That is what makes the click map to
                         # a turn without a side channel.
-                        batches.append(_user_widget(part.content, seq=position))
-                    elif isinstance(part, ToolReturnPart):
-                        ok = getattr(part, 'outcome', 'success') == 'success'
+                        content = part.content
+                        text = (
+                            content
+                            if isinstance(content, str)
+                            else next((item for item in content if isinstance(item, str)), '')
+                        )
+                        reports, remaining = split_reports(text, subagents)
+                        batches.extend(SubagentReport(node) for node in reports)
+                        if reports and not isinstance(content, str):
+                            content = [remaining if item is text else item for item in content]
+                        elif reports:
+                            content = remaining
+                        if not reports or remaining or (not isinstance(content, str) and images_in(content)):
+                            batches.append(_user_widget(content, seq=position, from_agent=from_agent))
+                    elif isinstance(part, (ToolReturnPart, RetryPromptPart)) and part.tool_name:
+                        ok = isinstance(part, ToolReturnPart) and part.outcome == 'success'
                         block = open_tools.pop(part.tool_call_id, None)
                         if block is None:
-                            match = next(
-                                (key for key, value in open_tools.items() if value.name == part.tool_name), None
-                            )
-                            block = open_tools.pop(match) if match is not None else block_for_tool(part.tool_name, {})
+                            block = block_for_tool(part.tool_name, {})
                         block.set_result(part.content, ok=ok)
             elif isinstance(message, ModelResponse):
                 for part in message.parts:
