@@ -33,6 +33,7 @@ def test_changed_instructions_compact_once_without_a_summary_after_resume() -> N
     assert state.compacted_calls == tuple(f'c{i}' for i in range(10))
     assert len(state.dropped_parts) == 25
     assert len(events) == 1
+    assert events[0].triggers == ('instruction change',)
     assert state.summary is None
     assert capability.last_view is not None and capability.last_view.summary_request is None
 

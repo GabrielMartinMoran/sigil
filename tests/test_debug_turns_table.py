@@ -75,3 +75,27 @@ def test_the_tui_table_names_the_events_and_never_the_conversation():
     assert 'Compaction events' in rendered
     assert 'step 2 emergency' in rendered
     assert 'secret' not in rendered
+
+
+def test_timeline_shows_only_provider_reported_step_costs():
+    from decimal import Decimal
+
+    from src.ui.widgets.debug_view import _turn_timeline
+
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='go')], run_id='a'),
+        ModelResponse(
+            parts=[TextPart('first')], run_id='a', usage=RequestUsage(input_tokens=100, cost=Decimal('0.20'))
+        ),
+        ModelResponse(
+            parts=[TextPart('second')],
+            run_id='a',
+            usage=RequestUsage(input_tokens=100),
+            provider_details={'cost': 0.0123},
+        ),
+        ModelResponse(parts=[TextPart('third')], run_id='a', provider_details={'cost': 0}),
+    ]
+    text = _turn_timeline(_report(messages)).plain
+    assert 'Step 3' in text and 'cost $0' in text
+    assert 'Step 2' in text and 'cost $0.0123' in text
+    assert '$0.20' not in text

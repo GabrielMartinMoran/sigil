@@ -29,6 +29,7 @@ from textual.css.query import NoMatches
 from src.engine.agents.tree.models.agent_node import AgentNode
 from src.engine.skills.loaded import loaded_skills
 from src.ui.messages import NodeOpened, TreeChanged
+from src.ui.subagent_reports import WAKE_PROMPT
 from src.ui.widgets.agent_tree_screen import AgentTreeScreen, TreeAction
 from src.ui.widgets.agent_view import AgentView
 from src.ui.widgets.chat_log import ChatLog
@@ -45,13 +46,6 @@ It is a debounce, not a delay for its own sake: a squad of three reports within 
 second, and one turn that reads all three is cheaper and easier to follow than
 three turns racing each other.
 """
-
-WAKE_PROMPT = 'A subagent finished while the session was idle. Read its report and continue.'
-"""What the agent is told when a turn starts on its own.
-
-The reports themselves are prepended by the turn machinery: this line only says
-why the turn exists, so the agent does not read the message as something the user
-typed."""
 
 
 class TreeMixin:

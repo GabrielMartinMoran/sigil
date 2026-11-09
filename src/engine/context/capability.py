@@ -244,6 +244,17 @@ class ContextViewCapability(AbstractCapability[Any]):
             attempt.finish('failed', error_type=type(error).__name__)
             return _failed_summary(result, error_name=type(error).__name__)
         attempt.finish('complete')
+        instruction_changed = any(
+            'instruction change' in event.triggers
+            for event in result.events[result.plan.recorded_events if result.plan else 0 :]
+        )
+        if instruction_changed:
+            return self._strategy_for_now().view(
+                request_context.messages,
+                budget,
+                summary=Summary(text=text, boundary=request.boundary),
+                compact_opportunistically=True,
+            )
         return self._strategy_for_now().view(
             request_context.messages,
             budget,

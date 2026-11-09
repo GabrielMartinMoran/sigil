@@ -95,9 +95,9 @@ def test_a_run_of_tool_calls_is_spaced_the_same_live_and_restored():
     def two_calls() -> list:
         return [
             ModelRequest(parts=[UserPromptPart(content='go')]),
-            ModelResponse(parts=[ToolCallPart(tool_name='run', args={'command': 'ls'})]),
+            ModelResponse(parts=[ToolCallPart(tool_name='run', args={'command': 'ls'}, tool_call_id='1')]),
             ModelRequest(parts=[ToolReturnPart(tool_name='run', content='a.py', tool_call_id='1')]),
-            ModelResponse(parts=[ToolCallPart(tool_name='read', args={'path': 'a.py'})]),
+            ModelResponse(parts=[ToolCallPart(tool_name='read', args={'path': 'a.py'}, tool_call_id='2')]),
             ModelRequest(parts=[ToolReturnPart(tool_name='read', content='print(1)', tool_call_id='2')]),
             ModelResponse(parts=[TextPart(content='done')]),
         ]
@@ -185,5 +185,128 @@ def test_history_shows_opaque_reasoning_without_exposing_signature():
             text = render_text(block._build())
             assert 'Reasoning' in text
             assert 'secret' not in text
+
+    asyncio.run(inner())
+
+
+def test_unmatched_result_does_not_claim_another_call_with_the_same_name():
+    async def inner() -> None:
+        app = Harness()
+        async with app.run_test():
+            chat = app.query_one(ChatLog)
+            await chat.render_history(
+                [
+                    ModelResponse(parts=[ToolCallPart('read_file', {'path': 'first'}, tool_call_id='a')]),
+                    ModelRequest(parts=[ToolReturnPart('read_file', 'other result', tool_call_id='other')]),
+                ]
+            )
+            tools = list(chat.query(ToolCallBlock))
+            assert len(tools) == 2
+            assert tools[0].pending
+            assert tools[1]._result == 'other result'
+
+    asyncio.run(inner())
+
+
+def test_retry_prompt_is_attached_to_its_tool_call():
+    from pydantic_ai.messages import RetryPromptPart
+
+    async def inner() -> None:
+        app = Harness()
+        async with app.run_test():
+            chat = app.query_one(ChatLog)
+            await chat.render_history(
+                [
+                    ModelResponse(parts=[ToolCallPart('read_file', {}, tool_call_id='a')]),
+                    ModelRequest(parts=[RetryPromptPart(content='try again', tool_name='read_file', tool_call_id='a')]),
+                ]
+            )
+            tool = chat.query_one(ToolCallBlock)
+            assert not tool.pending
+            assert not tool._ok
+            assert 'try again' in tool._result
+
+    asyncio.run(inner())
+
+
+def test_restored_subagent_report_is_an_event_not_a_user_message():
+    from src.engine.agents.profile.models.agent_role import AgentRole
+    from src.engine.agents.tree.models.agent_node import AgentNode
+    from src.engine.agents.tree.summoner import _envelope
+    from src.ui.widgets.chat_log import SubagentReport, UserMessage
+
+    async def inner() -> None:
+        node = AgentNode(id='12345678abcd', name='researcher', role=AgentRole.SUBAGENT, parent_id='root', depth=1)
+        node.mode = 'async'
+        node.finish('A long internal report')
+        text = (
+            _envelope(node, node.result)
+            + '\n\nA subagent finished while the session was idle. Read its report and continue.'
+        )
+        app = Harness()
+        async with app.run_test():
+            chat = app.query_one(ChatLog)
+            await chat.render_history([ModelRequest(parts=[UserPromptPart(text)])], subagents=[node])
+            assert len(list(chat.query(SubagentReport))) == 1
+            assert not list(chat.query(UserMessage))
+            assert 'A long internal report' not in str(chat.query_one(SubagentReport).render())
+
+    asyncio.run(inner())
+
+
+def test_restored_report_preserves_user_text_and_does_not_hide_unmatched_prompts():
+    from src.engine.agents.profile.models.agent_role import AgentRole
+    from src.engine.agents.tree.models.agent_node import AgentNode
+    from src.engine.agents.tree.summoner import _envelope
+    from src.ui.widgets.chat_log import SubagentReport, UserMessage
+
+    async def inner() -> None:
+        node = AgentNode(id='12345678abcd', name='researcher', role=AgentRole.SUBAGENT, parent_id='root', depth=1)
+        node.finish('internal report')
+        app = Harness()
+        async with app.run_test():
+            chat = app.query_one(ChatLog)
+            await chat.render_history(
+                [
+                    ModelRequest(parts=[UserPromptPart(_envelope(node, node.result) + '\n\nmy actual question')]),
+                    ModelRequest(parts=[UserPromptPart('[subagent invented] ordinary text')]),
+                ],
+                subagents=[node],
+            )
+            assert len(list(chat.query(SubagentReport))) == 1
+            users = list(chat.query(UserMessage))
+            assert len(users) == 2
+            assert 'my actual question' in str(users[0].render())
+            assert '[subagent invented]' in str(users[1].render())
+
+    asyncio.run(inner())
+
+
+def test_multiple_reports_and_standalone_delivery_render_as_events():
+    from src.engine.agents.profile.models.agent_role import AgentRole
+    from src.engine.agents.tree.models.agent_node import AgentNode
+    from src.engine.agents.tree.summoner import _envelope
+    from src.ui.widgets.chat_log import SubagentReport, UserMessage
+
+    async def inner() -> None:
+        first = AgentNode(id='aaaaaaaa1234', name='one', role=AgentRole.SUBAGENT, parent_id='root', depth=1)
+        second = AgentNode(id='bbbbbbbb1234', name='two', role=AgentRole.SUBAGENT, parent_id='root', depth=1)
+        first.finish('report one')
+        second.finish('report two')
+        combined = _envelope(first, first.result) + '\n\n' + _envelope(second, second.result) + '\n\nquestion'
+        app = Harness()
+        async with app.run_test():
+            chat = app.query_one(ChatLog)
+            await chat.render_history(
+                [
+                    ModelRequest(parts=[UserPromptPart(combined)]),
+                    ModelRequest(parts=[UserPromptPart(_envelope(first, first.result))]),
+                ],
+                subagents=[first, second],
+            )
+            assert len(list(chat.query(SubagentReport))) == 3
+            users = list(chat.query(UserMessage))
+            assert len(users) == 1
+            assert 'question' in str(users[0].render())
 
     asyncio.run(inner())

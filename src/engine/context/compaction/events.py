@@ -47,6 +47,7 @@ class CompactionEvent:
     request_id: str | None = None
     policy: Mapping[str, Any] = field(default_factory=dict)
     window: int | None = None
+    triggers: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, 'detail', MappingProxyType(dict(self.detail)))
@@ -69,6 +70,7 @@ class CompactionEvent:
             'request_id': self.request_id,
             'policy': dict(self.policy),
             'window': self.window,
+            'triggers': list(self.triggers),
         }
 
     @classmethod
@@ -86,6 +88,7 @@ class CompactionEvent:
             request_id=row.get('request_id'),
             policy=dict(row.get('policy', {})),
             window=row.get('window'),
+            triggers=tuple(row.get('triggers', ())),
         )
 
 

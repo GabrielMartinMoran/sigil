@@ -19,8 +19,10 @@ draft of something that may never be said.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
+from pydantic_ai.messages import ModelMessagesTypeAdapter
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -97,7 +99,8 @@ class AgentView(Vertical):
         self._node: AgentNode | None = None
         self._parent_label = ''
         self._has_parent = False
-        self._painted: tuple[str, int, str | None] | None = None
+        self._painted: tuple[str, str, bytes] | None = None
+        self._paint_lock = asyncio.Lock()
 
     def compose(self) -> ComposeResult:
         yield Static(Text(''), id='agent-header')
@@ -124,31 +127,33 @@ class AgentView(Vertical):
     async def refresh_node(self, node: AgentNode | None = None) -> None:
         """Repaints when the node moved on.
 
-        The signature is the state and the message count: a running node's
-        transcript grows one message at a time, and repainting on anything else
-        (the clock, a repaint of the tree) would rebuild every block for nothing.
+        The signature tracks the transcript and state, so changes within an
+        existing message are not missed and clock-only updates do not rebuild it.
         """
         if node is not None and self._node is not None and node.id == self._node.id:
             self._node = node
         await self._paint()
 
     async def _paint(self) -> None:
-        node = self._node
-        if node is None:
-            return
-        header = build_agent_header(node, parent_label=self._parent_label, has_parent=self._has_parent)
-        self.query_one('#agent-header', Static).update(header)
-        signature = (str(node.status), len(node.messages), node.result)
-        if signature == self._painted:
-            return
-        self._painted = signature
-        chat = self.transcript
-        await chat.clear()
-        if node.messages:
-            await chat.render_history(node.messages)
-            chat.finalize()
-        elif node.status is NodeStatus.RUNNING:
-            await chat.add_notice('Waiting for the first step…', style='dim')
+        async with self._paint_lock:
+            node = self._node
+            if node is None:
+                return
+            header = build_agent_header(node, parent_label=self._parent_label, has_parent=self._has_parent)
+            self.query_one('#agent-header', Static).update(header)
+            messages = ModelMessagesTypeAdapter.dump_json(node.messages)
+            status = node.status
+            signature = (node.id, str(status), messages)
+            if signature == self._painted:
+                return
+            chat = self.transcript
+            await chat.clear()
+            if messages != b'[]':
+                await chat.render_history(list(ModelMessagesTypeAdapter.validate_json(messages)), from_agent=True)
+                chat.finalize(close_pending=status.finished)
+            elif status is NodeStatus.RUNNING:
+                await chat.add_notice('Waiting for the first step…', style='dim')
+            self._painted = signature
 
     async def repaint(self) -> None:
         """Theme change: the header and the blocks carry the old palette."""

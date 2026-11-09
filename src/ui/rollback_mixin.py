@@ -257,7 +257,7 @@ class RollbackMixin:
         if chat is None:
             return
         await chat.clear()
-        await chat.render_history(reloaded.messages)
+        await chat.render_history(reloaded.messages, subagents=self.tree_nodes())
         chat.finalize()
 
     def _chat_or_none(self):

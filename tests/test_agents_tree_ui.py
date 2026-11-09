@@ -441,3 +441,111 @@ def test_loading_another_session_swaps_the_tree():
                 assert app.viewed_node_id() is None
 
     asyncio.run(inner())
+
+
+def test_running_node_keeps_unreturned_calls_pending_and_finishes_them_on_cancel():
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+
+    from src.ui.widgets.chat_log import ToolCallBlock
+
+    async def inner() -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _app(tmp)
+            node = _fill(app, running='researcher')
+            node.messages = [ModelResponse(parts=[ToolCallPart('read_file', {}, tool_call_id='a')])]
+            async with app.run_test() as pilot:
+                await app.open_subagent(node)
+                await pilot.pause()
+                view = app.query_one(AgentView)
+                assert view.transcript.query_one(ToolCallBlock).pending
+                node.cancel()
+                await view.refresh_node(node)
+                tool = view.transcript.query_one(ToolCallBlock)
+                assert not tool.pending
+                assert 'Interrupted' in tool._error
+
+    asyncio.run(inner())
+
+
+def test_overlapping_refreshes_do_not_mix_transcript_snapshots():
+    from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
+
+    from src.ui.widgets.chat_log import ToolCallBlock
+
+    async def inner() -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _app(tmp)
+            node = _fill(app, running='researcher')
+            async with app.run_test():
+                await app.open_subagent(node)
+                view = app.query_one(AgentView)
+                original = view.transcript.render_history
+                started = asyncio.Event()
+                release = asyncio.Event()
+                calls = 0
+
+                async def delayed(messages: list, **kwargs: Any) -> None:
+                    nonlocal calls
+                    calls += 1
+                    if calls == 1:
+                        started.set()
+                        await release.wait()
+                    await original(messages, **kwargs)
+
+                view.transcript.render_history = delayed
+                node.messages = [ModelResponse(parts=[ToolCallPart('read_file', {}, tool_call_id='a')])]
+                first = asyncio.create_task(view.refresh_node(node))
+                await started.wait()
+                node.messages = [
+                    *node.messages,
+                    ModelRequest(parts=[ToolReturnPart('read_file', 'ok', tool_call_id='a')]),
+                ]
+                second = asyncio.create_task(view.refresh_node(node))
+                await asyncio.sleep(0)
+                release.set()
+                await asyncio.gather(first, second)
+                tools = list(view.transcript.query(ToolCallBlock))
+                assert len(tools) == 1
+                assert tools[0]._result == 'ok'
+                assert not tools[0].pending
+
+    asyncio.run(inner())
+
+
+def test_node_view_refreshes_when_a_message_changes_without_a_count_change():
+    from pydantic_ai.messages import ModelResponse, TextPart
+
+    from src.ui.widgets.chat_log import AssistantBlock
+
+    async def inner() -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _app(tmp)
+            node = _fill(app, running='researcher')
+            node.messages = [ModelResponse(parts=[TextPart('before')])]
+            async with app.run_test():
+                await app.open_subagent(node)
+                view = app.query_one(AgentView)
+                node.messages[0].parts[0].content = 'after'
+                await view.refresh_node(node)
+                assert 'after' in render_text(view.transcript.query_one(AssistantBlock)._build())
+
+    asyncio.run(inner())
+
+
+def test_subagent_instructions_are_distinct_from_user_messages():
+    from src.ui.widgets.chat_log import AgentMessageBlock, UserMessage
+
+    async def inner() -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _app(tmp)
+            node = _fill(app, running='researcher')
+            node.messages = [ModelRequest(parts=[UserPromptPart('Investigate the project')])]
+            async with app.run_test():
+                await app.open_subagent(node)
+                view = app.query_one(AgentView)
+                instruction = view.transcript.query_one(AgentMessageBlock)
+                assert 'Investigate the project' in render_text(instruction.render())
+                assert 'agent-msg' in instruction.classes
+                assert not list(view.transcript.query(UserMessage))
+
+    asyncio.run(inner())
