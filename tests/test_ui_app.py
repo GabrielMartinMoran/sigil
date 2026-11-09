@@ -511,3 +511,20 @@ def test_context_command_shows_breakdown_and_scope(monkeypatch):
                 assert 'src/AGENTS.md' in text
 
     asyncio.run(inner())
+
+
+def test_child_tool_events_do_not_enter_parent_chat():
+    from src.engine.tooling.events import ToolCallEvent
+    from src.ui.tool_logging import ToolLogMessage
+    from src.ui.widgets.chat_log import ChatLog, ToolCallBlock
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _make_app(Agent(TestModel()), tmp)
+            async with app.run_test():
+                await app.on_tool_log_message(ToolLogMessage(ToolCallEvent('read_file', 'start', node_id='child')))
+                await app.on_tool_log_message(ToolLogMessage(ToolCallEvent('run', 'start')))
+                blocks = list(app.query_one(ChatLog).query(ToolCallBlock))
+                assert [block._name for block in blocks] == ['run']
+
+    asyncio.run(inner())

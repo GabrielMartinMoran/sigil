@@ -422,6 +422,8 @@ class SigilApp(
 
     async def on_tool_log_message(self, message: ToolLogMessage) -> None:
         event = message.event
+        if event.node_id is not None:
+            return
         chat = self.query_one(ChatLog)
         if event.phase == 'start':
             await chat.add_tool_call(event.tool_name, event.args)

@@ -316,6 +316,8 @@ class ServerRuntime:
 
     def _on_tool_event(self, event: Any) -> None:
         """The tool log sink: what started, how long it took, how it ended."""
+        if getattr(event, 'node_id', None) is not None:
+            return
         phase = getattr(event, 'phase', '')
         if phase == 'start':
             self.hub.publish(
