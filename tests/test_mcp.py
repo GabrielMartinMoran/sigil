@@ -295,24 +295,30 @@ def test_describe_connects_and_lists_tools(tmp_path):
 
 
 def test_meta_tools_expose_resources_and_prompts(tmp_path):
-    path = write_config(tmp_path / 'config.json', {'probe': stdio_server(tmp_path)})
+    path = write_config(tmp_path / 'config.json', {'probe': stdio_server(tmp_path, keep_alive=True)})
     manager = MCPManager(load_config([path], environ={}).servers)
     agent = DummyAgent()
     register_mcp_tools(agent, manager)
 
-    resources = asyncio.run(agent.registered['list_mcp_resources']())
-    assert [(item.server, item.uri) for item in resources] == [('probe', 'probe://hello')]
+    async def inner():
+        try:
+            resources = await agent.registered['list_mcp_resources']()
+            assert [(item.server, item.uri) for item in resources] == [('probe', 'probe://hello')]
 
-    content = asyncio.run(agent.registered['read_mcp_resource']('probe', 'probe://hello'))
-    assert content.content == 'hi there'
-    assert content.binary is False
+            content = await agent.registered['read_mcp_resource']('probe', 'probe://hello')
+            assert content.content == 'hi there'
+            assert content.binary is False
 
-    prompts = asyncio.run(agent.registered['list_mcp_prompts']())
-    assert [prompt.name for prompt in prompts] == ['greet']
-    assert prompts[0].arguments[0].name == 'name'
+            prompts = await agent.registered['list_mcp_prompts']()
+            assert [prompt.name for prompt in prompts] == ['greet']
+            assert prompts[0].arguments[0].name == 'name'
 
-    resolved = asyncio.run(agent.registered['get_mcp_prompt']('probe', 'greet', {'name': 'Gaby'}))
-    assert resolved.messages[0].content == 'Hello Gaby'
+            resolved = await agent.registered['get_mcp_prompt']('probe', 'greet', {'name': 'Gaby'})
+            assert resolved.messages[0].content == 'Hello Gaby'
+        finally:
+            await manager.aclose()
+
+    asyncio.run(inner())
 
 
 def test_meta_tools_are_not_registered_without_servers():

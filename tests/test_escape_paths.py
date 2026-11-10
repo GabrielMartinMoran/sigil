@@ -60,7 +60,6 @@ def test_escape_from_the_focused_prompt_asks_then_stops():
             release = asyncio.Event()
             app = _app(tmp, _agent_with_a_blocking_tool(release))
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 app.start_turn('go')
                 for _ in range(60):
                     await pilot.pause()
@@ -69,7 +68,6 @@ def test_escape_from_the_focused_prompt_asks_then_stops():
                 assert app.focused is app.query_one(PromptInput)
 
                 await pilot.press('escape')
-                await pilot.pause()
                 assert app._turn_active is True
                 assert 'again' in _status(app)
 
@@ -89,7 +87,6 @@ def test_escape_works_when_the_focus_is_not_in_the_prompt():
             release = asyncio.Event()
             app = _app(tmp, _agent_with_a_blocking_tool(release))
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 app.start_turn('go')
                 for _ in range(60):
                     await pilot.pause()
@@ -102,7 +99,6 @@ def test_escape_works_when_the_focus_is_not_in_the_prompt():
                 assert app.focused is not app.query_one(PromptInput)
 
                 await pilot.press('escape')
-                await pilot.pause()
                 assert app._turn_active is True
                 assert 'again' in _status(app)
 
@@ -120,9 +116,7 @@ def test_escape_without_a_turn_does_nothing_visible():
             release = asyncio.Event()
             app = _app(tmp, _agent_with_a_blocking_tool(release))
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 await pilot.press('escape')
-                await pilot.pause()
                 assert 'again' not in _status(app)
                 assert app._abort_deadline is None
 
@@ -137,7 +131,6 @@ def test_any_other_key_cancels_the_abort_even_with_the_focus_elsewhere():
             release = asyncio.Event()
             app = _app(tmp, _agent_with_a_blocking_tool(release))
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 app.start_turn('go')
                 for _ in range(60):
                     await pilot.pause()
@@ -147,11 +140,9 @@ def test_any_other_key_cancels_the_abort_even_with_the_focus_elsewhere():
                 app.set_focus(None)
                 await pilot.pause()
                 await pilot.press('escape')
-                await pilot.pause()
                 assert 'again' in _status(app)
 
                 await pilot.press('j')  # scrolling the chat
-                await pilot.pause()
                 assert 'again' not in _status(app)
                 assert app._abort_deadline is None
                 assert app._turn_active is True

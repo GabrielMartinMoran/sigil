@@ -21,8 +21,11 @@ import atexit
 import os
 import shutil
 import tempfile
+from collections.abc import Iterator
+from pathlib import Path
 
 import dotenv
+import pytest
 
 # 1. Disable the `.env` loader: `src/sigil.py` calls it, and a local file must not
 #    reach the process during tests.
@@ -40,3 +43,24 @@ atexit.register(shutil.rmtree, SANDBOX, True)
 #    passes it to `load_settings` explicitly.
 for _name in [name for name in os.environ if name.startswith('SIGIL_') and name != 'SIGIL_HOME']:
     del os.environ[_name]
+
+
+@pytest.fixture
+def memory_databases(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Isolate databases by path without disk I/O for explicitly opted-in tests."""
+    from src.engine.storage.database import Database
+
+    databases: dict[Path, Database] = {}
+
+    def at(_cls: type[Database], path: str | Path) -> Database:
+        key = Path(path).expanduser().resolve()
+        if key not in databases:
+            databases[key] = Database(':memory:')
+        return databases[key]
+
+    monkeypatch.setattr(Database, 'at', classmethod(at))
+    try:
+        yield
+    finally:
+        for database in databases.values():
+            database.close()

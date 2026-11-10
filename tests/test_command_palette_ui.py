@@ -37,7 +37,6 @@ def test_should_filter_palette_and_execute_without_losing_draft(tmp_path: Path) 
             await pilot.pause()
             assert app.screen.query_one(OptionList).option_count == 1
             await pilot.press('enter')
-            await pilot.pause()
             app.handle_command.assert_awaited_once_with('/context', '')
             assert prompt.value == 'my draft'
 
@@ -53,11 +52,9 @@ def test_should_request_worktree_name_and_dispatch_existing_command(tmp_path: Pa
             app.screen.query_one(Input).value = 'worktree'
             await pilot.pause()
             await pilot.press('enter')
-            await pilot.pause()
             assert isinstance(app.screen, TextPromptScreen)
             app.screen.query_one(Input).value = 'feature-x'
             await pilot.press('enter')
-            await pilot.pause()
             app.handle_command.assert_awaited_once_with('/new', '--worktree feature-x')
 
     asyncio.run(scenario())
@@ -84,7 +81,6 @@ def test_should_show_friendly_names_and_filter_by_name_or_slash_command(tmp_path
             assert options.option_count == 1
             assert options.get_option_at_index(0).prompt.plain.startswith('Choose model (/model)')
             await pilot.press('enter')
-            await pilot.pause()
             app.handle_command.assert_awaited_once_with('/model', '')
 
     asyncio.run(scenario())
@@ -100,7 +96,6 @@ def test_should_set_external_file_access_from_palette(tmp_path: Path) -> None:
                 await pilot.pause()
                 assert app.screen.query_one(OptionList).option_count == 1
                 await pilot.press('enter')
-                await pilot.pause()
                 assert app._session.allow_external_files is expected
                 assert app._store.load(app._session.id).allow_external_files is expected
 

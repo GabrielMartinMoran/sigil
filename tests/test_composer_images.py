@@ -19,6 +19,7 @@ import asyncio
 import io
 from typing import Self
 
+import pytest
 from PIL import Image
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
@@ -32,6 +33,8 @@ from src.ui.turn_mixin import Steer
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 from tests.ui_helpers import render_text
+
+pytestmark = pytest.mark.usefixtures('memory_databases')
 
 
 def _png(width: int = 40, height: int = 30) -> bytes:
@@ -87,12 +90,10 @@ def test_ctrl_v_with_an_image_writes_the_marker_where_the_cursor_is(tmp_path):
     async def inner() -> None:
         app = _app(tmp_path)
         async with app.run_test() as pilot:
-            await pilot.pause()
             composer = _composer(app)
             await pilot.press('m', 'i', 'r', 'a', 'space')
             with Clipboard(_png()):
                 await pilot.press('ctrl+v')
-                await pilot.pause()
 
             assert composer.text == 'mira [Image #1]'
             assert len(composer.attachments) == 1
@@ -105,11 +106,9 @@ def test_the_marker_is_painted_differently_from_the_text_around_it(tmp_path):
     async def inner() -> None:
         app = _app(tmp_path)
         async with app.run_test() as pilot:
-            await pilot.pause()
             composer = _composer(app)
             with Clipboard(_png()):
                 await pilot.press('ctrl+v')
-                await pilot.pause()
             await pilot.pause()
 
             # The style comes from the rendered strip: reverse video is what makes
@@ -126,14 +125,11 @@ def test_two_pastes_are_numbered_in_order(tmp_path):
     async def inner() -> None:
         app = _app(tmp_path)
         async with app.run_test() as pilot:
-            await pilot.pause()
             composer = _composer(app)
             with Clipboard(_png(10, 10)):
                 await pilot.press('ctrl+v')
-                await pilot.pause()
             with Clipboard(_png(20, 20)):
                 await pilot.press('ctrl+v')
-                await pilot.pause()
 
             assert composer.text == '[Image #1][Image #2]'
             assert [image.number for image in composer.attachments] == [1, 2]
@@ -146,13 +142,11 @@ def test_a_clipboard_without_an_image_still_pastes_text(tmp_path):
     async def inner() -> None:
         app = _app(tmp_path)
         async with app.run_test() as pilot:
-            await pilot.pause()
             composer = _composer(app)
             # No image: the widget falls back to the text paste it always had.
             app.copy_to_clipboard('texto del portapapeles')
             with Clipboard(None):
                 await pilot.press('ctrl+v')
-                await pilot.pause()
 
             assert composer.text == 'texto del portapapeles'
             assert composer.attachments == ()
@@ -164,12 +158,10 @@ def test_a_missing_clipboard_tool_is_reported_once_and_text_still_pastes(tmp_pat
     async def inner() -> None:
         app = _app(tmp_path)
         async with app.run_test() as pilot:
-            await pilot.pause()
             composer = _composer(app)
             app.copy_to_clipboard('texto')
             with Clipboard(error='Install `xclip` to paste screenshots.'):
                 await pilot.press('ctrl+v')
-                await pilot.pause()
 
             assert composer.text == 'texto'
             notices = [render_text(child.render()) for child in app.query_one(ChatLog).children]
@@ -185,14 +177,11 @@ def test_one_backspace_removes_the_whole_marker_and_the_image(tmp_path):
     async def inner() -> None:
         app = _app(tmp_path)
         async with app.run_test() as pilot:
-            await pilot.pause()
             composer = _composer(app)
             with Clipboard(_png()):
                 await pilot.press('ctrl+v')
-                await pilot.pause()
 
             await pilot.press('backspace')
-            await pilot.pause()
 
             assert composer.text == ''
             assert composer.attachments == ()
@@ -206,12 +195,10 @@ def test_backspace_inside_prose_still_deletes_one_character(tmp_path):
     async def inner() -> None:
         app = _app(tmp_path)
         async with app.run_test() as pilot:
-            await pilot.pause()
             composer = _composer(app)
             await pilot.press('h', 'o', 'l', 'a')
 
             await pilot.press('backspace')
-            await pilot.pause()
 
             assert composer.text == 'hol'
 
@@ -224,20 +211,16 @@ def test_deleting_the_first_of_two_images_renumbers_the_second(tmp_path):
     async def inner() -> None:
         app = _app(tmp_path)
         async with app.run_test() as pilot:
-            await pilot.pause()
             composer = _composer(app)
             with Clipboard(_png(10, 10)):
                 await pilot.press('ctrl+v')
-                await pilot.pause()
             await pilot.press('space')
             with Clipboard(_png(20, 20)):
                 await pilot.press('ctrl+v')
-                await pilot.pause()
 
             # The cursor sits at the end; the first marker is deleted from the start.
             composer.move_cursor((0, 0))
             await pilot.press('delete')
-            await pilot.pause()
 
             assert composer.text == ' [Image #1]'
             assert [image.number for image in composer.attachments] == [1]
@@ -250,11 +233,9 @@ def test_clearing_the_composer_drops_the_attachments(tmp_path):
     async def inner() -> None:
         app = _app(tmp_path)
         async with app.run_test() as pilot:
-            await pilot.pause()
             composer = _composer(app)
             with Clipboard(_png()):
                 await pilot.press('ctrl+v')
-                await pilot.pause()
 
             composer.clear()
 
@@ -262,7 +243,6 @@ def test_clearing_the_composer_drops_the_attachments(tmp_path):
             # The next paste starts at one again.
             with Clipboard(_png()):
                 await pilot.press('ctrl+v')
-                await pilot.pause()
             assert composer.text == '[Image #1]'
 
     asyncio.run(inner())
@@ -278,8 +258,7 @@ def test_a_message_that_missed_the_seam_comes_back_with_its_images(tmp_path):
 
     async def inner() -> None:
         app = _app(tmp_path)
-        async with app.run_test() as pilot:
-            await pilot.pause()
+        async with app.run_test():
             composer = _composer(app)
             leftovers = [Steer(text='volvé [Image #1]', attachments=(_attachment(1),))]
 
@@ -297,8 +276,7 @@ def test_restoring_two_messages_renumbers_the_second_ones_images(tmp_path):
 
     async def inner() -> None:
         app = _app(tmp_path)
-        async with app.run_test() as pilot:
-            await pilot.pause()
+        async with app.run_test():
             composer = _composer(app)
 
             composer.restore([('uno [Image #1]', (_attachment(1),)), ('dos [Image #1]', (_attachment(1),))])
@@ -318,11 +296,9 @@ def test_enter_sends_the_text_and_the_images_together(tmp_path):
     async def inner() -> None:
         app = _app(tmp_path)
         async with app.run_test() as pilot:
-            await pilot.pause()
             await pilot.press('q', 'u', 'e')
             with Clipboard(_png()):
                 await pilot.press('ctrl+v')
-                await pilot.pause()
             await pilot.press('enter')
 
             for _ in range(60):

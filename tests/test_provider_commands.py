@@ -25,6 +25,7 @@ from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.effort_screen import EffortScreen
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.sidebar_panel import SidebarPanel
+from tests.ui_helpers import wait_until
 
 CATALOG = ModelCatalog(
     models=(
@@ -138,7 +139,6 @@ def test_effort_without_a_provider_points_at_the_setup_command():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(Path(tmp))
             async with app.run_test() as pilot:
-                await pilot.pause()
                 _submit(app, '/effort')
                 await pilot.pause()
                 assert any('/provider' in text for text in _texts(app))
@@ -154,10 +154,8 @@ def test_effort_without_argument_opens_the_picker_with_the_accepted_levels():
             session = SessionStore(cwd=str(root), base_dir=root / 'sessions').create_session()
             app = _app(root, service, session)
             async with app.run_test() as pilot:
-                await pilot.pause()
                 _submit(app, '/effort')
-                for _ in range(8):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: isinstance(app.screen, EffortScreen))
 
                 screen = app.screen
                 assert isinstance(screen, EffortScreen)
@@ -175,15 +173,12 @@ def test_the_effort_picker_applies_the_highlighted_level():
             session = SessionStore(cwd=str(root), base_dir=root / 'sessions').create_session()
             app = _app(root, service, session)
             async with app.run_test() as pilot:
-                await pilot.pause()
                 _submit(app, '/effort')
-                for _ in range(8):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: isinstance(app.screen, EffortScreen))
 
                 await pilot.press('down')  # default -> low
                 await pilot.press('enter')
-                for _ in range(8):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: service.snapshot().thinking == 'low')
 
                 assert service.snapshot().thinking == 'low'
 
@@ -204,7 +199,6 @@ def test_effort_sets_the_level_and_the_panel_follows():
             session = SessionStore(cwd=str(root), base_dir=root / 'sessions').create_session()
             app = _app(root, service, session)
             async with app.run_test() as pilot:
-                await pilot.pause()
                 _submit(app, '/effort high')
                 await pilot.pause()
                 assert service.snapshot().thinking == 'high'
@@ -221,7 +215,6 @@ def test_effort_rejects_a_level_the_model_does_not_accept():
             session = SessionStore(cwd=str(root), base_dir=root / 'sessions').create_session()
             app = _app(root, service, session)
             async with app.run_test() as pilot:
-                await pilot.pause()
                 _submit(app, '/effort max')
                 await pilot.pause()
                 assert service.snapshot().thinking == 'default'
@@ -237,8 +230,7 @@ def test_the_panel_shows_the_active_account_and_its_context():
             service = await _prepared(root)
             session = SessionStore(cwd=str(root), base_dir=root / 'sessions').create_session()
             app = _app(root, service, session)
-            async with app.run_test() as pilot:
-                await pilot.pause()
+            async with app.run_test():
                 sidebar = app.query_one(SidebarPanel).text
                 assert 'work' in sidebar
                 assert 'OpenRouter' in sidebar
@@ -254,8 +246,7 @@ def test_the_panel_says_no_model_before_anything_is_configured():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(Path(tmp))
-            async with app.run_test() as pilot:
-                await pilot.pause()
+            async with app.run_test():
                 sidebar = app.query_one(SidebarPanel).text
                 assert '/provider' in sidebar
                 # A context percentage for a window that does not exist yet is a
@@ -280,8 +271,7 @@ def test_loading_a_session_restores_its_model():
             assert service.snapshot().model == 'first/model'
 
             app = _app(root, service, saved)
-            async with app.run_test() as pilot:
-                await pilot.pause()
+            async with app.run_test():
                 restored = app._restore_session_model(saved)
                 del restored
                 assert service.snapshot().model == 'second/model'
@@ -326,8 +316,7 @@ def test_a_session_without_a_selection_loads_without_touching_the_model():
             assert legacy.selection is None
 
             app = _app(root, service, legacy)
-            async with app.run_test() as pilot:
-                await pilot.pause()
+            async with app.run_test():
                 app._restore_session_model(legacy)
                 assert service.snapshot().model == 'first/model'
 

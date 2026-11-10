@@ -50,7 +50,6 @@ def test_should_filter_models_by_provider_and_toggle_favourite(tmp_path: Path) -
             await pilot.pause()
             assert [row.model.name for row in screen.visible_models] == ['alpha']
             await pilot.press('enter')
-            await pilot.pause()
             assert not isinstance(app.screen, GroupedModelScreen)
 
     asyncio.run(scenario())

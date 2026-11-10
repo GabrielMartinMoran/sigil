@@ -12,6 +12,7 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from textual.containers import VerticalScroll
@@ -28,7 +29,9 @@ from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.sidebar_panel import SidebarPanel
 from src.ui.widgets.status_bar import StatusBar
 from src.ui.widgets.theme_picker_screen import ThemePickerScreen
-from tests.ui_helpers import render_text
+from tests.ui_helpers import render_text, wait_for_turn
+
+pytestmark = pytest.mark.usefixtures('memory_databases')
 
 
 def _app(tmp: str, **kwargs) -> SigilApp:
@@ -53,21 +56,19 @@ def test_shift_enter_inserts_a_line_and_enter_sends():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
                 field = app.query_one(PromptInput)
                 field.focus()
 
                 await pilot.press('a')
                 await pilot.press('shift+enter')
                 await pilot.press('b')
-                await pilot.pause()
                 assert field.value == 'a\nb'
                 # Nothing was sent: the turn is the only thing that clears it.
                 assert app._session.messages == []
 
                 await pilot.press('enter')
-                for _ in range(30):
-                    await pilot.pause()
+                await wait_for_turn(app)
+                assert not app._turn_active
                 assert field.value == ''
                 assert len(app._session.messages) == 2
 
@@ -79,13 +80,12 @@ def test_a_multi_line_message_reaches_the_turn_whole():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
                 field = app.query_one(PromptInput)
                 field.focus()
                 field.value = 'first line\nsecond line'
                 await pilot.press('enter')
-                for _ in range(30):
-                    await pilot.pause()
+                await wait_for_turn(app)
+                assert not app._turn_active
 
                 from pydantic_ai.messages import UserPromptPart
 
@@ -101,7 +101,6 @@ def test_the_composer_grows_with_the_message_and_stops():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
                 field = app.query_one(PromptInput)
                 one_line = field.size.height
                 field.value = '\n'.join(str(i) for i in range(5))
@@ -116,12 +115,10 @@ def test_whitespace_only_is_not_sent():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
                 field = app.query_one(PromptInput)
                 field.focus()
                 field.value = '   \n  '
                 await pilot.press('enter')
-                await pilot.pause()
                 assert app._session.messages == []
 
     asyncio.run(inner())
@@ -134,18 +131,15 @@ def test_the_bar_is_idle_before_the_turn_and_spins_during_it():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(100, 30)):
                 bar = app.query_one(StatusBar)
                 assert 'Ready' in bar.render().plain
 
                 app.set_activity(running=True, label='Thinking')
-                await pilot.pause()
                 assert 'Thinking' in bar.render().plain
                 assert 'Ready' not in bar.render().plain
 
                 app.set_activity(running=False)
-                await pilot.pause()
                 assert 'Ready' in bar.render().plain
 
     asyncio.run(inner())
@@ -155,11 +149,9 @@ def test_the_spinner_animates_and_stops():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(100, 30)):
                 bar = app.query_one(StatusBar)
                 app.set_activity(running=True, label='Thinking')
-                await pilot.pause()
                 first = bar.render().plain
                 # The frame advances on a timer, not on the render call.
                 bar._advance()
@@ -167,7 +159,6 @@ def test_the_spinner_animates_and_stops():
                 assert first != second
 
                 app.set_activity(running=False)
-                await pilot.pause()
                 assert bar._timer is None
 
     asyncio.run(inner())
@@ -177,12 +168,10 @@ def test_the_label_follows_the_stream():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(100, 30)):
                 bar = app.query_one(StatusBar)
                 app.set_activity(running=True, label='Thinking')
                 app.set_activity_label('Writing')
-                await pilot.pause()
                 assert 'Writing' in bar.render().plain
 
     asyncio.run(inner())
@@ -192,16 +181,13 @@ def test_the_elapsed_time_shows_only_after_a_second():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(100, 30)):
                 bar = app.query_one(StatusBar)
                 app.set_activity(running=True, label='Thinking')
-                await pilot.pause()
                 assert '0s' not in bar.render().plain
 
                 app._turn_started_at -= 7
                 app.activity_tick()
-                await pilot.pause()
                 assert '7s' in bar.render().plain
 
     asyncio.run(inner())
@@ -223,12 +209,11 @@ def test_the_bar_shows_the_branch_and_the_diff(tmp_path):
 
     async def inner():
         app = _app(str(tmp_path), workspace_manager=WorkspaceManager(root))
-        async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
+        async with app.run_test(size=(120, 30)):
             app.refresh_workspace_badge()
             app.refresh_diff()
-            for _ in range(10):
-                await pilot.pause()
+            app._stop_diff_polling()
+            await asyncio.wait_for(app.workers.wait_for_complete(), timeout=5)
 
             text = app.query_one(StatusBar).render().plain
             assert root.name in text or 'main' in text
@@ -273,8 +258,7 @@ def test_without_git_the_bar_says_nothing_about_changes():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(100, 30)):
                 text = app.query_one(StatusBar).render().plain
                 assert '+' not in text
                 assert '−' not in text
@@ -309,8 +293,7 @@ def test_the_sidebar_is_one_panel_with_the_roadmap_as_its_last_section():
             roadmap = RoadmapStores(session_id=None, base_dir=Path(tmp))
             roadmap.root.set_items([TodoItem(title='Ship it', status='in_progress')])
             app = _app(tmp, roadmap_store=roadmap)
-            async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(120, 40)):
                 sidebar = app.query_one('#sidebar')
                 assert type(sidebar).__name__ == 'SidebarPanel'
                 # One box: the scroll and the body inside it, and nothing else. The
@@ -345,7 +328,6 @@ def test_the_panel_scrolls_when_a_long_plan_does_not_fit():
             roadmap.root.set_items([TodoItem(title=f'Task {index}') for index in range(20)])
             app = _app(tmp, roadmap_store=roadmap)
             async with app.run_test(size=(100, 24)) as pilot:
-                await pilot.pause()
                 panel = app.query_one(SidebarPanel)
                 scroller = app.query_one('#sidebar-scroll')
                 prompt = app.query_one(PromptInput)
@@ -373,7 +355,6 @@ def test_the_panel_scrolls_when_there_are_more_skills_than_rows():
             roadmap.root.set_items([TodoItem(title='The only task')])
             app = _app(tmp, roadmap_store=roadmap)
             async with app.run_test(size=(100, 26)) as pilot:
-                await pilot.pause()
                 panel = app.query_one(SidebarPanel)
                 panel.update_skills([f'skill-{index}' for index in range(20)])
                 await pilot.pause()
@@ -395,7 +376,6 @@ def test_the_roadmap_still_updates_live():
             roadmap = RoadmapStores(session_id=None, base_dir=Path(tmp))
             app = _app(tmp, roadmap_store=roadmap)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 panel = app.query_one(SidebarPanel)
                 assert 'No tasks yet' in panel.text
                 assert 'Roadmap' in panel.text
@@ -413,8 +393,7 @@ def test_the_panel_without_a_roadmap_store_has_no_roadmap_section():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
-            async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(120, 40)):
                 text = app.query_one(SidebarPanel).text
                 assert 'Model' in text
                 assert 'Roadmap' not in text
@@ -427,15 +406,12 @@ def test_hiding_the_sidebar_hides_the_roadmap_with_it():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
-            async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(120, 40)):
                 panel = app.query_one(SidebarPanel)
                 await app.handle_command('/sidebar', 'off')
-                await pilot.pause()
                 assert panel.display is False
 
                 await app.handle_command('/sidebar', 'on')
-                await pilot.pause()
                 assert panel.display is True
 
     asyncio.run(inner())
@@ -448,15 +424,13 @@ def test_reasoning_is_collapsed_by_default():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(100, 30)):
                 chat = app.query_one(ChatLog)
                 assert chat.reasoning_visible is False
 
                 await chat.begin_response()
                 await chat.add_thinking('secret reasoning')
                 chat.finalize()
-                await pilot.pause()
 
                 from src.ui.widgets.chat_log import AssistantBlock
 
@@ -472,25 +446,21 @@ def test_the_command_expands_and_collapses_in_place():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(100, 30)):
                 chat = app.query_one(ChatLog)
                 await chat.begin_response()
                 await chat.add_thinking('secret reasoning')
                 chat.finalize()
-                await pilot.pause()
 
                 from src.ui.widgets.chat_log import AssistantBlock
 
                 block = next(child for child in chat.children if isinstance(child, AssistantBlock))
 
                 await app.handle_command('/reasoning-visibility', 'on')
-                await pilot.pause()
                 assert chat.reasoning_visible is True
                 assert 'secret reasoning' in render_text(block._build())
 
                 await app.handle_command('/reasoning-visibility', 'off')
-                await pilot.pause()
                 assert 'secret reasoning' not in render_text(block._build())
 
     asyncio.run(inner())
@@ -500,14 +470,11 @@ def test_the_command_toggles_without_an_argument():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(100, 30)):
                 await app.handle_command('/reasoning-visibility')
-                await pilot.pause()
                 assert app._preferences.reasoning_visible is True
 
                 await app.handle_command('/reasoning-visibility')
-                await pilot.pause()
                 assert app._preferences.reasoning_visible is False
 
     asyncio.run(inner())
@@ -518,16 +485,13 @@ def test_the_preference_survives_a_restart():
         with tempfile.TemporaryDirectory() as tmp:
             store = PreferencesStore(Path(tmp) / 'ui.json')
             first = _app(tmp)
-            async with first.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
+            async with first.run_test(size=(100, 30)):
                 await first.handle_command('/reasoning-visibility', 'on')
-                await pilot.pause()
 
             assert store.load().reasoning_visible is True
 
             second = _app(tmp)
-            async with second.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
+            async with second.run_test(size=(100, 30)):
                 assert second.query_one(ChatLog).reasoning_visible is True
 
     asyncio.run(inner())
@@ -537,10 +501,8 @@ def test_an_unknown_argument_reports_the_usage():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(100, 30)):
                 await app.handle_command('/reasoning-visibility', 'maybe')
-                await pilot.pause()
                 texts = [render_text(child.render()) for child in app.query_one(ChatLog).children]
                 assert any('Usage: /reasoning-visibility' in text for text in texts)
 
@@ -556,12 +518,10 @@ def test_a_tool_call_and_its_result_share_one_block():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(100, 30)):
                 chat = app.query_one(ChatLog)
                 await chat.add_tool_call('read_file', {'path': 'a.py'})
                 await chat.add_tool_result('read_file', 'line one\nline two')
-                await pilot.pause()
 
                 from src.ui.widgets.chat_log import ToolCallBlock
 
@@ -580,47 +540,24 @@ def test_a_tool_call_and_its_result_share_one_block():
 
 
 def test_the_block_indents_the_output_under_a_gutter():
-    async def inner():
-        with tempfile.TemporaryDirectory() as tmp:
-            app = _app(tmp)
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
-                chat = app.query_one(ChatLog)
-                await chat.add_tool_call('run', {'command': 'ls'})
-                await chat.add_tool_result('run', 'a.txt\nb.txt')
-                await pilot.pause()
+    from src.ui.widgets.chat_log import ToolCallBlock
 
-                from src.ui.widgets.chat_log import ToolCallBlock
-
-                block = next(child for child in chat.children if isinstance(child, ToolCallBlock))
-                lines = render_text(block._build()).splitlines()
-                assert all(line.startswith('  │ ') for line in lines if line.strip())
-
-    asyncio.run(inner())
+    block = ToolCallBlock('run', {'command': 'ls'})
+    block.set_result('a.txt\nb.txt')
+    lines = render_text(block._build()).splitlines()
+    assert all(line.startswith('  │ ') for line in lines if line.strip())
 
 
 def test_long_output_is_truncated_with_a_count():
-    async def inner():
-        with tempfile.TemporaryDirectory() as tmp:
-            app = _app(tmp)
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
-                chat = app.query_one(ChatLog)
-                await chat.add_tool_call('run', {'command': 'seq 100'})
-                await chat.add_tool_result('run', '\n'.join(str(i) for i in range(40)))
-                await pilot.pause()
+    from src.ui.widgets.chat_log import ToolCallBlock
 
-                from src.ui.widgets.chat_log import ToolCallBlock
-
-                block = next(child for child in chat.children if isinstance(child, ToolCallBlock))
-                # Collapsed, the row already says how much output there is.
-                assert '… 40 lines' in render_text(block._build())
-                block.set_expanded(True)
-                text = render_text(block._build())
-                assert '… +34 more' in text
-                assert '39' not in text
-
-    asyncio.run(inner())
+    block = ToolCallBlock('run', {'command': 'seq 100'})
+    block.set_result('\n'.join(str(i) for i in range(40)))
+    assert '… 40 lines' in render_text(block._build())
+    block.set_expanded(True)
+    text = render_text(block._build())
+    assert '… +34 more' in text
+    assert '39' not in text
 
 
 def test_a_pending_call_is_marked_as_running():
@@ -628,7 +565,6 @@ def test_a_pending_call_is_marked_as_running():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
                 chat = app.query_one(ChatLog)
                 await chat.add_tool_call('run', {'command': 'sleep 10'})
                 await pilot.pause()
@@ -644,25 +580,12 @@ def test_a_pending_call_is_marked_as_running():
 
 def test_indentation_of_the_output_is_kept():
     """A diff or a snippet is unreadable without its leading whitespace."""
+    from src.ui.widgets.chat_log import ToolCallBlock
 
-    async def inner():
-        with tempfile.TemporaryDirectory() as tmp:
-            app = _app(tmp)
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
-                chat = app.query_one(ChatLog)
-                await chat.add_tool_call('read_file', {'path': 'a.py'})
-                await chat.add_tool_result('read_file', 'def f():\n    return 1')
-                await pilot.pause()
-
-                from src.ui.widgets.chat_log import ToolCallBlock
-
-                block = next(child for child in chat.children if isinstance(child, ToolCallBlock))
-                block.set_expanded(True)
-                # One panel-padding space plus the original four-space indent.
-                assert '│     return 1' in render_text(block._build())
-
-    asyncio.run(inner())
+    block = ToolCallBlock('read_file', {'path': 'a.py'})
+    block.set_result('def f():\n    return 1')
+    block.set_expanded(True)
+    assert '│     return 1' in render_text(block._build())
 
 
 def test_several_arguments_are_readable():
@@ -680,8 +603,7 @@ def test_the_builtin_themes_are_registered_and_the_default_applies():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(100, 30)):
                 assert app.theme == 'dark'
                 assert 'synthwave' in app.available_themes
 
@@ -693,8 +615,7 @@ def test_a_stored_theme_is_applied_on_start():
         with tempfile.TemporaryDirectory() as tmp:
             PreferencesStore(Path(tmp) / 'ui.json').save(Preferences(theme='synthwave'))
             app = _app(tmp)
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(100, 30)):
                 assert app.theme == 'synthwave'
 
     asyncio.run(inner())
@@ -710,8 +631,7 @@ def test_an_installed_theme_shows_up(tmp_path):
 
     async def inner():
         app = _app(str(tmp_path), themes=ThemeRegistry.load(themes))
-        async with app.run_test(size=(100, 30)) as pilot:
-            await pilot.pause()
+        async with app.run_test(size=(100, 30)):
             assert 'mine' in app.available_themes
 
     asyncio.run(inner())
@@ -721,10 +641,8 @@ def test_the_command_switches_the_theme_and_remembers_it():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(100, 30)):
                 await app.handle_command('/theme', 'synthwave')
-                await pilot.pause()
                 assert app.theme == 'synthwave'
                 assert PreferencesStore(Path(tmp) / 'ui.json').load().theme == 'synthwave'
 
@@ -735,10 +653,8 @@ def test_an_unknown_theme_lists_what_is_installed():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(100, 30)):
                 await app.handle_command('/theme', 'nope')
-                await pilot.pause()
                 texts = [render_text(child.render()) for child in app.query_one(ChatLog).children]
                 joined = ' '.join(texts)
                 assert 'No theme called' in joined
@@ -752,20 +668,23 @@ def test_the_picker_previews_on_highlight_and_restores_on_cancel():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
                 app.run_worker(app.handle_command('/theme'))
                 for _ in range(10):
                     await pilot.pause()
+                    if isinstance(app.screen, ThemePickerScreen):
+                        break
                 assert isinstance(app.screen, ThemePickerScreen)
 
                 await pilot.press('down')
-                await pilot.pause()
                 # Moving the highlight is what changes the app behind the modal.
                 assert app.theme == 'synthwave'
 
                 await pilot.press('escape')
                 for _ in range(5):
                     await pilot.pause()
+                    if not isinstance(app.screen, ThemePickerScreen) and app.theme == 'dark':
+                        break
+                assert not isinstance(app.screen, ThemePickerScreen)
                 assert app.theme == 'dark'
                 assert PreferencesStore(Path(tmp) / 'ui.json').load().theme == 'dark'
 
@@ -777,15 +696,20 @@ def test_the_picker_applies_the_highlighted_theme_on_enter():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
                 app.run_worker(app.handle_command('/theme'))
                 for _ in range(10):
                     await pilot.pause()
+                    if isinstance(app.screen, ThemePickerScreen):
+                        break
+                assert isinstance(app.screen, ThemePickerScreen)
 
                 await pilot.press('down')
                 await pilot.press('enter')
                 for _ in range(5):
                     await pilot.pause()
+                    if not isinstance(app.screen, ThemePickerScreen):
+                        break
+                assert not isinstance(app.screen, ThemePickerScreen)
                 assert app.theme == 'synthwave'
                 assert PreferencesStore(Path(tmp) / 'ui.json').load().theme == 'synthwave'
 
@@ -797,7 +721,6 @@ def test_a_theme_change_repaints_the_text_and_not_only_the_boxes():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
                 panel = app.query_one(SidebarPanel)
                 before = {span.style for span in panel._build().spans if span.style}
                 app.theme = 'synthwave'
@@ -812,10 +735,8 @@ def test_theme_list_reports_the_installed_ones():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(100, 30)):
                 await app.handle_command('/theme', '--list')
-                await pilot.pause()
                 texts = [render_text(child.render()) for child in app.query_one(ChatLog).children]
                 joined = ' '.join(texts)
                 assert 'dark' in joined

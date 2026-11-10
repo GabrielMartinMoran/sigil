@@ -28,6 +28,7 @@ from src.ui.widgets.agent_picker_screen import AgentPickerScreen
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.status_bar import StatusBar
+from tests.ui_helpers import wait_until
 
 FRONTMATTER = '---\nname: {name}\ndescription: {description}\n{extra}---\n{body}\n'
 
@@ -77,8 +78,7 @@ def test_the_bar_starts_with_the_agent_in_effect():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
-            async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(120, 40)):
                 assert 'Wizard' in _bar(app)
 
     asyncio.run(inner())
@@ -91,7 +91,6 @@ def test_a_transient_message_does_not_erase_the_agent():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 app._paint_status('Stopping…', style='yellow')
                 await pilot.pause()
                 assert 'Wizard' in _bar(app)
@@ -120,11 +119,9 @@ def test_ctrl_a_opens_the_agent_picker_from_the_prompt():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 app.query_one(PromptInput).focus()
                 await pilot.press('ctrl+a')
-                for _ in range(8):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: isinstance(app.screen, AgentPickerScreen))
                 assert isinstance(app.screen, AgentPickerScreen)
 
     asyncio.run(inner())
@@ -137,14 +134,12 @@ def test_ctrl_a_does_not_move_the_cursor_instead():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 field = app.query_one(PromptInput)
                 field.focus()
                 field.value = 'hola'
                 field.cursor_position = len(field.value)
                 await pilot.press('ctrl+a')
-                for _ in range(8):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: isinstance(app.screen, AgentPickerScreen))
                 assert field.value == 'hola'
                 assert isinstance(app.screen, AgentPickerScreen)
 
@@ -156,10 +151,8 @@ def test_the_picker_lists_the_profiles_and_marks_the_current_one():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 await pilot.press('ctrl+a')
-                for _ in range(8):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: isinstance(app.screen, AgentPickerScreen))
 
                 screen = app.screen
                 options = screen.query_one(OptionList)
@@ -176,16 +169,12 @@ def test_choosing_in_the_picker_switches_the_agent():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 await pilot.press('ctrl+a')
-                for _ in range(8):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: isinstance(app.screen, AgentPickerScreen))
                 # The highlight starts on the active one; move up to `reviewer`.
                 await pilot.press('up')
-                await pilot.pause()
                 await pilot.press('enter')
-                for _ in range(8):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: app.active_agent().name == 'reviewer')
 
                 assert not isinstance(app.screen, AgentPickerScreen)
                 assert app.active_agent().name == 'reviewer'
@@ -200,12 +189,9 @@ def test_the_picker_filters_as_you_type():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, names=('wizard', 'reviewer', 'writer'))
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 await pilot.press('ctrl+a')
-                for _ in range(8):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: isinstance(app.screen, AgentPickerScreen))
                 await pilot.press('w', 'r')
-                await pilot.pause()
                 options = app.screen.query_one(OptionList)
                 assert [str(option.id) for option in options.options] == ['writer']
 
@@ -217,13 +203,10 @@ def test_escape_closes_the_picker_and_keeps_the_agent():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 await pilot.press('ctrl+a')
-                for _ in range(8):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: isinstance(app.screen, AgentPickerScreen))
                 await pilot.press('escape')
-                for _ in range(8):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: not isinstance(app.screen, AgentPickerScreen))
                 assert not isinstance(app.screen, AgentPickerScreen)
                 assert app.active_agent().name == 'wizard'
 
@@ -238,11 +221,9 @@ def test_the_command_switches_directly():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 app.query_one(PromptInput).value = '/agent reviewer'
                 await pilot.press('enter')
-                for _ in range(10):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: any('Agent: Reviewer' in text for text in _chat(app)))
 
                 assert app.active_agent().name == 'reviewer'
                 assert any('Agent: Reviewer' in text for text in _chat(app))
@@ -255,11 +236,9 @@ def test_an_unknown_name_is_a_notice_not_a_crash():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 app.query_one(PromptInput).value = '/agent nope'
                 await pilot.press('enter')
-                for _ in range(10):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: any('Unknown agent' in text for text in _chat(app)))
 
                 assert app.active_agent().name == 'wizard'
                 assert any('Unknown agent' in text for text in _chat(app))
@@ -272,11 +251,9 @@ def test_the_command_with_no_profiles_says_where_to_put_one():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, names=())
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 app.query_one(PromptInput).value = '/agent'
                 await pilot.press('enter')
-                for _ in range(10):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: any('.sigil/agents' in text for text in _chat(app)))
 
                 assert any('.sigil/agents' in text for text in _chat(app))
 
@@ -291,16 +268,14 @@ def test_a_new_session_inherits_the_agent():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 app.query_one(PromptInput).value = '/agent reviewer'
                 await pilot.press('enter')
-                for _ in range(10):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: app.active_agent().name == 'reviewer')
 
+                previous_session = app._session.id
                 app.query_one(PromptInput).value = '/new'
                 await pilot.press('enter')
-                for _ in range(10):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: app._session.id != previous_session)
 
                 assert app._session.agent == 'reviewer'
                 assert 'Reviewer' in _bar(app)
@@ -324,7 +299,6 @@ def test_switching_agent_is_refused_while_a_turn_runs():
 
             app._agent = agent
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 app.start_turn('go')
                 for _ in range(40):
                     await pilot.pause()
@@ -333,8 +307,9 @@ def test_switching_agent_is_refused_while_a_turn_runs():
 
                 app.query_one(PromptInput).value = '/agent reviewer'
                 await pilot.press('enter')
-                for _ in range(10):
-                    await pilot.pause()
+                await wait_until(
+                    pilot, lambda: any('not available while the agent works' in text for text in _chat(app))
+                )
 
                 assert app.active_agent().name == 'wizard'
                 assert any('not available while the agent works' in text for text in _chat(app))

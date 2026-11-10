@@ -6,15 +6,17 @@ reflow per message — about 5 seconds for a 1,400-message session, on the start
 path, before the window was usable.
 
 The fix is to build the widgets first and mount them in one batch, which makes the
-layout happen once. These tests pin the shape of the cost, not a wall-clock number:
-they compare a long history against a short one on the same machine.
+layout happen once. These tests count mount operations for short and long histories
+and retain an absolute restoration-time ceiling for the long case.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
+from unittest.mock import patch
 
+import pytest
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from textual.app import App, ComposeResult
 
@@ -35,35 +37,32 @@ class Harness(App):
         yield ChatLog(id='chat')
 
 
-def render(turns: int) -> float:
-    async def inner() -> float:
+@pytest.mark.parametrize('turns', [150, 600])
+def test_rendering_a_long_history_is_not_quadratic(turns: int) -> None:
+    """A single mount prevents the per-message reflows behind the regression.
+
+    Count the expensive operation instead of dividing two noisy timings. Both
+    sizes still use real Textual widgets, mounting, and layout.
+    """
+
+    async def inner() -> None:
         app = Harness()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.pause()
             chat = app.query_one(ChatLog)
-            started = time.perf_counter()
-            await chat.render_history(history(turns))
-            chat.finalize()
-            return time.perf_counter() - started
+            messages = history(turns)
+            with patch.object(chat, 'mount', wraps=chat.mount) as mount:
+                started = time.perf_counter()
+                await chat.render_history(messages)
+                chat.finalize()
+                elapsed = time.perf_counter() - started
+            assert mount.call_count == 1
+            assert len(mount.call_args.args) == turns * 2
+            await pilot.pause()
+            assert len(chat.children) == turns * 2
+            if turns == 600:
+                assert elapsed < 2.5, f'restoring 1,200 messages took {elapsed:.2f}s'
 
-    return asyncio.run(inner())
-
-
-def test_rendering_a_long_history_is_not_quadratic():
-    """The cost must grow with the number of messages, not with its square.
-
-    Mounting one widget at a time reflows the whole log every time, so doubling the
-    history used to quadruple the time. Batched, it roughly doubles.
-    """
-    small = render(150)
-    large = render(600)
-
-    # 4x the messages. Quadratic would be ~16x; allow up to 8x for noise, which is
-    # still far below what the old per-message mount produced.
-    assert large < small * 8, f'{small=:.3f}s {large=:.3f}s: the cost grows too fast'
-    # And an absolute ceiling: a 1,200-message history has no business taking
-    # seconds to restore.
-    assert large < 2.5, f'restoring 1,200 messages took {large:.2f}s'
+    asyncio.run(inner())
 
 
 def test_the_history_renders_every_message():

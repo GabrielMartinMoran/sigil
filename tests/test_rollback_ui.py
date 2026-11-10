@@ -119,7 +119,6 @@ def test_the_command_forks_and_leaves_the_session_on_screen(monkeypatch):
             app = _app(tmp)
             original = app._session.id
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 app.run_worker(app.handle_command('/rollback'))
                 for _ in range(20):
                     await pilot.pause()
@@ -129,7 +128,6 @@ def test_the_command_forks_and_leaves_the_session_on_screen(monkeypatch):
 
                 # Two stages: the point, then the action.
                 await pilot.press('enter')
-                await pilot.pause()
                 # `Fork here` is the third action.
                 await pilot.press('down', 'down', 'enter')
                 for _ in range(20):
@@ -148,7 +146,6 @@ def test_the_command_rolls_back_and_rebuilds_the_conversation(monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, turns=2)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 before = len(app._session.messages)
                 app.run_worker(app.handle_command('/rollback'))
                 for _ in range(20):
@@ -157,7 +154,6 @@ def test_the_command_rolls_back_and_rebuilds_the_conversation(monkeypatch):
                         break
 
                 await pilot.press('enter')
-                await pilot.pause()
                 await pilot.press('enter')  # the first action: roll back with files
                 for _ in range(30):
                     await pilot.pause()
@@ -182,8 +178,7 @@ def test_a_rollback_puts_the_prompt_back_in_the_composer():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, turns=2)
-            async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(120, 40)):
                 point = app._rollback.points(app._session.id)[0]
                 chat = app.query_one(ChatLog)
 
@@ -203,8 +198,7 @@ def test_a_rollback_keeps_the_draft_that_was_in_the_composer():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, turns=2)
-            async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(120, 40)):
                 prompt = app.query_one(PromptInput)
                 prompt.text = 'a draft I was writing'
                 point = app._rollback.points(app._session.id)[0]
@@ -254,8 +248,7 @@ def test_a_prompt_that_is_only_a_screenshot_gets_its_marker_back():
                 session=session,
                 rollback=Rollback(store, workspace=Path(tmp) / 'ws'),
             )
-            async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(120, 40)):
                 point = app._rollback.points(session.id)[0]
                 chat = app.query_one(ChatLog)
 
@@ -308,8 +301,7 @@ def test_a_rollback_brings_the_images_back_with_their_prompt():
                 session=session,
                 rollback=Rollback(store, workspace=Path(tmp) / 'ws'),
             )
-            async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(120, 40)):
                 point = app._rollback.points(session.id)[0]
                 chat = app.query_one(ChatLog)
 
@@ -330,8 +322,7 @@ def test_the_command_is_refused_while_a_turn_runs(monkeypatch):
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
-            async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(120, 40)):
                 app._turn_active = True
                 chat = app.query_one(ChatLog)
                 await app.show_rollback(chat)
@@ -346,7 +337,6 @@ def test_a_numbered_argument_skips_the_list(monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, turns=3)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 # `handle_command` takes the name and the arguments apart: the prompt is
                 # what splits the line, not the handler.
                 app.run_worker(app.handle_command('/rollback', '2'))
@@ -371,8 +361,7 @@ def test_a_rendered_user_message_carries_its_position():
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, turns=2)
-            async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(120, 40)):
                 chat = app.query_one(ChatLog)
                 await chat.clear()
                 await chat.render_history(app._session.messages)
@@ -388,7 +377,6 @@ def test_clicking_a_message_opens_the_choice_on_that_point():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, turns=2)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 chat = app.query_one(ChatLog)
                 first = next(child for child in chat.children if isinstance(child, UserMessage))
 
@@ -411,7 +399,6 @@ def test_clicking_a_message_that_never_reached_a_checkpoint_does_nothing():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 # A line that has not reached a checkpoint has no position, so a click
                 # does nothing: guessing one would open the wrong turn.
                 widget = await app.query_one(ChatLog).add_user('not saved yet')
@@ -444,7 +431,6 @@ def test_rollback_restores_visible_assistant_answers():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 point = app._rollback.points(app._session.id)[0]
                 chat = app.query_one(ChatLog)
                 await app.apply_rollback(chat, RollbackChoice(turn_id=point.turn_id, action=ROLLBACK_ONLY))

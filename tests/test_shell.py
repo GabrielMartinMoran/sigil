@@ -7,6 +7,8 @@ import asyncio
 import os
 import time
 
+import pytest
+
 from src.engine.shell.guard import SELF_GUARD_ENV
 from src.engine.shell.limits import MAX_OUTPUT_BYTES
 from src.engine.shell.runner import execute_command, execute_commands
@@ -124,7 +126,10 @@ def test_empty_command_is_rejected():
     assert not result.timed_out
 
 
-def test_timeout_vs_normal_are_distinguishable():
+def test_timeout_vs_normal_are_distinguishable(monkeypatch):
+    from src.engine.shell import runner
+
+    monkeypatch.setattr(runner, '_clamp_timeout', lambda _: 0.05)
     normal = execute_command('true')
     timed = execute_command('sleep 10', timeout_seconds=1)
     assert not normal.timed_out and normal.returncode == 0
@@ -178,13 +183,22 @@ def test_refuses_uv_run_main():
 # --- 13. Parallel execution ----------------------------------------------------
 
 
-def test_execute_commands_runs_in_parallel():
-    start = time.monotonic()
-    results = asyncio.run(execute_commands(['sleep 1', 'sleep 1', 'sleep 1']))
-    elapsed = time.monotonic() - start
-    assert all(r.returncode == 0 for r in results)
-    # Sequentially they would take ~3s; in parallel they should be around 1s.
-    assert elapsed < 2.5
+def test_execute_commands_runs_in_parallel(monkeypatch):
+    from threading import Barrier
+
+    from src.engine.shell import runner
+    from src.engine.shell.runner import RunToolOutput
+
+    barrier = Barrier(3, timeout=3)
+
+    def command(_cmd, timeout_seconds):
+        barrier.wait()
+        return RunToolOutput(returncode=0)
+
+    monkeypatch.setattr(runner, 'execute_command', command)
+    results = asyncio.run(execute_commands(['first', 'second', 'third']))
+    assert len(results) == 3
+    assert all(result.returncode == 0 for result in results)
 
 
 def test_execute_commands_preserve_order():
@@ -204,7 +218,19 @@ def test_execute_commands_empty_list():
     assert asyncio.run(execute_commands([])) == []
 
 
-def test_execute_commands_timeout_is_per_command():
+@pytest.mark.parametrize('requested, expected', [(-1, 1), (0, 1), (1, 1), (60, 60), (120, 120), (121, 120)])
+def test_timeout_policy_clamps_to_the_public_bounds(requested: int, expected: int) -> None:
+    from src.engine.shell.runner import _clamp_timeout
+
+    assert _clamp_timeout(requested) == expected
+
+
+def test_execute_commands_timeout_is_per_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.engine.shell import runner
+
+    # Keep real processes and deadline handling; the public one-second minimum is
+    # covered separately, including the unpatched termination tests above.
+    monkeypatch.setattr(runner, '_clamp_timeout', lambda _: 0.1)
     start = time.monotonic()
     results = asyncio.run(execute_commands(['sleep 10', 'echo ok'], timeout_seconds=1))
     elapsed = time.monotonic() - start

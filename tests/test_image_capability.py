@@ -84,13 +84,11 @@ def test_a_text_only_model_refuses_the_paste_and_names_the_way_out(tmp_path):
     async def inner() -> None:
         app = _app(tmp_path, service=Service(images=False, model='text-small'))
         async with app.run_test() as pilot:
-            await pilot.pause()
             composer = _composer(app)
             original = prompt_module.read_clipboard_image
             prompt_module.read_clipboard_image = lambda **_: _png()
             try:
                 await pilot.press('ctrl+v')
-                await pilot.pause()
             finally:
                 prompt_module.read_clipboard_image = original
 
@@ -106,13 +104,11 @@ def test_a_multimodal_model_accepts_the_paste(tmp_path):
     async def inner() -> None:
         app = _app(tmp_path, service=Service(images=True, model='vision'))
         async with app.run_test() as pilot:
-            await pilot.pause()
             composer = _composer(app)
             original = prompt_module.read_clipboard_image
             prompt_module.read_clipboard_image = lambda **_: _png()
             try:
                 await pilot.press('ctrl+v')
-                await pilot.pause()
             finally:
                 prompt_module.read_clipboard_image = original
 
@@ -127,14 +123,12 @@ def test_with_no_model_configured_the_paste_is_allowed(tmp_path):
     async def inner() -> None:
         app = _app(tmp_path)
         async with app.run_test() as pilot:
-            await pilot.pause()
             assert app.accepts_images()
             composer = _composer(app)
             original = prompt_module.read_clipboard_image
             prompt_module.read_clipboard_image = lambda **_: _png()
             try:
                 await pilot.press('ctrl+v')
-                await pilot.pause()
             finally:
                 prompt_module.read_clipboard_image = original
 

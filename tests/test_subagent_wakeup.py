@@ -126,7 +126,7 @@ def test_a_finished_subagent_wakes_the_session():
                 app._wake_from_subagents()
                 for _ in range(60):
                     await pilot.pause()
-                    if not node.delivered and not app._turn_active:
+                    if node.delivered and not app._turn_active:
                         break
                 return app, node
 

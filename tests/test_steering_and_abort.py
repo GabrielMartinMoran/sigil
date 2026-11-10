@@ -28,6 +28,7 @@ from src.ui.widgets.chat_log import AssistantBlock, ChatLog
 from src.ui.widgets.command_menu import CommandMenu
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.status_bar import StatusBar
+from tests.ui_helpers import wait_for_turn
 
 
 def _make_app(tmp: str, agent: Agent) -> SigilApp:
@@ -82,9 +83,8 @@ def test_a_message_typed_mid_turn_is_injected_into_the_running_agent():
 
             app = _make_app(tmp, agent)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 app.start_turn('first')
-                assert await _wait_for(pilot, started.is_set), 'the tool never started'
+                await asyncio.wait_for(started.wait(), timeout=5)
                 # The turn is in flight and the prompt is not blocked.
                 assert app.query_one(PromptInput).disabled is False
                 assert app._turn_active is True
@@ -92,11 +92,10 @@ def test_a_message_typed_mid_turn_is_injected_into_the_running_agent():
                 # A message typed right here, while the tool is still running.
                 await pilot.press('s', 't', 'o', 'p')
                 await pilot.press('enter')
-                await pilot.pause()
                 assert app._turn_active is True, 'it started a second turn instead of steering'
                 release.set()
 
-                assert await _wait_for(pilot, lambda: not app._turn_active)
+                await wait_for_turn(app)
                 seen = [
                     part.content
                     for message in app._session.messages
@@ -129,18 +128,16 @@ def test_the_queued_message_lands_after_the_tool_results():
 
             app = _make_app(tmp, agent)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 app.start_turn('go')
                 for _ in range(40):
                     await pilot.pause()
                     if app._current_run is not None:
                         break
 
-                await pilot.press('n', 'o', 'w')
+                app.query_one(PromptInput).value = 'now'
                 await pilot.press('enter')
-                await pilot.pause()
                 release.set()
-                assert await _wait_for(pilot, lambda: not app._turn_active)
+                await wait_for_turn(app)
 
                 flat = [part for message in app._session.messages for part in message.parts]
                 kinds = [type(part).__name__ for part in flat]
@@ -182,9 +179,8 @@ def test_a_message_that_arrives_as_the_agent_finishes_gives_it_one_more_step():
             agent = Agent(FunctionModel(stream_function=stream_function), instructions='x')
             app = _make_app(tmp, agent)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 app.start_turn('go')
-                assert await _wait_for(pilot, answered.is_set)
+                await asyncio.wait_for(answered.wait(), timeout=5)
 
                 field = app.query_one(PromptInput)
                 field.value = 'one more thing'
@@ -193,7 +189,7 @@ def test_a_message_that_arrives_as_the_agent_finishes_gives_it_one_more_step():
                 assert app._turn_active is True
                 release.set()
 
-                assert await _wait_for(pilot, lambda: not app._turn_active)
+                await wait_for_turn(app)
                 prompts = [
                     part.content
                     for message in app._session.messages
@@ -215,9 +211,7 @@ def test_a_message_that_misses_the_last_seam_comes_back_to_the_prompt():
         with tempfile.TemporaryDirectory() as tmp:
             agent = Agent(TestModel(custom_output_text='done'), instructions='x')
             app = _make_app(tmp, agent)
-            async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
-
+            async with app.run_test(size=(100, 40)):
                 # What `_take_undelivered` sees after a turn whose queue closed
                 # before the message could be delivered.
                 from src.ui.turn_mixin import Steer
@@ -246,23 +240,21 @@ def test_the_queued_line_loses_its_mark_once_the_run_reads_it():
 
             app = _make_app(tmp, agent)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 app.start_turn('go')
                 for _ in range(40):
                     await pilot.pause()
                     if app._current_run is not None:
                         break
 
-                await pilot.press('h', 'i')
+                app.query_one(PromptInput).value = 'hi'
                 await pilot.press('enter')
-                await pilot.pause()
 
                 queued_lines = [text for text in _chat_texts(app) if 'queued' in text]
                 assert queued_lines, 'the line does not say that it is waiting'
                 assert release is not None
 
                 release.set()
-                assert await _wait_for(pilot, lambda: not app._turn_active)
+                await wait_for_turn(app)
                 assert not [text for text in _chat_texts(app) if 'queued' in text]
 
     asyncio.run(inner())
@@ -282,7 +274,6 @@ def test_commands_that_would_swap_the_session_are_refused_mid_turn():
 
             app = _make_app(tmp, agent)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 app.start_turn('go')
                 for _ in range(40):
                     await pilot.pause()
@@ -301,7 +292,7 @@ def test_commands_that_would_swap_the_session_are_refused_mid_turn():
                 assert app.query_one(PromptInput).value == '/new'
 
                 release.set()
-                assert await _wait_for(pilot, lambda: not app._turn_active)
+                await wait_for_turn(app)
 
     asyncio.run(inner())
 
@@ -328,7 +319,6 @@ def test_the_menu_enter_is_refused_too_not_only_the_typed_path():
 
             app = _make_app(tmp, agent)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 app.start_turn('go')
                 assert await _wait_for(pilot, lambda: app._current_run is not None)
                 session_before = app._session.id
@@ -351,7 +341,7 @@ def test_the_menu_enter_is_refused_too_not_only_the_typed_path():
                 assert app.query_one(PromptInput).value == '/new'
 
                 release.set()
-                assert await _wait_for(pilot, lambda: not app._turn_active)
+                await wait_for_turn(app)
 
     asyncio.run(inner())
 
@@ -377,7 +367,6 @@ def test_load_is_refused_mid_turn_and_never_opens_the_picker():
 
             app = _make_app(tmp, agent)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 # A saved session to load, so the picker would have something to show.
                 saved = app._store.create_session()
                 app._store.save(saved)
@@ -397,7 +386,7 @@ def test_load_is_refused_mid_turn_and_never_opens_the_picker():
                 assert any('/load is not available' in text for text in _chat_texts(app))
 
                 release.set()
-                assert await _wait_for(pilot, lambda: not app._turn_active)
+                await wait_for_turn(app)
                 # And the app is still the app: the turn ended normally.
                 assert app.query_one(PromptInput).value == '/load'
 
@@ -424,7 +413,6 @@ def test_a_turn_never_writes_its_history_into_a_session_opened_under_it():
 
             app = _make_app(tmp, agent)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 app.start_turn('go')
                 assert await _wait_for(pilot, lambda: app._current_run is not None)
                 old_session = app._session
@@ -434,7 +422,7 @@ def test_a_turn_never_writes_its_history_into_a_session_opened_under_it():
                 app.bind_session(new_session)
 
                 release.set()
-                assert await _wait_for(pilot, lambda: not app._turn_active)
+                await wait_for_turn(app)
 
                 # The turn's work is in the session it belonged to...
                 assert old_session.messages
@@ -481,7 +469,6 @@ def test_the_first_esc_asks_and_the_second_one_stops_the_turn():
 
             app = _make_app(tmp, agent)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 app.start_turn('go')
                 for _ in range(40):
                     await pilot.pause()
@@ -490,14 +477,13 @@ def test_the_first_esc_asks_and_the_second_one_stops_the_turn():
                 assert app._turn_active is True
 
                 await pilot.press('escape')
-                await pilot.pause()
                 # Nothing stopped yet: it is a question, not an order.
                 assert app._turn_active is True
                 assert 'again' in _status(app)
                 assert app._abort_deadline is not None
 
                 await pilot.press('escape')
-                assert await _wait_for(pilot, lambda: not app._turn_active)
+                await wait_for_turn(app)
                 assert any('Turn cancelled.' in text for text in _chat_texts(app))
                 # No error: stopping on purpose is not a failure.
                 assert not any('Error' in text for text in _chat_texts(app))
@@ -520,7 +506,6 @@ def test_any_other_key_cancels_the_abort_request():
 
             app = _make_app(tmp, agent)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 app.start_turn('go')
                 for _ in range(40):
                     await pilot.pause()
@@ -528,11 +513,9 @@ def test_any_other_key_cancels_the_abort_request():
                         break
 
                 await pilot.press('escape')
-                await pilot.pause()
                 assert app._abort_deadline is not None
 
                 await pilot.press('x')
-                await pilot.pause()
                 assert app._abort_deadline is None
                 assert 'again' not in _status(app)
                 # The turn is still going: the confirmation did not survive.
@@ -540,12 +523,11 @@ def test_any_other_key_cancels_the_abort_request():
 
                 # A third `Esc` asks again instead of stopping (the window is new).
                 await pilot.press('escape')
-                await pilot.pause()
                 assert app._turn_active is True
                 assert app._abort_deadline is not None
 
                 release.set()
-                assert await _wait_for(pilot, lambda: not app._turn_active)
+                await wait_for_turn(app)
 
     asyncio.run(inner())
 
@@ -567,7 +549,6 @@ def test_the_abort_request_expires_on_its_own(monkeypatch):
 
             app = _make_app(tmp, agent)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 app.start_turn('go')
                 for _ in range(40):
                     await pilot.pause()
@@ -575,7 +556,6 @@ def test_the_abort_request_expires_on_its_own(monkeypatch):
                         break
 
                 await pilot.press('escape')
-                await pilot.pause()
                 assert app._abort_deadline is not None
 
                 # The window is a constant of the app, so a shorter one is enough.
@@ -588,7 +568,7 @@ def test_the_abort_request_expires_on_its_own(monkeypatch):
                 assert 'again' not in _status(app)
 
                 release.set()
-                assert await _wait_for(pilot, lambda: not app._turn_active)
+                await wait_for_turn(app)
 
     asyncio.run(inner())
 
@@ -609,7 +589,6 @@ def test_the_second_esc_still_stops_the_turn_when_the_window_is_open():
 
             app = _make_app(tmp, agent)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 app.start_turn('go')
                 for _ in range(40):
                     await pilot.pause()
@@ -623,7 +602,7 @@ def test_the_second_esc_still_stops_the_turn_when_the_window_is_open():
                 # The second one, before it expires, is the confirmation.
                 assert app.request_abort() is True
                 app.abort_turn()
-                assert await _wait_for(pilot, lambda: not app._turn_active)
+                await wait_for_turn(app)
                 release.set()
 
     asyncio.run(inner())
@@ -650,7 +629,6 @@ def test_two_messages_sent_back_to_back_do_not_start_two_turns():
 
             app = _make_app(tmp, agent)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 field = app.query_one(PromptInput)
                 # Both submits in the same tick: the worker has not started yet.
                 for text in ('first', 'second'):
@@ -663,7 +641,7 @@ def test_two_messages_sent_back_to_back_do_not_start_two_turns():
 
                 assert await _wait_for(pilot, lambda: app._current_run is not None)
                 release.set()
-                assert await _wait_for(pilot, lambda: not app._turn_active)
+                await wait_for_turn(app)
 
                 prompts = [
                     part.content
@@ -692,7 +670,6 @@ def test_an_aborted_turn_is_saved_and_the_next_message_still_works():
 
             app = _make_app(tmp, agent)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 app.start_turn('go')
                 for _ in range(40):
                     await pilot.pause()
@@ -701,7 +678,7 @@ def test_an_aborted_turn_is_saved_and_the_next_message_still_works():
 
                 await pilot.press('escape')
                 await pilot.press('escape')
-                assert await _wait_for(pilot, lambda: not app._turn_active)
+                await wait_for_turn(app)
 
                 # What the run completed is on disk, not only in memory.
                 saved = app._store.load(app._session.id)
@@ -714,9 +691,9 @@ def test_an_aborted_turn_is_saved_and_the_next_message_still_works():
                 # And the conversation continues. The tool is free now, so the
                 # new turn ends with the model's answer.
                 release.set()
-                await pilot.press('a', 'g', 'a', 'i', 'n')
+                app.query_one(PromptInput).value = 'again'
                 await pilot.press('enter')
-                assert await _wait_for(pilot, lambda: not app._turn_active)
+                await wait_for_turn(app)
                 texts = _chat_texts(app)
                 assert not any('Error' in text for text in texts)
                 assert any('answered' in text for text in texts)
@@ -757,7 +734,6 @@ def test_aborting_kills_the_shell_commands_the_turn_spawned():
 
             app = _make_app(tmp, agent)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 app.start_turn('go')
                 assert await _wait_for(pilot, started.is_set, attempts=100)
                 assert await _wait_for(pilot, lambda: pid_file.exists() and pid_file.read_text().strip())
@@ -766,7 +742,7 @@ def test_aborting_kills_the_shell_commands_the_turn_spawned():
 
                 app.request_abort()
                 app.abort_turn()
-                assert await _wait_for(pilot, lambda: not app._turn_active)
+                await wait_for_turn(app)
                 # The process went with the turn, not with its timeout.
                 assert await _wait_for(pilot, lambda: not _alive(pid), attempts=40)
 
@@ -788,7 +764,6 @@ def test_quitting_mid_turn_stops_the_run_and_kills_its_commands():
 
             app = _make_app(tmp, agent)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 app.start_turn('go')
                 for _ in range(40):
                     await pilot.pause()
@@ -844,7 +819,6 @@ def test_the_model_shortcut_is_refused_mid_turn_as_well():
 
             app = _make_app(tmp, agent)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 app.start_turn('go')
                 assert await _wait_for(pilot, lambda: app._current_run is not None)
 
@@ -855,6 +829,6 @@ def test_the_model_shortcut_is_refused_mid_turn_as_well():
                 assert any('/model is not available' in text for text in _chat_texts(app))
 
                 release.set()
-                assert await _wait_for(pilot, lambda: not app._turn_active)
+                await wait_for_turn(app)
 
     asyncio.run(inner())

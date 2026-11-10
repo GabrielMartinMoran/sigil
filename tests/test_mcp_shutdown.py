@@ -9,7 +9,6 @@ and every test of the app that built a manager paid for it.
 from __future__ import annotations
 
 import asyncio
-import time
 from pathlib import Path
 
 import pytest
@@ -133,30 +132,33 @@ def test_closing_the_manager_twice_is_harmless(tmp_path):
     asyncio.run(inner())
 
 
-def test_closing_does_not_wait_the_full_grace_period_per_server(tmp_path):
-    """The whole point: with several servers, the closes run concurrently.
+def test_closing_waits_for_all_servers_concurrently():
+    """No close may finish until every server has started closing."""
+    from types import SimpleNamespace
 
-    Sequentially, four servers that ignore the EOF cost four grace periods.
-    """
-    shutdown.apply_shutdown_timeout(0.3)
-    servers = {}
-    for index in range(4):
-        directory = tmp_path / f's{index}'
-        directory.mkdir()
-        servers[f'probe{index}'] = stdio_server(directory)
+    async def inner() -> None:
+        manager = MCPManager({})
+        started: list[int] = []
+        finished: list[int] = []
+        all_started = asyncio.Event()
 
-    config = tmp_path / 'config.json'
-    config.write_text(__import__('json').dumps({'mcp_servers': servers}), encoding='utf-8')
-    manager = MCPManager(load_config([config], environ={}).servers)
+        def server(index: int) -> SimpleNamespace:
+            async def close() -> None:
+                started.append(index)
+                if len(started) == 4:
+                    all_started.set()
+                await asyncio.wait_for(all_started.wait(), timeout=2)
+                finished.append(index)
 
-    async def inner() -> float:
-        await manager.describe(connect=True)
-        started = time.perf_counter()
+            return SimpleNamespace(name=str(index), toolset=SimpleNamespace(client=SimpleNamespace(close=close)))
+
+        manager._servers = {str(index): server(index) for index in range(4)}
         await manager.aclose()
-        return time.perf_counter() - started
+        assert sorted(started) == list(range(4))
+        assert sorted(finished) == list(range(4))
+        assert not manager.errors
 
-    elapsed = asyncio.run(inner())
-    assert elapsed < 1.0, f'closing four servers took {elapsed:.2f}s: the closes are not concurrent'
+    asyncio.run(inner())
 
 
 def test_a_manager_without_servers_closes_cleanly():

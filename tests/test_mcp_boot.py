@@ -24,6 +24,7 @@ from src.engine.mcp.deferred import MCPGateway, build_manager
 from src.engine.sessions.session_store import SessionStore
 from src.ui.app import SigilApp
 from src.ui.widgets.sidebar_panel import SidebarPanel
+from tests.ui_helpers import wait_until
 
 SERVER_SCRIPT = '''\
 from mcp.server.mcpserver import MCPServer
@@ -100,12 +101,7 @@ def test_the_app_boots_mcp_and_the_panel_ends_up_with_the_real_state(tmp_path: P
 
     async def inner() -> None:
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.pause()
-            for _ in range(100):
-                await pilot.pause()
-                await asyncio.sleep(0.05)
-                if app.query_one(SidebarPanel)._mcp_known:
-                    break
+            await wait_until(pilot, lambda: app.query_one(SidebarPanel)._mcp_known, timeout=10)
             assert gateway.loaded is True
             assert gateway.pending.loaded is True
             text = app.query_one(SidebarPanel).text
@@ -129,9 +125,8 @@ def test_an_app_with_nothing_configured_never_starts_the_worker(tmp_path: Path):
     )
 
     async def inner() -> None:
-        async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.pause()
-            await asyncio.sleep(0.2)
+        async with app.run_test(size=(120, 40)):
+            await asyncio.wait_for(app.workers.wait_for_complete(), timeout=5)
             assert gateway.loaded is False
             # The section is absent, not empty.
             assert 'MCP' not in app.query_one(SidebarPanel).text
@@ -152,9 +147,8 @@ def test_a_failing_load_is_reported_in_the_chat_and_does_not_break_the_app(tmp_p
     )
 
     async def inner() -> None:
-        async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.pause()
-            await asyncio.sleep(0.2)
+        async with app.run_test(size=(120, 40)):
+            await asyncio.wait_for(app.workers.wait_for_complete(), timeout=5)
             assert gateway.loaded is False
             assert any('boom' in error for error in gateway.errors)
             # The window is alive and the app still answers.

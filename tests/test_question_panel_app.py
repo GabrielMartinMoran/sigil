@@ -9,6 +9,7 @@ import asyncio
 import tempfile
 from pathlib import Path
 
+import pytest
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from textual.widgets import OptionList, Static
@@ -21,6 +22,9 @@ from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.question_panel import QuestionPanel
+from tests.ui_helpers import fill_chat, wait_for_turn
+
+pytestmark = pytest.mark.usefixtures('memory_databases')
 
 
 def _question(text: str = 'What do we do?') -> QuestionItem:
@@ -47,7 +51,6 @@ async def _answer(pilot, prompts: dict[str, str]) -> None:
     """Answers the questions the hub registered, one enter per question."""
     for _ in prompts:
         await pilot.press('enter')
-        await pilot.pause()
 
 
 def test_panel_does_not_cover_the_chat():
@@ -60,8 +63,7 @@ def test_panel_does_not_cover_the_chat():
                 await pilot.pause()
                 chat = app.query_one(ChatLog)
                 sidebar = app.query_one('#sidebar')
-                for index in range(30):
-                    await chat.add_user(f'message {index}')
+                await fill_chat(chat)
                 await pilot.pause()
                 height_without_panel = chat.size.height
                 width_without_panel = chat.size.width
@@ -180,10 +182,7 @@ def test_a_tool_can_ask_mid_turn_and_the_turn_continues():
                 assert app._turn_active is True
 
                 await pilot.press('enter')
-                for _ in range(40):
-                    await pilot.pause()
-                    if not app._turn_active:
-                        break
+                await wait_for_turn(app)
 
                 assert seen == ['Recommended']
                 assert panel.display is False
@@ -212,10 +211,7 @@ def test_escaping_the_panel_stops_the_turn_and_gives_control_back():
                 assert app.query_one(QuestionPanel).display is True
 
                 await pilot.press('escape')
-                for _ in range(40):
-                    await pilot.pause()
-                    if not app._turn_active:
-                        break
+                await wait_for_turn(app)
 
                 # The turn is over and the prompt is usable again: the panel took
                 # the whole turn with it, not just the question.
@@ -232,10 +228,7 @@ def test_escaping_the_panel_stops_the_turn_and_gives_control_back():
                 # The conversation can go on.
                 await pilot.press('h', 'i')
                 await pilot.press('enter')
-                for _ in range(40):
-                    await pilot.pause()
-                    if not app._turn_active:
-                        break
+                await wait_for_turn(app)
                 texts = [str(w.render()) for w in app.query_one(ChatLog).children]
                 assert app._turn_active is False
                 assert not any('Error' in text for text in texts)
@@ -252,8 +245,7 @@ def test_ctrl_arrows_read_the_chat_without_leaving_the_panel():
             async with app.run_test(size=(100, 40)) as pilot:
                 await pilot.pause()
                 chat = app.query_one(ChatLog)
-                for index in range(60):
-                    await chat.add_user(f'message {index}')
+                await fill_chat(chat)
                 await pilot.pause()
 
                 task = asyncio.create_task(app.ask_question([_question()]))
@@ -263,14 +255,12 @@ def test_ctrl_arrows_read_the_chat_without_leaving_the_panel():
 
                 before = chat.scroll_offset.y
                 await pilot.press('ctrl+up')
-                await pilot.pause()
                 assert chat.scroll_offset.y < before
                 # The question does not move: the list still has the highlight.
                 assert app.query_one(QuestionPanel).query_one(OptionList).highlighted == 0
                 assert not chat.is_vertical_scroll_end
 
                 await pilot.press('ctrl+down')
-                await pilot.pause()
                 assert chat.scroll_offset.y > before - 5
 
                 await pilot.press('escape')
@@ -287,8 +277,7 @@ def test_ctrl_arrows_read_the_debug_view_when_it_is_the_one_on_screen():
             async with app.run_test(size=(100, 40)) as pilot:
                 await pilot.pause()
                 chat = app.query_one(ChatLog)
-                for index in range(30):
-                    await chat.add_user(f'message {index}')
+                await fill_chat(chat)
                 await pilot.pause()
                 app.set_debug_visible(True)
                 await pilot.pause()
@@ -300,7 +289,6 @@ def test_ctrl_arrows_read_the_debug_view_when_it_is_the_one_on_screen():
                 # The chat is not on screen: the keys must not move a hidden view.
                 chat_offset = chat.scroll_offset.y
                 await pilot.press('ctrl+up')
-                await pilot.pause()
                 assert chat.scroll_offset.y == chat_offset
 
                 await pilot.press('escape')
@@ -323,11 +311,9 @@ def test_answered_questions_are_summarised_in_the_panel():
 
                 panel = app.query_one(QuestionPanel)
                 await pilot.press('enter')  # First: Recommended
-                await pilot.pause()
                 assert panel.query_one('#question-title', Static).render().plain == 'Second'
 
                 await pilot.press('alt+left')
-                await pilot.pause()
                 assert panel.query_one('#question-title', Static).render().plain == 'First'
                 summary = panel.query_one('#question-answers', Static).render().plain
                 assert 'First' in summary
@@ -336,7 +322,6 @@ def test_answered_questions_are_summarised_in_the_panel():
                 assert options.highlighted == 0
 
                 await pilot.press('alt+right')
-                await pilot.pause()
                 await pilot.press('enter')
                 answers = await asyncio.wait_for(task, timeout=5)
                 assert answers is not None

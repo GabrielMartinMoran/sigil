@@ -32,7 +32,6 @@ def test_roadmap_panel_shows_and_updates(monkeypatch):
                 roadmap_store=roadmap,
             )
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 panel = app.query_one(SidebarPanel)
                 assert panel.display is True
                 assert 'Task A' in panel.text
@@ -60,7 +59,6 @@ def test_new_session_gets_its_own_empty_roadmap(monkeypatch):
                 roadmap_store=roadmap,
             )
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 panel = app.query_one(SidebarPanel)
                 assert 'Old task' in panel.text
 
@@ -94,7 +92,6 @@ def test_loading_a_session_restores_its_roadmap(monkeypatch):
                 roadmap_store=roadmap,
             )
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 panel = app.query_one(SidebarPanel)
                 assert 'Task from the second' in panel.text
 
@@ -143,7 +140,6 @@ def test_sidebar_command_hides_and_shows_the_panel(monkeypatch):
 
             app = _sidebar_app(tmp, roadmap, session)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 panel = app.query_one(SidebarPanel)
                 assert panel.display is True
 
@@ -170,7 +166,6 @@ def test_sidebar_command_without_argument_toggles(monkeypatch):
 
             app = _sidebar_app(tmp, roadmap, session)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 panel = app.query_one(SidebarPanel)
 
                 await app.handle_command('/sidebar')
@@ -194,7 +189,6 @@ def test_hidden_sidebar_stays_hidden_when_the_roadmap_changes(monkeypatch):
 
             app = _sidebar_app(tmp, roadmap, session)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 panel = app.query_one(SidebarPanel)
 
                 await app.handle_command('/sidebar', 'off')
@@ -218,7 +212,6 @@ def test_sidebar_command_rejects_unknown_arguments(monkeypatch):
 
             app = _sidebar_app(tmp, roadmap, session)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 panel = app.query_one(SidebarPanel)
 
                 await app.handle_command('/sidebar', 'maybe')
@@ -241,13 +234,11 @@ def test_sidebar_command_typed_in_the_prompt(monkeypatch):
 
             app = _sidebar_app(tmp, roadmap, session)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 panel = app.query_one(SidebarPanel)
                 assert panel.display is True
 
                 app.query_one(PromptInput).value = '/sidebar off'
                 await pilot.press('enter')
-                await pilot.pause()
 
                 assert panel.display is False
 

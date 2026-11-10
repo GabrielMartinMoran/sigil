@@ -346,7 +346,6 @@ def test_the_panel_reads_the_bill_from_the_session_history():
                 session=store.create_session(),
             )
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 app.model_state = lambda: ModelState(alias='work', provider='OpenRouter', model='anthropic/x')
                 app._history = [
                     ModelRequest(parts=[UserPromptPart(content='hi')]),
@@ -375,7 +374,6 @@ def test_sidebar_reflects_loaded_skills():
             app = SigilApp(agent=agent, store=store, session=session)
 
             async with app.run_test() as pilot:
-                await pilot.pause()
                 panel = app.query_one(SidebarPanel)
                 assert 'none yet' in panel._build().plain
 
@@ -414,7 +412,6 @@ def test_the_mcp_section_survives_the_startup_capability_fetch(tmp_path):
             mcp_manager=manager,
         )
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.pause()
             # The probe connects to a binary that does not exist, which is a fast
             # failure: a second is plenty even on a loaded machine.
             for _ in range(50):
@@ -447,8 +444,7 @@ def test_the_mcp_probe_does_not_share_the_turn_worker_group():
                 store=store,
                 session=store.create_session(),
             )
-            async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(120, 40)):
                 assert app.refresh_mcp_status().group == 'mcp'
 
     asyncio.run(inner())
