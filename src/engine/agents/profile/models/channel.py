@@ -31,11 +31,11 @@ becomes real, because a prompt that merely says "you may not" is a suggestion.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from src.engine.agents.profile.models.agent_name import is_valid_agent_name
 from src.engine.agents.profile.models.agent_parse_error import AgentParseError
 
 _KNOWN_KEYS = {'mode', 'parent', 'siblings'}
@@ -172,8 +172,11 @@ def _names(raw: Any) -> tuple[str, ...]:
         name = item.strip().lower()
         if not name:
             raise AgentParseError('`channel.siblings` cannot contain an empty name.')
-        if not re.match(r'^[a-z0-9]+(?:-[a-z0-9]+)*$', name):
-            raise AgentParseError(f'Invalid agent name in `channel.siblings`: {name!r} (use kebab-case).')
+        if not is_valid_agent_name(name):
+            raise AgentParseError(
+                f'Invalid agent name in `channel.siblings`: {name!r} '
+                '(use letters and digits separated by single hyphens or underscores).'
+            )
         if name not in names:
             names.append(name)
     return tuple(names)

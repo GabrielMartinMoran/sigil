@@ -22,10 +22,10 @@ so a profile changes how Sigil works without touching the base prompt.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 
+from src.engine.agents.profile.models.agent_name import is_valid_agent_name
 from src.engine.agents.profile.models.agent_parse_error import AgentParseError
 from src.engine.agents.profile.models.agent_profile import AgentProfile
 from src.engine.agents.profile.models.agent_role import AgentRole
@@ -34,7 +34,6 @@ from src.engine.agents.profile.permissions import parse_permissions
 from src.engine.markdown.frontmatter import FrontmatterError
 from src.engine.markdown.frontmatter import split_frontmatter as _split
 
-_NAME_RE = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
 _MAX_NAME_LENGTH = 64
 _MAX_DESCRIPTION_LENGTH = 1024
 
@@ -100,9 +99,9 @@ def build_profile(data: dict[str, Any], *, profile_file: Path, source: str) -> A
         raise AgentParseError('`name` cannot be empty.')
     if len(name) > _MAX_NAME_LENGTH:
         raise AgentParseError(f'`name` is too long ({len(name)} characters); maximum is {_MAX_NAME_LENGTH}.')
-    if not _NAME_RE.match(name):
+    if not is_valid_agent_name(name):
         raise AgentParseError(
-            f"Invalid agent name '{name}': use kebab-case (lowercase letters, digits and single hyphens)."
+            f"Invalid agent name '{name}': use lowercase letters and digits separated by single hyphens or underscores."
         )
 
     description = _clean_string(data.get('description'), 'description')
