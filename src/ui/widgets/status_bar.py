@@ -70,6 +70,7 @@ class StatusBar(Static):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(Text(''), **kwargs)
+        self._project = ''
         self._agent = ''
         self._activity = ActivityState()
         self._workspace: WorkspaceBadge | None = None
@@ -79,6 +80,10 @@ class StatusBar(Static):
         self._timer: Any = None
 
     # --- state --------------------------------------------------------------
+
+    def set_project(self, name: str) -> None:
+        self._project = name.strip()
+        self.refresh()
 
     def set_agent(self, name: str) -> None:
         """Paints (or clears) the active agent profile. It never borrows the line."""
@@ -180,8 +185,11 @@ class StatusBar(Static):
     def _left(self) -> Text:
         """Who answers, then either the transient question or what it is doing."""
         text = Text()
+        if self._project:
+            text.append(self._project, style='bold')
         if self._agent:
-            text.append('agent ', style=color(self, 'muted'))
+            if text.plain:
+                text.append('  ·  ', style=color(self, 'muted'))
             text.append(self._agent, style=f'bold {color(self, "accent")}')
         if self._message is not None:
             # A question outranks the progress report: one line, one thing to read.

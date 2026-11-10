@@ -205,3 +205,14 @@ def test_stale_writer_cannot_replace_divergent_same_length_history(tmp_path):
     loaded = store.load(first.id)
     assert loaded is not None
     assert loaded.messages[0].parts[0].content == 'newer'
+
+
+def test_draft_is_not_saved_until_a_user_message(tmp_path):
+    store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
+    session = store.draft_session()
+    store.save_progress(session)
+    assert store.load(session.id) is None
+    assert store.list_sessions() == []
+    session.messages = [ModelRequest(parts=[UserPromptPart(content='hello')])]
+    store.save_progress(session)
+    assert store.load(session.id).messages[0].parts[0].content == 'hello'

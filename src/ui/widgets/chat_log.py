@@ -35,11 +35,14 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from rich.console import Group
+from rich.console import Console, ConsoleOptions, Group, RenderResult
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.segment import Segment
+from rich.style import Style
 from rich.text import Text
 from textual.events import Click
+from textual.selection import Selection
 from textual.timer import Timer
 from textual.widgets import Static
 
@@ -266,6 +269,44 @@ def _user_widget(content: str | list[Any], *, seq: int | None = None, from_agent
     return UserMessage(rendered, seq=seq, classes='user-msg')
 
 
+_URL = re.compile(r'https?://[^\s<>\[\]()]+')
+
+
+def link_urls(text: Text) -> Text:
+    for match in _URL.finditer(text.plain):
+        url = match.group().rstrip('.,;:!?')
+        text.stylize(Style(link=url, underline=True), match.start(), match.start() + len(url))
+    return text
+
+
+class LinkedMarkdown:
+    """Render Markdown while adding terminal links to bare HTTP URLs."""
+
+    def __init__(self, text: str) -> None:
+        self.markdown = Markdown(text)
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        for segment in console.render(self.markdown, options):
+            if segment.control or (segment.style and segment.style.link):
+                yield segment
+                continue
+            start = 0
+            for match in _URL.finditer(segment.text):
+                url = match.group().rstrip('.,;:!?')
+                yield Segment(segment.text[start : match.start()], segment.style)
+                yield Segment(url, (segment.style or Style()) + Style(link=url, underline=True))
+                start = match.start() + len(url)
+            yield Segment(segment.text[start:], segment.style)
+
+
+class LinkNotice(Static):
+    def on_click(self, event: Click) -> None:
+        url = event.style.link if event.style else None
+        if url and url.startswith(('https://', 'http://')):
+            self.app.open_url(url)
+            event.stop()
+
+
 class AssistantBlock(Static):
     """One model response block: collapsed reasoning plus the Markdown answer.
 
@@ -348,6 +389,18 @@ class AssistantBlock(Static):
         """Rebuilds the content after a theme change; see `ChatLog.repaint`."""
         self._flush()
 
+    def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+        console = self.app.console
+        options = console.options.update_width(max(1, self.content_size.width))
+        rendered = ''.join(segment.text for segment in console.render(self._build(), options) if not segment.control)
+        return selection.extract(rendered), '\n'
+
+    def on_click(self, event: Click) -> None:
+        url = event.style.link if event.style else None
+        if url and url.startswith(('https://', 'http://')):
+            self.app.open_url(url)
+            event.stop()
+
     # --- rendering ----------------------------------------------------------
 
     def _build(self):
@@ -355,7 +408,7 @@ class AssistantBlock(Static):
         if self._has_thinking:
             parts.append(self._reasoning_renderable())
         if self._text:
-            parts.append(Markdown(self._text))
+            parts.append(LinkedMarkdown(self._text))
         if not parts:
             return Text('')
         if len(parts) == 1:
@@ -512,6 +565,10 @@ class ToolCallBlock(Static):
 
     def on_click(self, event: Click) -> None:
         event.stop()
+        url = event.style.link if event.style else None
+        if url and url.startswith(('https://', 'http://')):
+            self.app.open_url(url)
+            return
         self.action_toggle_output()
 
     @property
@@ -530,7 +587,7 @@ class ToolCallBlock(Static):
         self.update(self._build())
 
     def _build(self):
-        body = self._body()
+        body = [link_urls(line) for line in self._body()]
         if self._expanded and body:
             output = Text('\n').join(line[len(GUTTER) :] for line in body)
             if self._name == 'run':
@@ -1128,7 +1185,7 @@ class ChatLog(ReadOnlyScroll):
         self._current = None
         self._open_tools.clear()
         self._close_group()
-        await self._append(Static(Text(text, style=style), classes='notice'))
+        await self._append(LinkNotice(link_urls(Text(text, style=style)), classes='notice'))
 
     async def add_tool_call(self, name: str, args: Any) -> None:
         """Opens a tool block. Its result lands in it, not on a line of its own.

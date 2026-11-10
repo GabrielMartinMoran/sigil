@@ -271,6 +271,23 @@ Read `references/fastapi.md` for the router, middleware, and testing patterns.
 
 Read `references/cli-workers-and-persistence.md` for these profiles.
 
+## Validator pilot
+
+For substantive Python project work, run the bundled validator as an additional
+check. Resolve the script relative to this skill, not the project directory:
+
+```sh
+/path/to/clean-python/scripts/validate.sh /path/to/project
+```
+
+The POSIX script requires `realpath`, Cargo, a Rust toolchain, accessible Cargo
+dependencies, and a writable temporary directory. It builds outside the skill.
+Use `--help` for options. Exit 0 means clean, 1 means violations, and 2 means
+an execution or parse error; errors take precedence. If the validator cannot
+run, report it as not run and continue other available checks; never report a
+pass. The validator is experimental and does not replace the project gates.
+See `validator/README.md` for rules and limitations.
+
 ## Quality gate
 
 Run the project's configured commands after implementation. A typical Python

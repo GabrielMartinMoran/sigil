@@ -569,3 +569,16 @@ def test_api_key_is_stored_as_a_key_secret(tmp_path):
     secret = service.secrets.get(account.id)
     assert isinstance(secret, ApiKeySecret)
     assert secret.key == 'sk-test'
+
+
+def test_apply_restores_reasoning_for_uncached_model(tmp_path):
+    service = _service(tmp_path)
+    account = _add(service).account
+    saved = Selection(
+        account_id=account.id, model='custom/unknown', thinking='high', window=123000, efforts=('low', 'high')
+    )
+    snapshot = service.apply(saved)
+    assert snapshot.thinking == 'high'
+    assert snapshot.selection.window == 123000
+    assert service.state.last_selection().thinking == 'high'
+    assert service.set_thinking('low').thinking == 'low'

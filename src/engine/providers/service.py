@@ -228,7 +228,9 @@ class ModelService:
         """
         return await self.catalog.models(account, secret=self._api_key_for(account))
 
-    def select(self, alias: str, model: str, thinking: ThinkingChoice = 'default') -> ModelSnapshot:
+    def select(
+        self, alias: str, model: str, thinking: ThinkingChoice = 'default', *, known: Selection | None = None
+    ) -> ModelSnapshot:
         """Makes ``model`` of ``alias`` the active model.
 
         Raises:
@@ -243,6 +245,11 @@ class ModelService:
 
         choice = _parse_thinking(thinking)
         capability = self._capability_for(account, model)
+        cached = self.catalog.cached(account)
+        if known is not None and (cached is None or cached.find(model) is None) and fallback_capability(model) is None:
+            capability = ModelCapability(
+                name=model, context_window=known.window, efforts=known.efforts, supports_images=known.images
+            )
         selection = Selection(
             account_id=account.id,
             model=model,
@@ -394,7 +401,7 @@ class ModelService:
         account = self.accounts.find_id(selection.account_id)
         if account is None:
             raise NoAccountError()
-        return self.select(account.alias, selection.model, selection.thinking)
+        return self.select(account.alias, selection.model, selection.thinking, known=selection)
 
     def current_model(self) -> Model:
         """The model the agent talks to.
@@ -482,6 +489,14 @@ class ModelService:
         static = fallback_capability(model)
         if static is not None:
             return static
+        selection = self.state.last_selection()
+        if selection is not None and selection.account_id == account.id and selection.model == model:
+            return ModelCapability(
+                name=model,
+                context_window=selection.window,
+                efforts=selection.efforts,
+                supports_images=selection.images,
+            )
         # A model no catalogue has described (Go, free text, cold cache) is allowed
         # with unknown capabilities: refusing it would make a valid model unusable
         # just because a list could not be fetched.

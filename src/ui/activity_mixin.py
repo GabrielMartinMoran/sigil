@@ -89,6 +89,8 @@ class ActivityMixin:
             bar = self.query_one(StatusBar)
         except Exception:  # noqa: BLE001
             return
+        manager = getattr(self, '_workspace_manager', None)
+        bar.set_project(manager.root.name if manager is not None else '')
         bar.set_workspace(self.workspace_badge())
 
     # --- diff ---------------------------------------------------------------

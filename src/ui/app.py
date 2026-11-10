@@ -419,6 +419,8 @@ class SigilApp(
     async def on_chat_notice(self, message: ChatNotice) -> None:
         """Appends a notice posted from a synchronous context."""
         await self.query_one(ChatLog).add_notice(message.text, style=message.style)
+        if 'red' in message.style:
+            self.notify(message.text, severity='error')
 
     async def on_prompt_input_attachment_rejected(self, message: PromptInput.AttachmentRejected) -> None:
         """An image could not be attached: one line, and the composer keeps what it had.

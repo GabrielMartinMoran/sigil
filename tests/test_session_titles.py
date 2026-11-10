@@ -625,6 +625,20 @@ def _row_text(entry: CatalogEntry) -> str:
     return session_option(entry).prompt.plain
 
 
+def test_the_picker_starts_with_the_local_last_updated_date():
+    from datetime import datetime
+
+    updated = '2026-11-09T13:42:00+00:00'
+    session = Session(id='a' * 32, cwd='/repo', updated_at=updated)
+    expected = datetime.fromisoformat(updated).astimezone().strftime('%Y-%m-%d %H:%M')
+    assert _row_text(_entry(session, current=True)).startswith(f'{expected}  ● ')
+
+
+def test_the_picker_handles_an_invalid_update_date():
+    session = Session(id='a' * 32, cwd='/repo', updated_at='invalid')
+    assert _row_text(_entry(session)).startswith('unknown date')
+
+
 def test_the_picker_shows_the_generated_title():
     session = Session(id='a' * 32, cwd='/repo', title='Fix the login form')
     session.messages = [ModelRequest(parts=[UserPromptPart(content='the login form is broken and ')])]

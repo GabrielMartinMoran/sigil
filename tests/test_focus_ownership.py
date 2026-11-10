@@ -522,3 +522,100 @@ def test_the_composer_border_follows_the_focus():
                 assert opacity is not None and float(opacity) < 1
 
     asyncio.run(inner())
+
+
+def test_assistant_markdown_can_be_selected():
+    from textual.selection import SELECT_ALL
+
+    from src.ui.widgets.chat_log import AssistantBlock
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _app(tmp)
+            async with app.run_test(size=(100, 40)) as pilot:
+                chat = app.query_one(ChatLog)
+                await chat.begin_response()
+                await chat.add_text('Hello **world**')
+                chat.finalize()
+                await pilot.pause()
+                block = chat.query_one(AssistantBlock)
+                selected = block.get_selection(SELECT_ALL)
+                assert selected is not None
+                assert 'Hello world' in selected[0]
+
+    asyncio.run(inner())
+
+
+def test_assistant_markdown_link_opens_in_browser():
+    from src.ui.widgets.chat_log import AssistantBlock
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _app(tmp)
+            opened = []
+            app.open_url = lambda url, **kwargs: opened.append(url)
+            async with app.run_test(size=(100, 40)) as pilot:
+                chat = app.query_one(ChatLog)
+                await chat.begin_response()
+                await chat.add_text('[example](https://example.com)')
+                chat.finalize()
+                await pilot.pause()
+                block = chat.query_one(AssistantBlock)
+                await pilot.click(block, offset=(1, 0))
+                assert opened == ['https://example.com']
+
+    asyncio.run(inner())
+
+
+def test_assistant_plain_url_opens_in_browser():
+    from src.ui.widgets.chat_log import AssistantBlock
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _app(tmp)
+            opened = []
+            app.open_url = lambda url, **kwargs: opened.append(url)
+            async with app.run_test(size=(100, 40)) as pilot:
+                chat = app.query_one(ChatLog)
+                await chat.begin_response()
+                await chat.add_text('https://example.com')
+                chat.finalize()
+                await pilot.pause()
+                await pilot.click(chat.query_one(AssistantBlock), offset=(1, 0))
+                assert opened == ['https://example.com']
+
+    asyncio.run(inner())
+
+
+def test_error_notice_is_also_shown_as_a_toast():
+    from src.ui.messages import ChatNotice
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _app(tmp)
+            toasts = []
+            app.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+            async with app.run_test() as pilot:
+                app.post_message(ChatNotice('Provider failed', style='bold red'))
+                await pilot.pause()
+                assert toasts == [('Provider failed', {'severity': 'error'})]
+
+    asyncio.run(inner())
+
+
+def test_url_in_notice_opens_in_browser():
+    from src.ui.widgets.chat_log import LinkNotice
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _app(tmp)
+            opened = []
+            app.open_url = lambda url, **kwargs: opened.append(url)
+            async with app.run_test(size=(100, 40)) as pilot:
+                chat = app.query_one(ChatLog)
+                await chat.add_notice('https://example.com')
+                await pilot.pause()
+                await pilot.click(chat.query_one(LinkNotice), offset=(1, 0))
+                assert opened == ['https://example.com']
+
+    asyncio.run(inner())

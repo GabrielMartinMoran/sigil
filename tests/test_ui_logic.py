@@ -93,14 +93,12 @@ def test_assistant_block_renders_markdown_and_collapses_reasoning():
 
 
 def test_assistant_block_without_reasoning_is_just_markdown():
-    from rich.markdown import Markdown
-
-    from src.ui.widgets.chat_log import AssistantBlock
+    from src.ui.widgets.chat_log import AssistantBlock, LinkedMarkdown
 
     block = AssistantBlock(reasoning_visible=False)
     block.add_text('# Hello')
     block.finalize()
-    assert isinstance(block._build(), Markdown)
+    assert isinstance(block._build(), LinkedMarkdown)
 
 
 def test_assistant_block_without_content_is_empty_text():
