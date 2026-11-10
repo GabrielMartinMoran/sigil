@@ -31,6 +31,15 @@ if TYPE_CHECKING:
     from src.engine.skills.registry import SkillRegistry
 
 _SIGIL_PROMPT = os.path.join(os.path.dirname(__file__), 'prompts', 'sigil.md')
+_WORKSPACE_DENIED = (
+    '- **Workspace:** Operate within the initial working directory and its descendants unless explicitly authorized '
+    'otherwise. The OS temporary directory is an extension of that space, not somewhere outside it.'
+)
+_WORKSPACE_ALLOWED = (
+    '- **Workspace:** Outside-workspace file access is allowed for this session. Access external paths only as needed '
+    'for the user’s task, exercise care, and respect all other permissions and safety rules. '
+    'The OS temporary directory is also available.'
+)
 
 
 def _load_prompt() -> str:
@@ -60,6 +69,7 @@ def create_agent(
     extra_capabilities: Sequence[AbstractCapability] | None = None,
     available_features: Callable[[], frozenset[str]] | None = None,
     node_blocks: Callable[[str | None], str] | None = None,
+    allow_external_files: Callable[[], bool] | None = None,
 ) -> Agent:
     """Builds the agent.
 
@@ -104,8 +114,12 @@ def create_agent(
 
     def render_prompt() -> str:
         """The prompt for the request about to be made."""
+        policy = (
+            _WORKSPACE_ALLOWED if allow_external_files is not None and allow_external_files() else _WORKSPACE_DENIED
+        )
+        template = prompt_template.replace('{{workspace_policy}}', policy)
         return _section(
-            'base_instructions', render(prompt_template, None if available_features is None else available_features())
+            'base_instructions', render(template, None if available_features is None else available_features())
         )
 
     agent = Agent(

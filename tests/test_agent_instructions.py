@@ -210,3 +210,23 @@ def test_rewriting_workspace_with_legacy_append_history(tmp_path):
     parts = [part for message in projected for part in message.parts]
     assert 'intermediate workspace rule' not in str(parts)
     assert 'old workspace rule' not in str(parts)
+
+
+def test_workspace_permission_is_refreshed_in_each_request():
+    allowed = False
+    agent = create_agent(model=TestModel(), allow_external_files=lambda: allowed)
+    first = agent.run_sync('first')
+    assert 'Operate within the initial working directory' in _last_request_instructions(first)
+    assert 'Outside-workspace file access is allowed' not in _last_request_instructions(first)
+
+    allowed = True
+    second = agent.run_sync('second', message_history=first.all_messages())
+    instructions = _last_request_instructions(second)
+    assert 'Outside-workspace file access is allowed' in instructions
+    assert 'Operate within the initial working directory' not in instructions
+    assert 'Never read, expose, or modify credentials' in instructions
+
+    allowed = False
+    third = agent.run_sync('third', message_history=second.all_messages())
+    assert 'Outside-workspace file access is allowed' not in _last_request_instructions(third)
+    assert 'Operate within the initial working directory' in _last_request_instructions(third)

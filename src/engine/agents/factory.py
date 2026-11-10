@@ -72,6 +72,7 @@ class AgentSpec:
     callable receives the node id — ``None`` for the root — and its result is
     rendered on every request, because the tree moves under it.
     """
+    allow_external_files: Callable[[], bool] | None = None
     available_features: Callable[[str | None], frozenset[str]] | None = None
     """What the model will see, by agent name. ``None`` means the active profile.
 
@@ -118,6 +119,7 @@ class AgentFactory:
             if features is None
             else _bound(features, None if profile is None else profile.name),
             node_blocks=self.spec.node_blocks,
+            allow_external_files=self.spec.allow_external_files,
         )
         for register in self.spec.tool_registrars:
             register(agent)

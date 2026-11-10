@@ -371,6 +371,7 @@ class Composition:
                 tool_registrars=[self.install_tools],
                 node_blocks=self.node_blocks,
                 available_features=self.available_features,
+                allow_external_files=lambda: self.session.allow_external_files,
             )
         )
 
