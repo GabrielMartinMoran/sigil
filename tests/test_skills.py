@@ -318,8 +318,8 @@ def test_render_available_skills_excludes_disabled(tmp_path):
     registry = SkillRegistry([('project', tmp_path)])
 
     rendered = rendering.render_available_skills(registry)
-    assert '`visible`' in rendered
-    assert '`hidden`' not in rendered
+    assert 'name="visible"' in rendered
+    assert 'name="hidden"' not in rendered
 
 
 def test_render_available_skills_empty(tmp_path):
@@ -487,7 +487,7 @@ def test_catalogue_order_is_stable_across_root_and_creation_order(tmp_path):
     write_skill(global_root, 'alpha')
     registry = SkillRegistry([('project', project), ('global', global_root)])
     first = rendering.render_available_skills(registry)
-    assert first.index('`alpha`') < first.index('`middle`') < first.index('`zulu`')
+    assert first.index('name="alpha"') < first.index('name="middle"') < first.index('name="zulu"')
     assert rendering.render_available_skills(registry.refresh()) == first
 
 

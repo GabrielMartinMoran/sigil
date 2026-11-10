@@ -94,12 +94,12 @@ def test_partial_resource_rebuilds_after_compaction_and_multiple_sqlite_resumes(
         assert loaded_resources(session.messages) == (('demo', 'references/doc.md', 5),)
         block = render_loaded_skills(registry, [], loaded_resources(session.messages))
         assert 'ABCDE' in block and 'ABCDEFGHIJ' not in block
-        assert '(partial)' in block
+        assert 'status="partial"' in block
     target = tmp_path / 'demo' / 'references' / 'doc.md'
     target.write_text('XYZ updated')
     assert 'XYZ u' in render_loaded_skills(registry, [], loaded_resources(session.messages))
     target.unlink()
-    assert '(unavailable)' in render_loaded_skills(registry, [], loaded_resources(session.messages))
+    assert 'status="unavailable"' in render_loaded_skills(registry, [], loaded_resources(session.messages))
 
 
 def test_effective_resource_limit_is_clamped_and_rollback_does_not_resurrect_reads():

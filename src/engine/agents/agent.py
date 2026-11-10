@@ -39,6 +39,14 @@ def _load_prompt() -> str:
         return f.read()
 
 
+def _section(name: str, content: str) -> str:
+    """Mark an instruction block without allowing its body to close the boundary."""
+    if not content.strip():
+        return ''
+    closing = f'</{name}>'
+    return f'<{name}>\n{content.replace(closing, f"&lt;/{name}&gt;").strip()}\n{closing}\n'
+
+
 def create_agent(
     skill_registry: SkillRegistry | None = None,
     *,
@@ -96,7 +104,9 @@ def create_agent(
 
     def render_prompt() -> str:
         """The prompt for the request about to be made."""
-        return render(prompt_template, None if available_features is None else available_features())
+        return _section(
+            'base_instructions', render(prompt_template, None if available_features is None else available_features())
+        )
 
     agent = Agent(
         model if model is not None else UnconfiguredModel(),
@@ -123,7 +133,7 @@ def create_agent(
         # before the ones that only describe the workspace.
         @agent.instructions(name='agent-profile')
         def _agent_profile() -> str:
-            return render_agent_profile(source)
+            return _section('agent_profile', render_agent_profile(source))
 
     if agent_registry is not None and source is not None:
         # Right after the profile: which subagents it may start is part of what the
@@ -131,13 +141,21 @@ def create_agent(
         # request like the body above.
         @agent.instructions(name='subagents')
         def _subagents() -> str:
-            return render_subagents(agent_registry, source.profile())
+            return _section('available_agents', render_subagents(agent_registry, source.profile()))
+
+    if skill_registry is not None:
+        # Progressive disclosure, level 1: the metadata (name + description)
+        # of the installed skills is recomputed on every request. That way a skill
+        # added during the session shows up without restarting the agent.
+        @agent.instructions(name='skills')
+        def _skills_metadata() -> str:
+            return render_available_skills(skill_registry)
 
     if workspace is not None and scope is not None:
         # Replace the full workspace snapshot when the scope or files change.
         @agent.instructions(name='workspace')
         def _workspace_instructions() -> str:
-            return workspace.render(scope.scopes())
+            return _section('project_instructions', workspace.render(scope.scopes()))
 
     if skill_registry is not None:
         # Level 2 as a block, not as a tool result: the SKILL.md body survives
@@ -153,13 +171,5 @@ def create_agent(
         @agent.instructions(name='loaded-skills')
         def _loaded_skills(ctx: RunContext[SigilDeps]) -> str:
             return render_loaded_skills(skill_registry, loaded_skills(ctx.messages), loaded_resources(ctx.messages))
-
-    if skill_registry is not None:
-        # Progressive disclosure, level 1: the metadata (name + description)
-        # of the installed skills is recomputed on every request. That way a skill
-        # added during the session shows up without restarting the agent.
-        @agent.instructions(name='skills')
-        def _skills_metadata() -> str:
-            return render_available_skills(skill_registry)
 
     return agent

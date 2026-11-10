@@ -164,7 +164,7 @@ def test_node_context_is_not_registered_as_an_instruction(tmp_path):
     )
     names = _instruction_names(agent)
     assert 'node-context' not in names
-    assert names.index('workspace') < names.index('skills')
+    assert names.index('skills') < names.index('workspace')
 
 
 def test_workspace_changes_replace_prior_instructions(tmp_path):
