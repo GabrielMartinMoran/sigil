@@ -75,9 +75,19 @@ def test_parse_requires_name_and_description(tmp_path):
         parse_profile(missing_description, source='project')
 
 
-def test_parse_rejects_a_name_that_is_not_kebab_case(tmp_path):
-    profile_file = write_profile(tmp_path, 'Bad_Name')
-    with pytest.raises(AgentParseError, match='kebab-case'):
+@pytest.mark.parametrize('name', ['pas_developer', 'pas-qa', 'pas_researcher-2'])
+def test_registry_discovers_valid_agent_names(tmp_path, name):
+    write_profile(tmp_path, name, extra='role: subagent\n')
+    registry = AgentRegistry([('project', tmp_path)])
+
+    assert registry.require_subagent(name).name == name
+    assert not registry.errors
+
+
+@pytest.mark.parametrize('name', ['Bad_Name', '_agent', 'agent_', 'agent__name', 'agent_-name'])
+def test_parse_rejects_invalid_agent_names(tmp_path, name):
+    profile_file = write_profile(tmp_path, name)
+    with pytest.raises(AgentParseError, match='Invalid agent name'):
         parse_profile(profile_file, source='project')
 
 

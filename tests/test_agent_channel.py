@@ -108,9 +108,16 @@ def test_an_unknown_key_inside_the_channel_is_an_error():
         parse_channel({'mode': 'bidirectional', 'friends': ['x']})
 
 
-def test_a_sibling_name_that_is_not_kebab_case_is_an_error():
+def test_sibling_names_can_contain_underscores():
+    policy = parse_channel({'mode': 'bidirectional', 'siblings': ['PAS_Developer', 'pas_researcher-2']})
+    assert policy.may_message_sibling('pas_developer')
+    assert policy.may_message_sibling('pas_researcher-2')
+
+
+@pytest.mark.parametrize('name', ['Not A Name', '_agent', 'agent_', 'agent__name', 'agent_-name'])
+def test_invalid_sibling_names_are_rejected(name):
     with pytest.raises(AgentParseError, match='Invalid agent name'):
-        parse_channel({'mode': 'bidirectional', 'siblings': ['Not A Name']})
+        parse_channel({'mode': 'bidirectional', 'siblings': [name]})
 
 
 def test_the_channel_describes_itself_for_the_header():
