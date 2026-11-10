@@ -1,0 +1,13 @@
+[package]
+name = "clean-python-validator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ignore = "0.4"
+rayon = "1"
+rustpython-parser = "0.4"
+rustpython-ast = { version = "0.4", features = ["visitor"] }
+
+[dev-dependencies]
+tempfile = "3"
