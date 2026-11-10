@@ -32,7 +32,7 @@ from src.ui.messages import NodeOpened, TreeChanged
 from src.ui.subagent_reports import WAKE_PROMPT
 from src.ui.widgets.agent_tree_screen import AgentTreeScreen, TreeAction
 from src.ui.widgets.agent_view import AgentView
-from src.ui.widgets.chat_log import ChatLog
+from src.ui.widgets.chat_log import ChatLog, SummonBlock
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.sidebar_panel import SidebarPanel
 
@@ -274,6 +274,8 @@ class TreeMixin:
     def on_tree_changed(self, message: TreeChanged) -> None:
         """A node was born or moved on: repaint what shows it."""
         node = message.node
+        for block in self.query(SummonBlock):
+            block.set_node(node)
         if self.subagent_open and self.viewed_node_id() == node.id:
             self.run_worker(self._refresh_node_view(node))
         self._refresh_tree_screen()
