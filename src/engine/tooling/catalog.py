@@ -66,6 +66,9 @@ class ToolCatalog:
             compaction=compaction,
         )
 
+    def remove(self, name: str) -> None:
+        self._tools.pop(name, None)
+
     def get(self, name: str) -> ToolDeclaration | None:
         return self._tools.get(name)
 

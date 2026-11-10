@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -89,6 +89,8 @@ class Session:
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
     _persisted_at: str | None = field(default=None, repr=False, compare=False)
+    _baseline: str | None = field(default=None, repr=False, compare=False)
+    _recovery_session: Session | None = field(default=None, repr=False, compare=False)
     title: str | None = None
     selection: Selection | None = None
     """Provider account, model and reasoning level the conversation runs on.
@@ -112,6 +114,8 @@ class Session:
     subagent that finished an hour ago is part of the conversation's history even
     though nothing is running now.
     """
+
+    allow_external_files: bool = False
 
     tools_tokens: int = 0
     """What the last request measured of the tool schemas.
@@ -216,14 +220,14 @@ class SessionStore:
             session.touch()
             conn.execute(
                 'INSERT INTO sessions (id, workspace_id, title, preview, account_id, model, thinking, '
-                'window, efforts, images, tools_tokens, instructions_tokens, created_at, updated_at) '
-                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+                'window, efforts, images, tools_tokens, instructions_tokens, allow_external_files, created_at, updated_at) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
                 'ON CONFLICT(id) DO UPDATE SET '
                 'title = excluded.title, preview = excluded.preview, account_id = excluded.account_id, '
                 'model = excluded.model, thinking = excluded.thinking, window = excluded.window, '
                 'efforts = excluded.efforts, images = excluded.images, '
                 'tools_tokens = excluded.tools_tokens, '
-                'instructions_tokens = excluded.instructions_tokens, updated_at = excluded.updated_at',
+                'instructions_tokens = excluded.instructions_tokens, allow_external_files = excluded.allow_external_files, updated_at = excluded.updated_at',
                 (
                     session.id,
                     self.workspace_id,
@@ -237,6 +241,7 @@ class SessionStore:
                     1 if selection is None or selection.images else 0,
                     int(session.tools_tokens),
                     int(session.instructions_tokens),
+                    int(session.allow_external_files),
                     session.created_at,
                     session.updated_at,
                 ),
@@ -277,14 +282,87 @@ class SessionStore:
                 )
 
         session._persisted_at = session.updated_at
+        session._baseline = self._fingerprint(session)
+
+    @staticmethod
+    def _fingerprint(session: Session) -> str:
+        from src.engine.sessions.synchronization import fingerprint
+
+        return fingerprint(
+            session.messages,
+            session.tree,
+            {
+                'title': session.title,
+                'selection': None if session.selection is None else session.selection.to_dict(),
+                'agent': session.agent,
+                'allow_external_files': session.allow_external_files,
+            },
+        )
+
+    @staticmethod
+    def _recovery_copy(session: Session) -> Session:
+        from src.engine.sessions.synchronization import copy_tree
+
+        recovery = session._recovery_session or replace(
+            session, id=uuid.uuid4().hex, _persisted_at=None, _baseline=None, _recovery_session=None
+        )
+        recovery.messages = list(session.messages)
+        recovery.selection = session.selection
+        recovery.agent = session.agent
+        recovery.allow_external_files = session.allow_external_files
+        recovery.title = f'{session.title or session.short_id} (recovered local changes)'
+        recovery.tree = copy_tree(session.tree, recovery.id)
+        return recovery
+
+    def _preserve_local(self, session: Session) -> str | None:
+        if session._baseline == self._fingerprint(session):
+            return None
+        recovery = self._recovery_copy(session)
+        try:
+            self.save(recovery)
+        except SessionConflictError:
+            # A recovery session can itself be opened elsewhere. Keep that edit
+            # and checkpoint this writer into a fresh copy instead of retrying it.
+            session._recovery_session = None
+            recovery = self._recovery_copy(session)
+            self.save(recovery)
+        session._recovery_session = recovery
+        self.database.execute('UPDATE workspaces SET last_session_id = ? WHERE id = ?', (session.id, self.workspace_id))
+        return recovery.id
+
+    def save_progress(self, session: Session) -> str | None:
+        """Checkpoint without replacing newer disk state or interrupting a live run."""
+        try:
+            self.save(session)
+        except SessionConflictError:
+            return self._preserve_local(session)
+        return None
+
+    def refresh(self, session: Session) -> Session | None:
+        """Return a newer consistent snapshot, preserving any divergent local work."""
+        with self.database.transaction() as conn:
+            row = conn.execute('SELECT * FROM sessions WHERE id = ?', (session.id,)).fetchone()
+            if row is None or row['updated_at'] == session._persisted_at:
+                return None
+            latest = self._session_from(row)
+        self._preserve_local(session)
+        return latest
+
+    def save_current(self, session: Session) -> Session:
+        """Save an idle session, or reload the winner instead of crashing the client."""
+        try:
+            self.save(session)
+        except SessionConflictError:
+            return self.refresh(session) or session
+        return session
 
     def load(self, session_id: str) -> Session | None:
         """Loads a session by id and marks it as the last one used."""
-        row = self.database.one('SELECT * FROM sessions WHERE id = ?', (session_id,))
-        if row is None:
-            return None
-        session = self._session_from(row)
         with self.database.transaction() as conn:
+            row = conn.execute('SELECT * FROM sessions WHERE id = ?', (session_id,)).fetchone()
+            if row is None:
+                return None
+            session = self._session_from(row)
             conn.execute(
                 'UPDATE workspaces SET last_session_id = ?, updated_at = ? WHERE id = ?',
                 (session.id, _now(), self.workspace_id),
@@ -342,11 +420,13 @@ class SessionStore:
             agent='',
             tools_tokens=int(row['tools_tokens'] or 0),
             instructions_tokens=int(row['instructions_tokens'] or 0),
+            allow_external_files=bool(row['allow_external_files']),
         )
         session.messages = root_messages(self.database, self.blobs, session.id)
         session.tree = load_tree(self.database, self.blobs, session.id)
         root = session.tree.root if session.tree is not None else None
         session.agent = '' if root is None else root.name
+        session._baseline = self._fingerprint(session)
         return session
 
 

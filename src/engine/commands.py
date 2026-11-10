@@ -51,6 +51,7 @@ COMMANDS: tuple[Command, ...] = (
     Command('/provider', 'Manage provider accounts (add, remove, rename)'),
     Command('/model', 'Pick a model and reasoning effort across providers'),
     Command('/effort', 'Show or set the reasoning effort'),
+    Command('/external-files', 'Show or set outside-workspace file access (allow/deny)'),
     Command('/mcp', 'Show MCP server status'),
     Command('/context', 'Show the context usage breakdown'),
     Command(

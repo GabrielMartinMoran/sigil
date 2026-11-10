@@ -52,6 +52,28 @@ ones in `~/.sigil/agents`, and Sigil ships with one of its own.
 
 See [Agents](#agents) for the format and the permission rules.
 
+## File access outside the workspace
+
+File tools deny paths outside the workspace and temporary directories by default.
+Use `/external-files allow` to permit reads and writes outside those locations for
+the current session. Use `/external-files deny` to restore the restriction, or
+`/external-files` to show its current state. The setting persists with the session.
+It applies to file tools, not shell commands or external tools.
+
+## Local tool extensions
+
+Add tools without changing Sigil's core by creating
+`.sigil/tools/<extension>/tools.py` in a project, or
+`~/.sigil/tools/<extension>/tools.py` globally. Only functions decorated with
+`@tool` from `sigil_tools` are exposed. Tools and optional `on_load` / `on_unload`
+hooks use `async def`; compaction and presentation callbacks stay synchronous.
+
+Project extensions require trust approval before Python is imported. Extensions
+are trusted code, not sandboxed plugins, and manage their own external
+dependencies. See [Local tool extensions](docs/local-tools.md) for the quick
+start, advanced declarations, lifecycle, security boundaries, and design
+philosophy.
+
 ## Agent Skills
 
 Sigil implements the [Agent Skills](https://github.com/anthropics/skills) protocol:

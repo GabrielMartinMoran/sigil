@@ -88,3 +88,20 @@ def test_should_show_friendly_names_and_filter_by_name_or_slash_command(tmp_path
             app.handle_command.assert_awaited_once_with('/model', '')
 
     asyncio.run(scenario())
+
+
+def test_should_set_external_file_access_from_palette(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        app = make_app(tmp_path)
+        async with app.run_test(size=(100, 35)) as pilot:
+            for query, expected in [('allow outside', True), ('deny outside', False)]:
+                await pilot.press('ctrl+p')
+                app.screen.query_one(Input).value = query
+                await pilot.pause()
+                assert app.screen.query_one(OptionList).option_count == 1
+                await pilot.press('enter')
+                await pilot.pause()
+                assert app._session.allow_external_files is expected
+                assert app._store.load(app._session.id).allow_external_files is expected
+
+    asyncio.run(scenario())

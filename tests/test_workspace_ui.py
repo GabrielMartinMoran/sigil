@@ -425,3 +425,44 @@ def test_worktrees_dir_follows_the_environment(monkeypatch, tmp_path, repo):
             assert Path.cwd() == tmp_path / 'configured' / 'project' / 'configured'
 
     asyncio.run(inner())
+
+
+@pytest.mark.parametrize('args', ['', '--worktree recovered'])
+def test_new_session_survives_an_external_update(monkeypatch, tmp_path, repo, args: str) -> None:
+    monkeypatch.chdir(repo)
+
+    async def inner() -> None:
+        app = _app(repo, tmp_path, sessions=['original'])
+        original_id = app._session.id
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            external = app._store.load(original_id)
+            external.messages.append(ModelRequest(parts=[UserPromptPart('external update')]))
+            app._store.save(external)
+
+            await app.handle_command('/new', args)
+            await pilot.pause()
+
+            assert app._session.id != original_id
+            assert app._session.messages == []
+            saved = app._store.load(original_id)
+            assert saved.messages == external.messages
+
+    asyncio.run(inner())
+
+
+def test_external_files_command_updates_only_current_session(monkeypatch, tmp_path, repo):
+    monkeypatch.chdir(repo)
+
+    async def inner():
+        app = _app(repo, tmp_path)
+        async with app.run_test():
+            session_id = app._session.id
+            await app.handle_command('/external-files', 'allow')
+            assert app._store.load(session_id).allow_external_files
+            await app.handle_command('/external-files', 'invalid')
+            assert app._session.allow_external_files
+            await app.handle_command('/external-files', 'deny')
+            assert not app._store.load(session_id).allow_external_files
+
+    asyncio.run(inner())

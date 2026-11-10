@@ -54,6 +54,7 @@ from src.engine.sessions.recovery import recover_history
 from src.engine.shell import running as running_commands
 from src.ui.desktop_notifications import Attention
 from src.ui.messages import ChatNotice
+from src.ui.session_refresh import render_refreshed_session, session_view
 from src.ui.turn_timing import TurnTimings
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
@@ -163,7 +164,7 @@ class TurnMixin:
         # The measurement of the blocks that are always sent rides with the row, so a
         # session loaded later knows its real budget instead of starting at zero.
         self._meter.stamp(session)
-        self._store.save(session)
+        self._store.save_progress(session)
         # The context section updates per step, not only when the turn closes.
         self.refresh_context(messages)
         # The debug view too (it is a no-op if closed).
@@ -494,7 +495,7 @@ class TurnMixin:
                 session.messages = history
                 if session is self._session:
                     self._history = history
-                self._store.save(session)
+                self._store.save_progress(session)
                 await chat.add_notice(recovery.notice, style='yellow')
             async with self._agent.iter(
                 user_content(text, attachments),
@@ -549,9 +550,15 @@ class TurnMixin:
         # conversation on screen is left alone.
         session.messages = history
         self._meter.stamp(session)
-        self._store.save(session)
+        current = self._store.save_current(session)
         if session is self._session:
-            self._history = history
+            if current is not session:
+                await render_refreshed_session(session_view(self), current, chat)
+                await chat.add_notice(
+                    'Session changed elsewhere. Local progress is saved in a recovered session; reloaded the latest version.',
+                    style='yellow',
+                )
+            self._history = current.messages
         # A message that missed the last seam is not lost: it comes back to the
         # prompt, ready to be sent again. The chat line goes with it, so what is
         # left on screen matches what the agent actually read.

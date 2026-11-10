@@ -30,7 +30,7 @@ class MenuMixin:
         choice = await self.push_screen_wait(CommandPaletteScreen())
         if choice is None:
             return
-        args = ''
+        args = choice.args
         if choice.worktree:
             name = await self.push_screen_wait(TextPromptScreen(title='New worktree', placeholder='Worktree name…'))
             if name is None:

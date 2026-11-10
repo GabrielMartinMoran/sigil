@@ -431,3 +431,32 @@ def test_reading_a_file_does_not_conflict_with_editing_it(tmp_path, monkeypatch)
 
     assert Path(tmp_path / 'a.txt').read_text() == 'ONE\n'
     assert [part.outcome for part in _tool_returns(result)] == ['success', 'success']
+
+
+def test_external_access_follows_current_session_for_all_file_tools(tmp_path, monkeypatch):
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
+    monkeypatch.setattr(paths, 'temp_dirs', lambda: ())
+    external = tmp_path / 'outside.txt'
+    external.write_text('before')
+    allowed = False
+    agent = DummyAgent()
+    register_file_tools(agent, allow_external=lambda: allowed)
+    tools = agent.tools
+
+    for name, arguments in (
+        ('read_file', {}),
+        ('write_file', {'content': 'new'}),
+        ('patch_file', {'old_string': 'before', 'new_string': 'after'}),
+    ):
+        with pytest.raises(FileToolError):
+            tools[name](path=str(external), **arguments)
+    allowed = True
+    assert tools['read_file'](path=str(external)).content == 'before'
+    tools['patch_file'](path=str(external), old_string='before', new_string='after')
+    tools['write_file'](path=str(external), content='new')
+    assert external.read_text() == 'new'
+    allowed = False
+    with pytest.raises(FileToolError):
+        tools['read_file'](path=str(external))

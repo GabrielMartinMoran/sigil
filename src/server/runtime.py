@@ -80,6 +80,7 @@ class ServerRuntime:
     def __init__(self, composition: Composition, hub: EventHub) -> None:
         self.composition = composition
         self.hub = hub
+        composition.extension_notice = lambda text: hub.publish('notice', text=text, tone='danger')
         self._task: asyncio.Task[None] | None = None
         self._run: Any = None
         self._pending_question: PendingQuestion | None = None
@@ -137,6 +138,10 @@ class ServerRuntime:
         if self.busy:
             queued = self._steer(cleaned)
             return {'accepted': 'steer', 'delivered': queued}
+        latest = self.composition.store.refresh(self.session)
+        if latest is not None:
+            self.composition.bind_session(latest)
+            self.hub.publish_state('session_reloaded')
         self._task = asyncio.get_event_loop().create_task(self._turn(cleaned))
         return {'accepted': 'turn'}
 
@@ -190,7 +195,7 @@ class ServerRuntime:
             return
         self._last_checkpoint_at = now
         session.messages = list(messages)
-        self.composition.store.save(session)
+        self.composition.store.save_progress(session)
 
     async def _turn(self, text: str) -> None:
         composition = self.composition
@@ -211,7 +216,7 @@ class ServerRuntime:
             if recovery.changed:
                 history = recovery.messages
                 session.messages = history
-                composition.store.save(session)
+                composition.store.save_progress(session)
                 self.hub.publish('notice', text=recovery.notice, tone='warn')
 
             async with agent.iter(
@@ -241,7 +246,14 @@ class ServerRuntime:
 
         history = recover_history(history).messages
         session.messages = history
-        composition.store.save(session)
+        current = composition.store.save_current(session)
+        if current is not session:
+            composition.bind_session(current)
+            self.hub.publish(
+                'notice',
+                text='Session changed elsewhere; local progress was saved in a recovered session.',
+                tone='warn',
+            )
 
         if budget.exhausted:
             self.hub.publish(
@@ -277,7 +289,7 @@ class ServerRuntime:
             if not title:
                 return
             session.title = title
-            self.composition.store.save(session)
+            self.composition.store.save_progress(session)
             self.hub.publish_state('session_named')
 
         asyncio.get_event_loop().create_task(name())
