@@ -94,21 +94,42 @@ def _prompt_stack(report: DebugReport) -> RenderableType:
     if not request.captured:
         return Text('Last request · prompt stack\n  No request captured in this process yet.', style='dim')
 
+    labels = {
+        '(base)': 'Base Instructions',
+        'base': 'Base Instructions',
+        'agent-profile': 'Agent Profile',
+        'subagents': 'Available Agents',
+        'skills': 'Available Skills',
+        'workspace': 'Project Instructions',
+        'loaded-skills': 'Loaded Skills',
+    }
     blocks: list[tuple[str, str, int | None]] = []
-    blocks.extend(
-        (block.name, 'dynamic' if block.dynamic else 'static', block.tokens) for block in request.instructions
-    )
-    if request.tools:
-        blocks.append(('Tool schemas', 'schema', request.tools_tokens))
-    if request.native_tools:
-        blocks.append((f'{request.native_tools} native tool schemas', 'schema', None))
+    tools_added = False
+
+    def add_tools() -> None:
+        if request.tools:
+            blocks.append(('Tool Definitions', 'schema', request.tools_tokens))
+        if request.native_tools:
+            blocks.append((f'Native Tool Definitions ({request.native_tools})', 'schema', None))
+
+    for block in request.instructions:
+        if not tools_added and block.name in {'skills', 'workspace', 'loaded-skills'}:
+            add_tools()
+            tools_added = True
+        label = labels.get(block.name, block.name.replace('-', ' ').title())
+        blocks.append((label, 'dynamic' if block.dynamic else 'static', block.tokens))
+    if not tools_added:
+        add_tools()
     for dynamic, parts in groupby(request.sections, key=lambda part: part.kind == 'dynamic'):
         group = tuple(parts)
         if dynamic:
-            blocks.extend((part.label, part.kind, part.tokens) for part in group)
+            blocks.extend(
+                ('Agent Context' if part.label == 'Agent context' else part.label, part.kind, part.tokens)
+                for part in group
+            )
         else:
             tokens = None if any(part.tokens is None for part in group) else sum(part.tokens or 0 for part in group)
-            blocks.append(('History', 'history', tokens))
+            blocks.append(('Conversation History', 'history', tokens))
 
     table = Table(box=box.SQUARE, show_header=False, show_lines=True, padding=(0, 1), expand=True)
     table.add_column('Block')

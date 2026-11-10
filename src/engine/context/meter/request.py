@@ -171,16 +171,19 @@ def _skill_metrics(parts: Sequence[object]) -> dict[str, int]:
     text = '\n'.join(getattr(part, 'content', '') for part in parts if getattr(part, 'name', '') == 'loaded-skills')
     if not text:
         return {}
-    resources = re.split(r'(?m)^#### Resource `[^\n]+`', text)
-    tokens = sum(estimate_tokens(section) for section in resources[1:])
+    resources = re.findall(r'<skill_resource\s+path="[^"]*"\s+status="([^"]+)">.*?</skill_resource>', text, re.DOTALL)
+    resource_blocks = re.findall(
+        r'<skill_resource\s+path="[^"]*"\s+status="[^"]+">.*?</skill_resource>', text, re.DOTALL
+    )
+    tokens = sum(estimate_tokens(block) for block in resource_blocks)
     return {
         'instructions_tokens': max(0, estimate_tokens(text) - tokens),
         'resources_tokens': tokens,
-        'resources': max(0, len(resources) - 1),
-        'partial': len(re.findall(r'(?m)^#### Resource `[^\n]+` \(partial\)', text)),
-        'binary': len(re.findall(r'(?m)^#### Resource `[^\n]+` \(binary\)', text)),
-        'unavailable': len(re.findall(r'(?m)^#### Resource `[^\n]+` \(unavailable\)', text)),
-        'unavailable_skills': text.count('[Skill unavailable;'),
+        'resources': len(resources),
+        'partial': resources.count('partial'),
+        'binary': resources.count('binary'),
+        'unavailable': resources.count('unavailable'),
+        'unavailable_skills': len(re.findall(r'<skill\s+name="[^"]*"\s+status="unavailable"\s*/>', text)),
     }
 
 
