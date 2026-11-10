@@ -39,6 +39,7 @@ COMMAND_LABELS = {
 class PaletteChoice:
     name: str
     worktree: bool = False
+    args: str = ''
 
 
 class CommandPaletteScreen(ProviderModal):
@@ -73,6 +74,15 @@ class CommandPaletteScreen(ProviderModal):
                 'Start a session in a new worktree',
             ),
         )
+        for value in ('allow', 'deny'):
+            self._items.append(
+                (
+                    PaletteChoice('/external-files', args=value),
+                    f'{value.capitalize()} outside-workspace file access',
+                    f'/external-files {value}',
+                    f'{value.capitalize()} file tools outside the workspace for this session',
+                )
+            )
         self._visible: list[tuple[PaletteChoice, str, str, str]] = []
 
     def compose_body(self) -> ComposeResult:
