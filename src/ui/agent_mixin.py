@@ -19,6 +19,7 @@ from textual.css.query import NoMatches
 
 from src.engine.agents.profile.models.agent_not_found import AgentNotFound
 from src.engine.agents.profile.models.agent_profile import AgentProfile
+from src.engine.providers.domain.provider_error import ProviderError
 from src.ui.messages import ChatNotice
 from src.ui.widgets.agent_picker_screen import AgentChoice, AgentPickerScreen
 from src.ui.widgets.chat_log import ChatLog
@@ -84,12 +85,19 @@ class AgentMixin:
 
     def apply_agent(self, name: str, chat: ChatLog) -> None:
         """Activates ``name``, records it on the session and repaints the bar."""
+        previous = self._agent_registry.active_name
         try:
             profile = self._agent_registry.activate(name)
-        except AgentNotFound as exc:
+            select_model = getattr(self, '_on_agent_selected', None)
+            snapshot = select_model(profile.name) if select_model is not None else None
+        except (AgentNotFound, ProviderError) as exc:
+            if previous and self._agent_registry.active_name != previous:
+                self._agent_registry.activate(previous)
             chat.post_message(ChatNotice(str(exc), style='bold red'))
             return
         self.remember_agent(profile)
+        if snapshot is not None:
+            self._after_model_change(snapshot)
         chat.post_message(ChatNotice(f'Agent: {profile.label} — {profile.permissions.describe()}', style='green'))
 
     def bind_agent(self, name: str) -> None:

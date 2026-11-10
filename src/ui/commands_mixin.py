@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 
 from src.engine.context.meter.render import render_report
+from src.engine.providers.domain.provider_error import ProviderError
 from src.engine.sessions.catalog import catalog
 from src.engine.shell import running as running_commands
 from src.engine.workspace.arguments import UsageError, parse_new_args
@@ -256,10 +257,21 @@ class CommandsMixin:
         profile = self.active_agent()
         session.agent = profile.name if profile is not None else ''
         self.bind_session(session)
+        model_error = None
+        select_model = getattr(self, '_on_agent_selected', None)
+        if select_model is not None and profile is not None:
+            try:
+                snapshot = select_model(profile.name)
+                if snapshot is not None:
+                    self._after_model_change(snapshot)
+            except ProviderError as exc:
+                model_error = str(exc)
         if self._scope is not None:
             self._scope.reset()
         self.refresh_sidebar()
         await chat.clear()
+        if model_error is not None:
+            await chat.add_notice(f'Agent model: {model_error}', style='bold red')
         if switch is not None:
             await self.announce_switch(switch, chat)
         await chat.add_notice(f'New session {self._session.short_id}.', style='green')

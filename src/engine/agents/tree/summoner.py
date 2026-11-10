@@ -1,9 +1,8 @@
 """Summoning a subagent: the tree, the two modes and the way back.
 
-A subagent is an agent. It runs the same tools, the same model and its own
-profile prompt; what makes it a *sub*agent is only who started it and where its
-message goes. This module is what starts it, keeps it, and carries the messages
-in both directions.
+A subagent runs the same tools with its own profile prompt and a configured or
+inherited model. What makes it a *sub*agent is who started it and where its
+message goes. This module starts it and carries messages in both directions.
 
 **Sync and async are two ways of waiting, not two kinds of agent.**
 
@@ -44,6 +43,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -61,6 +61,7 @@ from src.engine.tooling.events import CURRENT_NODE_ID
 
 if TYPE_CHECKING:
     from pydantic_ai import Agent
+    from pydantic_ai.models import Model
 
     from src.engine.agents.profile.models.agent_profile import AgentProfile
     from src.engine.agents.profile.registry import AgentRegistry
@@ -78,6 +79,25 @@ summoned another, which is allowed — it is the same tool — but it is also th
 shape that runs away when nobody is watching, so the chain is capped. The cap is
 about the chain, not the branch: an agent may summon ten subagents in a row.
 """
+
+
+@dataclass(frozen=True, slots=True)
+class AgentRunModel:
+    """The concrete model and reasoning settings captured for one execution."""
+
+    model: Model | None
+    settings: dict[str, Any] | None
+    label: str
+    window: int | None = None
+    images: bool = True
+    provider: str | None = None
+
+
+_ACTIVE_AGENT_MODEL: ContextVar[AgentRunModel | None] = ContextVar('active_agent_model', default=None)
+
+
+def current_agent_model() -> AgentRunModel | None:
+    return _ACTIVE_AGENT_MODEL.get()
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +153,8 @@ class SubagentSummoner:
         max_steps: int = 0,
         model: Callable[[], str] | None = None,
         model_settings: Callable[[], dict[str, Any] | None] | None = None,
+        agent_model: Callable[[str], AgentRunModel | None] | None = None,
+        base_model: Callable[[], AgentRunModel] | None = None,
         on_change: OnChange | None = None,
         root_run: RootRun | None = None,
         on_delivered: OnDelivered | None = None,
@@ -148,6 +170,8 @@ class SubagentSummoner:
         self._max_steps = max_steps
         self._model = model
         self._model_settings = model_settings
+        self._agent_model = agent_model
+        self._base_model = base_model
         self._on_change = on_change
         self._root_run = root_run
         self._on_delivered = on_delivered
@@ -280,17 +304,18 @@ class SubagentSummoner:
                 f'would run at level {caller.depth + 1}. Do this part yourself, or have the '
                 'current agent report back to its parent and let the chain close.'
             )
+        selected = self._model_for(profile)
         node = tree.add(
             parent_id=caller.id,
             name=profile.name,
             role=profile.role,
             task=task,
             mode=mode,
-            model=self._model() if self._model is not None else '',
+            model=selected.label,
         )
         node.channel = profile.channel
         node.max_steps = profile.max_steps
-        return await self._launch(node, profile, task, mode)
+        return await self._launch(node, profile, task, mode, selected)
 
     # --- the same node, again ----------------------------------------------
 
@@ -310,6 +335,8 @@ class SubagentSummoner:
                 'to stop it before resuming with something else.'
             )
         profile = self._profile(node.name)
+        selected = self._model_for(profile)
+        node.model = selected.label
         # A node that was killed or cancelled mid-tool leaves a call with no
         # answer; a prompt on top of that is refused for good. The tail is closed
         # out here, before the history is handed back to the agent.
@@ -317,19 +344,41 @@ class SubagentSummoner:
         node.mode = mode
         node.max_steps = profile.max_steps
         node.channel = profile.channel
-        return await self._launch(node, profile, task, mode)
+        return await self._launch(node, profile, task, mode, selected)
 
     # --- running one node --------------------------------------------------
 
-    async def _launch(self, node: AgentNode, profile: AgentProfile, task: str, mode: SummonMode) -> str:
+    def _model_for(self, profile: AgentProfile) -> AgentRunModel:
+        try:
+            configured = self._agent_model(profile.name) if self._agent_model is not None else None
+        except Exception as exc:
+            raise SummonError(f'Cannot use the configured model for {profile.name}: {exc}') from exc
+        if configured is not None:
+            return configured
+        parent = _ACTIVE_AGENT_MODEL.get()
+        if parent is not None:
+            return parent
+        if self._base_model is not None:
+            return self._base_model()
+        return AgentRunModel(
+            None,
+            self._model_settings() if self._model_settings is not None else None,
+            self._model() if self._model is not None else '',
+        )
+
+    async def _launch(
+        self, node: AgentNode, profile: AgentProfile, task: str, mode: SummonMode, selected: AgentRunModel
+    ) -> str:
         """Starts the run as a task, then decides whether to wait for it."""
         node.start()
         self._notify(node)
         token = CURRENT_NODE_ID.set(node.id)
+        model_token = _ACTIVE_AGENT_MODEL.set(selected)
         try:
             handle = asyncio.create_task(self._execute(node, profile, task), name=f'subagent-{node.short_id}')
         finally:
             CURRENT_NODE_ID.reset(token)
+            _ACTIVE_AGENT_MODEL.reset(model_token)
         self._tasks[node.id] = handle
         handle.add_done_callback(lambda _finished, node_id=node.id: self._tasks.pop(node_id, None))
         if mode == 'async':
@@ -383,6 +432,8 @@ class SubagentSummoner:
         )
         run: Any = None
         message = ''
+        selected = _ACTIVE_AGENT_MODEL.get()
+        assert selected is not None
         try:
             async with agent.iter(
                 task,
@@ -390,7 +441,8 @@ class SubagentSummoner:
                 message_history=list(node.messages) or None,
                 usage_limits=UsageLimits(request_limit=None),
                 capabilities=[budget],
-                model_settings=self._model_settings() if self._model_settings is not None else None,
+                model_settings=selected.settings,
+                **({'model': selected.model} if selected.model is not None else {}),
             ) as run:
                 node.run = run
                 async for _step in run:

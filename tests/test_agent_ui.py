@@ -341,3 +341,33 @@ def test_a_session_without_a_profile_reads_back_empty(tmp_path):
     )
 
     assert store.load(session.id).agent == ''
+
+
+def test_selecting_agent_applies_its_model_but_binding_session_does_not(tmp_path):
+    import asyncio
+
+    app = _app(str(tmp_path))
+    selected = []
+    app._on_agent_selected = lambda name: selected.append(name)
+
+    async def run():
+        async with app.run_test(size=(120, 40)):
+            app.apply_agent('reviewer', app.query_one(ChatLog))
+            assert selected == ['reviewer']
+            app.bind_agent('wizard')
+            assert selected == ['reviewer']
+
+    asyncio.run(run())
+
+
+def test_new_session_applies_default_for_inherited_agent(tmp_path):
+    app = _app(str(tmp_path))
+    selected = []
+    app._on_agent_selected = lambda name: selected.append(name)
+
+    async def run():
+        async with app.run_test(size=(120, 40)):
+            await app.new_session(app.query_one(ChatLog))
+            assert selected == ['wizard']
+
+    asyncio.run(run())

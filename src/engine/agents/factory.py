@@ -3,9 +3,8 @@
 The composition root assembles the session once: the model, the tools, the MCP
 toolsets, the capabilities that project the context and gate the model features,
 the workspace instructions. Every agent in the tree wants the same collection —
-a subagent is an agent, so it has the same tools, the same model and the same
-permissions mechanism — and the only thing that differs is *which profile* says
-how to behave.
+a subagent is an agent, so it has the same tools and permissions mechanism.
+Each run can override the shared model, and each profile defines its behavior.
 
 That is what this factory is: the shared half, held once, plus the per-profile
 half, built on demand. It exists instead of a second assembly in the composition

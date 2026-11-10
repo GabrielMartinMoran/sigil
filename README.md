@@ -536,6 +536,34 @@ and before the rest, and it is rewritten rather than appended — so the previou
 profile's instructions stop travelling with the conversation the moment you
 switch.
 
+### Model and effort per agent
+
+Set default models in `.sigil/config.json` in the project or in
+`~/.sigil/config.json` for all projects. Each entry names an existing provider
+account alias, a model ID, and a reasoning effort:
+
+```json
+{
+  "agents": {
+    "wizard": {"account": "work", "model": "openai/gpt-5", "effort": "high"},
+    "scout": {"account": "work", "model": "openai/gpt-5-mini", "effort": "low"}
+  }
+}
+```
+
+The project entry replaces the global entry for the same agent. `SIGIL_CONFIG`
+selects a single config file instead of both. Accepted efforts are `default`,
+`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. The model ID can
+be a custom ID, but the account and provider must support it and the chosen
+effort.
+
+Selecting a main agent or starting a new session applies its configured model
+and effort. You can still change either afterward with `/model` and `/effort`.
+Loading a saved session restores its selection rather than reapplying the
+profile default. A configured
+subagent always uses its own selection; an unconfigured subagent inherits the
+model and effort of the agent that summoned it, including when nested.
+
 ## Subagents
 
 A session is not one agent: it is a **tree**. The agent at the root is the one you
@@ -543,9 +571,10 @@ talk to — the one `/agent` and `ctrl+a` offer — and under it hang the
 **subagents** it summoned. They are not selectable, they are not listed anywhere
 except the tree, and they answer to the agent that started them.
 
-A subagent is an agent: same tools, same model, same permission rules, its own
-profile and its own context. What makes it a *sub*agent is who starts it and where
-its answer goes.
+A subagent has the same tools and permission rules as an agent, with its own
+profile and context. It uses its configured model, or inherits its caller's
+model and effort. What makes it a *sub*agent is who starts it and where its
+answer goes.
 
 ### The role
 
