@@ -770,7 +770,7 @@ class SummonBlock(ToolCallBlock):
     beginning to work, and the id in the result is the handle they will use for the
     rest of the session. So the block reads as a spawn:
 
-        ▶ Scout · pulsar-researcher
+        ⠋ Scout
           read the tree end to end and report the call path…
           async · #1a2b3c · working
 
@@ -785,6 +785,33 @@ class SummonBlock(ToolCallBlock):
         self._node_id = ''
         self._node_name = ''
         self._clickable = False
+        self._background_running = False
+
+    def on_mount(self) -> None:
+        if self._pending or self._background_running:
+            self._pending_timer = self.set_interval(SPINNER_INTERVAL, self._advance_pending)
+
+    def _advance_pending(self) -> None:
+        if self._pending or self._background_running:
+            self._pending_frame = (self._pending_frame + 1) % len(SPINNER_FRAMES)
+            self._update_content()
+
+    def set_node(self, node: AgentNode) -> None:
+        """Reconcile a background hand-off with its actual execution."""
+        if not self._node_id or not node.id.startswith(self._node_id) or self._status != 'working':
+            return
+        self._background_running = not node.status.finished
+        if self._background_running:
+            if self.is_mounted and self._pending_timer is None:
+                self._pending_timer = self.set_interval(SPINNER_INTERVAL, self._advance_pending)
+        else:
+            self._stop_pending_timer()
+            self._status = {
+                'done': 'out of steps' if node.budget_exhausted else 'finished',
+                'failed': 'failed',
+                'cancelled': 'stopped',
+            }[node.status.value]
+        self._update_content()
 
     def on_click(self) -> None:
         """A click opens the subagent, once the block knows which one it is.
@@ -837,10 +864,12 @@ class SummonBlock(ToolCallBlock):
         if named:
             self._node_name = named.group(1)
         self._status = self._read_status(text, ok=ok)
+        self._update_content()
 
     def set_error(self, message: str) -> None:
         super().set_error(message)
         self._status = 'refused'
+        self._update_content()
 
     @staticmethod
     def _read_status(text: str, *, ok: bool) -> str:
@@ -852,7 +881,11 @@ class SummonBlock(ToolCallBlock):
             return 'out of steps'
         if 'was stopped' in lowered or 'stopped, along' in lowered:
             return 'stopped'
-        if 'is working in the background' in lowered or 'working on it now' in lowered:
+        if (
+            'is working in the background' in lowered
+            or 'working on it now' in lowered
+            or 'moved to the background' in lowered
+        ):
             return 'working'
         if 'finished' in lowered:
             return 'finished'
@@ -873,7 +906,8 @@ class SummonBlock(ToolCallBlock):
         resumed = bool(self._spawn['agent_id'])
         text = Text()
         text.append(GUTTER, style=border)
-        text.append('↻ ' if resumed else '▶ ', style=f'bold {color(self, "success")}')
+        mark = SPINNER_FRAMES[self._pending_frame] if self._pending or self._background_running else '●'
+        text.append(f'{mark} ', style=f'bold {color(self, "success")}')
         # One name, and never the word "subagent" standing in for one: the label is
         # the profile name with its dashes opened up, so painting both would be
         # saying the same thing twice.
@@ -930,6 +964,7 @@ class SummonBlock(ToolCallBlock):
             'finished': color(self, 'success'),
             'out of steps': 'yellow',
             'refused': color(self, 'diff-removed'),
+            'failed': color(self, 'diff-removed'),
             'stopped': color(self, 'muted'),
         }.get(self._status, color(self, 'muted'))
         return style
@@ -1131,6 +1166,11 @@ class ChatLog(ReadOnlyScroll):
             await self._append(block)
             self._last_block = block
         block.set_result(output, ok=ok)
+        if isinstance(block, SummonBlock) and self.is_mounted:
+            tree_nodes = getattr(self.app, 'tree_nodes', None)
+            if callable(tree_nodes):
+                for node in tree_nodes():
+                    block.set_node(node)
         self._refresh_group()
 
     def set_tool_summary(self, name: str, summary: ToolSummary | None, duration_ms: float | None) -> bool:
@@ -1322,6 +1362,10 @@ class ChatLog(ReadOnlyScroll):
 
         if not batches:
             return
+        for block in batches:
+            if isinstance(block, SummonBlock):
+                for node in subagents:
+                    block.set_node(node)
         if self.is_mounted and self.app is not None:
             # One layout for the whole history instead of one per message.
             with self.app.batch_update():
