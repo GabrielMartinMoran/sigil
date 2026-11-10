@@ -14,7 +14,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 
-from src.engine.shell.guard import SELF_GUARD_ENV
+from src.engine.shell.environment import child_environment
 from src.engine.shell.limits import MAX_OUTPUT_BYTES
 
 _READ_CHUNK_BYTES = 8192
@@ -63,13 +63,7 @@ def spawn(cmd: str, *, cwd: str | None, extra_env: dict[str, str] | None) -> sub
         stderr=subprocess.PIPE,
         start_new_session=True,
         cwd=cwd,
-        env={
-            **os.environ,
-            'CI': '1',
-            'GIT_TERMINAL_PROMPT': '0',
-            SELF_GUARD_ENV: '1',
-            **(extra_env or {}),
-        },
+        env=child_environment(extra_env),
     )
 
 

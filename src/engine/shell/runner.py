@@ -91,12 +91,12 @@ def execute_command(
     if cwd_error is not None:
         return cwd_error
 
-    deadline = time.monotonic() + _clamp_timeout(timeout_seconds)
-
     try:
         process = spawn(cmd, cwd=cwd_path, extra_env=extra_env)
     except OSError as exc:
         return RunToolOutput(returncode=_NOT_FOUND_RETURNCODE, stderr=str(exc))
+
+    deadline = time.monotonic() + _clamp_timeout(timeout_seconds)
 
     # Registered while it runs, so an aborted turn can kill it instead of
     # leaving it working until its own timeout.
