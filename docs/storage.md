@@ -1091,6 +1091,7 @@ CREATE TABLE sessions (
     -- of the conversation and not of the process: `0` means "not measured here yet".
     tools_tokens        INTEGER NOT NULL DEFAULT 0,
     instructions_tokens INTEGER NOT NULL DEFAULT 0,
+    allow_external_files INTEGER NOT NULL DEFAULT 0,
     created_at   TEXT    NOT NULL,
     updated_at   TEXT    NOT NULL
 ) STRICT, WITHOUT ROWID;
@@ -1243,7 +1244,7 @@ CREATE TABLE app_state (
     value TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
-PRAGMA user_version = 2;
+PRAGMA user_version = 4;
 ```
 
 One consequence worth stating: `roadmap_items.execution_id` uses `''` for the
@@ -1262,6 +1263,7 @@ end in the same shape.
 | Step | Adds |
 | --- | --- |
 | 2 | `sessions.tools_tokens`, `sessions.instructions_tokens` |
+| 4 | `sessions.allow_external_files` |
 
 Step 2 exists because the two numbers the context meter measures per request — the
 cost of the tool schemas and of the instruction blocks — come from

@@ -7,7 +7,7 @@ lives in ``text``; the path logic, in ``paths``.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from src.engine.files.conflicts import same_file_conflict
@@ -131,9 +131,9 @@ def _read_whole(target: Any, size: int, max_bytes: int) -> FileContent:
     )
 
 
-def _require_file(path: str) -> Any:
+def _require_file(path: str, *, allow_external: bool = False) -> Any:
     """Resolves ``path`` and validates that it is an existing file."""
-    target = resolve(path)
+    target = resolve(path, allow_external=allow_external)
     if not target.exists():
         raise FileToolError(f'File not found: {path!r}.')
     if not target.is_file():
@@ -184,7 +184,13 @@ def _patched_text(
     return updated, 'lines', 1
 
 
-def register_file_tools(agent: Any, logger: ToolLogger | None = None, catalog: ToolCatalog | None = None) -> None:
+def register_file_tools(
+    agent: Any,
+    logger: ToolLogger | None = None,
+    catalog: ToolCatalog | None = None,
+    *,
+    allow_external: Callable[[], bool] = lambda: False,
+) -> None:
     """Registers the file tools on a pydantic-ai agent."""
     tools = ToolRegistrar(agent, logger, catalog)
 
@@ -198,8 +204,7 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None, catalog: T
         """Read a text or binary file from the workspace or the temporary directory.
 
         Use this to inspect a file before editing it. Paths are resolved
-        against the workspace; the OS temporary directory is allowed too. Any
-        other path is rejected. For large files, request a line range or a byte
+        against the workspace; the OS temporary directory is allowed too. Other paths require session authorization via `/external-files allow`. For large files, request a line range or a byte
         limit.
 
         Args:
@@ -209,7 +214,7 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None, catalog: T
             max_bytes: Maximum bytes to read when no line range is given
                 (default 256 KiB).
         """
-        target = _require_file(path)
+        target = _require_file(path, allow_external=allow_external())
         size = target.stat().st_size
         if start_line is not None or end_line is not None:
             return _read_line_range(target, path, size, start_line, end_line)
@@ -219,7 +224,7 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None, catalog: T
         concurrency=same_file_conflict, permission=_WRITE, describe=describe_write, compaction=WRITE_FILE_COMPACTOR
     )
     def write_file(path: str, content: str, append: bool = False) -> WriteResult:
-        """Write or append to a text file in the workspace or the temporary directory.
+        """Write or append to a text file in an authorized location.
 
         Parent directories are created as needed. Use `patch_file` for focused
         edits to an existing file; use this tool to create a new file or to
@@ -233,7 +238,7 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None, catalog: T
             content: Text to write.
             append: When true, append instead of overwriting.
         """
-        target = resolve(path)
+        target = resolve(path, allow_external=allow_external())
         created = not target.exists()
         target.parent.mkdir(parents=True, exist_ok=True)
         data = content.encode('utf-8')
@@ -253,7 +258,7 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None, catalog: T
         expected_text: str | None = None,
         replace_all: bool = False,
     ) -> PatchResult:
-        """Edit an existing file in the workspace or the temporary directory, with two modes.
+        """Edit an existing file in an authorized location, with two modes.
 
         Prefer the exact-match mode: pass `old_string` (text to find) and
         `new_string` (replacement). The old text must appear exactly once unless
@@ -282,7 +287,7 @@ def register_file_tools(agent: Any, logger: ToolLogger | None = None, catalog: T
                 validation in line mode.
             replace_all: Replace every occurrence in string mode.
         """
-        target = _require_file(path)
+        target = _require_file(path, allow_external=allow_external())
         text = _read_text_for_patch(target, path)
         before = len(text.encode('utf-8'))
 

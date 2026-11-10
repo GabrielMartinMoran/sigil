@@ -19,10 +19,11 @@ def run() -> None:
 
     composition = Composition(settings=settings)
 
-    SigilApp(
+    app = SigilApp(
         agent=composition.agent,
         store=composition.store,
         session=composition.session,
+        on_bind_session=composition.bind_session,
         settings=settings,
         model_service=composition.model_service,
         login_flow=composition.login_flow,
@@ -46,4 +47,7 @@ def run() -> None:
         agent_registry=composition.agent_registry,
         agent_tree=composition.agent_trees,
         summoner=composition.summoner,
-    ).run()
+        extensions=composition.extensions,
+    )
+    composition.extension_notice = lambda text: app.notify(text, severity='warning', timeout=15)
+    app.run()

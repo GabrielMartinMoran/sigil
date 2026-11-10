@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- the budget of the next request is the real one. See `ContextMeter`.
     tools_tokens        INTEGER NOT NULL DEFAULT 0,
     instructions_tokens INTEGER NOT NULL DEFAULT 0,
+    allow_external_files INTEGER NOT NULL DEFAULT 0,
     created_at   TEXT    NOT NULL,
     updated_at   TEXT    NOT NULL
 ) STRICT, WITHOUT ROWID;
@@ -199,7 +200,7 @@ CREATE TABLE IF NOT EXISTS app_state (
 ) STRICT, WITHOUT ROWID;
 """
 
-USER_VERSION = 3
+USER_VERSION = 4
 """The version `SCHEMA` describes.
 
 Steps start above the empty file: a database created today is written whole and its
@@ -208,6 +209,7 @@ written by an older Sigil.
 """
 
 MIGRATIONS: dict[int, str] = {
+    4: 'ALTER TABLE sessions ADD COLUMN allow_external_files INTEGER NOT NULL DEFAULT 0;',
     2: (
         # What the last request measured of the blocks that are always sent. A session
         # written before this column existed has measured nothing, and `0` says that

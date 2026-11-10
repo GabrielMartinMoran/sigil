@@ -44,11 +44,14 @@ def recorded_state(messages: Sequence[ModelMessage]) -> tuple[CompactionState, t
         request_id = record.get('request_id')
         if request_id and request_id in seen:
             continue
-        if request_id:
-            seen.add(request_id)
         candidate = _migrated(record, messages)
         if candidate.evaluated_steps > message_steps[index]:
-            raise ContextPolicyVersionError('Context frontier points beyond its owning response.')
+            # A shortened/normalized transcript can retain derived metadata from a
+            # later frontier. Never replay its summary or edits into the past;
+            # rebuild from the last valid decision and the original parts instead.
+            continue
+        if request_id:
+            seen.add(request_id)
         state = candidate
         for row in record['events']:
             event = CompactionEvent.from_row(row)

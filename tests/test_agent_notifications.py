@@ -218,6 +218,7 @@ def test_should_upgrade_version_two_without_losing_history(tmp_path: Path) -> No
     with sqlite3.connect(path) as connection:
         connection.executescript(SCHEMA)
         connection.execute('DROP TABLE agent_notifications')
+        connection.execute('ALTER TABLE sessions DROP COLUMN allow_external_files')
         connection.execute("INSERT INTO app_state VALUES ('kept', 'old value')")
         connection.execute('PRAGMA user_version = 2')
 

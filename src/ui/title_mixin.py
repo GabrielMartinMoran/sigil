@@ -162,7 +162,7 @@ class TitleMixin:
         with suppress(Exception):
             # The turn writes its own checkpoints; a failed save here costs the
             # title on the next start, not the conversation.
-            self._store.save(session)
+            self._store.save_progress(session)
         # A title that arrives after the user moved on belongs to the session it
         # names: it is saved there, and the window keeps describing the active one.
         if session is self._session:

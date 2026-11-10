@@ -35,6 +35,11 @@ def register_output(name: str, presenter: OutputPresenter) -> None:
     _PRESENTERS[name] = presenter
 
 
+def unregister_output(name: str) -> None:
+    """Remove a presenter when its extension is unloaded."""
+    _PRESENTERS.pop(name, None)
+
+
 def _normalize(value: Any) -> Any:
     if isinstance(value, BaseModel):
         return value.model_dump(mode='json')

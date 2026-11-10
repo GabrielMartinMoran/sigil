@@ -147,12 +147,16 @@ class SigilApp(
         agent_registry: AgentRegistry | None = None,
         agent_tree: AgentTreeStore | None = None,
         summoner: SubagentSummoner | None = None,
+        on_bind_session: Callable[[Session], object] | None = None,
+        extensions: Any = None,
     ) -> None:
         super().__init__()
+        self._extensions = extensions
         self._settings = settings or load_settings({})
         self._agent = agent
         self._store = store
         self._session = session
+        self._on_bind_session = on_bind_session
         self._model_service = model_service
         self._login_flow = login_flow
         self._tool_logger = tool_logger
@@ -328,6 +332,11 @@ class SigilApp(
         # open on purpose, and the event loop waits them out when it shuts down.
         # Closing them here is what keeps the quit from stalling on a server that
         # ignores the EOF (see `src.engine.mcp.shutdown`).
+        if self._extensions is not None:
+            self.workers.cancel_all()
+            if self._summoner is not None:
+                self._summoner.cancel_all()
+            await self._extensions.close()
         await self.close_mcp_servers()
 
     @work(exclusive=True, group='mcp-boot')

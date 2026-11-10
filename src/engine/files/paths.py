@@ -63,7 +63,7 @@ def is_allowed(path: Path) -> bool:
     return any(path.is_relative_to(root) for root in allowed_roots())
 
 
-def resolve(path: str) -> Path:
+def resolve(path: str, *, allow_external: bool = False) -> Path:
     """Resolves ``path`` and validates that it stays inside an allowed tree.
 
     A relative path is resolved against the workspace; an absolute one is used
@@ -72,7 +72,7 @@ def resolve(path: str) -> Path:
     """
     root = workspace_root()
     candidate = Path(path).resolve() if os.path.isabs(path) else (root / path).resolve()
-    if not is_allowed(candidate):
+    if not allow_external and not is_allowed(candidate):
         raise FileToolError(
             f'Path {path!r} is outside the workspace ({root}) and outside the temporary directory. '
             'Files outside them need explicit authorization from the user.'

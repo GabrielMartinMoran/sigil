@@ -30,6 +30,7 @@ from typing import Any
 
 from pydantic_ai import Agent
 
+from sigil_tools import ToolContext
 from src.engine.agents.factory import AgentFactory, AgentSpec
 from src.engine.agents.model_features import IMAGE_INPUT, ModelFeatureGate
 from src.engine.agents.profile.registry import AgentRegistry
@@ -49,8 +50,11 @@ from src.engine.context.scope import ScopeSink, ScopeTracker
 from src.engine.context.strategy.append_only import AppendOnlyStrategy
 from src.engine.context.strategy.passthrough import PassthroughStrategy
 from src.engine.context.strategy.protocol import ContextStrategy
+from src.engine.extensions.toolset import ExtensionToolset
 from src.engine.files.tools import register_file_tools
 from src.engine.interaction.hub import QuestionHub
+from src.engine.interaction.models.question_item import QuestionItem
+from src.engine.interaction.models.question_option import QuestionOption
 from src.engine.interaction.tools import register_interaction_tools
 from src.engine.mcp.config.loader import load_config
 from src.engine.mcp.deferred import MCPGateway
@@ -221,7 +225,7 @@ class Composition:
         self.question_hub = question_hub if question_hub is not None else QuestionHub()
         self.roadmap_store = RoadmapStores(
             session_id=self.session.id,
-            flush=lambda: self.store.save(self.session) if self.session.messages else None,
+            flush=lambda: self.store.save_progress(self.session) if self.session.messages else None,
         )
 
         # Rollback: the conversation, the plan and the workspace, back to the
@@ -270,8 +274,49 @@ class Composition:
             on_idle=self._tree_listeners_idle,
         )
 
+        self.extensions = ExtensionToolset(
+            workspace=lambda: self.workspace_manager.root,
+            catalog=self.tool_catalog,
+            authorize=self._authorize_extensions,
+            logger=self.tool_logger,
+            context_factory=self._extension_context,
+            notice=lambda text: self.extension_notice(text) if self.extension_notice else None,
+        )
         self.factory = self._build_factory()
         self.agent = self.factory.root()
+
+    extension_notice: Callable[[str], None] | None = None
+
+    async def _authorize_extensions(self, workspace: Path) -> bool:
+        if not self.question_hub.available:
+            return False
+        answers = await self.question_hub.ask(
+            [
+                QuestionItem(
+                    question=(
+                        f'Load Python tool extensions from {workspace / ".sigil" / "tools"}? '
+                        'This executes trusted code with your user permissions, without a sandbox.'
+                    ),
+                    options=[
+                        QuestionOption(label='Do not load', recommended=True),
+                        QuestionOption(label='Load extensions'),
+                    ],
+                    allow_custom=False,
+                )
+            ]
+        )
+        return bool(answers and not answers[0].custom and answers[0].answer == 'Load extensions')
+
+    def _extension_context(self, ctx: Any) -> ToolContext:
+        tree = self.agent_trees.active
+        node_id = getattr(ctx.deps, 'node_id', None)
+        node = tree.node(node_id) if node_id else tree.root
+        return ToolContext(
+            workspace=self.workspace_manager.root,
+            agent_id=node.id if node is not None else '',
+            agent_name=node.name if node is not None else self.agent_registry.active_name,
+            session_id=self.session.id,
+        )
 
     def _require_declared_compactors(self) -> None:
         # A missing declaration is not a fallback to the generic policy: it is a tool
@@ -317,7 +362,7 @@ class Composition:
                 skill_registry=self.skill_registry,
                 # The placeholder, not the real toolsets: the agent is built before
                 # the MCP layer exists, and `MCPGateway.install` fills it in.
-                toolsets=[self.mcp.pending],
+                toolsets=[self.mcp.pending, self.extensions],
                 model_retry=self.model_retry,
                 workspace=self.workspace,
                 scope=self.scope,
@@ -404,7 +449,9 @@ class Composition:
         register_skill_tools(target, self.skill_registry, logger=logger, catalog=catalog)
         register_mcp_tools(target, self.mcp, logger=logger, catalog=catalog)
         register_web_tools(target, logger=logger, catalog=catalog)
-        register_file_tools(target, logger=logger, catalog=catalog)
+        register_file_tools(
+            target, logger=logger, catalog=catalog, allow_external=lambda: self.session.allow_external_files
+        )
         register_image_tools(target, logger=logger, catalog=catalog)
         register_interaction_tools(target, self.question_hub, logger=logger, catalog=catalog)
         register_roadmap_tools(target, self.roadmap_store, logger=logger, catalog=catalog)

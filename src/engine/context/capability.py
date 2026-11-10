@@ -264,6 +264,7 @@ class ContextViewCapability(AbstractCapability[Any]):
     def _record_decision(
         self, ctx: RunContext[Any], result: ViewResult, budget: ContextBudget, fingerprint: str
     ) -> None:
+        from src.engine.context.compaction.clock import step_count
         from src.engine.context.compaction.events import POLICY_VERSION, RECORD_KEY
 
         planned = result.plan
@@ -271,7 +272,7 @@ class ContextViewCapability(AbstractCapability[Any]):
             return
         record = {
             'version': POLICY_VERSION,
-            'state': planned.state.as_row(),
+            'state': replace(planned.state, evaluated_steps=step_count(ctx.messages)).as_row(),
             'events': [
                 replace(
                     event, request_id=request_id_of(ctx), policy=planned.effective_policy, window=budget.window
@@ -367,7 +368,7 @@ def _last_part_key(messages: Sequence[ModelMessage]) -> str | None:
 
 def compatible_model_history(messages: Sequence[ModelMessage], model_name: str | None) -> list[ModelMessage]:
     """Avoid replaying signed reasoning produced by a different model."""
-    from pydantic_ai.messages import ModelResponse, ThinkingPart
+    from pydantic_ai.messages import ModelResponse, TextPart, ThinkingPart, ToolCallPart
 
     result = []
     for message in messages:
@@ -381,5 +382,11 @@ def compatible_model_history(messages: Sequence[ModelMessage], model_name: str |
             continue
         parts = [part for part in message.parts if not (isinstance(part, ThinkingPart) and part.signature)]
         if parts:
-            result.append(message if len(parts) == len(message.parts) else replace(message, parts=parts))
-    return result
+            parts = [
+                replace(part, id=None) if isinstance(part, (TextPart, ThinkingPart, ToolCallPart)) else part
+                for part in parts
+            ]
+            result.append(replace(message, parts=parts, provider_response_id=None, history_digest=None))
+    from src.engine.context.media_compatibility import compatible_images
+
+    return compatible_images(result)

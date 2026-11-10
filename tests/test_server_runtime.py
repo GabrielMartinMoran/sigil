@@ -243,3 +243,82 @@ def test_unknown_context_window_is_reported_as_turn_error(runtime: ServerRuntime
     finished = next(event for event in runtime.hub.replay() if event.type == 'turn_finished')
     assert finished.data['status'] == 'error'
     assert 'unknown' in finished.data['error']
+
+
+def test_send_reloads_external_conversation_before_starting(runtime: ServerRuntime) -> None:
+    from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+
+    store = runtime.composition.store
+    external = store.load(runtime.session.id)
+    external.messages = [
+        ModelRequest(parts=[UserPromptPart('external question')], run_id='external'),
+        ModelResponse(parts=[TextPart('external answer')], run_id='external'),
+    ]
+    store.save(external)
+
+    async def go() -> None:
+        await runtime.send('continue')
+        await runtime.wait()
+
+    asyncio.run(go())
+
+    assert runtime.session.messages[:2] == external.messages
+    assert any(event.type == 'turn_finished' for event in runtime.hub.replay())
+
+
+def test_external_write_during_a_turn_preserves_both_histories(runtime: ServerRuntime) -> None:
+    from collections.abc import AsyncIterator
+
+    from pydantic_ai import Agent
+    from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    store = runtime.composition.store
+    original_id = runtime.session.id
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        external = store.load(original_id)
+        external.messages = [
+            ModelRequest(parts=[UserPromptPart('remote question')], run_id='remote'),
+            ModelResponse(parts=[TextPart('remote answer')], run_id='remote'),
+        ]
+        store.save(external)
+        yield 'local result'
+
+    runtime.composition.agent = Agent(FunctionModel(stream_function=answer))
+
+    async def go() -> None:
+        await runtime.send('local question')
+        await runtime.wait()
+
+    asyncio.run(go())
+
+    assert runtime.session.messages[0].parts[0].content == 'remote question'
+    recovered = [item for item in store.list_sessions() if item.id != original_id]
+    assert len(recovered) == 1
+    backup = store.load(recovered[0].id)
+    assert backup.messages[-1].parts[0].content == 'local result'
+    assert any(event.type == 'turn_finished' for event in runtime.hub.replay())
+
+
+def test_terminal_session_switch_updates_the_composition_owner(composition: Composition) -> None:
+    from src.ui.app import SigilApp
+
+    async def go() -> None:
+        app = SigilApp(
+            agent=composition.agent,
+            store=composition.store,
+            session=composition.session,
+            roadmap_store=composition.roadmap_store,
+            agent_tree=composition.agent_trees,
+            on_bind_session=composition.bind_session,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            previous = composition.session
+            await app.handle_command('/new')
+            assert composition.session is app._session
+            assert composition.session is not previous
+            assert composition.agent_trees.active is app._session.tree
+
+    asyncio.run(go())

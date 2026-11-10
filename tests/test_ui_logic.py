@@ -30,6 +30,7 @@ def test_match_commands_filters_by_prefix():
         '/provider',
         '/model',
         '/effort',
+        '/external-files',
         '/mcp',
         '/context',
         '/rollback',

@@ -12,11 +12,12 @@ from src.engine.workspace.models.workspace_error import WorkspaceError
 from src.ui.help_text import HELP_TEXT, KEYS_TEXT
 from src.ui.mcp_report import format_mcp_status
 from src.ui.messages import ChatNotice
+from src.ui.session_refresh import bind_refreshed_session, render_refreshed_session, session_view
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.session_picker import SessionPicker
 
-BUSY_COMMANDS = frozenset({'/new', '/load', '/agent', '/provider', '/model', '/effort', '/quit'})
+BUSY_COMMANDS = frozenset({'/new', '/load', '/agent', '/provider', '/model', '/effort', '/external-files', '/quit'})
 """Commands a running turn refuses.
 
 They are the ones that would change what the turn is working with, or end the
@@ -87,8 +88,18 @@ class CommandsMixin:
             self.steer(text, widget, attachments=attachments)
             return
 
+        await self.refresh_active_session(chat)
+        seq = len(self._history)
         await chat.add_user(text, attachments=attachments, seq=seq)
         self.start_turn(text, attachments=attachments)
+
+    async def refresh_active_session(self, chat: ChatLog) -> None:
+        view = session_view(self)
+        latest = view._store.refresh(view._session)
+        if latest is None:
+            return
+        await render_refreshed_session(view, latest, chat)
+        await chat.add_notice('Session updated by another process; reloaded the latest version.', style='yellow')
 
     def is_refused_while_busy(self, name: str) -> bool:
         """Whether ``name`` is one of the commands a running turn forbids.
@@ -136,6 +147,7 @@ class CommandsMixin:
             '/provider': lambda: self.show_providers(chat),
             '/model': lambda: self.show_models(chat, args),
             '/effort': lambda: self.show_effort(chat, args),
+            '/external-files': lambda: self.handle_external_files(args, chat),
             '/reasoning-visibility': lambda: self.handle_reasoning_visibility(args, chat),
             '/tools': lambda: self.handle_tools(args, chat),
             '/alerts': lambda: self.handle_alerts(args, chat),
@@ -158,6 +170,19 @@ class CommandsMixin:
         # came out as a worker failure, which is a crash for the user.
         if inspect.isawaitable(result):
             await result
+
+    async def handle_external_files(self, args: str, chat: ChatLog) -> None:
+        """Show or change this session's file access boundary."""
+        value = args.strip().lower()
+        if value not in {'', 'allow', 'deny'}:
+            await chat.add_notice('Usage: /external-files [allow|deny]', style='yellow')
+            return
+        await self.refresh_active_session(chat)
+        if value:
+            self._session.allow_external_files = value == 'allow'
+            self._store.save(self._session)
+        state = 'allowed' if self._session.allow_external_files else 'denied'
+        await chat.add_notice(f'Outside-workspace file access is {state} for this session.', style='yellow')
 
     async def show_help(self, chat: ChatLog) -> None:
         """Commands plus the keys that are not discoverable from the menu."""
@@ -284,6 +309,9 @@ class CommandsMixin:
     def bind_session(self, session: object) -> None:
         """Points the app at ``session``: history, agent, tree, roadmap and persistence."""
         self._session = session
+        callback = getattr(self, '_on_bind_session', None)
+        if callback is not None:
+            callback(session)
         self._history = session.messages
         # The measured half of the context lives with the request that produced it, so
         # it travels on the session and is read back here. `/load` used to leave the
@@ -348,7 +376,13 @@ class CommandsMixin:
         if self._session.messages:
             # What the meter measured rides with the row: `/load` reads it back.
             self._meter.stamp(self._session)
-            self._store.save(self._session)
+            current = self._store.save_current(self._session)
+            if current is not self._session:
+                view = session_view(self)
+                bind_refreshed_session(view, current)
+                view.post_message(
+                    ChatNotice('Session updated by another process; reloaded the latest version.', style='yellow')
+                )
 
     def _sync_session_selection(self) -> None:
         """Copies the active model into the session before it is written."""
