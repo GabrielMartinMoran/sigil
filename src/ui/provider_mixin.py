@@ -325,6 +325,8 @@ class ProviderMixin:
         """Propagates a new model to the session, the meter and the chrome."""
         if self._session is not None:
             self._session.selection = snapshot.selection
+            if self._session.messages:
+                self.persist()
         self.load_model_window()
         self.refresh_sidebar()
 

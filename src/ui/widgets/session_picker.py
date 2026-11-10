@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import ClassVar
 
 from rich.text import Text
@@ -16,7 +17,7 @@ from src.engine.sessions.catalog import CatalogEntry
 
 
 def session_option(entry: CatalogEntry) -> Option:
-    """One line per session: workspace badge, short id and its title.
+    """One line per session: local update time, workspace, short id and title.
 
     The badge is what tells two sessions with the same title apart, which is
     exactly what happens when the same task is tried in the main worktree and in a
@@ -26,7 +27,11 @@ def session_option(entry: CatalogEntry) -> Option:
     """
     badge = Text(f'{entry.label:<12}', style='bold yellow' if entry.is_worktree else 'bold cyan')
     marker = Text('● ' if entry.is_current else '  ', style='green')
-    prompt = Text()
+    try:
+        updated = datetime.fromisoformat(entry.session.updated_at).astimezone().strftime('%Y-%m-%d %H:%M')
+    except ValueError:
+        updated = 'unknown date    '
+    prompt = Text(f'{updated}  ', style='dim')
     prompt.append(marker)
     prompt.append(badge)
     prompt.append(f'{entry.session.short_id}  ', style='bold')

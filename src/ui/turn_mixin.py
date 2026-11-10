@@ -528,6 +528,7 @@ class TurnMixin:
             if run is not None:
                 history = run.all_messages()
             await chat.add_notice(f'Error: {exc}', style='bold red')
+            self.notify(f'Turn failed: {exc}', severity='error')
         finally:
             clock.stop()
             self._current_run = None

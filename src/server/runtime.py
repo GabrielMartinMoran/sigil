@@ -436,7 +436,7 @@ class ServerRuntime:
         switch = self.composition.workspace_manager.switch(root)
         self.composition.root = switch.workspace.root
         store = self.composition.store
-        session = store.load_last() or store.create_session()
+        session = store.load_last() or store.draft_session()
         self.composition.bind_session(session)
         self.composition.rebuild_agent()
         self.hub.publish_state('workspace')
@@ -446,7 +446,8 @@ class ServerRuntime:
         """Starts an empty conversation in the current workspace."""
         if self.busy:
             raise RuntimeError('Cannot start a session while a turn is running.')
-        session = self.composition.store.create_session()
+        session = self.composition.store.draft_session()
+        session.selection = self.composition.model_service.snapshot().selection
         self.composition.bind_session(session)
         self.hub.publish_state('session')
         return session

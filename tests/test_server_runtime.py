@@ -171,9 +171,9 @@ def test_new_session_and_open_session_round_trip(runtime: ServerRuntime) -> None
     second = runtime.new_session()
     assert second.id != first.id
     assert runtime.session.id == second.id
-    reopened = runtime.open_session(first.id)
-    assert reopened.id == first.id
-    assert runtime.session.id == first.id
+    with pytest.raises(LookupError):
+        runtime.open_session(first.id)
+    assert runtime.composition.store.list_sessions() == []
 
 
 def test_the_routes_answer_with_the_projections(tmp_path: Path, composition: Composition) -> None:
@@ -249,6 +249,8 @@ def test_send_reloads_external_conversation_before_starting(runtime: ServerRunti
     from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
     store = runtime.composition.store
+    runtime.session.messages = [ModelRequest(parts=[UserPromptPart('initial')])]
+    store.save(runtime.session)
     external = store.load(runtime.session.id)
     external.messages = [
         ModelRequest(parts=[UserPromptPart('external question')], run_id='external'),
@@ -274,6 +276,8 @@ def test_external_write_during_a_turn_preserves_both_histories(runtime: ServerRu
     from pydantic_ai.models.function import AgentInfo, FunctionModel
 
     store = runtime.composition.store
+    runtime.session.messages = [ModelRequest(parts=[UserPromptPart('initial')], run_id='initial')]
+    store.save(runtime.session)
     original_id = runtime.session.id
 
     async def answer(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
@@ -322,3 +326,21 @@ def test_terminal_session_switch_updates_the_composition_owner(composition: Comp
             assert composition.agent_trees.active is app._session.tree
 
     asyncio.run(go())
+
+
+def test_startup_does_not_resume_previous_session(composition: Composition, tmp_path: Path) -> None:
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+    previous = composition.session
+    previous.messages = [ModelRequest(parts=[UserPromptPart('previous')])]
+    composition.store.save(previous)
+    reopened = Composition(
+        tmp_path,
+        settings=load_settings(),
+        model=TestModel(custom_output_text='done', call_tools=[]),
+        provider_paths=_paths(tmp_path),
+    )
+    assert reopened.session.id != previous.id
+    assert reopened.session.messages == []
+    assert reopened.store.load(reopened.session.id) is None
+    assert reopened.store.load(previous.id) is not None

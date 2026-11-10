@@ -452,3 +452,19 @@ def test_the_mcp_probe_does_not_share_the_turn_worker_group():
                 assert app.refresh_mcp_status().group == 'mcp'
 
     asyncio.run(inner())
+
+
+def test_status_bar_displays_agent_name_without_prefix():
+    bar = StatusBar()
+    bar.set_agent('wizard')
+    assert bar.plain().startswith('wizard')
+    assert 'agent wizard' not in bar.plain()
+
+
+def test_project_name_appears_at_the_start_of_status_bar():
+    bar = StatusBar()
+    bar.set_project('sigil')
+    bar.set_agent('wizard')
+    assert bar.plain().startswith('sigil  ·  wizard')
+    bar.show('Press Esc to cancel')
+    assert bar.plain().startswith('sigil  ·  wizard')

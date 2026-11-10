@@ -247,7 +247,10 @@ class CommandsMixin:
             self.persist()
             switch = None
 
-        session = self._store.create_session()
+        session = self._store.draft_session()
+        service = getattr(self, '_model_service', None)
+        if service is not None:
+            session.selection = service.snapshot().selection
         # A new session inherits the agent in effect: starting a conversation
         # should not silently drop back to the default profile.
         profile = self.active_agent()

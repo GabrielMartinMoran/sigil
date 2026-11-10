@@ -329,8 +329,7 @@ class Composition:
     # --- the built pieces ---------------------------------------------------
 
     def _open_session(self) -> Session:
-        session = self.store.load_last()
-        return session if session is not None else self.store.create_session()
+        return self.store.draft_session()
 
     def mcp_loader(self) -> Callable[[], Any] | None:
         """Builds the MCP layer off the startup path.

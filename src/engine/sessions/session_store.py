@@ -20,7 +20,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 
 from src.engine.agents.tree.tree import AgentTree
 from src.engine.providers.domain.selection import Selection
@@ -89,6 +89,7 @@ class Session:
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
     _persisted_at: str | None = field(default=None, repr=False, compare=False)
+    _draft: bool = field(default=False, repr=False, compare=False)
     _baseline: str | None = field(default=None, repr=False, compare=False)
     _recovery_session: Session | None = field(default=None, repr=False, compare=False)
     title: str | None = None
@@ -199,6 +200,10 @@ class SessionStore:
 
     # --- public API ----------------------------------------------------------
 
+    def draft_session(self) -> Session:
+        """Create an in-memory conversation until its first user message."""
+        return Session(id=uuid.uuid4().hex, cwd=self.cwd, _draft=True)
+
     def create_session(self, title: str | None = None) -> Session:
         """Creates an empty session and persists it immediately."""
         session = Session(id=uuid.uuid4().hex, cwd=self.cwd, title=title)
@@ -212,6 +217,13 @@ class SessionStore:
         a half-written one. The session's size stopped mattering: an append is
         rows, not a rewrite.
         """
+        if session._draft and not any(
+            isinstance(part, UserPromptPart)
+            for message in session.messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        ):
+            return
         selection = session.selection
         with self.database.transaction() as conn:
             row = conn.execute('SELECT updated_at FROM sessions WHERE id = ?', (session.id,)).fetchone()
@@ -282,6 +294,7 @@ class SessionStore:
                 )
 
         session._persisted_at = session.updated_at
+        session._draft = False
         session._baseline = self._fingerprint(session)
 
     @staticmethod

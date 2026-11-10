@@ -18,6 +18,8 @@ from src.engine.sessions.session_store import SessionStore
 from src.engine.workspace.manager import WorkspaceManager
 from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
+from src.ui.widgets.sidebar_panel import SidebarPanel
+from src.ui.widgets.status_bar import StatusBar
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -99,8 +101,11 @@ def test_new_with_worktree_creates_it_and_works_there(monkeypatch, tmp_path, rep
         app = _app(repo, tmp_path)
         async with app.run_test() as pilot:
             await pilot.pause()
+            assert app.query_one(StatusBar).plain().startswith('project')
+            assert not app.query_one(SidebarPanel).text.startswith('project')
             await app.handle_command('/new', '--worktree fix-login')
             await pilot.pause()
+            assert app.query_one(StatusBar).plain().startswith('fix-login')
 
             expected = tmp_path / 'worktrees' / 'project' / 'fix-login'
             assert Path.cwd() == expected
@@ -136,6 +141,8 @@ def test_the_picker_shows_every_workspace_and_marks_the_current_one(monkeypatch,
             await app.handle_command('/new', '--worktree picker')
             await pilot.pause()
             worktree_session = app._session.id
+            app._session.messages = [ModelRequest(parts=[UserPromptPart(content='worktree task')])]
+            app._store.save(app._session)
 
             app.switch_workspace(str(repo))
             await pilot.pause()
@@ -150,7 +157,7 @@ def test_the_picker_shows_every_workspace_and_marks_the_current_one(monkeypatch,
             listed = [options.get_option_at_index(index).prompt.plain for index in range(options.option_count)]
             assert any('picker' in line for line in listed)
             assert any('main' in line for line in listed)
-            assert any(line.startswith('●') for line in listed)
+            assert any('  ● ' in line for line in listed)
 
             target = next(
                 index
@@ -269,6 +276,8 @@ def test_load_switches_to_the_workspace_of_the_session(monkeypatch, tmp_path, re
             await app.handle_command('/new', '--worktree fix-login')
             await pilot.pause()
             worktree_session = app._session.id
+            app._session.messages = [ModelRequest(parts=[UserPromptPart(content='worktree task')])]
+            app._store.save(app._session)
 
             # Back to the main worktree, then load the worktree session from there.
             app.switch_workspace(str(repo))
@@ -363,7 +372,7 @@ def test_load_across_worktrees_restores_the_workspace_and_the_model(monkeypatch,
             self.applied: list[Selection] = []
 
         def snapshot(self) -> ModelSnapshot:
-            return ModelSnapshot()
+            return ModelSnapshot(selection=Selection(account_id='acc-1', model='anthropic/x', thinking='high'))
 
         def is_configured(self) -> bool:
             # A configured-enough router: the test is not about the catalogue.
@@ -386,9 +395,9 @@ def test_load_across_worktrees_restores_the_workspace_and_the_model(monkeypatch,
             worktree_session = app._session.id
 
             selection = Selection(account_id='acc-1', model='anthropic/x', thinking='high')
-            stored = app._store.load(worktree_session)
-            stored.selection = selection
-            app._store.save(stored)
+            app._session.messages = [ModelRequest(parts=[UserPromptPart(content='worktree task')])]
+            app._session.selection = selection
+            app._store.save(app._session)
 
             app.switch_workspace(str(repo))
             await pilot.pause()
