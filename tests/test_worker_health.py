@@ -27,6 +27,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import pytest
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
@@ -36,6 +37,9 @@ from src.engine.agents.tree.store import AgentTreeStore
 from src.engine.agents.tree.summoner import SubagentSummoner
 from src.engine.sessions.session_store import SessionStore
 from src.ui.app import SigilApp
+from src.ui.widgets.agent_tree_screen import AgentTreeScreen
+
+pytestmark = pytest.mark.usefixtures('memory_databases')
 
 
 class WorkRecorder:
@@ -124,8 +128,7 @@ def test_waking_with_a_subagent_on_screen_hands_only_runnable_work():
                 assert app.subagent_open is True
 
                 app._wake_from_subagents()
-                for _ in range(60):
-                    await pilot.pause()
+                await pilot.pause()
                 return recorder.unrun, app.subagent_open
 
     unrun, still_open = asyncio.run(inner())
@@ -144,8 +147,7 @@ def test_a_normal_wake_up_hands_only_runnable_work():
                 _waiting_node(app)
                 app.subagents_idle()
                 app._wake_from_subagents()
-                for _ in range(60):
-                    await pilot.pause()
+                await pilot.pause()
                 return recorder.unrun
 
     assert asyncio.run(inner()) == []
@@ -165,20 +167,16 @@ def test_the_view_toggles_hand_only_runnable_work():
                 await app.open_subagent(node)
                 await pilot.pause()
                 app.action_toggle_debug()
-                for _ in range(30):
-                    await pilot.pause()
+                await pilot.pause()
 
                 await app.open_subagent(node)
                 await pilot.pause()
                 await pilot.press('escape')
-                for _ in range(30):
-                    await pilot.pause()
 
                 await app.open_subagent(node)
                 await pilot.pause()
                 app.show_chat()
-                for _ in range(30):
-                    await pilot.pause()
+                await pilot.pause()
                 return recorder.unrun
 
     assert asyncio.run(inner()) == []
@@ -197,6 +195,9 @@ def test_opening_the_tree_hands_only_runnable_work():
                 app.run_worker(app.open_tree())
                 for _ in range(30):
                     await pilot.pause()
+                    if isinstance(app.screen, AgentTreeScreen):
+                        break
+                assert isinstance(app.screen, AgentTreeScreen)
                 return recorder.unrun
 
     assert asyncio.run(inner()) == []

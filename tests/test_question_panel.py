@@ -3,6 +3,8 @@
 The panel is not a modal: it lives under the chat and borrows its height, so the
 answers can be about something that is still readable. These tests check the
 navigation between questions and that a draft is not lost when going back.
+Keyboard regressions use Pilot; state-transition cases call the real mounted
+panel handlers directly without repeating the keyboard path.
 """
 
 import asyncio
@@ -60,6 +62,13 @@ def _title(app: Host) -> str:
     return str(app.panel.query_one('#question-title', Static).render())
 
 
+def _select(panel: QuestionPanel, index: int = 0) -> None:
+    """Deliver a selection at the state boundary; keyboard dispatch is tested apart."""
+    options = panel.query_one(OptionList)
+    options.highlighted = index
+    panel.on_option_list_option_selected(OptionList.OptionSelected(options, options.get_option_at_index(index), index))
+
+
 def test_select_recommended_option():
     async def inner():
         app = Host([_question()])
@@ -67,7 +76,6 @@ def test_select_recommended_option():
             await pilot.pause()
             assert app.panel.display is True
             await pilot.press('enter')
-            await pilot.pause()
             assert isinstance(app.result, list)
             assert app.result[0].answer == 'Recommended'
             assert app.result[0].custom is False
@@ -85,12 +93,10 @@ def test_custom_option_opens_input():
             for _ in range(3):
                 await pilot.press('down')
             await pilot.press('enter')
-            await pilot.pause()
             custom = app.panel.query_one('#question-custom', Input)
             assert custom.display is True
             await pilot.press('h', 'e', 'l', 'l', 'o')
             await pilot.press('enter')
-            await pilot.pause()
             assert isinstance(app.result, list)
             assert app.result[0].answer == 'hello'
             assert app.result[0].custom is True
@@ -104,24 +110,22 @@ def test_cancel_returns_none():
         async with app.run_test(size=(100, 40)) as pilot:
             await pilot.pause()
             await pilot.press('escape')
-            await pilot.pause()
             assert app.result is None
             assert app.panel.display is False
 
     _run(inner())
 
 
-def test_multiple_questions_are_asked_in_order():
-    async def inner():
+def test_multiple_questions_are_asked_in_order() -> None:
+    async def inner() -> None:
         app = Host([_question('First'), _question('Second')])
         async with app.run_test(size=(100, 40)) as pilot:
             await pilot.pause()
             assert 'First' in _title(app)
-            await pilot.press('enter')
-            await pilot.pause()
+            _select(app.panel)
             assert 'Second' in _title(app)
-            await pilot.press('enter')
-            await pilot.pause()
+            _select(app.panel)
+            await asyncio.wait_for(app.workers.wait_for_complete(), timeout=5)
             assert isinstance(app.result, list)
             assert [answer.question for answer in app.result] == ['First', 'Second']
             assert all(answer.answer == 'Recommended' for answer in app.result)
@@ -137,11 +141,9 @@ def test_going_back_shows_the_answer_that_was_chosen():
             # Second option of the first question.
             await pilot.press('down')
             await pilot.press('enter')
-            await pilot.pause()
             assert 'Second' in _title(app)
 
             await pilot.press('alt+left')
-            await pilot.pause()
             assert 'First' in _title(app)
             # The record of what was answered and the mark on the chosen row.
             summary = str(app.panel.query_one('#question-answers', Static).render())
@@ -153,44 +155,36 @@ def test_going_back_shows_the_answer_that_was_chosen():
     _run(inner())
 
 
-def test_going_back_keeps_the_custom_text():
-    async def inner():
+def test_going_back_keeps_the_custom_text() -> None:
+    async def inner() -> None:
         app = Host([_question('First'), _question('Second')])
         async with app.run_test(size=(100, 40)) as pilot:
             await pilot.pause()
-            for _ in range(3):
-                await pilot.press('down')
-            await pilot.press('enter')
-            await pilot.pause()
-            await pilot.press('a', 'b', 'c')
-            await pilot.press('enter')
-            await pilot.pause()
+            options = app.panel.query_one(OptionList)
+            _select(app.panel, options.option_count - 1)
+            custom = app.panel.query_one('#question-custom', Input)
+            custom.value = 'abc'
+            app.panel.on_input_submitted(Input.Submitted(custom, custom.value))
             assert 'Second' in _title(app)
 
-            await pilot.press('alt+left')
-            await pilot.pause()
-            custom = app.panel.query_one('#question-custom', Input)
+            app.panel.action_previous_question()
             assert custom.display is True
             assert custom.value == 'abc'
 
     _run(inner())
 
 
-def test_changing_an_answer_replaces_it():
-    async def inner():
+def test_changing_an_answer_replaces_it() -> None:
+    async def inner() -> None:
         app = Host([_question('First'), _question('Second')])
         async with app.run_test(size=(100, 40)) as pilot:
             await pilot.pause()
-            await pilot.press('enter')  # first question: Recommended
-            await pilot.pause()
-            await pilot.press('alt+left')
-            await pilot.pause()
-            await pilot.press('down')
-            await pilot.press('enter')  # first question again: Alternative A
-            await pilot.pause()
+            _select(app.panel)
+            app.panel.action_previous_question()
+            _select(app.panel, 1)
             assert 'Second' in _title(app)
-            await pilot.press('enter')
-            await pilot.pause()
+            _select(app.panel)
+            await asyncio.wait_for(app.workers.wait_for_complete(), timeout=5)
             assert isinstance(app.result, list)
             assert app.result[0].answer == 'Alternative A'
 
@@ -204,17 +198,13 @@ def test_moving_forward_is_free_but_finishing_requires_every_answer():
             await pilot.pause()
             # Forward is free: nothing is lost, the first question keeps its draft.
             await pilot.press('alt+right')
-            await pilot.pause()
             assert 'Second' in _title(app)
             await pilot.press('alt+left')
-            await pilot.pause()
             assert 'First' in _title(app)
 
             # Finishing without answering points at what is missing.
             await pilot.press('alt+right')
-            await pilot.pause()
             await pilot.press('alt+right')
-            await pilot.pause()
             assert 'First' in _title(app)
             assert app.result == 'unset'
             assert app.panel.query_one('#question-hint', Static).display is True
@@ -222,35 +212,32 @@ def test_moving_forward_is_free_but_finishing_requires_every_answer():
     _run(inner())
 
 
-def test_finishing_the_last_question_with_one_unanswered_goes_back_to_it():
-    async def inner():
+def test_finishing_the_last_question_with_one_unanswered_goes_back_to_it() -> None:
+    async def inner() -> None:
         app = Host([_question('First'), _question('Second')])
         async with app.run_test(size=(100, 40)) as pilot:
             await pilot.pause()
-            await pilot.press('alt+right')  # to the second, first still open
-            await pilot.pause()
-            await pilot.press('enter')  # answer the second
-            await pilot.pause()
-            # It lands on the one that is still open, not on a closed panel.
+            app.panel.action_next_question()
+            _select(app.panel)
             assert 'First' in _title(app)
             assert app.result == 'unset'
-            await pilot.press('enter')
-            await pilot.pause()
+            _select(app.panel)
+            await asyncio.wait_for(app.workers.wait_for_complete(), timeout=5)
             assert isinstance(app.result, list)
             assert [answer.question for answer in app.result] == ['First', 'Second']
 
     _run(inner())
 
 
-def test_previous_on_the_first_question_explains_itself():
-    async def inner():
+def test_previous_on_the_first_question_explains_itself() -> None:
+    async def inner() -> None:
         app = Host([_question('First'), _question('Second')])
         async with app.run_test(size=(100, 40)) as pilot:
             await pilot.pause()
-            await pilot.press('alt+left')
-            await pilot.pause()
+            app.panel.action_previous_question()
             assert 'First' in _title(app)
             assert app.result == 'unset'
+            assert app.panel.query_one('#question-hint', Static).display is True
 
     _run(inner())
 
@@ -263,13 +250,10 @@ def test_going_back_keeps_text_that_was_not_submitted():
             for _ in range(3):
                 await pilot.press('down')
             await pilot.press('enter')  # Other
-            await pilot.pause()
             await pilot.press('h', 'a', 'l', 'f')  # typed, not submitted
             await pilot.press('alt+right')  # last question: it tries to finish
-            await pilot.pause()
             assert app.result == 'unset'
             await pilot.press('alt+left')
-            await pilot.pause()
             custom = app.panel.query_one('#question-custom', Input)
             assert custom.display is True
             assert custom.value == 'half'
@@ -285,14 +269,11 @@ def test_tab_moves_between_the_list_and_the_text_field():
             for _ in range(3):
                 await pilot.press('down')
             await pilot.press('enter')  # Other: the field takes the focus
-            await pilot.pause()
             custom = app.panel.query_one('#question-custom', Input)
             assert app.focused is custom
             await pilot.press('tab')
-            await pilot.pause()
             assert app.focused is app.panel.query_one(OptionList)
             await pilot.press('tab')
-            await pilot.pause()
             assert app.focused is custom
 
     _run(inner())
@@ -306,13 +287,10 @@ def test_picking_an_option_after_typing_closes_the_field():
             for _ in range(3):
                 await pilot.press('down')
             await pilot.press('enter')
-            await pilot.pause()
             await pilot.press('h', 'i')
             await pilot.press('tab')  # back to the list, keeping the text
-            await pilot.pause()
             await pilot.press('home')  # first option
             await pilot.press('enter')
-            await pilot.pause()
             assert isinstance(app.result, list)
             assert app.result[0].answer == 'Recommended'
             assert app.result[0].custom is False

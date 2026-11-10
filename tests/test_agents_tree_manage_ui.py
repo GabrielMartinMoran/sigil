@@ -15,6 +15,7 @@ from typing import Any
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from rich.text import Text
+from textual.app import App
 from textual.widgets import OptionList
 
 from src.engine.agents.profile.models.agent_role import AgentRole
@@ -106,23 +107,16 @@ def test_the_screen_returns_what_to_do_with_the_highlighted_row():
     node = tree.add(parent_id=root.id, name='worker', role=AgentRole.SUBAGENT, task='a')
     screen = AgentTreeScreen(tree.nodes())
 
-    async def inner():
-        with tempfile.TemporaryDirectory() as tmp:
-            app = _app(tmp)
-            async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
-                app.push_screen(screen)
-                for _ in range(20):
-                    await pilot.pause()
-                    if app.screen is screen:
-                        break
-                screen.query_one(OptionList).highlighted = 1
-                decided: list[Any] = []
-                screen.dismiss = decided.append  # type: ignore[method-assign]
-                screen.action_detach()
-                for _ in range(20):
-                    await pilot.pause()
-                return decided[0]
+    async def inner() -> TreeAction:
+        app = App()
+        async with app.run_test() as pilot:
+            app.push_screen(screen)
+            await pilot.pause()
+            screen.query_one(OptionList).highlighted = 1
+            decided: list[TreeAction] = []
+            screen.dismiss = decided.append  # type: ignore[method-assign]
+            screen.action_detach()
+            return decided[0]
 
     result = asyncio.run(inner())
     assert isinstance(result, TreeAction)

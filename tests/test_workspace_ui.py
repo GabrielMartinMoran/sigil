@@ -20,6 +20,7 @@ from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.sidebar_panel import SidebarPanel
 from src.ui.widgets.status_bar import StatusBar
+from tests.ui_helpers import wait_until
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -83,7 +84,6 @@ def test_new_without_arguments_stays_in_the_same_workspace(monkeypatch, tmp_path
     async def inner():
         app = _app(repo, tmp_path)
         async with app.run_test() as pilot:
-            await pilot.pause()
             await app.handle_command('/new')
             await pilot.pause()
 
@@ -100,7 +100,6 @@ def test_new_with_worktree_creates_it_and_works_there(monkeypatch, tmp_path, rep
     async def inner():
         app = _app(repo, tmp_path)
         async with app.run_test() as pilot:
-            await pilot.pause()
             assert app.query_one(StatusBar).plain().startswith('project')
             assert not app.query_one(SidebarPanel).text.startswith('project')
             await app.handle_command('/new', '--worktree fix-login')
@@ -135,7 +134,6 @@ def test_the_picker_shows_every_workspace_and_marks_the_current_one(monkeypatch,
     async def inner():
         app = _app(repo, tmp_path)
         async with app.run_test(size=(140, 40)) as pilot:
-            await pilot.pause()
             app._session.messages = [ModelRequest(parts=[UserPromptPart(content='main task')])]
             app._store.save(app._session)
             await app.handle_command('/new', '--worktree picker')
@@ -166,8 +164,7 @@ def test_the_picker_shows_every_workspace_and_marks_the_current_one(monkeypatch,
             )
             options.highlighted = target
             await pilot.press('enter')
-            for _ in range(20):
-                await pilot.pause()
+            await wait_until(pilot, lambda: app._session.id == worktree_session)
 
             assert app._session.id == worktree_session
             assert app.current_workspace_label() == 'picker'
@@ -184,7 +181,6 @@ def test_tools_operate_on_the_new_worktree_after_the_switch(monkeypatch, tmp_pat
     async def inner():
         app = _app(repo, tmp_path)
         async with app.run_test() as pilot:
-            await pilot.pause()
             await app.handle_command('/new', '--worktree isolated')
             await pilot.pause()
 
@@ -238,7 +234,6 @@ def test_new_worktree_rejects_a_bad_name_without_switching(monkeypatch, tmp_path
     async def inner():
         app = _app(repo, tmp_path)
         async with app.run_test() as pilot:
-            await pilot.pause()
             await app.handle_command('/new', '--worktree nested/bad')
             await pilot.pause()
 
@@ -255,7 +250,6 @@ def test_new_with_a_bad_flag_shows_the_usage(monkeypatch, tmp_path, repo):
     async def inner():
         app = _app(repo, tmp_path)
         async with app.run_test() as pilot:
-            await pilot.pause()
             before = app._session.id
             await app.handle_command('/new', '--wt fix-login')
             await pilot.pause()
@@ -272,7 +266,6 @@ def test_load_switches_to_the_workspace_of_the_session(monkeypatch, tmp_path, re
     async def inner():
         app = _app(repo, tmp_path)
         async with app.run_test() as pilot:
-            await pilot.pause()
             await app.handle_command('/new', '--worktree fix-login')
             await pilot.pause()
             worktree_session = app._session.id
@@ -312,7 +305,6 @@ def test_load_opens_the_picker_with_one_option_per_session(monkeypatch, tmp_path
     async def inner():
         app = _app(repo, tmp_path, sessions=['main task'])
         async with app.run_test(size=(140, 40)) as pilot:
-            await pilot.pause()
             app._store.create_session()
 
             app.run_worker(app.handle_command('/load'))
@@ -343,7 +335,6 @@ def test_switching_clears_the_scope(monkeypatch, tmp_path, repo):
         scope = ScopeTracker(repo)
         app = _app(repo, tmp_path, scope=scope)
         async with app.run_test() as pilot:
-            await pilot.pause()
             scope.observe('read_file', {'path': 'README.md'})
 
             await app.handle_command('/new', '--worktree clean-scope')
@@ -389,7 +380,6 @@ def test_load_across_worktrees_restores_the_workspace_and_the_model(monkeypatch,
         service = FakeService()
         app._model_service = service
         async with app.run_test() as pilot:
-            await pilot.pause()
             await app.handle_command('/new', '--worktree composed')
             await pilot.pause()
             worktree_session = app._session.id
@@ -427,7 +417,6 @@ def test_worktrees_dir_follows_the_environment(monkeypatch, tmp_path, repo):
         # whatever the environment says at the moment of creating the worktree.
         app._workspace_manager._worktrees_dir = None
         async with app.run_test() as pilot:
-            await pilot.pause()
             await app.handle_command('/new', '--worktree configured')
             await pilot.pause()
 
@@ -444,7 +433,6 @@ def test_new_session_survives_an_external_update(monkeypatch, tmp_path, repo, ar
         app = _app(repo, tmp_path, sessions=['original'])
         original_id = app._session.id
         async with app.run_test() as pilot:
-            await pilot.pause()
             external = app._store.load(original_id)
             external.messages.append(ModelRequest(parts=[UserPromptPart('external update')]))
             app._store.save(external)

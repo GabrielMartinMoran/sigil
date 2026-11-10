@@ -15,9 +15,11 @@ import asyncio
 import tempfile
 from pathlib import Path
 
+import pytest
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from textual import events
+from textual.pilot import Pilot
 from textual.widgets import OptionList, Static
 
 from src.engine.interaction.hub import QuestionHub
@@ -29,6 +31,9 @@ from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.question_panel import QuestionPanel
 from src.ui.widgets.sidebar_panel import SidebarPanel
 from src.ui.widgets.status_bar import StatusBar
+from tests.ui_helpers import fill_chat
+
+pytestmark = pytest.mark.usefixtures('memory_databases')
 
 CTRL_LINES = 5
 """Lines the `ctrl+↑` / `ctrl+↓` pair moves: the step the panel already documents."""
@@ -54,11 +59,10 @@ def _question(label: str = 'What do we do?') -> QuestionItem:
     )
 
 
-async def _fill(pilot, app: SigilApp, rows: int = 30) -> ChatLog:
+async def _fill(pilot: Pilot, app: SigilApp) -> ChatLog:
     """A transcript long enough to scroll."""
     chat = app.query_one(ChatLog)
-    for index in range(rows):
-        await chat.add_user(f'message {index}')
+    await fill_chat(chat)
     await pilot.pause()
     return chat
 
@@ -79,7 +83,6 @@ def test_a_click_on_the_transcript_keeps_the_keys_in_the_composer():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 await _fill(pilot, app)
                 prompt = app.query_one(PromptInput)
                 assert app.focused is prompt
@@ -99,7 +102,6 @@ def test_a_click_on_the_side_panel_keeps_the_keys_in_the_composer():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 await _fill(pilot, app)
                 prompt = app.query_one(PromptInput)
 
@@ -120,16 +122,13 @@ def test_tab_stays_in_the_composer():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 await _fill(pilot, app)
                 prompt = app.query_one(PromptInput)
 
                 await pilot.press('tab')
-                await pilot.pause()
                 assert app.focused is prompt
 
                 await pilot.press('shift+tab')
-                await pilot.pause()
                 assert app.focused is prompt
 
     asyncio.run(inner())
@@ -142,7 +141,6 @@ def test_the_wheel_still_scrolls_the_transcript():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 chat = await _fill(pilot, app)
                 assert chat.is_vertical_scroll_end
                 before = chat.scroll_offset.y
@@ -159,19 +157,16 @@ def test_pageup_and_pagedown_scroll_the_transcript_from_the_composer():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 chat = await _fill(pilot, app)
                 prompt = app.query_one(PromptInput)
                 assert chat.is_vertical_scroll_end
 
                 await pilot.press('pageup')
-                await pilot.pause()
                 assert not chat.is_vertical_scroll_end
                 assert app.focused is prompt
 
                 raised = chat.scroll_offset.y
                 await pilot.press('pagedown')
-                await pilot.pause()
                 assert chat.scroll_offset.y > raised
 
     asyncio.run(inner())
@@ -182,18 +177,15 @@ def test_ctrl_arrows_scroll_the_transcript_from_the_composer():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 chat = await _fill(pilot, app)
                 prompt = app.query_one(PromptInput)
                 start = chat.scroll_offset.y
 
                 await pilot.press('ctrl+up')
-                await pilot.pause()
                 assert chat.scroll_offset.y == start - CTRL_LINES
                 assert app.focused is prompt
 
                 await pilot.press('ctrl+down')
-                await pilot.pause()
                 assert chat.scroll_offset.y == start
 
     asyncio.run(inner())
@@ -216,7 +208,6 @@ def test_every_option_is_one_line_at_any_width():
             hub = QuestionHub()
             app = _app(tmp, hub)
             async with app.run_test(size=(60, 20)) as pilot:
-                await pilot.pause()
                 question = QuestionItem(
                     question='Which one?',
                     options=[
@@ -261,7 +252,6 @@ def test_the_help_line_never_scrolls_away():
             hub = QuestionHub()
             app = _app(tmp, hub)
             async with app.run_test(size=(60, 18)) as pilot:
-                await pilot.pause()
                 task = asyncio.create_task(app.ask_question([_question()]))
                 await pilot.pause()
                 await pilot.pause()
@@ -296,7 +286,6 @@ def test_the_composer_steps_aside_for_the_question():
             hub = QuestionHub()
             app = _app(tmp, hub)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 prompt = app.query_one(PromptInput)
                 prompt.value = 'half a thought'
                 await pilot.pause()
@@ -332,7 +321,6 @@ def test_a_question_leaves_the_side_panel_preference_alone():
             hub = QuestionHub()
             app = _app(tmp, hub)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 sidebar = app.query_one(SidebarPanel)
                 sidebar.set_shown(False)
                 await pilot.pause()
@@ -365,7 +353,6 @@ def test_the_side_panel_shrinks_with_the_transcript_instead_of_stepping_out():
             hub = QuestionHub()
             app = _app(tmp, hub)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 chat = await _fill(pilot, app)
                 sidebar = app.query_one(SidebarPanel)
                 chat_height = chat.size.height
@@ -399,7 +386,6 @@ def test_the_panel_keeps_the_keys_after_a_click_outside_it():
             hub = QuestionHub()
             app = _app(tmp, hub)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 await _fill(pilot, app)
                 task = asyncio.create_task(app.ask_question([_question()]))
                 await pilot.pause()
@@ -417,7 +403,6 @@ def test_the_panel_keeps_the_keys_after_a_click_outside_it():
                     assert app.focused is options
 
                 await pilot.press('down')
-                await pilot.pause()
                 assert options.highlighted == 1
                 await pilot.press('enter')
                 answers = await asyncio.wait_for(task, timeout=5)
@@ -435,7 +420,6 @@ def test_the_panel_keeps_the_keys_in_the_free_text_field():
             hub = QuestionHub()
             app = _app(tmp, hub)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 task = asyncio.create_task(app.ask_question([_question()]))
                 await pilot.pause()
                 await pilot.pause()
@@ -443,7 +427,6 @@ def test_the_panel_keeps_the_keys_in_the_free_text_field():
                 panel = app.query_one(QuestionPanel)
                 # The free-text row is the last one the list offers.
                 await pilot.press('down', 'down', 'enter')
-                await pilot.pause()
                 field = panel.query_one('#question-custom')
                 assert field.display is True
                 assert app.focused is field
@@ -474,7 +457,6 @@ def test_escape_outside_the_panel_cancels_the_question_not_the_turn():
             hub = QuestionHub()
             app = _app(tmp, hub)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 # A question only shows up mid-turn: that is when the abort exists.
                 app._turn_active = True
                 try:
@@ -504,7 +486,6 @@ def test_the_composer_border_follows_the_focus():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
                 prompt = app.query_one(PromptInput)
                 focused = prompt.styles.border_top
 

@@ -114,7 +114,6 @@ def test_should_recall_command_selected_from_menu(app: SigilApp) -> None:
             await pilot.pause()
             assert app.menu_visible
             await pilot.press('enter')
-            await pilot.pause()
             await pilot.press('up')
             assert field.value == '/help'
             await pilot.pause()

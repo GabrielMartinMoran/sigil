@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import pytest
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
@@ -31,7 +32,9 @@ from src.ui.widgets.agent_tree_screen import AgentTreeScreen, node_row, status_t
 from src.ui.widgets.agent_view import AgentView, build_agent_header, elapsed_text
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
-from tests.ui_helpers import render_text
+from tests.ui_helpers import render_text, wait_until
+
+pytestmark = pytest.mark.usefixtures('memory_databases')
 
 
 def _app(tmp: str, *, summoner: Any = None) -> SigilApp:
@@ -151,7 +154,6 @@ def test_alt_t_opens_the_tree_and_choosing_a_node_opens_it():
             app = _app(tmp)
             first = _fill(app)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 await pilot.press('ctrl+t')
                 for _ in range(30):
                     await pilot.pause()
@@ -180,7 +182,6 @@ def test_opening_a_subagent_replaces_the_chat_and_locks_the_composer():
             app = _app(tmp)
             first = _fill(app)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 await app.open_subagent(first)
                 await pilot.pause()
 
@@ -210,11 +211,8 @@ def test_the_node_view_paints_the_transcript_of_the_node():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             first = _fill(app)
-            async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(120, 40)):
                 await app.open_subagent(first)
-                for _ in range(20):
-                    await pilot.pause()
                 view = app.query_one(AgentView)
                 header = render_text(view.query_one('#agent-header').render())
                 assert 'Researcher' in header
@@ -226,8 +224,6 @@ def test_the_node_view_paints_the_transcript_of_the_node():
                 # A real node keeps its own transcript, starting with the task.
                 first.messages = [ModelRequest(parts=[UserPromptPart(content='read the tree')])]
                 await view.refresh_node(first)
-                for _ in range(20):
-                    await pilot.pause()
                 rendered = '\n'.join(render_text(child.render()) for child in view.transcript.children)
                 assert 'read the tree' in rendered
                 assert 'read the tree' not in render_text(view.query_one('#agent-header').render())
@@ -244,7 +240,6 @@ def test_going_back_from_a_nested_node_lands_on_its_parent():
             child = tree.add(parent_id=first.id, name='reader', role=AgentRole.SUBAGENT, task='deeper')
             child.finish('ok')
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 await app.open_subagent(child)
                 await pilot.pause()
                 assert app.viewed_node_id() == child.id
@@ -265,7 +260,6 @@ def test_alt_t_without_subagents_says_so_instead_of_opening_an_empty_box():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 # Nobody to open yet: the app says so instead of showing a box with
                 # the one row the user already knows.
                 await app.open_tree()
@@ -285,7 +279,6 @@ def test_opening_the_debug_view_closes_the_node_view():
             app = _app(tmp)
             first = _fill(app)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 await app.open_subagent(first)
                 await pilot.pause()
                 assert app.subagent_open is True
@@ -306,7 +299,6 @@ def test_new_session_while_a_subagent_is_open_gives_the_chat_back():
             app = _app(tmp)
             first = _fill(app)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 await app.open_subagent(first)
                 await pilot.pause()
 
@@ -326,15 +318,13 @@ def test_a_finished_subagent_repaints_the_view_it_is_shown_in():
             app = _app(tmp)
             first = _fill(app, running='researcher')
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 await app.open_subagent(first)
                 await pilot.pause()
                 assert 'running' in render_text(app.query_one('#agent-header').render())
 
                 first.finish('it has three modules')
                 app.announce_tree_change(first)
-                for _ in range(20):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: 'done' in render_text(app.query_one('#agent-header').render()))
                 assert 'done' in render_text(app.query_one('#agent-header').render())
 
     asyncio.run(inner())
@@ -350,7 +340,6 @@ def test_a_message_from_a_subagent_goes_to_the_running_turn():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 assert app.root_run() is None
 
                 enqueued: list[str] = []
@@ -371,8 +360,12 @@ def test_a_message_from_a_subagent_goes_to_the_running_turn():
                         task='go',
                     )
                 )
-                for _ in range(20):
-                    await pilot.pause()
+                await wait_until(
+                    pilot,
+                    lambda: any(
+                        'sent its message' in render_text(child.render()) for child in app.query_one(ChatLog).children
+                    ),
+                )
                 chat = app.query_one(ChatLog)
                 assert any('sent its message' in render_text(child.render()) for child in chat.children)
                 app._turn_active = False
@@ -393,8 +386,7 @@ def test_the_messages_that_arrive_while_idle_wait_for_the_next_turn():
                 builder=lambda: lambda profile: None,
             )
             app = _app(tmp, summoner=summoner)
-            async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(120, 40)):
                 assert app.take_subagent_messages() == []
                 assert app._summoner is summoner
                 # The listener was attached on mount, pointing at the app.
@@ -413,8 +405,7 @@ def test_stop_subagents_reaches_the_summoner():
                 builder=lambda: lambda profile: None,
             )
             app = _app(tmp, summoner=summoner)
-            async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(120, 40)):
                 called: list[bool] = []
                 summoner.cancel_all = lambda: called.append(True)  # type: ignore[method-assign]
                 app.stop_subagents()
@@ -431,8 +422,7 @@ def test_loading_another_session_swaps_the_tree():
             first_tree = app._agent_tree.active
             assert len(first_tree) == 3
 
-            async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
+            async with app.run_test(size=(120, 40)):
                 other = app._store.create_session()
                 app.bind_session(other)
                 await app.query_one(ChatLog).clear()

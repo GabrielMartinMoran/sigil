@@ -16,7 +16,9 @@ import asyncio
 import tempfile
 from pathlib import Path
 
+import pytest
 from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 from textual.widgets import OptionList
 
 from src.engine.providers.bootstrap import ProviderPaths, build_service
@@ -35,6 +37,7 @@ from src.ui.widgets.effort_screen import EffortScreen
 from src.ui.widgets.grouped_model_screen import GroupedModelScreen
 from src.ui.widgets.model_picker_screen import ModelPickerScreen
 from src.ui.widgets.prompt_input import PromptInput
+from tests.ui_helpers import wait_until
 
 DEEPSEEK = ModelCapability(
     name='deepseek-v4.1-flash',
@@ -90,7 +93,7 @@ async def _prepared(tmp_path: Path, kind=ProviderKind.OPENROUTER, alias: str = '
 def _app(tmp: str, service=None) -> SigilApp:
     store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
     return SigilApp(
-        agent=Agent((service or _service(Path(tmp))).current_model(), instructions='x'),
+        agent=Agent(TestModel(custom_output_text='ok'), instructions='x'),
         store=store,
         session=store.create_session(),
         model_service=service,
@@ -106,11 +109,9 @@ def test_ctrl_m_opens_the_model_picker():
             service = await _prepared(Path(tmp), ProviderKind.OPENCODE, 'ds')
             app = _app(tmp, service)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 app.query_one(PromptInput).focus()
                 await pilot.press('ctrl+m')
-                for _ in range(8):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: isinstance(app.screen, GroupedModelScreen))
                 assert isinstance(app.screen, GroupedModelScreen)
 
     asyncio.run(inner())
@@ -122,34 +123,36 @@ def test_ctrl_l_opens_the_effort_picker():
             service = await _prepared(Path(tmp), ProviderKind.OPENCODE, 'ds')
             app = _app(tmp, service)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 app.query_one(PromptInput).focus()
                 await pilot.press('ctrl+l')
-                for _ in range(8):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: isinstance(app.screen, EffortScreen))
                 assert isinstance(app.screen, EffortScreen)
 
     asyncio.run(inner())
 
 
-def test_enter_still_sends_a_message_with_the_shortcuts_wired():
+def test_enter_still_sends_a_message_with_the_shortcuts_wired(monkeypatch: pytest.MonkeyPatch) -> None:
     """The regression a global `ctrl+m` binding caused: Enter stopped working."""
+    import pydantic_ai.models
+
+    monkeypatch.setattr(pydantic_ai.models, 'ALLOW_MODEL_REQUESTS', False)
 
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             service = await _prepared(Path(tmp), ProviderKind.OPENCODE, 'ds')
             app = _app(tmp, service)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 field = app.query_one(PromptInput)
                 field.focus()
                 field.value = 'hello'
                 await pilot.press('enter')
-                for _ in range(8):
-                    await pilot.pause()
-                # The prompt cleared and no modal opened: it was sent, not captured.
+                await asyncio.wait_for(app.workers.wait_for_complete(), timeout=5)
+                # The prompt cleared and the turn completed without opening a modal.
                 assert field.value == ''
                 assert not isinstance(app.screen, (ModelPickerScreen, EffortScreen))
+                assert not app._turn_active
+                assert len(app._session.messages) == 2
+                assert app._session.messages[-1].parts[0].content == 'ok'
 
     asyncio.run(inner())
 
@@ -160,15 +163,12 @@ def test_ctrl_m_does_not_swallow_the_typed_text():
             service = await _prepared(Path(tmp), ProviderKind.OPENCODE, 'ds')
             app = _app(tmp, service)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 field = app.query_one(PromptInput)
                 field.focus()
                 field.value = 'hola'
                 await pilot.press('ctrl+m')
-                for _ in range(8):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: isinstance(app.screen, GroupedModelScreen))
                 await pilot.press('escape')
-                await pilot.pause()
                 assert field.value == 'hola'
 
     asyncio.run(inner())
@@ -229,10 +229,8 @@ def test_the_effort_picker_offers_the_real_levels_of_the_model():
             service = await _prepared(Path(tmp), ProviderKind.OPENCODE, 'ds')
             app = _app(tmp, service)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 await pilot.press('ctrl+l')
-                for _ in range(8):
-                    await pilot.pause()
+                await wait_until(pilot, lambda: isinstance(app.screen, EffortScreen))
 
                 screen = app.screen
                 assert isinstance(screen, EffortScreen)
@@ -253,9 +251,8 @@ def test_a_cold_start_fetches_the_catalogue_once(tmp_path):
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, restarted)
-            async with app.run_test(size=(120, 40)) as pilot:
-                for _ in range(12):
-                    await pilot.pause()
+            async with app.run_test(size=(120, 40)):
+                await asyncio.wait_for(app.workers.wait_for_complete(), timeout=5)
                 assert catalog.fetches == 1
 
     asyncio.run(inner())
@@ -269,9 +266,8 @@ def test_a_second_start_does_not_refetch_when_the_cache_is_warm(tmp_path):
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, service)
-            async with app.run_test(size=(120, 40)) as pilot:
-                for _ in range(12):
-                    await pilot.pause()
+            async with app.run_test(size=(120, 40)):
+                await asyncio.wait_for(app.workers.wait_for_complete(), timeout=5)
                 # `refresh_capability` runs once and fills the cache.
                 assert service.catalog.cached(service.list_accounts()[0]) is not None
 

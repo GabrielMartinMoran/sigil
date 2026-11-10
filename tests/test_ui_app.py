@@ -17,14 +17,7 @@ from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import AssistantBlock, ChatLog, ToolCallBlock
 from src.ui.widgets.command_menu import CommandMenu
 from src.ui.widgets.prompt_input import PromptInput
-from tests.ui_helpers import render_text
-
-
-async def _wait_idle(app, pilot, attempts: int = 40) -> None:
-    for _ in range(attempts):
-        await pilot.pause()
-        if not app._turn_active:
-            return
+from tests.ui_helpers import render_text, wait_for_turn
 
 
 def _make_app(agent: Agent, tmp: str, tool_logger: ToolLoggerHub | None = None) -> SigilApp:
@@ -40,10 +33,9 @@ def test_app_runs_turn_and_renders_chat(monkeypatch):
             agent = Agent(TestModel(custom_output_text='answer'), instructions='x')
             app = _make_app(agent, tmp)
             async with app.run_test() as pilot:
-                await pilot.pause()
                 await pilot.press('h', 'e', 'l', 'l', 'o')
                 await pilot.press('enter')
-                await _wait_idle(app, pilot)
+                await wait_for_turn(app)
 
                 chat = app.query_one(ChatLog)
                 assert len(chat.children) >= 2  # user message + answer
@@ -59,10 +51,8 @@ def test_command_menu_filters_and_selects(monkeypatch):
             agent = Agent(TestModel(custom_output_text='ok'), instructions='x')
             app = _make_app(agent, tmp)
             async with app.run_test() as pilot:
-                await pilot.pause()
                 app.query_one(PromptInput).value = ''
                 await pilot.press('slash')
-                await pilot.pause()
 
                 menu = app.query_one(CommandMenu)
                 assert menu.display is True
@@ -71,12 +61,10 @@ def test_command_menu_filters_and_selects(monkeypatch):
                 assert menu.option_count == len(COMMANDS)
 
                 await pilot.press('n')
-                await pilot.pause()
                 assert menu.option_count == 1
                 assert menu.get_option_at_index(0).id == '/new'
 
                 await pilot.press('enter')
-                await pilot.pause()
                 assert menu.display is False
 
     asyncio.run(inner())
@@ -103,11 +91,8 @@ def test_mcp_command_without_servers_explains_how_to_configure(monkeypatch):
             agent = Agent(TestModel(custom_output_text='ok'), instructions='x')
             app = _make_app(agent, tmp)
             async with app.run_test() as pilot:
-                await pilot.pause()
-                await pilot.press('/')
-                await pilot.press('m', 'c', 'p')
+                app.query_one(PromptInput).value = '/mcp'
                 await pilot.press('enter')
-                await pilot.pause()
 
                 assert any('mcp_servers' in text for text in _chat_texts(app))
 
@@ -126,8 +111,7 @@ def test_startup_notices_are_rendered(monkeypatch):
                 session=store.create_session(),
                 startup_notices=('mcp_servers is invalid',),
             )
-            async with app.run_test() as pilot:
-                await pilot.pause()
+            async with app.run_test():
                 assert any('mcp_servers is invalid' in text for text in _chat_texts(app))
 
     asyncio.run(inner())
@@ -146,10 +130,9 @@ def test_tool_call_and_result_are_rendered(monkeypatch):
 
             app = _make_app(agent, tmp, tool_logger)
             async with app.run_test() as pilot:
-                await pilot.pause()
-                await pilot.press('h', 'i')
+                app.query_one(PromptInput).value = 'hi'
                 await pilot.press('enter')
-                await _wait_idle(app, pilot)
+                await wait_for_turn(app)
 
                 widgets = list(app.query_one(ChatLog).children)
                 blocks = [widget for widget in widgets if isinstance(widget, ToolCallBlock)]
@@ -187,10 +170,9 @@ def test_tool_error_is_rendered_as_notice(monkeypatch):
 
             app = _make_app(agent, tmp, tool_logger)
             async with app.run_test() as pilot:
-                await pilot.pause()
-                await pilot.press('h', 'i')
+                app.query_one(PromptInput).value = 'hi'
                 await pilot.press('enter')
-                await _wait_idle(app, pilot)
+                await wait_for_turn(app)
 
                 widgets = list(app.query_one(ChatLog).children)
                 blocks = [widget for widget in widgets if isinstance(widget, ToolCallBlock)]
@@ -209,7 +191,6 @@ def test_autoscroll_only_when_at_bottom(monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(Agent(TestModel(), instructions='x'), tmp)
             async with app.run_test(size=(80, 24)) as pilot:
-                await pilot.pause()
                 chat = app.query_one(ChatLog)
 
                 for index in range(60):
@@ -241,7 +222,6 @@ def test_autoscroll_follows_streaming_growth(monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(Agent(TestModel(), instructions='x'), tmp)
             async with app.run_test(size=(80, 24)) as pilot:
-                await pilot.pause()
                 chat = app.query_one(ChatLog)
 
                 for index in range(40):
@@ -272,10 +252,10 @@ def test_markdown_output_is_rendered_in_app(monkeypatch):
             agent = Agent(TestModel(custom_output_text='# Heading\n\nThis is **bold**.'), instructions='x')
             app = _make_app(agent, tmp)
             async with app.run_test(size=(90, 30)) as pilot:
-                await pilot.pause()
-                await pilot.press('h', 'i')
+                app.query_one(PromptInput).value = 'hi'
                 await pilot.press('enter')
-                await _wait_idle(app, pilot)
+                await wait_for_turn(app)
+                await pilot.pause()
 
                 svg = app.export_screenshot()
                 assert 'Heading' in svg
@@ -313,10 +293,9 @@ def test_step_limit_gives_the_turn_one_last_answer(monkeypatch):
             session = store.create_session()
             app = SigilApp(agent=agent, store=store, session=session, tool_logger=tool_logger)
             async with app.run_test() as pilot:
-                await pilot.pause()
-                await pilot.press('h', 'i')
+                app.query_one(PromptInput).value = 'hi'
                 await pilot.press('enter')
-                await _wait_idle(app, pilot)
+                await wait_for_turn(app)
 
                 # The turn hit the limit; it says so and it kept its context.
                 assert any('Step limit' in text for text in _chat_texts(app))
@@ -331,7 +310,7 @@ def test_step_limit_gives_the_turn_one_last_answer(monkeypatch):
                 sessions = store.list_sessions()
                 saved = next((s for s in sessions if s.id == session.id), None)
                 assert saved is not None
-                await pilot.press('a', 'g', 'a', 'i', 'n')
+                app.query_one(PromptInput).value += 'again'
 
                 reloaded = store.load(session.id)
                 assert reloaded is not None and len(reloaded.messages) == len(app._history)
@@ -339,9 +318,9 @@ def test_step_limit_gives_the_turn_one_last_answer(monkeypatch):
                 # The next turn starts with all the previous context.
                 prior = len(app._history)
                 monkeypatch.setattr(appmod, 'load_settings', lambda *a, **k: SigilSettings(max_steps=20))
-                await pilot.press('a', 'g', 'a', 'i', 'n')
+                app.query_one(PromptInput).value += 'again'
                 await pilot.press('enter')
-                await _wait_idle(app, pilot)
+                await wait_for_turn(app)
                 assert len(app._history) > prior
 
     asyncio.run(inner())
@@ -382,10 +361,9 @@ def test_turn_is_not_cut_by_pydantic_ai_default_request_limit(monkeypatch):
 
             app = _make_app(agent, tmp)
             async with app.run_test() as pilot:
-                await pilot.pause()
-                await pilot.press('h', 'i')
+                app.query_one(PromptInput).value = 'hi'
                 await pilot.press('enter')
-                await _wait_idle(app, pilot, attempts=400)
+                await wait_for_turn(app, timeout=10)
 
                 texts = _chat_texts(app)
                 assert not any('request_limit' in text for text in texts)
@@ -424,10 +402,9 @@ def test_checkpoint_persists_progress_during_turn(monkeypatch):
 
             app = SigilApp(agent=agent, store=store, session=session, tool_logger=tool_logger)
             async with app.run_test() as pilot:
-                await pilot.pause()
-                await pilot.press('h', 'i')
+                app.query_one(PromptInput).value = 'hi'
                 await pilot.press('enter')
-                await _wait_idle(app, pilot)
+                await wait_for_turn(app)
 
             assert seen, 'the tool never got to run'
             assert seen[0] >= 2  # user prompt + model response
@@ -497,12 +474,9 @@ def test_context_command_shows_breakdown_and_scope(monkeypatch):
                 workspace=workspace,
             )
             async with app.run_test() as pilot:
-                await pilot.pause()
                 scope.observe('read_file', {'path': 'src/x.py'})
-                await pilot.press('/')
-                await pilot.press('c', 'o', 'n', 't', 'e', 'x', 't')
+                app.query_one(PromptInput).value = '/context'
                 await pilot.press('enter')
-                await pilot.pause()
 
                 text = '\n'.join(_chat_texts(app))
                 assert 'Context' in text

@@ -32,7 +32,7 @@ from src.ui.app import SigilApp
 from src.ui.messages import NodeOpened
 from src.ui.widgets.agent_view import AgentView
 from src.ui.widgets.chat_log import ChatLog, SummonBlock
-from tests.ui_helpers import render_text
+from tests.ui_helpers import render_text, wait_until
 
 
 def _app(tmp: str, *, with_summoner: bool = True) -> SigilApp:
@@ -119,7 +119,6 @@ def test_clicking_a_spawn_opens_the_subagent():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 node = _node(app)
                 block = _spawn_block(app, node)
                 await app.query_one(ChatLog).mount(block)
@@ -144,7 +143,6 @@ def test_the_click_resolves_the_short_id_the_block_shows():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 node = _node(app)
                 block = _spawn_block(app, node)
                 await app.query_one(ChatLog).mount(block)
@@ -166,10 +164,14 @@ def test_a_click_on_a_node_this_session_lost_says_so():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 app.post_message(NodeOpened('deadbeef'))
-                for _ in range(30):
-                    await pilot.pause()
+                await wait_until(
+                    pilot,
+                    lambda: any(
+                        'not part of this session' in render_text(child.render())
+                        for child in app.query_one(ChatLog).children
+                    ),
+                )
                 return [render_text(child.render()) for child in app.query_one(ChatLog).children]
 
     texts = asyncio.run(inner())
@@ -181,14 +183,12 @@ def test_a_click_does_not_open_anything_while_the_block_has_no_id():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 _node(app)
                 block = _spawn_block(app, None, with_id=False)
                 await app.query_one(ChatLog).mount(block)
                 await pilot.pause()
                 await pilot.click(block)
-                for _ in range(20):
-                    await pilot.pause()
+                await asyncio.wait_for(app.workers.wait_for_complete(), timeout=5)
                 return app.subagent_open
 
     assert asyncio.run(inner()) is False
@@ -199,7 +199,6 @@ def test_opening_by_click_also_restores_the_chat_on_escape():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.pause()
                 node = _node(app)
                 block = _spawn_block(app, node)
                 await app.query_one(ChatLog).mount(block)

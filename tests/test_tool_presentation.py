@@ -40,6 +40,7 @@ from src.engine.tooling.registrar import ToolRegistrar
 from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import ChatLog, ToolCallBlock, ToolGroupHeader
 from src.ui.widgets.rows import fit
+from tests.ui_helpers import ChatApp
 
 OK = RunToolOutput(returncode=0, stdout='.........\n9 passed in 0.45s\n')
 FAILED = RunToolOutput(
@@ -195,40 +196,33 @@ def test_fit_drops_the_right_half_rather_than_leaving_a_stub():
 
 def test_the_block_shows_the_summary_and_the_duration_instead_of_a_repr():
     async def inner():
-        with tempfile.TemporaryDirectory() as tmp:
-            store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
-            app = SigilApp(
-                agent=Agent(TestModel(custom_output_text='ok'), instructions='x'),
-                store=store,
-                session=store.create_session(),
-            )
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
-                chat = app.query_one(ChatLog)
-                await chat.add_tool_call('run', {'cmds': ['pytest -q']})
-                await pilot.pause()
-                block = app.query_one(ToolCallBlock)
-                # Pending is animated, not a frozen check or an ellipsis.
-                assert block.pending
-                first = block._state_mark()
-                block._advance_pending()
-                assert block._state_mark() != first
-                assert block._pending_timer is not None
-                assert 'running' in block._header().plain
-                assert '9 passed' not in block._header().plain
+        app = ChatApp()
+        async with app.run_test(size=(100, 30)) as pilot:
+            chat = app.query_one(ChatLog)
+            await chat.add_tool_call('run', {'cmds': ['pytest -q']})
+            await pilot.pause()
+            block = app.query_one(ToolCallBlock)
+            # Pending is animated, not a frozen check or an ellipsis.
+            assert block.pending
+            first = block._state_mark()
+            block._advance_pending()
+            assert block._state_mark() != first
+            assert block._pending_timer is not None
+            assert 'running' in block._header().plain
+            assert '9 passed' not in block._header().plain
 
-                chat.set_tool_summary('run', ToolSummary('9 passed in 0.45s', 'good'), 450)
-                await chat.add_tool_result('run', OK)
-                await pilot.pause()
-                header = block._header().plain
-                assert '9 passed in 0.45s' in header
-                assert '450ms' in header
-                assert 'returncode=' not in header
-                assert block._state_mark() == '✓'
-                assert block._pending_timer is None
-                assert 'running' not in header
-                # Flush right on the width the block actually has.
-                assert block._header().cell_len == block.size.width
+            chat.set_tool_summary('run', ToolSummary('9 passed in 0.45s', 'good'), 450)
+            await chat.add_tool_result('run', OK)
+            await pilot.pause()
+            header = block._header().plain
+            assert '9 passed in 0.45s' in header
+            assert '450ms' in header
+            assert 'returncode=' not in header
+            assert block._state_mark() == '✓'
+            assert block._pending_timer is None
+            assert 'running' not in header
+            # Flush right on the width the block actually has.
+            assert block._header().cell_len == block.size.width
 
     asyncio.run(inner())
 
@@ -237,27 +231,20 @@ def test_a_failed_result_is_red_and_marks_the_outcome_as_failed():
     """A bad result is a visible failure even when the invocation returned."""
 
     async def inner():
-        with tempfile.TemporaryDirectory() as tmp:
-            store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
-            app = SigilApp(
-                agent=Agent(TestModel(custom_output_text='ok'), instructions='x'),
-                store=store,
-                session=store.create_session(),
-            )
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
-                chat = app.query_one(ChatLog)
-                await chat.add_tool_call('run', {'cmds': ['pytest -q']})
-                chat.set_tool_summary('run', ToolSummary('1 failed', 'bad'), 610)
-                await chat.add_tool_result('run', FAILED)
-                await pilot.pause()
-                block = app.query_one(ToolCallBlock)
-                assert block._state_mark() == '✗'
-                summary = block._outcome()
-                assert summary is not None
-                assert '1 failed' in summary.plain
-                # Painted with the theme's error color, which is what "bad" means.
-                assert app.theme_variables['error'] in [str(span.style) for span in summary.spans]
+        app = ChatApp()
+        async with app.run_test(size=(100, 30)) as pilot:
+            chat = app.query_one(ChatLog)
+            await chat.add_tool_call('run', {'cmds': ['pytest -q']})
+            chat.set_tool_summary('run', ToolSummary('1 failed', 'bad'), 610)
+            await chat.add_tool_result('run', FAILED)
+            await pilot.pause()
+            block = app.query_one(ToolCallBlock)
+            assert block._state_mark() == '✗'
+            summary = block._outcome()
+            assert summary is not None
+            assert '1 failed' in summary.plain
+            # Painted with the theme's error color, which is what "bad" means.
+            assert app.theme_variables['error'] in [str(span.style) for span in summary.spans]
 
     asyncio.run(inner())
 
@@ -279,7 +266,6 @@ def test_the_header_follows_the_width_and_drops_the_outcome_when_there_is_no_roo
                 session=store.create_session(),
             )
             async with app.run_test(size=(120, 30)) as pilot:
-                await pilot.pause()
                 chat = app.query_one(ChatLog)
                 await chat.add_tool_call('write_file', {'path': 'tests/test_roadmap.py', 'content': 'x' * 400})
                 chat.set_tool_summary('write_file', ToolSummary('created · 1.2 KB', 'neutral'), 12)
@@ -306,28 +292,13 @@ def test_the_header_follows_the_width_and_drops_the_outcome_when_there_is_no_roo
     asyncio.run(inner())
 
 
-def test_a_reloaded_session_has_no_duration_to_lie_about():
+def test_a_reloaded_session_has_no_duration_to_lie_about() -> None:
     """`duration_ms` lives in the event and is not persisted: draw nothing, not 0.0s."""
-
-    async def inner():
-        with tempfile.TemporaryDirectory() as tmp:
-            store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
-            app = SigilApp(
-                agent=Agent(TestModel(custom_output_text='ok'), instructions='x'),
-                store=store,
-                session=store.create_session(),
-            )
-            async with app.run_test(size=(100, 30)) as pilot:
-                await pilot.pause()
-                block = ToolCallBlock('run', {'cmds': ['ls']}, classes='tool-call')
-                await app.query_one(ChatLog).mount(block)
-                block.set_result(RunToolOutput(returncode=0, stdout='a\n'))
-                await pilot.pause()
-                header = block._header().plain
-                assert 'ms' not in header
-                assert '0.0s' not in header
-
-    asyncio.run(inner())
+    block = ToolCallBlock('run', {'cmds': ['ls']}, classes='tool-call')
+    block.set_result(RunToolOutput(returncode=0, stdout='a\n'))
+    header = block._header().plain
+    assert 'ms' not in header
+    assert '0.0s' not in header
 
 
 # --- the batch ---------------------------------------------------------------
@@ -356,70 +327,56 @@ def test_a_batch_gets_one_header_and_a_single_call_does_not():
     """
 
     async def inner():
-        with tempfile.TemporaryDirectory() as tmp:
-            store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
-            app = SigilApp(
-                agent=Agent(TestModel(custom_output_text='ok'), instructions='x'),
-                store=store,
-                session=store.create_session(),
-            )
-            async with app.run_test(size=(120, 30)) as pilot:
-                await pilot.pause()
-                chat = app.query_one(ChatLog)
+        app = ChatApp()
+        async with app.run_test(size=(120, 30)) as pilot:
+            chat = app.query_one(ChatLog)
 
-                await _batch(chat, [('run', {'cmds': ['ls']})])
-                await pilot.pause()
-                headers = _headers(chat)
-                assert len(headers) == 1
-                # One call needs no grouping: the row explains itself.
-                assert headers[0].display is False
+            await _batch(chat, [('run', {'cmds': ['ls']})])
+            await pilot.pause()
+            headers = _headers(chat)
+            assert len(headers) == 1
+            # One call needs no grouping: the row explains itself.
+            assert headers[0].display is False
 
-                # A second call of the same step joins the same batch.
-                await _batch(chat, [('read_file', {'path': 'a.py'})])
-                await pilot.pause()
-                assert len(_headers(chat)) == 1
-                assert headers[0].display is True
-                assert headers[0]._rows == _rows(chat)
+            # A second call of the same step joins the same batch.
+            await _batch(chat, [('read_file', {'path': 'a.py'})])
+            await pilot.pause()
+            assert len(_headers(chat)) == 1
+            assert headers[0].display is True
+            assert headers[0]._rows == _rows(chat)
 
-                # The model answers: the next calls belong to a new step.
-                await chat.begin_response()
-                await chat.add_text('now the other one')
-                await _batch(chat, [('run', {'cmds': ['pwd']}), ('run', {'cmds': ['whoami']})])
-                await pilot.pause()
-                assert len(_headers(chat)) == 2
-                assert _headers(chat)[1].display is True
+            # The model answers: the next calls belong to a new step.
+            await chat.begin_response()
+            await chat.add_text('now the other one')
+            await _batch(chat, [('run', {'cmds': ['pwd']}), ('run', {'cmds': ['whoami']})])
+            await pilot.pause()
+            assert len(_headers(chat)) == 2
+            assert _headers(chat)[1].display is True
 
     asyncio.run(inner())
 
 
 def test_the_header_counts_what_is_left_and_then_stops_counting():
     async def inner():
-        with tempfile.TemporaryDirectory() as tmp:
-            store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
-            app = SigilApp(
-                agent=Agent(TestModel(custom_output_text='ok'), instructions='x'),
-                store=store,
-                session=store.create_session(),
-            )
-            async with app.run_test(size=(120, 30)) as pilot:
-                await pilot.pause()
-                chat = app.query_one(ChatLog)
-                await _batch(chat, [('run', {'cmds': ['a']}), ('run', {'cmds': ['b']}), ('read_file', {'path': 'c'})])
-                await pilot.pause()
-                header = _headers(chat)[0]
-                assert '3 tools' in header.render().plain
-                assert '0 / 3 done' in header.render().plain
+        app = ChatApp()
+        async with app.run_test(size=(120, 30)) as pilot:
+            chat = app.query_one(ChatLog)
+            await _batch(chat, [('run', {'cmds': ['a']}), ('run', {'cmds': ['b']}), ('read_file', {'path': 'c'})])
+            await pilot.pause()
+            header = _headers(chat)[0]
+            assert '3 tools' in header.render().plain
+            assert '0 / 3 done' in header.render().plain
 
-                await chat.add_tool_result('run', 'ok')
-                await pilot.pause()
-                assert '1 / 3 done' in header.render().plain
+            await chat.add_tool_result('run', 'ok')
+            await pilot.pause()
+            assert '1 / 3 done' in header.render().plain
 
-                await chat.add_tool_result('run', 'ok')
-                await chat.add_tool_result('read_file', 'ok')
-                await pilot.pause()
-                # Closed: no counter, because there is nothing left to wait for.
-                assert '[' not in header.render().plain
-                assert header.closed is True
+            await chat.add_tool_result('run', 'ok')
+            await chat.add_tool_result('read_file', 'ok')
+            await pilot.pause()
+            # Closed: no counter, because there is nothing left to wait for.
+            assert '[' not in header.render().plain
+            assert header.closed is True
 
     asyncio.run(inner())
 
@@ -428,24 +385,17 @@ def test_the_header_says_how_many_calls_raised():
     """A raised call is counted; a bad result is not, and shows on its own row."""
 
     async def inner():
-        with tempfile.TemporaryDirectory() as tmp:
-            store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
-            app = SigilApp(
-                agent=Agent(TestModel(custom_output_text='ok'), instructions='x'),
-                store=store,
-                session=store.create_session(),
-            )
-            async with app.run_test(size=(120, 30)) as pilot:
-                await pilot.pause()
-                chat = app.query_one(ChatLog)
-                await _batch(chat, [('run', {'cmds': ['a']}), ('read_file', {'path': 'b'})])
-                await chat.add_tool_error('run', 'RuntimeError: boom')
-                await chat.add_tool_result('read_file', 'ok')
-                await pilot.pause()
-                header = _headers(chat)[0]
-                assert '1 error' in header.render().plain
-                # It survives a reload: the rows keep their own state.
-                assert _rows(chat)[0]._state_mark() == '✗'
+        app = ChatApp()
+        async with app.run_test(size=(120, 30)) as pilot:
+            chat = app.query_one(ChatLog)
+            await _batch(chat, [('run', {'cmds': ['a']}), ('read_file', {'path': 'b'})])
+            await chat.add_tool_error('run', 'RuntimeError: boom')
+            await chat.add_tool_result('read_file', 'ok')
+            await pilot.pause()
+            header = _headers(chat)[0]
+            assert '1 error' in header.render().plain
+            # It survives a reload: the rows keep their own state.
+            assert _rows(chat)[0]._state_mark() == '✗'
 
     asyncio.run(inner())
 
@@ -454,27 +404,20 @@ def test_text_between_calls_starts_a_new_batch():
     """The grouping is inference, and this is the rule: a run of calls with no answer."""
 
     async def inner():
-        with tempfile.TemporaryDirectory() as tmp:
-            store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
-            app = SigilApp(
-                agent=Agent(TestModel(custom_output_text='ok'), instructions='x'),
-                store=store,
-                session=store.create_session(),
-            )
-            async with app.run_test(size=(120, 30)) as pilot:
-                await pilot.pause()
-                chat = app.query_one(ChatLog)
-                await _batch(chat, [('run', {'cmds': ['a']}), ('run', {'cmds': ['b']})])
-                await chat.add_tool_result('run', 'ok')
-                await chat.add_tool_result('run', 'ok')
-                await pilot.pause()
+        app = ChatApp()
+        async with app.run_test(size=(120, 30)) as pilot:
+            chat = app.query_one(ChatLog)
+            await _batch(chat, [('run', {'cmds': ['a']}), ('run', {'cmds': ['b']})])
+            await chat.add_tool_result('run', 'ok')
+            await chat.add_tool_result('run', 'ok')
+            await pilot.pause()
 
-                # The model answers, then asks for more: a second step, not the same one.
-                await chat.begin_response()
-                await chat.add_text('now the tests')
-                await _batch(chat, [('read_file', {'path': 'x'}), ('read_file', {'path': 'y'})])
-                await pilot.pause()
-                assert len(_headers(chat)) == 2
+            # The model answers, then asks for more: a second step, not the same one.
+            await chat.begin_response()
+            await chat.add_text('now the tests')
+            await _batch(chat, [('read_file', {'path': 'x'}), ('read_file', {'path': 'y'})])
+            await pilot.pause()
+            assert len(_headers(chat)) == 2
 
     asyncio.run(inner())
 
@@ -482,102 +425,40 @@ def test_text_between_calls_starts_a_new_batch():
 # --- collapsing --------------------------------------------------------------
 
 
-def test_output_is_collapsed_by_default_and_says_nothing_extra():
+def test_output_is_collapsed_by_default_and_says_nothing_extra() -> None:
     """A row that says `9 passed` does not need a second line saying there is output."""
-
-    async def inner():
-        with tempfile.TemporaryDirectory() as tmp:
-            store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
-            app = SigilApp(
-                agent=Agent(TestModel(custom_output_text='ok'), instructions='x'),
-                store=store,
-                session=store.create_session(),
-            )
-            async with app.run_test(size=(120, 30)) as pilot:
-                await pilot.pause()
-                chat = app.query_one(ChatLog)
-                await chat.add_tool_call('run', {'cmds': ['pytest -q']})
-                chat.set_tool_summary('run', ToolSummary('9 passed in 0.45s', 'good'), 450)
-                await chat.add_tool_result('run', RunToolOutput(returncode=0, stdout='one\ntwo\nthree\n'))
-                await pilot.pause()
-                block = _rows(chat)[0]
-                assert block._expanded is False
-                assert block._body() == []
-
-    asyncio.run(inner())
+    block = ToolCallBlock('run', {'cmds': ['pytest -q']})
+    block.set_summary(ToolSummary('9 passed in 0.45s', 'good'), 450)
+    block.set_result(RunToolOutput(returncode=0, stdout='one\ntwo\nthree\n'))
+    assert block._expanded is False
+    assert block._body() == []
 
 
-def test_a_failure_shows_its_lines_even_collapsed():
+def test_a_failure_shows_its_lines_even_collapsed() -> None:
     """Hiding a failure behind a preference nobody set would hide the actionable part."""
-
-    async def inner():
-        with tempfile.TemporaryDirectory() as tmp:
-            store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
-            app = SigilApp(
-                agent=Agent(TestModel(custom_output_text='ok'), instructions='x'),
-                store=store,
-                session=store.create_session(),
-            )
-            async with app.run_test(size=(120, 30)) as pilot:
-                await pilot.pause()
-                chat = app.query_one(ChatLog)
-                await chat.add_tool_call('run', {'cmds': ['pytest -q']})
-                chat.set_tool_summary('run', ToolSummary('1 failed', 'bad'), 610)
-                output = 'FAILED tests/test_x.py::test_y - NameError\nline two\nline three\nline four\nline five\n'
-                await chat.add_tool_result('run', RunToolOutput(returncode=1, stdout=output))
-                await pilot.pause()
-                block = _rows(chat)[0]
-                body = [line.plain for line in block._body()]
-                assert any('NameError' in line for line in body)
-                assert all('↳' in line for line in body if 'FAILED' in line)
-                # Capped: the transcript is not a terminal.
-                assert len(body) <= 4
-
-    asyncio.run(inner())
+    block = ToolCallBlock('run', {'cmds': ['pytest -q']})
+    block.set_summary(ToolSummary('1 failed', 'bad'), 610)
+    output = 'FAILED tests/test_x.py::test_y - NameError\nline two\nline three\nline four\nline five\n'
+    block.set_result(RunToolOutput(returncode=1, stdout=output))
+    body = [line.plain for line in block._body()]
+    assert any('NameError' in line for line in body)
+    assert all('↳' in line for line in body if 'FAILED' in line)
+    assert len(body) <= 4
 
 
-def test_a_tool_that_raised_shows_the_error_even_collapsed():
-    async def inner():
-        with tempfile.TemporaryDirectory() as tmp:
-            store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
-            app = SigilApp(
-                agent=Agent(TestModel(custom_output_text='ok'), instructions='x'),
-                store=store,
-                session=store.create_session(),
-            )
-            async with app.run_test(size=(120, 30)) as pilot:
-                await pilot.pause()
-                chat = app.query_one(ChatLog)
-                await chat.add_tool_call('read_file', {'path': 'nope.py'})
-                await chat.add_tool_error('read_file', 'FileToolError: no such file')
-                await pilot.pause()
-                body = [line.plain for line in _rows(chat)[0]._body()]
-                assert any('no such file' in line for line in body)
-
-    asyncio.run(inner())
+def test_a_tool_that_raised_shows_the_error_even_collapsed() -> None:
+    block = ToolCallBlock('read_file', {'path': 'nope.py'})
+    block.set_error('FileToolError: no such file')
+    body = [line.plain for line in block._body()]
+    assert any('no such file' in line for line in body)
 
 
-def test_a_tool_without_a_presenter_says_that_there_is_output():
+def test_a_tool_without_a_presenter_says_that_there_is_output() -> None:
     """Otherwise the row is a ✓ with nothing behind it — an MCP tool, for instance."""
-
-    async def inner():
-        with tempfile.TemporaryDirectory() as tmp:
-            store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
-            app = SigilApp(
-                agent=Agent(TestModel(custom_output_text='ok'), instructions='x'),
-                store=store,
-                session=store.create_session(),
-            )
-            async with app.run_test(size=(120, 30)) as pilot:
-                await pilot.pause()
-                chat = app.query_one(ChatLog)
-                await chat.add_tool_call('mcp_github_create_issue', {'title': 'x'})
-                await chat.add_tool_result('mcp_github_create_issue', 'issue #12 created\nsecond line')
-                await pilot.pause()
-                body = [line.plain for line in _rows(chat)[0]._body()]
-                assert body and '2 lines' in body[0]
-
-    asyncio.run(inner())
+    block = ToolCallBlock('mcp_github_create_issue', {'title': 'x'})
+    block.set_result('issue #12 created\nsecond line')
+    body = [line.plain for line in block._body()]
+    assert body and '2 lines' in body[0]
 
 
 def test_tools_expanded_repaints_what_is_already_on_screen_and_is_remembered():
@@ -592,7 +473,6 @@ def test_tools_expanded_repaints_what_is_already_on_screen_and_is_remembered():
                 preferences_store=prefs,
             )
             async with app.run_test(size=(120, 30)) as pilot:
-                await pilot.pause()
                 chat = app.query_one(ChatLog)
                 await chat.add_tool_call('run', {'cmds': ['ls']})
                 chat.set_tool_summary('run', ToolSummary('2 lines', 'neutral'), 5)
@@ -617,29 +497,22 @@ def test_tools_expanded_repaints_what_is_already_on_screen_and_is_remembered():
 
 def test_should_stop_pending_animation_on_interrupted_turn_and_unmount() -> None:
     async def scenario() -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
-            app = SigilApp(
-                agent=Agent(TestModel(custom_output_text='ok'), instructions='x'),
-                store=store,
-                session=store.create_session(),
-            )
-            async with app.run_test() as pilot:
-                await pilot.pause()
-                chat = app.query_one(ChatLog)
-                await chat.add_tool_call('run', {'cmds': ['sleep 10']})
-                block = app.query_one(ToolCallBlock)
-                assert block._pending_timer is not None
-                chat.finalize()
-                assert not block.pending
-                assert block._state_mark() == '✗'
-                assert block._pending_timer is None
-                assert block.raised
+        app = ChatApp()
+        async with app.run_test():
+            chat = app.query_one(ChatLog)
+            await chat.add_tool_call('run', {'cmds': ['sleep 10']})
+            block = app.query_one(ToolCallBlock)
+            assert block._pending_timer is not None
+            chat.finalize()
+            assert not block.pending
+            assert block._state_mark() == '✗'
+            assert block._pending_timer is None
+            assert block.raised
 
-                await chat.add_tool_call('read_file', {'path': 'a.py'})
-                other = list(app.query(ToolCallBlock))[-1]
-                assert other._pending_timer is not None
-                await other.remove()
-                assert other._pending_timer is None
+            await chat.add_tool_call('read_file', {'path': 'a.py'})
+            other = list(app.query(ToolCallBlock))[-1]
+            assert other._pending_timer is not None
+            await other.remove()
+            assert other._pending_timer is None
 
     asyncio.run(scenario())

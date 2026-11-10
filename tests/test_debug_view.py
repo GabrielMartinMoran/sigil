@@ -6,6 +6,7 @@ import asyncio
 import tempfile
 from pathlib import Path
 
+import pytest
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
@@ -16,6 +17,10 @@ from src.engine.sessions.session_store import SessionStore
 from src.ui.app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.debug_view import AgentDebugView, build_debug_body, build_debug_header
+from src.ui.widgets.prompt_input import PromptInput
+from tests.ui_helpers import wait_for_turn
+
+pytestmark = pytest.mark.usefixtures('memory_databases')
 
 
 def _make_app(tmp: str) -> SigilApp:
@@ -58,13 +63,11 @@ def test_alt_d_replaces_chat_with_debug_view(monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(tmp)
             async with app.run_test() as pilot:
-                await pilot.pause()
                 chat = app.query_one(ChatLog)
                 view = app.query_one(AgentDebugView)
                 assert view.display is False
 
                 await pilot.press('alt+d')
-                await pilot.pause()
 
                 assert app.debug_visible is True
                 assert view.display is True
@@ -74,7 +77,6 @@ def test_alt_d_replaces_chat_with_debug_view(monkeypatch):
                 assert app._turn_active is False
 
                 await pilot.press('alt+d')
-                await pilot.pause()
 
                 assert app.debug_visible is False
                 assert view.display is False
@@ -90,16 +92,11 @@ def test_debug_view_renders_agent_side_sections(monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(tmp)
             async with app.run_test() as pilot:
-                await pilot.pause()
-                await pilot.press('h', 'e', 'l', 'l', 'o')
+                app.query_one(PromptInput).value = 'hello'
                 await pilot.press('enter')
-                for _ in range(40):
-                    await pilot.pause()
-                    if not app._turn_active:
-                        break
+                await wait_for_turn(app)
 
                 await pilot.press('alt+d')
-                await pilot.pause()
 
                 header = _header_text(app)
                 assert 'DEBUG' in header
@@ -121,13 +118,8 @@ def test_debug_command_toggles_and_text_mode(monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(tmp)
             async with app.run_test() as pilot:
-                await pilot.pause()
-
-                await pilot.press('/')
-                for char in 'debug':
-                    await pilot.press(char)
+                app.query_one(PromptInput).value = '/debug'
                 await pilot.press('enter')
-                await pilot.pause()
 
                 assert app.debug_visible is True
                 assert app.query_one(AgentDebugView).display is True
@@ -148,7 +140,6 @@ def test_debug_command_rejects_bad_argument(monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(tmp)
             async with app.run_test() as pilot:
-                await pilot.pause()
                 await app.handle_command('/debug', 'nonsense')
                 await pilot.pause()
                 assert 'Usage: /debug' in _chat_text(app)
@@ -164,7 +155,6 @@ def test_report_without_request_does_not_raise(monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(tmp)
             async with app.run_test() as pilot:
-                await pilot.pause()
                 app.set_debug_visible(True)
                 await pilot.pause()
                 body = _report_text(app)
@@ -185,7 +175,6 @@ def test_refresh_is_coalesced_while_streaming(monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(tmp)
             async with app.run_test() as pilot:
-                await pilot.pause()
                 app.set_debug_visible(True)
                 await pilot.pause()
 
@@ -217,7 +206,6 @@ def test_closing_cancels_a_pending_refresh(monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(tmp)
             async with app.run_test() as pilot:
-                await pilot.pause()
                 app.set_debug_visible(True)
                 await pilot.pause()
 
@@ -247,8 +235,7 @@ def test_should_expose_real_turn_node_timings_in_debug_text() -> None:
     async def scenario() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(tmp)
-            async with app.run_test() as pilot:
-                await pilot.pause()
+            async with app.run_test():
                 worker = app.run_turn('hello')
                 await worker.wait()
                 report = await app.show_debug_text()

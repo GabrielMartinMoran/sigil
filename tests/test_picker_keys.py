@@ -17,6 +17,7 @@ from pathlib import Path
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
+from textual.app import App
 from textual.widgets import Input, OptionList
 
 from src.engine.providers.domain.model_capability import ModelCapability, ModelCatalog
@@ -54,18 +55,16 @@ def _drive(screen, keys: tuple[str, ...], inspect=None):
     """
 
     async def inner():
-        with tempfile.TemporaryDirectory() as tmp:
-            app = _app(tmp)
-            seen: dict[str, object] = {}
-            async with app.run_test() as pilot:
-                app.push_screen(screen)
-                await pilot.pause()
-                for key in keys:
-                    await pilot.press(key)
-                    await pilot.pause()
-                if inspect is not None:
-                    seen['value'] = inspect(screen)
-            return seen.get('value')
+        app = App()
+        seen: dict[str, object] = {}
+        async with app.run_test() as pilot:
+            app.push_screen(screen)
+            await pilot.pause()
+            for key in keys:
+                await pilot.press(key)
+            if inspect is not None:
+                seen['value'] = inspect(screen)
+        return seen.get('value')
 
     return asyncio.run(inner())
 
@@ -146,16 +145,14 @@ def test_enter_after_arrows_picks_the_highlighted_model():
 
 def _screen_result(screen, keys: tuple[str, ...]):
     async def inner():
-        with tempfile.TemporaryDirectory() as tmp:
-            app = _app(tmp)
-            captured: dict[str, object] = {}
-            async with app.run_test() as pilot:
-                app.push_screen(screen, lambda value: captured.setdefault('v', value))
-                await pilot.pause()
-                for key in keys:
-                    await pilot.press(key)
-                    await pilot.pause()
-            return captured.get('v')
+        app = App()
+        captured: dict[str, object] = {}
+        async with app.run_test() as pilot:
+            app.push_screen(screen, lambda value: captured.setdefault('v', value))
+            await pilot.pause()
+            for key in keys:
+                await pilot.press(key)
+        return captured.get('v')
 
     return asyncio.run(inner())
 
@@ -200,12 +197,10 @@ def test_tab_completes_the_highlighted_command():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test() as pilot:
-                await pilot.pause()
                 field = app.query_one(PromptInput)
                 field.value = '/'
                 await pilot.pause()
                 await pilot.press('tab')
-                await pilot.pause()
                 assert field.value == '/new'
 
     asyncio.run(inner())
@@ -216,12 +211,10 @@ def test_tab_adds_a_trailing_space_for_commands_that_take_an_argument():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test() as pilot:
-                await pilot.pause()
                 field = app.query_one(PromptInput)
                 field.value = '/mod'
                 await pilot.pause()
                 await pilot.press('tab')
-                await pilot.pause()
                 assert field.value == '/model '
 
     asyncio.run(inner())
@@ -232,12 +225,10 @@ def test_tab_does_not_run_the_command():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test() as pilot:
-                await pilot.pause()
                 field = app.query_one(PromptInput)
                 field.value = '/'
                 await pilot.pause()
                 await pilot.press('tab')
-                await pilot.pause()
                 # Still on the main screen: completing is not executing.
                 assert app.screen is app.screen_stack[0]
                 assert field.value.startswith('/')
@@ -250,12 +241,10 @@ def test_tab_without_the_menu_does_not_steal_the_focus():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test() as pilot:
-                await pilot.pause()
                 field = app.query_one(PromptInput)
                 field.value = ''
                 await pilot.pause()
                 await pilot.press('tab')
-                await pilot.pause()
                 assert app.focused is field
 
     asyncio.run(inner())
@@ -312,7 +301,6 @@ def test_typing_an_argument_closes_the_menu():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test() as pilot:
-                await pilot.pause()
                 field = app.query_one(PromptInput)
                 field.value = '/agent reviewer'
                 await pilot.pause()
@@ -326,7 +314,6 @@ def test_the_menu_reopens_when_the_argument_is_erased():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test() as pilot:
-                await pilot.pause()
                 field = app.query_one(PromptInput)
                 field.value = '/agent reviewer'
                 await pilot.pause()

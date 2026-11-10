@@ -10,15 +10,13 @@ from __future__ import annotations
 
 import asyncio
 
-from pydantic_ai.models.test import TestModel
+from textual.app import App
 
 from src.engine.providers.domain.auth_method import AuthMethod
 from src.engine.providers.domain.model_capability import ModelCapability, ModelCatalog
 from src.engine.providers.domain.provider_account import ProviderAccount
 from src.engine.providers.domain.provider_kind import ProviderKind
 from src.engine.providers.domain.provider_variant import ProviderVariant
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
 from src.ui.widgets.account_form_screen import AccountFormScreen, NewAccount
 from src.ui.widgets.confirm_screen import ConfirmScreen
 from src.ui.widgets.model_picker_screen import ModelChoice, ModelPickerScreen
@@ -47,23 +45,13 @@ def _screen_result(screen, keys: tuple[str, ...] = ('escape',)):
     """Pushes ``screen`` on a real app, presses ``keys`` and returns the result."""
 
     async def inner():
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmp:
-            store = SessionStore(cwd=tmp, base_dir=__import__('pathlib').Path(tmp) / 's')
-            app = SigilApp(
-                agent=__import__('pydantic_ai').Agent(TestModel(), instructions='x'),
-                store=store,
-                session=store.create_session(),
-            )
-            result: dict[str, object] = {}
-            async with app.run_test() as pilot:
-                app.push_screen(screen, lambda value: result.setdefault('value', value))
-                await pilot.pause()
-                for key in keys:
-                    await pilot.press(key)
-                await pilot.pause()
-            return result.get('value')
+        app = App()
+        result: dict[str, object] = {}
+        async with app.run_test() as pilot:
+            app.push_screen(screen, lambda value: result.setdefault('value', value))
+            await pilot.pause()
+            await pilot.press(*keys)
+        return result.get('value')
 
     return asyncio.run(inner())
 
@@ -170,7 +158,6 @@ def test_picker_returns_the_highlighted_model():
 
 def test_picker_marks_the_current_model():
     screen = ModelPickerScreen(CATALOG, current='openai/gpt-4o-mini')
-    _screen_result(screen, ('escape',))
     rows = [_row_text(model) for model in screen._catalog.models]
     assert any('●' in row for row in rows)
 
