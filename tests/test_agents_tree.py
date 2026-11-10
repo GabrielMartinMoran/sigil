@@ -844,3 +844,86 @@ def test_concurrent_subagents_tag_their_tool_events_without_leaking_to_parent(tm
         any(getattr(part, 'tool_name', '') == 'probe' for msg in node.messages for part in msg.parts) for node in nodes
     )
     assert events[-1].node_id is None
+
+
+def test_configured_subagent_and_nested_child_use_same_model_and_effort(tmp_path):
+    from src.engine.agents.tree.summoner import _ACTIVE_AGENT_MODEL, AgentRunModel
+
+    env = make_env(tmp_path)
+    write_profile(tmp_path, 'reviewer', extra='role: subagent\n')
+    env.registry.refresh()
+    calls = []
+    sent_settings = []
+
+    class TrackingModel(FunctionModel):
+        async def request(self, messages, model_settings, model_request_parameters):
+            sent_settings.append(model_settings)
+            return await super().request(messages, model_settings, model_request_parameters)
+
+    def configured(messages, info):
+        calls.append(_ACTIVE_AGENT_MODEL.get().settings)
+        if len(calls) == 1:
+            return ModelResponse(parts=[ToolCallPart('summon', {'agent': 'reviewer', 'task': 'check'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    selected = AgentRunModel(TrackingModel(configured), {'thinking': 'high'}, 'account:custom')
+    env.summoner._agent_model = lambda name: selected if name == 'worker' else None
+
+    async def run():
+        return await env.summoner.summon(parent_id=None, name='worker', task='go')
+
+    asyncio.run(run())
+    assert len(calls) >= 3
+    assert all(call['thinking'] == 'high' for call in calls)
+    assert all(settings['thinking'] == 'high' for settings in sent_settings)
+    assert [node.model for node in env.tree().nodes()[1:]] == ['account:custom', 'account:custom']
+
+
+def test_concurrent_subagents_do_not_share_model_or_effort(tmp_path):
+    from src.engine.agents.tree.summoner import AgentRunModel, current_agent_model
+
+    env = make_env(tmp_path)
+    write_profile(tmp_path, 'reviewer', extra='role: subagent\n')
+    env.registry.refresh()
+    seen = []
+
+    def answer(label):
+        def handler(messages, info):
+            selected = current_agent_model()
+            seen.append((label, selected.label, selected.settings['thinking']))
+            return ModelResponse(parts=[TextPart('done')])
+
+        return _model(handler)
+
+    selections = {
+        'worker': AgentRunModel(answer('worker'), {'thinking': 'high'}, 'a:model-a'),
+        'reviewer': AgentRunModel(answer('reviewer'), {'thinking': 'low'}, 'b:model-b'),
+    }
+    env.summoner._agent_model = selections.get
+
+    async def run():
+        await asyncio.gather(
+            env.summoner.summon(parent_id=None, name='worker', task='one'),
+            env.summoner.summon(parent_id=None, name='reviewer', task='two'),
+        )
+        assert current_agent_model() is None
+
+    asyncio.run(run())
+    assert sorted(seen) == [('reviewer', 'b:model-b', 'low'), ('worker', 'a:model-a', 'high')]
+
+
+def test_unconfigured_subagent_captures_parent_model_and_effort(tmp_path):
+    from src.engine.agents.tree.summoner import AgentRunModel, current_agent_model
+
+    env = make_env(tmp_path)
+    seen = []
+
+    def handler(messages, info):
+        selected = current_agent_model()
+        seen.append((selected.label, selected.settings))
+        return ModelResponse(parts=[TextPart('done')])
+
+    parent = AgentRunModel(_model(handler), {'thinking': 'medium'}, 'parent:custom')
+    env.summoner._base_model = lambda: parent
+    asyncio.run(env.summoner.summon(parent_id=None, name='worker', task='go'))
+    assert seen == [('parent:custom', {'thinking': 'medium'})]

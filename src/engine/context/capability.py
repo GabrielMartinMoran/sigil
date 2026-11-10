@@ -179,6 +179,12 @@ class ContextViewCapability(AbstractCapability[Any]):
             budget, model_name=request_context.model.model_name, output_reserve=max(budget.output_reserve, output)
         )
         is_root = getattr(ctx.deps, 'node_id', None) is None
+        if not is_root:
+            from src.engine.agents.tree.summoner import current_agent_model
+
+            selected = current_agent_model()
+            if selected is not None:
+                budget = replace(budget, window=selected.window)
         if is_root:
             self.meter.set_overhead(instructions=instructions, tools=tools)
 

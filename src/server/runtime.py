@@ -45,6 +45,7 @@ from src.engine.attachments.content import user_content
 from src.engine.bootstrap import Composition, model_settings
 from src.engine.interaction.models.question_answer import QuestionAnswer
 from src.engine.interaction.models.question_item import QuestionItem
+from src.engine.providers.domain.provider_error import ProviderError
 from src.engine.sessions.recovery import recover_history
 from src.engine.shell import running as running_commands
 from src.engine.tooling.outputs import present_output
@@ -447,7 +448,12 @@ class ServerRuntime:
         if self.busy:
             raise RuntimeError('Cannot start a session while a turn is running.')
         session = self.composition.store.draft_session()
-        session.selection = self.composition.model_service.snapshot().selection
+        session.agent = self.composition.agent_registry.active_name
+        try:
+            selected = self.composition.select_agent_model(session.agent)
+        except ProviderError as exc:
+            raise RuntimeError(f'Agent model: {exc}') from exc
+        session.selection = (selected or self.composition.model_service.snapshot()).selection
         self.composition.bind_session(session)
         self.hub.publish_state('session')
         return session

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +39,7 @@ from src.engine.agents.retry import RetryTransientModelErrors
 from src.engine.agents.rollback import Rollback
 from src.engine.agents.tree.rendering import SUMMON_TOOL, render_notifications, render_peers, summonable
 from src.engine.agents.tree.store import AgentTreeStore
-from src.engine.agents.tree.summoner import SubagentSummoner
+from src.engine.agents.tree.summoner import AgentRunModel, SubagentSummoner, current_agent_model
 from src.engine.agents.tree.tools import register_tree_tools
 from src.engine.attachments.tools import register_image_tools
 from src.engine.context.capability import ContextViewCapability
@@ -62,11 +63,13 @@ from src.engine.mcp.shutdown import read_shutdown_timeout
 from src.engine.mcp.tools import register_mcp_tools
 from src.engine.paths import providers_dir
 from src.engine.providers.bootstrap import ProviderPaths, build_service
+from src.engine.providers.domain.provider_error import ProviderError
 from src.engine.providers.domain.thinking import settings_value as thinking_settings
 from src.engine.providers.factory.unconfigured import UnconfiguredModel
 from src.engine.providers.login.chatgpt_flow import ChatGPTLoginFlow
 from src.engine.providers.login.credential_source import chatgpt_provider_factory
 from src.engine.providers.service import ModelService
+from src.engine.providers.snapshot import ModelSnapshot
 from src.engine.providers.store.secret_store import FileSecretStore
 from src.engine.providers.store.state_store import SqliteStateStore
 from src.engine.roadmap.stores import RoadmapStores
@@ -153,6 +156,8 @@ class Composition:
         self.root = Path(os.path.realpath(str(root if root is not None else Path.cwd())))
         self.settings = settings
         self._model_override = model
+        self.mcp_config = load_config(cwd=self.root)
+        self._agent_config_root = self.root
 
         # A single skill registry shared by the agent instructions
         # (metadata) and by the tools (load, resources and scripts).
@@ -201,6 +206,14 @@ class Composition:
             self.model_service.apply(selected)
             self.session.selection = self.model_service.state.last_selection()
 
+        if session is None and model is None:
+            try:
+                snapshot = self.select_agent_model(self.agent_registry.active_name)
+                if snapshot is not None:
+                    self.session.selection = snapshot.selection
+            except ProviderError as exc:
+                self.mcp_config = replace(self.mcp_config, errors=(*self.mcp_config.errors, f'Agent model: {exc}'))
+
         # The meter needs the window before any client exists, or the first turn of
         # a cold start shows `ctx: ?` and cannot budget. The selection carries the
         # last known value, so this needs no network.
@@ -217,7 +230,7 @@ class Composition:
         self.context_capability = ContextViewCapability(
             strategy=build_strategy(settings, lookup=self.tool_catalog.compactor),
             meter=self.meter,
-            provider=lambda: active_provider(self.model_service),
+            provider=self.current_provider,
         )
 
         # Bridge for interactive questions and roadmap state: the engine updates,
@@ -248,7 +261,7 @@ class Composition:
         # MCP servers declared in .sigil/config.json (and in ~/.sigil/config.json).
         # Config errors do not abort startup: they are shown in the chat. Parsing
         # the file is cheap; building the manager is not and happens on a worker.
-        config = load_config()
+        config = self.mcp_config
         self.mcp = MCPGateway(configured=len(config.servers), config_errors=tuple(config.errors))
         self.mcp_config = config
         self.mcp_shutdown_timeout = read_shutdown_timeout()
@@ -268,6 +281,8 @@ class Composition:
             max_steps=settings.max_steps,
             model=lambda: self.model_service.snapshot().label,
             model_settings=lambda: model_settings(self.model_service),
+            agent_model=self.subagent_model,
+            base_model=self.root_run_model,
         )
         self.summoner.listen(
             on_change=self._on_tree_change,
@@ -348,6 +363,52 @@ class Composition:
 
         return build
 
+    def select_agent_model(self, name: str) -> ModelSnapshot | None:
+        """Apply a profile's default without preventing later manual changes."""
+        if name in self.mcp_config.invalid_agents:
+            raise ProviderError(f'Invalid model configuration for agent {name!r}; check the config errors.')
+        config = self.mcp_config.agents.get(name)
+        if config is None:
+            return None
+        return self.model_service.select(config.account, config.model, config.effort, preserve_thinking=True)
+
+    def subagent_model(self, name: str) -> AgentRunModel | None:
+        """Build a profile's model independently of the session's router."""
+        if name in self.mcp_config.invalid_agents:
+            raise ProviderError(f'Invalid model configuration for agent {name!r}; check the config errors.')
+        config = self.mcp_config.agents.get(name)
+        if config is None:
+            return None
+        model = self.model_service.build_agent_model(config.account, config.model)
+        value = thinking_settings(config.effort)
+        settings = None if value is None else {'thinking': value}
+        capability = self.model_service.agent_capability(config.account, config.model)
+        return AgentRunModel(
+            model,
+            settings,
+            f'{config.account}:{config.model}',
+            capability.context_window,
+            capability.supports_images,
+            getattr(model, 'system', None),
+        )
+
+    def root_run_model(self) -> AgentRunModel:
+        """Capture the root selection when a child is started."""
+        snapshot = self.model_service.snapshot()
+        model = self._model_override if self._model_override is not None else self.model_service.router.current
+        return AgentRunModel(
+            model,
+            model_settings(self.model_service),
+            snapshot.label,
+            snapshot.window,
+            snapshot.images,
+            getattr(model, 'system', None),
+        )
+
+    def current_provider(self) -> str | None:
+        selected = current_agent_model()
+        return selected.provider if selected is not None else active_provider(self.model_service)
+
     def current_model(self) -> Any:
         """The model the next agent is built on: an override, or the router's."""
         if self._model_override is not None:
@@ -396,7 +457,8 @@ class Composition:
     def supports(self, feature: str) -> bool:
         """Whether the active model has a feature, read per request."""
         if feature == IMAGE_INPUT:
-            return self.model_service.snapshot().images
+            selected = current_agent_model()
+            return selected.images if selected is not None else self.model_service.snapshot().images
         return True
 
     def available_features(self, agent_name: str | None = None) -> frozenset[str]:
@@ -483,6 +545,11 @@ class Composition:
     def bind_session(self, session: Session) -> Session:
         """Points the composition at another session of the same workspace."""
         self.session = session
+        workspace = Path(os.path.realpath(session.cwd))
+        if workspace != self._agent_config_root:
+            config = load_config(cwd=workspace)
+            self.mcp_config = replace(self.mcp_config, agents=config.agents, invalid_agents=config.invalid_agents)
+            self._agent_config_root = workspace
         self.agent_trees.bind(session, root_name=session.agent or self.agent_registry.active_name)
         self.roadmap_store.bind_session(session.id)
         return session

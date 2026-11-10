@@ -229,7 +229,13 @@ class ModelService:
         return await self.catalog.models(account, secret=self._api_key_for(account))
 
     def select(
-        self, alias: str, model: str, thinking: ThinkingChoice = 'default', *, known: Selection | None = None
+        self,
+        alias: str,
+        model: str,
+        thinking: ThinkingChoice = 'default',
+        *,
+        known: Selection | None = None,
+        preserve_thinking: bool = False,
     ) -> ModelSnapshot:
         """Makes ``model`` of ``alias`` the active model.
 
@@ -253,7 +259,7 @@ class ModelService:
         selection = Selection(
             account_id=account.id,
             model=model,
-            thinking=_fit_thinking(choice, capability),
+            thinking=choice if preserve_thinking else _fit_thinking(choice, capability),
             window=capability.context_window,
             efforts=capability.efforts,
             images=capability.supports_images,
@@ -265,6 +271,15 @@ class ModelService:
         self._save([account.with_model(model) if item.id == account.id else item for item in self.accounts.load()])
         self.state.set_last_selection(selection)
         return self.snapshot()
+
+    def agent_capability(self, alias: str, model: str) -> ModelCapability:
+        """Return the best available capability for an agent's model."""
+        return self._capability_for(self.find(alias), model)
+
+    def build_agent_model(self, alias: str, model: str) -> Model:
+        """Build a model without changing the active selection or router."""
+        account = self.find(alias)
+        return self._build(account, model, self._capability_for(account, model), self._secret_for(account))
 
     def set_thinking(self, thinking: ThinkingChoice) -> ModelSnapshot:
         """Changes the reasoning level of the active model.
@@ -401,7 +416,7 @@ class ModelService:
         account = self.accounts.find_id(selection.account_id)
         if account is None:
             raise NoAccountError()
-        return self.select(account.alias, selection.model, selection.thinking, known=selection)
+        return self.select(account.alias, selection.model, selection.thinking, known=selection, preserve_thinking=True)
 
     def current_model(self) -> Model:
         """The model the agent talks to.
