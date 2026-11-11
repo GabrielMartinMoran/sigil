@@ -283,6 +283,25 @@ def test_stdio_server_end_to_end(tmp_path):
     assert manager.errors == []
 
 
+def test_stdio_server_diagnostics_do_not_write_over_the_terminal(tmp_path, capfd):
+    entry = stdio_server(tmp_path)
+    script = Path(entry['args'][0])
+    script.write_text("import sys\nprint('MCP startup on stderr', file=sys.stderr, flush=True)\n" + SERVER_SCRIPT)
+    path = write_config(tmp_path / 'config.json', {'probe': entry})
+    manager = MCPManager(load_config([path], environ={}).servers)
+
+    async def run():
+        try:
+            return await manager.describe(connect=True)
+        finally:
+            await manager.aclose()
+
+    statuses = asyncio.run(run())
+    assert statuses[0].error is None
+    assert statuses[0].tools == ['probe_add']
+    assert 'MCP startup on stderr' not in capfd.readouterr().err
+
+
 def test_describe_connects_and_lists_tools(tmp_path):
     path = write_config(tmp_path / 'config.json', {'probe': stdio_server(tmp_path)})
     manager = MCPManager(load_config([path], environ={}).servers)

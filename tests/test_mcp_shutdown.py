@@ -150,7 +150,11 @@ def test_closing_waits_for_all_servers_concurrently():
                 await asyncio.wait_for(all_started.wait(), timeout=2)
                 finished.append(index)
 
-            return SimpleNamespace(name=str(index), toolset=SimpleNamespace(client=SimpleNamespace(close=close)))
+            return SimpleNamespace(
+                name=str(index),
+                toolset=SimpleNamespace(client=SimpleNamespace(close=close)),
+                lifecycle_lock=asyncio.Lock(),
+            )
 
         manager._servers = {str(index): server(index) for index in range(4)}
         await manager.aclose()

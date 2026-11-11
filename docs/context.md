@@ -66,8 +66,8 @@ tool schemas and history together:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `SIGIL_CONTEXT_TRIGGER_PERCENT` | `75` | Above it, one deterministic batch runs |
-| `SIGIL_CONTEXT_TARGET_PERCENT` | `60` | Above it after that batch, a checkpoint is requested |
+| `SIGIL_CONTEXT_TRIGGER_PERCENT` | `60` | Above it, one deterministic batch runs |
+| `SIGIL_CONTEXT_TARGET_PERCENT` | `40` | Above it after that batch, a checkpoint is requested |
 
 They are starting hypotheses, not measured quality boundaries. The trigger is
 measured on the request as it would be sent *without* intervention, so a
@@ -220,8 +220,8 @@ non-negative; percentages require `0 < target < trigger <= 100`.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `SIGIL_CONTEXT_STRATEGY` | `append-only` | `append-only` or `passthrough` |
-| `SIGIL_CONTEXT_TRIGGER_PERCENT` | `75` | Share of the window that starts a compaction |
-| `SIGIL_CONTEXT_TARGET_PERCENT` | `60` | Share the deterministic batch should leave behind |
+| `SIGIL_CONTEXT_TRIGGER_PERCENT` | `60` | Share of the window that starts a compaction |
+| `SIGIL_CONTEXT_TARGET_PERCENT` | `40` | Share the deterministic batch should leave behind |
 | `SIGIL_CONTEXT_RECENT_REASONING_BLOCKS` | `5` | Individual reasoning parts protected at a boundary |
 | `SIGIL_CONTEXT_RECENT_TOOL_CALLS` | `20` | Individual tool calls protected at a boundary |
 | `SIGIL_CONTEXT_SAFETY_MARGIN_PERCENT` | `5` | Window percentage reserved for uncertainty, from 0 to 99 |

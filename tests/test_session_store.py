@@ -52,6 +52,17 @@ def test_save_and_load_roundtrip(tmp_path):
     assert loaded.messages[1].parts[0].content == 'hey there'
 
 
+def test_mcp_overrides_are_saved_only_for_the_owning_session(tmp_path):
+    store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
+    first = store.create_session()
+    second = store.create_session()
+    first.mcp_overrides = {'on-by-default': False, 'off-by-default': True}
+    store.save(first)
+
+    assert store.load(first.id).mcp_overrides == first.mcp_overrides
+    assert store.load(second.id).mcp_overrides == {}
+
+
 def test_create_session_persists_a_row(tmp_path):
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     session = store.create_session()

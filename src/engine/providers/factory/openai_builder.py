@@ -86,10 +86,13 @@ class OpenAIOAuthBuilder:
 
         credential = require_oauth(account, secret)
         provider = self._provider_factory(credential, account)
+        # Subscription sharing rejects configuration_update input items. Send the
+        # selected effort at request level instead, even after a history change.
+        profile = {**_profile(capability), 'supports_mid_conversation_effort': False}
         return OpenAIResponsesModel(
             model_name=model,
             provider=provider,
-            profile=_profile(capability),
+            profile=profile,
             settings={'openai_reasoning_summary': 'auto'} if capability.efforts else None,
         )
 

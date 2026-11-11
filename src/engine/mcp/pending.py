@@ -20,6 +20,7 @@ starting. The meta-tools are registered with the rest, on the same thread.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any, Self
 
 from pydantic_ai.toolsets import AbstractToolset
@@ -36,6 +37,7 @@ class PendingToolset(AbstractToolset[Any]):
 
     def __init__(self, toolset: AbstractToolset[Any] | None = None) -> None:
         self._toolset = toolset
+        self.before_use: Callable[[], Awaitable[None]] | None = None
 
     @property
     def id(self) -> str | None:
@@ -51,6 +53,8 @@ class PendingToolset(AbstractToolset[Any]):
         self._toolset = toolset
 
     async def __aenter__(self) -> Self:
+        if self.before_use is not None:
+            await self.before_use()
         if self._toolset is not None:
             await self._toolset.__aenter__()
         return self
@@ -61,11 +65,15 @@ class PendingToolset(AbstractToolset[Any]):
         return None
 
     async def get_tools(self, ctx: Any) -> dict[str, ToolsetTool[Any]]:
+        if self.before_use is not None:
+            await self.before_use()
         if self._toolset is None:
             return {}
         return await self._toolset.get_tools(ctx)
 
     async def call_tool(self, name: str, tool_args: dict[str, Any], ctx: Any, tool: ToolsetTool[Any]) -> Any:
+        if self.before_use is not None:
+            await self.before_use()
         if self._toolset is None:
             raise LookupError(f'No MCP tool is available yet: {name!r} was called before its server was loaded.')
         return await self._toolset.call_tool(name, tool_args, ctx, tool)

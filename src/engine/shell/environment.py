@@ -22,6 +22,7 @@ _MARKER = b'\x00SIGIL_SHELL_ENVIRONMENT\x00'
 _lock = threading.Lock()
 _cache: dict[str, str] | None = None
 _logger = logging.getLogger(__name__)
+_logger.addHandler(logging.NullHandler())
 
 
 def merge_path(inherited: str, discovered: str) -> str:

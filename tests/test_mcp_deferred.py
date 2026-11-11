@@ -110,6 +110,135 @@ def test_the_agent_sees_tools_that_arrive_after_it_was_built():
 # --- the gateway -------------------------------------------------------------
 
 
+def test_session_overrides_apply_before_and_after_gateway_install(tmp_path):
+    config = tmp_path / 'config.json'
+    config.write_text(
+        json.dumps(
+            {
+                'mcp_servers': {
+                    'enabled': {'command': sys.executable, 'args': ['-c', 'pass']},
+                    'disabled': {'command': sys.executable, 'args': ['-c', 'pass'], 'enabled': False},
+                }
+            }
+        )
+    )
+    specs = load_config([config], environ={}).servers
+    gateway = MCPGateway(configured=2)
+    gateway.set_overrides({'enabled': False, 'disabled': True})
+    manager = MCPManager(specs)
+    gateway.install(manager)
+    assert not manager.get('enabled').enabled
+    assert manager.get('disabled').enabled
+    assert manager.get('disabled').toolset is not None
+    assert gateway.toolsets == [manager.get('disabled').agent_toolset]
+    gateway.set_overrides({})
+    assert manager.get('enabled').enabled
+    assert not manager.get('disabled').enabled
+    assert gateway.toolsets == [manager.get('enabled').agent_toolset]
+
+
+def test_disabled_server_is_unavailable_to_agent_and_meta_tools(tmp_path):
+    from src.engine.mcp.config_models.mcp_config_error import MCPConfigError
+
+    script = tmp_path / 'server.py'
+    script.write_text(SERVER_SCRIPT)
+    config = tmp_path / 'config.json'
+    config.write_text(json.dumps({'mcp_servers': {'probe': {'command': sys.executable, 'args': [str(script)]}}}))
+    manager = MCPManager(load_config([config], environ={}).servers)
+    gateway = MCPGateway(configured=1)
+    gateway.install(manager)
+    agent = Agent(TestModel(), toolsets=[gateway.pending])
+
+    async def run():
+        try:
+            assert 'probe_add' in await gateway.pending.get_tools(_context(agent))
+            gateway.set_overrides({'probe': False})
+            await gateway.stop_disabled('probe')
+            assert await gateway.pending.get_tools(_context(agent)) == {}
+            assert await gateway.list_resources() == []
+            with pytest.raises(MCPConfigError, match='disabled'):
+                await gateway.read_resource('probe', 'probe://test')
+            gateway.set_overrides({})
+            assert 'probe_add' in await gateway.pending.get_tools(_context(agent))
+        finally:
+            await gateway.aclose()
+
+    asyncio.run(run())
+
+
+def test_session_switch_disconnects_keep_alive_server_and_reconnects(tmp_path):
+    import os
+
+    pid_file = tmp_path / 'server.pid'
+    script = tmp_path / 'server.py'
+    script.write_text(f"import os\nopen({str(pid_file)!r}, 'w').write(str(os.getpid()))\n" + SERVER_SCRIPT)
+    config = tmp_path / 'config.json'
+    config.write_text(
+        json.dumps(
+            {
+                'mcp_servers': {
+                    'probe': {
+                        'command': sys.executable,
+                        'args': [str(script)],
+                        'keep_alive': True,
+                    }
+                }
+            }
+        )
+    )
+    manager = MCPManager(load_config([config], environ={}).servers)
+    gateway = MCPGateway(configured=1)
+    gateway.install(manager)
+
+    async def run():
+        assert (await gateway.describe(connect=True))[0].tools
+        pid = int(pid_file.read_text())
+        os.kill(pid, 0)
+        gateway.set_overrides({'probe': False})
+        await gateway.wait_for_reconciliation()
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+        assert (await gateway.describe())[0].enabled is False
+        gateway.set_overrides({})
+        assert (await gateway.describe(connect=True))[0].tools
+        await gateway.aclose()
+
+    asyncio.run(run())
+
+
+def test_reenabled_server_waits_for_inflight_shutdown_before_agent_access(tmp_path):
+    script = tmp_path / 'server.py'
+    script.write_text(SERVER_SCRIPT)
+    config = tmp_path / 'config.json'
+    config.write_text(json.dumps({'mcp_servers': {'probe': {'command': sys.executable, 'args': [str(script)]}}}))
+    manager = MCPManager(load_config([config], environ={}).servers)
+    gateway = MCPGateway(configured=1)
+    gateway.install(manager)
+    agent = Agent(TestModel(), toolsets=[gateway.pending])
+
+    async def run():
+        started, release = asyncio.Event(), asyncio.Event()
+        original = manager.stop_disabled
+
+        async def delayed_stop(name):
+            started.set()
+            await release.wait()
+            await original(name)
+
+        manager.stop_disabled = delayed_stop
+        gateway.set_overrides({'probe': False})
+        await asyncio.wait_for(started.wait(), timeout=2)
+        gateway.set_overrides({})
+        access = asyncio.create_task(gateway.pending.get_tools(_context(agent)))
+        await asyncio.sleep(0)
+        assert not access.done()
+        release.set()
+        assert 'probe_add' in await asyncio.wait_for(access, timeout=10)
+        await gateway.aclose()
+
+    asyncio.run(run())
+
+
 def test_the_gateway_is_falsy_only_when_nothing_is_configured():
     """`if not manager` is how the app decides whether to paint the section."""
     assert not MCPGateway(configured=0)

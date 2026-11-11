@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     tools_tokens        INTEGER NOT NULL DEFAULT 0,
     instructions_tokens INTEGER NOT NULL DEFAULT 0,
     allow_external_files INTEGER NOT NULL DEFAULT 0,
+    mcp_overrides TEXT NOT NULL DEFAULT '{}',
     created_at   TEXT    NOT NULL,
     updated_at   TEXT    NOT NULL
 ) STRICT, WITHOUT ROWID;
@@ -200,7 +201,7 @@ CREATE TABLE IF NOT EXISTS app_state (
 ) STRICT, WITHOUT ROWID;
 """
 
-USER_VERSION = 4
+USER_VERSION = 5
 """The version `SCHEMA` describes.
 
 Steps start above the empty file: a database created today is written whole and its
@@ -209,6 +210,7 @@ written by an older Sigil.
 """
 
 MIGRATIONS: dict[int, str] = {
+    5: "ALTER TABLE sessions ADD COLUMN mcp_overrides TEXT NOT NULL DEFAULT '{}';",
     4: 'ALTER TABLE sessions ADD COLUMN allow_external_files INTEGER NOT NULL DEFAULT 0;',
     2: (
         # What the last request measured of the blocks that are always sent. A session

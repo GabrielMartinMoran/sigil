@@ -174,6 +174,43 @@ def test_openai_oauth_builder_uses_the_injected_provider():
     assert seen and seen[0][1] == 'openai-default'
 
 
+def test_chatgpt_plan_sends_current_effort_without_configuration_updates():
+    import asyncio
+
+    from pydantic_ai.messages import ModelRequest, ModelResponse, ModelSettingsDeltaPart, TextPart, UserPromptPart
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    account = _account(ProviderKind.OPENAI, auth=AuthMethod.OAUTH)
+    capability = _capability('gpt-6.1-sol', efforts=('low', 'high'))
+    model = OpenAIOAuthBuilder(lambda credential, account: OpenAIProvider(api_key='test')).build(
+        account, 'gpt-6.1-sol', capability, OAuthSecret(access_token='a', refresh_token='r')
+    )
+    messages = [
+        ModelRequest(
+            parts=[ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True), UserPromptPart('go')]
+        ),
+        ModelResponse(parts=[TextPart('answer')], model_name='gpt-6.1-terra'),
+        ModelRequest(parts=[ModelSettingsDeltaPart(settings={'thinking': 'high'}), UserPromptPart('continue')]),
+    ]
+    request = asyncio.run(
+        model._build_responses_request_params(messages, {}, ModelRequestParameters(thinking='high'), model.profile)
+    )
+
+    assert all(item.get('type') != 'configuration_update' for item in request.input)
+    assert request.reasoning['effort'] == 'high'
+    assert isinstance(messages[-1].parts[0], ModelSettingsDeltaPart)
+
+    key_model = OpenAIKeyBuilder().build(_account(ProviderKind.OPENAI), 'gpt-6.1-sol', capability, KEY)
+    key_request = asyncio.run(
+        key_model._build_responses_request_params(
+            messages, {}, ModelRequestParameters(thinking='high'), key_model.profile
+        )
+    )
+    assert any(item.get('type') == 'configuration_update' for item in key_request.input)
+    assert key_request.reasoning['effort'] == 'low'
+
+
 # --- registry ---------------------------------------------------------------
 
 

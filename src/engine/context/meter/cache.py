@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
+from decimal import Decimal
 
 from pydantic_ai.messages import ModelMessage, ModelResponse
 
@@ -26,6 +28,7 @@ class RequestCacheRow:
     output_tokens: int
     cost: float | None = None
     cost_estimated: bool = False
+    timestamp: datetime | None = None
 
     @property
     def valid(self) -> bool:
@@ -94,6 +97,16 @@ class CacheSummary:
         return self.cache_read / self.input_tokens if self.input_tokens and self.valid else None
 
 
+def format_call_time(timestamp: datetime | None) -> str:
+    """Format a response timestamp in the local time zone."""
+    return timestamp.astimezone().strftime('%Y-%m-%d %H:%M:%S') if timestamp else '?'
+
+
+def format_call_cost(amount: Decimal | float | None, estimated: bool = False) -> str:
+    """Distinguish estimated charges from reported charges and unknown values."""
+    return f'{"~" if estimated else ""}${amount}' if amount is not None else '?'
+
+
 def _cost(response: ModelResponse) -> tuple[float | None, bool]:
     """Available request cost and whether it is estimated."""
     cost, reported = request_amount(response)
@@ -125,6 +138,7 @@ def request_cache_rows(messages: Sequence[ModelMessage]) -> list[RequestCacheRow
                 output_tokens=usage.output_tokens or 0,
                 cost=cost,
                 cost_estimated=estimated,
+                timestamp=message.timestamp,
             )
         )
     return rows

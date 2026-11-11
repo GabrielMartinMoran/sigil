@@ -43,9 +43,50 @@ def test_semantic_colors_have_opposite_directions(ratio, cache, context):
 
 def test_prompt_cache_is_newest_first_without_changing_request_numbers():
     table = ui._cache_table(report()).renderables[0]
-    assert table.columns[0]._cells == ['2', '1', 'all']
-    assert table.columns[5]._cells[0].style == 'red'
-    assert table.columns[5]._cells[1].style == 'green'
+    assert table.columns[1]._cells == ['2', '1', 'all']
+    assert table.columns[6]._cells[0].style == 'red'
+    assert table.columns[6]._cells[1].style == 'green'
+
+
+def test_step_timeline_and_cache_table_show_timestamp_and_call_cost():
+    from datetime import UTC, datetime
+    from decimal import Decimal
+
+    timestamp = datetime(2026, 3, 10, 12, 34, 56, tzinfo=UTC)
+    messages = [
+        ModelRequest(parts=[UserPromptPart('start')]),
+        ModelResponse(
+            parts=[TextPart('one')],
+            timestamp=timestamp,
+            usage=RequestUsage(input_tokens=100),
+            provider_details={'cost': 0.0123},
+        ),
+        ModelResponse(
+            parts=[TextPart('two')],
+            timestamp=timestamp,
+            usage=RequestUsage(input_tokens=50, cost=Decimal('0.2')),
+        ),
+        ModelResponse(parts=[TextPart('three')], timestamp=timestamp),
+    ]
+    meter = ContextMeter(window=1000)
+    result = build_debug_report(messages, snapshot=meter.snapshot(messages), request=snapshot_request(None))
+    expected = timestamp.astimezone().strftime('%Y-%m-%d %H:%M:%S')
+    rendered_timeline = ui._turn_timeline(result)
+    timeline = rendered_timeline.plain.splitlines()
+    assert all(line.index('Step ') < line.index(expected) < line.index('context') for line in timeline[1:])
+    timestamp_spans = [
+        span for span in rendered_timeline.spans if rendered_timeline.plain[span.start : span.end] == expected
+    ]
+    assert len(timestamp_spans) == 3
+    assert all(span.style == 'not bold grey62' for span in timestamp_spans)
+    assert 'cost ?' in timeline[1]
+    assert 'cost ~$0.2' in timeline[2]
+    assert 'cost $0.0123' in timeline[3]
+
+    table = ui._cache_table(result).renderables[0]
+    assert table.columns[0].header == 'Date / time'
+    assert table.columns[0]._cells[:2] == [expected, expected]
+    assert table.columns[-1]._cells[:2] == ['~$0.2', '$0.0123']
 
 
 def test_turn_context_contains_fraction_and_color():
@@ -159,7 +200,7 @@ def test_plain_text_cache_uses_the_same_descending_order():
     from src.engine.context.meter.debug_render import render_debug_report
 
     text = render_debug_report(report())
-    assert text.index('    2 |') < text.index('    1 |')
+    assert text.index(' | 2 |') < text.index(' | 1 |')
 
 
 def test_timeline_shows_newest_step_first_with_colors():

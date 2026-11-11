@@ -16,7 +16,7 @@ def require(servers: ServerMap, name: str) -> MCPServer:
     if server is None:
         available = ', '.join(sorted(servers)) or 'none'
         raise MCPConfigError(f"Unknown MCP server '{name}'. Configured servers: {available}.")
-    if server.toolset is None:
+    if not server.enabled or server.toolset is None:
         state = 'disabled' if not server.enabled else 'not available'
         raise MCPConfigError(f"MCP server '{name}' is {state}.")
     return server
@@ -26,4 +26,4 @@ def targets(servers: ServerMap, server: str | None) -> list[MCPServer]:
     """Servers reached by a query: a single one or every active one."""
     if server is not None:
         return [require(servers, server)]
-    return [item for item in servers.values() if item.toolset is not None]
+    return [item for item in servers.values() if item.enabled and item.toolset is not None]

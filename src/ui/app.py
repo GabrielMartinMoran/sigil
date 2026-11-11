@@ -161,6 +161,8 @@ class SigilApp(
         self._login_flow = login_flow
         self._tool_logger = tool_logger
         self._mcp_manager = mcp_manager
+        if mcp_manager is not None and hasattr(mcp_manager, 'set_overrides'):
+            mcp_manager.set_overrides(session.mcp_overrides)
         self._mcp_loader = mcp_loader
         self._startup_notices = tuple(startup_notices)
         self._question_hub = question_hub

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from pydantic_ai.toolsets import AbstractToolset
@@ -26,6 +27,8 @@ class MCPServer:
     agent_toolset: AbstractToolset | None = None
     error: str | None = None
     tools: tuple[str, ...] = ()
+    enabled_override: bool | None = None
+    lifecycle_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     @property
     def name(self) -> str:
@@ -33,12 +36,12 @@ class MCPServer:
 
     @property
     def enabled(self) -> bool:
-        return self.spec.config.enabled
+        return self.spec.config.enabled if self.enabled_override is None else self.enabled_override
 
     @property
     def active(self) -> bool:
         """It has a toolset and did not fail while being built."""
-        return self.agent_toolset is not None and self.error is None
+        return self.enabled and self.agent_toolset is not None and self.error is None
 
     def status(self) -> ServerStatus:
         return ServerStatus(
@@ -46,7 +49,7 @@ class MCPServer:
             transport=self.spec.transport_kind,
             enabled=self.enabled,
             prefix=self.spec.tool_prefix,
-            tools=list(self.tools),
+            tools=list(self.tools) if self.enabled else [],
             error=self.error,
             source=str(self.spec.source),
         )

@@ -5,19 +5,22 @@ from __future__ import annotations
 import inspect
 
 from src.engine.context.meter.render import render_report
+from src.engine.mcp.tool_models.server_status import ServerStatus
 from src.engine.sessions.catalog import catalog
 from src.engine.shell import running as running_commands
 from src.engine.workspace.arguments import UsageError, parse_new_args
 from src.engine.workspace.models.workspace_error import WorkspaceError
 from src.ui.help_text import HELP_TEXT, KEYS_TEXT
-from src.ui.mcp_report import format_mcp_status
 from src.ui.messages import ChatNotice
 from src.ui.session_refresh import bind_refreshed_session, render_refreshed_session, session_view
 from src.ui.widgets.chat_log import ChatLog
+from src.ui.widgets.mcp_screen import MCPScreen
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.session_picker import SessionPicker
 
-BUSY_COMMANDS = frozenset({'/new', '/load', '/agent', '/provider', '/model', '/effort', '/external-files', '/quit'})
+BUSY_COMMANDS = frozenset(
+    {'/new', '/load', '/agent', '/provider', '/model', '/effort', '/external-files', '/mcp', '/quit'}
+)
 """Commands a running turn refuses.
 
 They are the ones that would change what the turn is working with, or end the
@@ -32,7 +35,7 @@ opened a modal. Refusing up front is what makes the refusal nothing more than a
 line in the chat.
 
 The rest read state and are safe mid-turn: `/context`, `/debug`, `/sidebar`,
-`/mcp` and `/help` do not touch the conversation or the model.
+and `/help` do not touch the conversation or the model. `/mcp` changes the tool set.
 """
 
 BUSY_REFUSAL = '{name} is not available while the agent works. Esc twice stops the turn first.'
@@ -108,6 +111,8 @@ class CommandsMixin:
         message is accepted, so a command typed in the gap before the worker
         starts is refused too.
         """
+        if name == '/mcp' and getattr(self, '_summoner', None) is not None and self._summoner.running():
+            return True
         return self._turn_active and name in BUSY_COMMANDS
 
     async def refuse_while_busy(self, command: str, chat: ChatLog) -> None:
@@ -312,6 +317,9 @@ class CommandsMixin:
     def bind_session(self, session: object) -> None:
         """Points the app at ``session``: history, agent, tree, roadmap and persistence."""
         self._session = session
+        mcp = getattr(self, '_mcp_manager', None)
+        if mcp is not None and hasattr(mcp, 'set_overrides'):
+            mcp.set_overrides(session.mcp_overrides)
         callback = getattr(self, '_on_bind_session', None)
         if callback is not None:
             callback(session)
@@ -473,8 +481,19 @@ class CommandsMixin:
             )
             return
 
-        await chat.add_notice('Querying MCP servers…', style='cyan')
-        statuses = await self._mcp_manager.describe(connect=True)
-        await chat.add_notice(format_mcp_status(statuses), style='white')
-        # `/mcp` is the diagnostic: the panel updates with what it just saw.
-        self.apply_mcp_status(statuses)
+        statuses = await self._mcp_manager.describe()
+        await self.push_screen_wait(
+            MCPScreen(statuses, self._toggle_session_mcp, lambda: self._mcp_manager.describe(connect=True))
+        )
+        self.refresh_mcp_status()
+
+    async def _toggle_session_mcp(self, name: str, enabled: bool) -> ServerStatus:
+        self._session.mcp_overrides[name] = enabled
+        self._mcp_manager.set_overrides(self._session.mcp_overrides)
+        if not self._session._draft or self._session.messages:
+            current = self._store.save_current(self._session)
+            if current is not self._session:
+                bind_refreshed_session(session_view(self), current)
+        if not enabled:
+            await self._mcp_manager.stop_disabled(name)
+        return self._mcp_manager.get(name).status()

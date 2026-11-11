@@ -39,6 +39,17 @@ def test_missing_rc_and_missing_shell_fall_back(tmp_path, monkeypatch):
     assert execute_command('printf %s "$SIGIL_TEST_INHERITED"').stdout == 'present'
 
 
+def test_missing_shell_does_not_write_logging_fallback_to_terminal(tmp_path, monkeypatch, capsys):
+    import logging
+    import sys
+
+    monkeypatch.setenv('SHELL', str(tmp_path / 'missing-shell'))
+    monkeypatch.setattr(logging.getLogger(), 'handlers', [])
+    monkeypatch.setattr(logging, 'lastResort', logging.StreamHandler(sys.stderr))
+    assert environment.shell_environment() == {}
+    assert 'Could not load the user shell environment' not in capsys.readouterr().err
+
+
 def test_uses_account_shell_when_shell_variable_is_missing(monkeypatch):
     monkeypatch.delenv('SHELL', raising=False)
     monkeypatch.setattr(environment, 'account_shell', lambda: '/account/shell')

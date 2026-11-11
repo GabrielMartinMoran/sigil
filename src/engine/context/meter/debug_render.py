@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from src.engine.context.compaction.events import CompactionEvent
+from src.engine.context.meter.cache import format_call_cost, format_call_time
 from src.engine.context.meter.debug import DebugMessage, DebugReport
 
 
@@ -83,13 +84,15 @@ def render_debug_report(report: DebugReport) -> str:
                 f'  measured requests: {cache.requests}; unmeasured: {cache.unmeasured}',
                 f'  input: {_n(cache.input_tokens)}  read: {_n(cache.cache_read)}  written: {_n(cache.cache_write)}',
                 f'  normal input: {_n(cache.uncached)}  read share: {_percent(cache.hit_ratio)}  output: {_n(cache.output_tokens)}',
-                '  Per request: # | input | read | written | normal input | read share | output',
+                '  Per request: local response time | # | input | read | written | normal input | read share | output | cost',
+                '  Cost: ~ is estimated; ? is unavailable.',
             ]
         )
         for row in reversed(cache.rows):
             lines.append(
-                f'    {row.index} | {_n(row.input_tokens)} | {_n(row.cache_read)} | {_n(row.cache_write)} | '
-                f'{_n(row.uncached)} | {_percent(row.hit_ratio)} | {_n(row.output_tokens)}'
+                f'    {format_call_time(row.timestamp)} | {row.index} | {_n(row.input_tokens)} | '
+                f'{_n(row.cache_read)} | {_n(row.cache_write)} | {_n(row.uncached)} | {_percent(row.hit_ratio)} | '
+                f'{_n(row.output_tokens)} | {format_call_cost(row.cost, row.cost_estimated)}'
             )
         if not cache.valid:
             lines.append('  Inconsistent cache counters: derived values are unavailable.')

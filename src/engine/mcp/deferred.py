@@ -73,6 +73,12 @@ class MCPGateway:
     _manager: MCPManager | None = None
     _ready: asyncio.Event | None = None
     _load_errors: list[str] = field(default_factory=list)
+    _overrides: dict[str, bool] = field(default_factory=dict)
+    _closing: set[str] = field(default_factory=set)
+    _reconciliation: asyncio.Task[None] | None = None
+
+    def __post_init__(self) -> None:
+        self.pending.before_use = self.wait_for_reconciliation
 
     # --- readiness ----------------------------------------------------------
 
@@ -99,19 +105,64 @@ class MCPGateway:
         reports what it can.
         """
         await self._event().wait()
+        await self.wait_for_reconciliation()
         return self._manager
 
     def install(self, manager: MCPManager) -> None:
         """Publishes the manager and the toolsets. Called once, from the loop."""
         self._manager = manager
-        self.toolsets = list(manager.toolsets)
+        manager.set_overrides(self._overrides)
+        self._refresh_toolsets()
         self._load_errors.extend(manager.errors)
+        self._event().set()
+
+    def set_overrides(self, overrides: Mapping[str, bool]) -> None:
+        """Select the current session's servers, including while loading."""
+        self._overrides = dict(overrides)
+        if self._manager is not None:
+            previously_enabled = {server.name for server in self._manager.servers.values() if server.enabled}
+            self._manager.set_overrides(self._overrides)
+            self._closing.update(
+                server.name
+                for server in self._manager.servers.values()
+                if not server.enabled and server.name in previously_enabled
+            )
+            self._refresh_toolsets()
+            self._schedule_reconciliation()
+
+    def _schedule_reconciliation(self) -> None:
+        if not self._closing or (self._reconciliation is not None and not self._reconciliation.done()):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._reconciliation = loop.create_task(self._reconcile())
+
+    async def _reconcile(self) -> None:
+        while self._closing:
+            names = self._closing.copy()
+            self._closing.difference_update(names)
+            assert self._manager is not None
+            await asyncio.gather(*(self._manager.stop_disabled(name) for name in names))
+
+    async def wait_for_reconciliation(self) -> None:
+        self._schedule_reconciliation()
+        task = self._reconciliation
+        if task is not None:
+            await asyncio.shield(task)
+
+    async def stop_disabled(self, name: str) -> None:
+        await self.wait_for_reconciliation()
+
+    def _refresh_toolsets(self) -> None:
+        assert self._manager is not None
+        self.toolsets = list(self._manager.toolsets)
         # The agent holds the placeholder; filling it is what makes the tools
         # appear, and the swap is picked up by the next `get_tools` of a run.
         from pydantic_ai.toolsets import CombinedToolset
 
         self.pending.fill(CombinedToolset(self.toolsets))
-        self._event().set()
 
     def fail(self, error: str) -> None:
         """Records a load that will not happen; waiters get an empty layer."""
@@ -171,6 +222,7 @@ class MCPGateway:
         manager = self._manager
         if manager is None:
             return
+        await self.wait_for_reconciliation()
         await manager.aclose()
 
 

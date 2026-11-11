@@ -331,6 +331,7 @@ AccountFormScreen,
 GroupedModelScreen,
 CommandPaletteScreen,
 ModelPickerScreen,
+MCPScreen,
 AgentPickerScreen,
 ConfirmScreen,
 TextPromptScreen {
@@ -354,6 +355,7 @@ TextPromptScreen {
 #provider-list,
 #form-options,
 #picker-models,
+#mcp-list,
 #palette-commands,
 #agent-list,
 #confirm-options {
