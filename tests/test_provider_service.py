@@ -582,3 +582,25 @@ def test_apply_restores_reasoning_for_uncached_model(tmp_path):
     assert snapshot.selection.window == 123000
     assert service.state.last_selection().thinking == 'high'
     assert service.set_thinking('low').thinking == 'low'
+
+
+def test_build_agent_model_does_not_change_active_selection(tmp_path):
+    service = _service(tmp_path)
+    _add(service)
+    before = service.snapshot()
+    previous_model = service.router.current
+
+    model = service.build_agent_model('work', 'second/model')
+
+    assert model is not previous_model
+    assert service.router.current is previous_model
+    assert service.snapshot().selection == before.selection
+
+
+def test_explicit_agent_effort_is_preserved_for_unknown_model(tmp_path):
+    service = _service(tmp_path)
+    _add(service)
+
+    snapshot = service.select('work', 'custom/model', 'high', preserve_thinking=True)
+
+    assert snapshot.thinking == 'high'

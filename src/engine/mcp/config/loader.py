@@ -46,6 +46,8 @@ def load_config(
 
     errors: list[str] = []
     servers: dict[str, MCPServerSpec] = {}
+    agents = {}
+    invalid_agents: set[str] = set()
     sources: list[Path] = []
 
     # From lowest to highest precedence: the last one read overrides the previous one.
@@ -55,8 +57,19 @@ def load_config(
                 errors.append(f'Config file not found: {path}')
             continue
         sources.append(path)
-        file_servers, file_errors = load_file(path, env)
+        file_servers, file_agents, file_invalid, file_errors = load_file(path, env)
         errors.extend(file_errors)
         servers.update(file_servers)
+        for name in file_invalid:
+            agents.pop(name, None)
+        invalid_agents.difference_update(file_agents)
+        invalid_agents.update(file_invalid)
+        agents.update(file_agents)
 
-    return LoadedConfig(servers=servers, errors=tuple(errors), sources=tuple(reversed(sources)))
+    return LoadedConfig(
+        servers=servers,
+        agents=agents,
+        invalid_agents=frozenset(invalid_agents),
+        errors=tuple(errors),
+        sources=tuple(reversed(sources)),
+    )

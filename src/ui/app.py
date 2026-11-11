@@ -148,6 +148,7 @@ class SigilApp(
         agent_tree: AgentTreeStore | None = None,
         summoner: SubagentSummoner | None = None,
         on_bind_session: Callable[[Session], object] | None = None,
+        on_agent_selected: Callable[[str], Any] | None = None,
         extensions: Any = None,
     ) -> None:
         super().__init__()
@@ -157,6 +158,7 @@ class SigilApp(
         self._store = store
         self._session = session
         self._on_bind_session = on_bind_session
+        self._on_agent_selected = on_agent_selected
         self._model_service = model_service
         self._login_flow = login_flow
         self._tool_logger = tool_logger
