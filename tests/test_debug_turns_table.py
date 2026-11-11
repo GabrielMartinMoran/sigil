@@ -77,7 +77,7 @@ def test_the_tui_table_names_the_events_and_never_the_conversation():
     assert 'secret' not in rendered
 
 
-def test_timeline_shows_only_provider_reported_step_costs():
+def test_timeline_distinguishes_estimated_from_provider_reported_step_costs():
     from decimal import Decimal
 
     from src.ui.widgets.debug_view import _turn_timeline
@@ -98,4 +98,4 @@ def test_timeline_shows_only_provider_reported_step_costs():
     text = _turn_timeline(_report(messages)).plain
     assert 'Step 3' in text and 'cost $0' in text
     assert 'Step 2' in text and 'cost $0.0123' in text
-    assert '$0.20' not in text
+    assert 'cost ~$0.20' in text

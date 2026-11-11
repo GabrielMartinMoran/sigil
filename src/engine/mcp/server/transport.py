@@ -9,6 +9,8 @@ belongs there too.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from src.engine.mcp.config_models.server_spec import MCPServerSpec
@@ -34,6 +36,8 @@ def stdio_transport(spec: MCPServerSpec) -> Any:
         env={**config.env, SELF_GUARD_ENV: '1'},
         cwd=str(cwd) if cwd is not None else None,
         keep_alive=config.keep_alive,
+        # Child diagnostics cannot share the terminal while Textual is drawing.
+        log_file=Path(os.devnull),
     )
 
 

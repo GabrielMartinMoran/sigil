@@ -14,8 +14,11 @@ from tests.test_context_compaction_records import history
 
 def test_policy_defaults_match_the_documented_thresholds():
     policy = CompactionPolicy()
-    assert policy.trigger_percent == 75
-    assert policy.target_percent == 60
+    assert policy.trigger_percent == 60
+    assert policy.target_percent == 40
+    settings = load_settings({})
+    assert settings.context_trigger_percent == 60
+    assert settings.context_target_percent == 40
     assert policy.recent_reasoning_blocks == 5
     assert policy.recent_tool_calls == 20
     assert DEFAULT_POLICY == policy

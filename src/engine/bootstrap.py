@@ -263,6 +263,7 @@ class Composition:
         # the file is cheap; building the manager is not and happens on a worker.
         config = self.mcp_config
         self.mcp = MCPGateway(configured=len(config.servers), config_errors=tuple(config.errors))
+        self.mcp.set_overrides(self.session.mcp_overrides)
         self.mcp_config = config
         self.mcp_shutdown_timeout = read_shutdown_timeout()
         self.login_flow = login_flow if login_flow is not None else ChatGPTLoginFlow(state=state)
@@ -545,6 +546,7 @@ class Composition:
     def bind_session(self, session: Session) -> Session:
         """Points the composition at another session of the same workspace."""
         self.session = session
+        self.mcp.set_overrides(session.mcp_overrides)
         workspace = Path(os.path.realpath(session.cwd))
         if workspace != self._agent_config_root:
             config = load_config(cwd=workspace)

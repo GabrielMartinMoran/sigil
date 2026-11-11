@@ -1092,6 +1092,7 @@ CREATE TABLE sessions (
     tools_tokens        INTEGER NOT NULL DEFAULT 0,
     instructions_tokens INTEGER NOT NULL DEFAULT 0,
     allow_external_files INTEGER NOT NULL DEFAULT 0,
+    mcp_overrides TEXT NOT NULL DEFAULT '{}',
     created_at   TEXT    NOT NULL,
     updated_at   TEXT    NOT NULL
 ) STRICT, WITHOUT ROWID;

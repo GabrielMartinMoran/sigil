@@ -35,7 +35,7 @@ def test_unknown_reasoning_size_and_thresholds_are_visible_without_content():
     text = render_debug_report(report(messages))
     assert 'unknown signed blocks 1' in text
     assert 'partial' in text
-    assert 'trigger 75%; target 60%' in text
+    assert 'trigger 60%; target 40%' in text
     assert '0 + ? (1 unknown)' in text
     assert 'SECRET' not in text and 'PRIVATE' not in text
 

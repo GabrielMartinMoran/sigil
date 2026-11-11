@@ -281,7 +281,7 @@ def test_streamed_history_survives_two_resumes_without_reinterpreting_events():
             state, events = recorded_state(current)
             assert state.compacted_calls
             assert len(events) == 1
-            assert events[0].policy['trigger_percent'] == 75
+            assert events[0].policy['trigger_percent'] == 60
             assert events[0].window == window
             if previous is not None:
                 assert events == previous

@@ -46,8 +46,8 @@ class MCPManager:
 
     # --- construction ------------------------------------------------------
 
-    def _build(self, spec: MCPServerSpec) -> MCPServer:
-        if not spec.config.enabled:
+    def _build(self, spec: MCPServerSpec, *, force: bool = False) -> MCPServer:
+        if not spec.config.enabled and not force:
             return MCPServer(spec=spec)
 
         try:
@@ -68,6 +68,30 @@ class MCPManager:
         if self.on_error is not None:
             self.on_error(server, message)
 
+    def set_overrides(self, overrides: Mapping[str, bool]) -> None:
+        """Apply the active session's choices without altering server configuration."""
+        for name, server in self._servers.items():
+            enabled = overrides.get(name, server.spec.config.enabled)
+            was_enabled = server.enabled
+            if enabled and server.toolset is None:
+                server = self._build(server.spec, force=True)
+                self._servers[name] = server
+            elif enabled and not was_enabled:
+                server.agent_toolset = wrap_toolset(
+                    server.spec, server.toolset, on_error=lambda message, name=name: self._report(name, message)
+                )
+                server.error = None
+            server.enabled_override = overrides.get(name)
+
+    async def stop_disabled(self, name: str) -> None:
+        """Disconnect an explicitly disabled server without discarding its configuration."""
+        server = self._servers.get(name)
+        if server is not None and server.toolset is not None:
+            async with server.lifecycle_lock:
+                if not server.enabled:
+                    await self._close_unlocked(server)
+                    server.tools = ()
+
     # --- queries -----------------------------------------------------------
 
     @property
@@ -77,7 +101,11 @@ class MCPManager:
     @property
     def toolsets(self) -> list[AbstractToolset]:
         """Toolsets ready to hand to the agent."""
-        return [server.agent_toolset for server in self._servers.values() if server.agent_toolset is not None]
+        return [
+            server.agent_toolset
+            for server in self._servers.values()
+            if server.enabled and server.agent_toolset is not None
+        ]
 
     def __len__(self) -> int:
         return len(self._servers)
@@ -110,11 +138,16 @@ class MCPManager:
         for server in self._servers.values():
             # With `connect` it always retries: `/mcp` is a diagnostic
             # command, and a server that already started may respond again.
-            if connect and server.toolset is not None:
+            if connect and server.enabled and server.toolset is not None:
                 await self._probe(server)
         return [server.status() for server in self._servers.values()]
 
     async def _probe(self, server: MCPServer) -> None:
+        async with server.lifecycle_lock:
+            if server.enabled:
+                await self._probe_unlocked(server)
+
+    async def _probe_unlocked(self, server: MCPServer) -> None:
         assert server.toolset is not None
         try:
             tools = await server.toolset.list_tools()
@@ -148,6 +181,10 @@ class MCPManager:
         await asyncio.gather(*closing, return_exceptions=True)
 
     async def _close(self, server: MCPServer) -> None:
+        async with server.lifecycle_lock:
+            await self._close_unlocked(server)
+
+    async def _close_unlocked(self, server: MCPServer) -> None:
         assert server.toolset is not None
         try:
             await server.toolset.client.close()

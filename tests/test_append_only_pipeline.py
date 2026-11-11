@@ -97,6 +97,28 @@ def test_crossing_the_trigger_reduces_old_payloads_and_reasoning_in_one_batch():
     assert result.summary_request is not None
 
 
+def test_default_thresholds_trigger_compaction_and_request_a_summary_only_if_needed():
+    strategy = AppendOnlyStrategy()
+    below_trigger = conversation(30)
+    below = strategy.view(below_trigger, budget_for(below_trigger, share=0.59))
+    assert not below.plan.state.compacted_calls
+    assert below.summary_request is None
+
+    above_trigger = conversation(30)
+    above_budget = budget_for(above_trigger, share=0.61)
+    above = strategy.view(above_trigger, above_budget)
+    assert above.plan.state.compacted_calls
+    assert 0.4 < estimate_messages_tokens(above.messages) / above_budget.window < 0.6
+    assert above.summary_request is not None
+
+    enough_reduction = conversation(60)
+    reduced_budget = budget_for(enough_reduction, share=0.61)
+    reduced = strategy.view(enough_reduction, reduced_budget)
+    assert reduced.plan.state.compacted_calls
+    assert estimate_messages_tokens(reduced.messages) / reduced_budget.window < 0.4
+    assert reduced.summary_request is None
+
+
 def test_the_checkpoint_replaces_the_older_span_and_keeps_the_tail():
     messages = conversation(30)
     strategy = AppendOnlyStrategy(lookup=ALL_COMPACTORS.get)

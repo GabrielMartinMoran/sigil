@@ -14,6 +14,7 @@ from textual.containers import Vertical
 from textual.widgets import Static
 
 from src.engine.context.compaction.events import CompactionEvent
+from src.engine.context.meter.cache import format_call_cost, format_call_time
 from src.engine.context.meter.debug import DebugReport
 from src.ui.widgets.debug_styles import DYNAMIC_STYLE, PART_STYLES, cache_style, context_style
 from src.ui.widgets.reading import ReadOnlyScroll
@@ -174,10 +175,12 @@ def _cache_table(report: DebugReport) -> RenderableType:
     if not cache.has_data:
         return Text(f'Prompt cache\n  No usage reported yet. Unmeasured responses: {cache.unmeasured}', style='dim')
     table = Table(title='Prompt cache · newest first · reported usage', title_justify='left', box=None, pad_edge=False)
-    for name in ('#', 'Input', 'Read', 'Written', 'Normal', 'Read %', 'Output'):
+    table.add_column('Date / time')
+    for name in ('#', 'Input', 'Read', 'Written', 'Normal', 'Read %', 'Output', 'Cost'):
         table.add_column(name, justify='right')
     for row in reversed(cache.rows):
         table.add_row(
+            format_call_time(row.timestamp),
             str(row.index),
             _context_cell(row.input_tokens, report.window),
             _n(row.cache_read),
@@ -185,8 +188,10 @@ def _cache_table(report: DebugReport) -> RenderableType:
             _n(row.uncached),
             Text(_pct(row.hit_ratio), style=cache_style(row.hit_ratio)),
             _n(row.output_tokens),
+            format_call_cost(row.cost, row.cost_estimated),
         )
     table.add_row(
+        '',
         'all',
         _n(cache.input_tokens),
         _n(cache.cache_read),
@@ -194,10 +199,12 @@ def _cache_table(report: DebugReport) -> RenderableType:
         _n(cache.uncached),
         Text(_pct(cache.hit_ratio), style=cache_style(cache.hit_ratio)),
         _n(cache.output_tokens),
+        '',
         style='bold',
     )
     notes = [
         'Read = reused; written = stored for later, not a hit. Zero may mean not reported.',
+        'Date / time is local response time; ~ marks an estimated cost, ? means unavailable.',
         f'{cache.requests} measured, {cache.unmeasured} unmeasured responses.',
     ]
     if not cache.valid:
@@ -267,7 +274,11 @@ def _turn_timeline(report: DebugReport) -> Text:
     for index in range(len(turn.steps), 0, -1):
         row = turn.steps[index - 1]
         marker = '└' if index == 1 else '┌' if index == len(turn.steps) else '├'
+        timestamp = turn.step_timestamps[index - 1] if index <= len(turn.step_timestamps) else None
         text.append(f'  {marker} Step {index:<{step_width}}  ', style='bold')
+        timestamp_text = format_call_time(timestamp)
+        text.append(timestamp_text, style='not bold grey62')
+        text.append(' ' * (21 - len(timestamp_text)))
         used = row.input_tokens if row else None
         text.append('context ')
         context = _context_cell(used, report.window)
@@ -278,8 +289,8 @@ def _turn_timeline(report: DebugReport) -> Text:
         cache = _pct(ratio)
         text.append(cache.ljust(cache_width), style=cache_style(ratio))
         cost = turn.step_costs[index - 1] if index <= len(turn.step_costs) else None
-        if cost is not None:
-            text.append(f'  cost ${cost:f}')
+        estimated = turn.step_cost_estimated[index - 1] if index <= len(turn.step_cost_estimated) else False
+        text.append(f'  cost {format_call_cost(cost, estimated)}')
         events = turn.step_events[index - 1] if turn.step_events else ()
         for event in events:
             text.append(f'  ◆ compaction: {_compaction_label(event)}', style='bold yellow')

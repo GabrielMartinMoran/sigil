@@ -80,6 +80,7 @@ def test_an_older_database_gets_the_new_columns(tmp_path):
     store.database.execute('ALTER TABLE sessions DROP COLUMN tools_tokens')
     store.database.execute('ALTER TABLE sessions DROP COLUMN instructions_tokens')
     store.database.execute('ALTER TABLE sessions DROP COLUMN allow_external_files')
+    store.database.execute('ALTER TABLE sessions DROP COLUMN mcp_overrides')
     store.database.execute('PRAGMA user_version = 1')
     Database.forget(path)
 

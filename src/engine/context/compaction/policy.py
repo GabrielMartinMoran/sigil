@@ -15,10 +15,10 @@ class CompactionPolicy:
     measured quality boundaries.
     """
 
-    trigger_percent: int = 75
+    trigger_percent: int = 60
     """Share of the window above which deterministic compaction runs."""
 
-    target_percent: int = 60
+    target_percent: int = 40
     """Share of the window deterministic compaction should leave behind."""
 
     recent_reasoning_blocks: int = 5

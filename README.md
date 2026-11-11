@@ -349,9 +349,11 @@ context.
 
 ### `/mcp` command
 
-`/mcp` in the chat connects to every server and shows transport, state, tools and
-the last error. Config errors also show up as a notice on startup, without
-blocking the session.
+`/mcp` opens a scrollable list of servers, their transport, and their state. Use
+the arrow keys and Enter to enable or disable a server for the current session.
+Your choice is saved with the session; a new session starts with the configured
+state. Disabled servers do not expose tools, resources, or prompts to the agent.
+Config errors also show up as a notice on startup, without blocking the session.
 
 ### What happens if a server fails
 
@@ -1093,8 +1095,8 @@ silently.
 
 | Command | Mid-turn |
 | --- | --- |
-| `/context`, `/debug`, `/sidebar`, `/mcp`, `/help` | Available: they only read state |
-| `/new`, `/load`, `/provider`, `/model`, `/effort`, `/quit` | Refused: they would swap the session, the model or the process under the running turn |
+| `/context`, `/debug`, `/sidebar`, `/help` | Available: they only read state |
+| `/new`, `/load`, `/provider`, `/model`, `/effort`, `/mcp`, `/quit` | Refused: they would change the session, tools, model, or process under the running turn |
 
 A refused command does nothing beyond saying so: the chat gets one yellow line
 naming it, and the command goes back into the prompt — the turn, the session,
@@ -1357,15 +1359,15 @@ type.
 | `/alerts [on\|off]` | Shows desktop alert status; enables or disables alerts |
 | `/theme [name\|--list]` | Opens the theme picker with a live preview; with a name, applies it; `--list` lists the installed ones |
 | `/sidebar [on\|off]` | Shows or hides the sidebar; without an argument, toggles |
-| `/mcp` | Queries the state of the MCP servers |
+| `/mcp` | Opens the MCP server list and changes availability for this session |
 | `/context` | Shows the breakdown of the used context and what the session cost |
 | `/debug [on\|off\|--text]` | Shows or hides the agent debug view; without an argument, toggles |
 | `/help` | Lists the available commands and the keys |
 | `/quit` | Exits Sigil |
 
 While a turn runs, only the read-only commands are available: `/context`,
-`/debug`, `/sidebar`, `/mcp` and `/help`. `/new`, `/load`, `/agent`, `/provider`,
-`/model`, `/effort` and `/quit` are refused: they would swap the session, the
+`/debug`, `/sidebar` and `/help`. `/new`, `/load`, `/agent`, `/provider`,
+`/model`, `/effort`, `/mcp` and `/quit` are refused: they would change the session, the
 agent, the model or the process under the running turn. A refused command comes
 back into the prompt after one yellow line in the chat, and nothing else
 changes.
@@ -1792,7 +1794,7 @@ Choose the guarded default for normal use, or passthrough for diagnostics:
 
 | Strategy | What it does |
 | --- | --- |
-| `append-only` (default) | Appends during ordinary work. At 75% of the window it reduces old payloads in one batch; above 60% the session's model writes a checkpoint. |
+| `append-only` (default) | Appends during ordinary work. Above 60% of the window it reduces old payloads in one batch; if the result remains above 40%, the session's model writes a checkpoint. |
 | `passthrough` | Sends the history as is. Diagnostics only; it never compacts. |
 
 By default, the newest five reasoning blocks and twenty tool calls stay intact.
@@ -1828,9 +1830,9 @@ separately. Cache writes are not hits; missing cache reporting is not evidence o
 zero reuse.
 
 The shared pipeline appends during ordinary work and rewrites the history only at
-a compaction boundary. Crossing 75% of the window runs one deterministic batch
+a compaction boundary. Crossing 60% of the window runs one deterministic batch
 that keeps the newest five reasoning blocks and twenty tool calls; if the result
-is still above 60%, the session's own model writes a structured checkpoint.
+is still above 40%, the session's own model writes a structured checkpoint.
 External tools use a single 500-character size policy; own tools declare what
 they keep. If the protected request still exceeds its estimated budget, Sigil
 stops before calling the provider with an actionable error instead of deleting
@@ -1851,8 +1853,8 @@ change behaviour behind your back.
 | `SIGIL_MODEL_MAX_ATTEMPTS` | `5` | Attempts per model request on transient failures. |
 | `SIGIL_HOME` | `~/.sigil` | Where sessions, roadmaps and provider credentials live. |
 | `SIGIL_CONTEXT_STRATEGY` | `append-only` | `append-only` or `passthrough`. |
-| `SIGIL_CONTEXT_TRIGGER_PERCENT` | `75` | Share of the window that starts a deterministic compaction. |
-| `SIGIL_CONTEXT_TARGET_PERCENT` | `60` | Share the deterministic batch should leave behind; above it, a checkpoint is requested. |
+| `SIGIL_CONTEXT_TRIGGER_PERCENT` | `60` | Share of the window that starts a deterministic compaction. |
+| `SIGIL_CONTEXT_TARGET_PERCENT` | `40` | Share the deterministic batch should leave behind; above it, a checkpoint is requested. |
 | `SIGIL_CONTEXT_RECENT_REASONING_BLOCKS` | `5` | Individual recent reasoning parts kept intact at compaction. |
 | `SIGIL_CONTEXT_RECENT_TOOL_CALLS` | `20` | Individual recent tool calls kept intact at compaction. |
 | `SIGIL_CONTEXT_SAFETY_MARGIN_PERCENT` | `5` | Additional window reservation for uncertainty; 0 to 99. |

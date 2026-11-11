@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from datetime import datetime
 from decimal import Decimal
 
 from pydantic_ai.messages import (
@@ -36,7 +37,7 @@ from pydantic_ai.messages import (
 from src.engine.agents.turn_map import library_run_id
 from src.engine.context.compaction.events import CompactionEvent
 from src.engine.context.meter.cache import CacheSummary, RequestCacheRow, cache_summary, request_cache_rows
-from src.engine.context.meter.cost import reported_cost
+from src.engine.context.meter.cost import request_amount
 from src.engine.context.meter.request import RequestSnapshot
 from src.engine.context.meter.snapshot import ContextSnapshot
 from src.engine.context.strategy.view_result import ViewResult
@@ -105,7 +106,9 @@ class DebugTurn:
     steps_before: int = 0
     step_events: tuple[tuple[CompactionEvent, ...], ...] = ()
     step_costs: tuple[Decimal | None, ...] = ()
-    """Provider-reported charges only; estimates are never included."""
+    """Available charges, with estimated values identified separately."""
+    step_cost_estimated: tuple[bool, ...] = ()
+    step_timestamps: tuple[datetime | None, ...] = ()
 
     @property
     def context_used(self) -> int | None:
@@ -195,6 +198,7 @@ def debug_turns(
             if last_usage is not None and last_usage.has_values() and not last_usage.unmeasured_requests
             else None
         )
+        amounts = [request_amount(response) for response in responses]
         turns.append(
             DebugTurn(
                 index,
@@ -208,7 +212,9 @@ def debug_turns(
                 _turn_steps(messages_in_turn, steps_here),
                 first_step,
                 _events_by_step(messages_in_turn, in_turn, first_step),
-                tuple(map(reported_cost, responses)),
+                tuple(amount for amount, _ in amounts),
+                tuple(amount is not None and not reported for amount, reported in amounts),
+                tuple(response.timestamp for response in responses),
             )
         )
     return tuple(turns)
