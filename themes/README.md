@@ -1,6 +1,6 @@
 # Theme templates
 
-The two builtin themes, as files. They are the same colors the app ships with, and
+The three builtin themes, as files. They are the same colors the app ships with, and
 they exist so you have a working file to copy instead of a shape to reconstruct:
 
 ```sh

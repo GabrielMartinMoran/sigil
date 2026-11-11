@@ -52,6 +52,7 @@ from src.engine.attachments.image_attachment import ImageAttachment
 from src.engine.context.images import image_size
 from src.engine.tooling.outputs import present_output
 from src.engine.tooling.presentation import ToolSummary, display_name
+from src.ui.markdown_theme import markdown_themes
 from src.ui.messages import NodeOpened, RollbackRequested
 from src.ui.palette import color
 from src.ui.subagent_reports import split_reports
@@ -282,10 +283,15 @@ def link_urls(text: Text) -> Text:
 class LinkedMarkdown:
     """Render Markdown while adding terminal links to bare HTTP URLs."""
 
-    def __init__(self, text: str) -> None:
-        self.markdown = Markdown(text)
+    def __init__(self, text: str, widget: Any = None) -> None:
+        self.theme, code_theme = markdown_themes(lambda name: color(widget, name))
+        self.markdown = Markdown(text, code_theme=code_theme)
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        with console.use_theme(self.theme):
+            yield from self._render_linked(console, options)
+
+    def _render_linked(self, console: Console, options: ConsoleOptions) -> RenderResult:
         for segment in console.render(self.markdown, options):
             if segment.control or (segment.style and segment.style.link):
                 yield segment
@@ -408,7 +414,7 @@ class AssistantBlock(Static):
         if self._has_thinking:
             parts.append(self._reasoning_renderable())
         if self._text:
-            parts.append(LinkedMarkdown(self._text))
+            parts.append(LinkedMarkdown(self._text, self))
         if not parts:
             return Text('')
         if len(parts) == 1:

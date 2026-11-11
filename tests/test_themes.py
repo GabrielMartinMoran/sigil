@@ -22,17 +22,27 @@ def _write(directory, name: str, payload: object) -> None:
     (directory / name).write_text(json.dumps(payload), encoding='utf-8')
 
 
-def test_the_builtins_are_a_dark_theme_and_synthwave():
+def test_the_builtins_include_sigil_dark_and_synthwave():
     registry = ThemeRegistry.load()
-    assert BUILTIN_NAMES == {'dark', 'synthwave'}
-    assert registry.names()[:2] == ['dark', 'synthwave']
+    assert BUILTIN_NAMES == {'sigil', 'dark', 'synthwave'}
+    assert registry.names()[:3] == ['sigil', 'dark', 'synthwave']
 
 
 def test_the_default_theme_is_a_builtin_and_resolves(tmp_path):
     registry = ThemeRegistry.load(tmp_path)
     assert registry.resolve('dark').name == 'dark'
     # A stored preference can name a theme that was uninstalled since.
-    assert registry.resolve('gone').name == 'dark'
+    assert registry.resolve('gone').name == 'sigil'
+
+
+def test_sigil_uses_the_brand_palette(tmp_path):
+    theme = ThemeRegistry.load(tmp_path).resolve('sigil')
+    assert theme.name == 'sigil'
+    assert theme.colors['background'] == '#0b0a0d'
+    assert theme.colors['primary'] == '#f59e0b'
+    assert theme.colors['secondary'] == '#d55a1f'
+    assert theme.colors['foreground'] == '#e7d7c1'
+    assert theme.colors['error'] != theme.colors['background']
 
 
 def test_builtins_define_every_variable_the_stylesheet_uses():
@@ -83,7 +93,7 @@ def test_a_user_theme_loads_from_a_file(tmp_path):
 def test_an_installed_theme_appears_after_the_builtins(tmp_path):
     _write(tmp_path, 'aaa.json', {'name': 'aaa', 'colors': {'primary': '#00ff00'}})
     registry = ThemeRegistry.load(tmp_path)
-    assert registry.names() == ['dark', 'synthwave', 'aaa']
+    assert registry.names() == ['sigil', 'dark', 'synthwave', 'aaa']
 
 
 def test_a_user_file_can_replace_a_builtin(tmp_path):
@@ -118,7 +128,7 @@ def test_a_broken_file_is_reported_and_skipped(tmp_path):
 def test_a_missing_directory_is_not_an_error(tmp_path):
     registry = ThemeRegistry.load(tmp_path / 'nowhere')
     assert registry.errors == []
-    assert registry.names()[:2] == ['dark', 'synthwave']
+    assert registry.names()[:3] == ['sigil', 'dark', 'synthwave']
 
 
 def test_a_color_that_does_not_parse_rejects_the_whole_file(tmp_path):

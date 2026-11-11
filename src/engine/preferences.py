@@ -18,6 +18,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from src.engine.paths import sigil_home
+from src.engine.themes import DEFAULT_THEME_NAME
 
 FILE_NAME = 'ui.json'
 
@@ -27,7 +28,7 @@ TOOLS_KEY = 'tools_expanded'
 DESKTOP_NOTIFICATIONS_KEY = 'desktop_notifications'
 MODEL_FAVORITES_KEY = 'model_favorites'
 
-DEFAULT_THEME = 'dark'
+DEFAULT_THEME = DEFAULT_THEME_NAME
 """Theme applied on a cold start. It is a builtin, so it always exists."""
 
 DEFAULT_REASONING_VISIBLE = False

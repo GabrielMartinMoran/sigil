@@ -1704,7 +1704,7 @@ the left margin. Consecutive calls share no gap, so the column is continuous.
 
 ## Themes
 
-A theme is a JSON file with a name and a set of colors. Sigil ships two and reads
+A theme is a JSON file with a name and a set of colors. Sigil ships three and reads
 the ones installed in `~/.sigil/themes`, one file each:
 
 ```
@@ -1752,7 +1752,8 @@ repository instead of being copied around.
 
 | Theme | What it is |
 | --- | --- |
-| `dark` | The default: a neutral dark surface with a cool accent, quiet enough not to compete with the content |
+| `sigil` | The default: obsidian surfaces, warm beige text, and amber and burnt-orange accents |
+| `dark` | A neutral dark surface with a cool accent |
 | `synthwave` | Neon on deep purple: hot pink, electric cyan and a violet sky. It exists to prove the system moves every surface and not just the accent |
 
 ### `/theme`
