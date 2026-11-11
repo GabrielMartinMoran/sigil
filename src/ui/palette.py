@@ -16,6 +16,14 @@ from rich.text import Text
 UNKNOWN = ''
 
 _FALLBACKS: dict[str, str] = {
+    'primary': 'cyan',
+    'secondary': 'blue',
+    'accent': 'cyan',
+    'foreground': 'white',
+    'panel': 'black',
+    'success': 'green',
+    'warning': 'yellow',
+    'error': 'red',
     'tool-border': 'bright_black',
     'tool-title': 'cyan',
     'tool-output': 'bright_black',
