@@ -1,0 +1,26 @@
+version: 1
+status: approved
+objective: Characterize whether the installed Pydantic AI exposes a reliable per-occurrence correlation from enqueue to persisted and reopened transcript, without modifying production behavior.
+scope:
+  included:
+    - Add test-only characterization of multiple steering inputs, including identical inputs and images, event identity, transcript serialization and reopening.
+    - Report observed correlation, ordering, batching and ambiguity honestly; do not force an expected identity or invent identifiers.
+  excluded:
+    - Production queue runtime, schema or rollback changes; replay or behavior changes; new dependencies.
+user_decisions:
+  - Existing approved durable queue plan remains blocked pending this evidence; two deliberate identical messages have distinct UUIDs.
+agent_decisions:
+  - Use deterministic model behavior and real installed Pydantic AI with temporary storage, at integration level, because actual enqueue/event/serialization boundaries are relevant.
+  - A test can document absence of a reliable mapping; absence is not a pass for queue runtime.
+tasks:
+  - id: steering-identity-characterization-v1
+    worker: pas_developer
+    paths: [tests/test_steering_identity_characterization.py]
+    assigned_skills: [clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer]
+    acceptance: '@integration: record event identifiers and the actual persisted and reopened message/part results for multiple steers, including identical text and images, plus relevant tool results or explain an evidenced inability; prevent accidental reliance on message content as occurrence identity.'
+    red_green_refactor: Characterization rather than feature TDD; establish real behavior without assuming an unsupported result, make tests deterministic, and refactor test fixtures.
+    checks: focused pytest, relevant existing steering and durable characterization regressions, full Python suite with -n 8, Ruff lint and format, diff including untracked, experimental clean-python validator absolute path with honest result.
+    escalation: Stop for new production paths, dependencies, behavioral choices or inability to characterize the actual installed library.
+verification: Independent pas_qa reviews tests, results, exact skills and evidence; no runtime implementation until a separately approved revised plan.
+risks: Characterization may show no usable identity; results apply only to the installed version, not the declared unbounded dependency range. No assumption of physical power-loss resilience.
+delegation: Sequential pas_developer then pas_qa; existing queue storage remains untouched.

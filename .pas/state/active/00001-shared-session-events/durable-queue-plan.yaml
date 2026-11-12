@@ -1,0 +1,121 @@
+version: 1
+status: approved
+objective: >-
+  Add a durable per-session message queue and server consumer, including safe
+  schema migration, durable acknowledgement, idempotency and interrupted-state
+  recovery. This increment does not yet turn the TUI into a shared-core client.
+user_decisions:
+  - Use a SQLite queue linked to the session and consumed by the server.
+  - Acknowledge complete messages and images only after durable commit; retry must not duplicate.
+  - Preserve confirmed messages through power loss subject to sync support by filesystem and hardware.
+  - Preserve accepted but undelivered messages as stopped on stop; no execution without explicit user action.
+  - After a service crash, keep accepted work visible as interrupted and do not replay automatically.
+  - Existing older Sigil instances must be closed before opening the same database with the new service.
+  - Busy-session messages retain steering semantics rather than silently becoming later turns.
+  - Linux and macOS, Windows through WSL; native Windows excluded.
+scope:
+  included:
+    - SQLite migration version 6 and safe transactional schema initialization; WAL synchronous FULL.
+    - Persisted per-session queue and session draft materialization atomically with acceptance.
+    - Request idempotency, payload verification, server ownership and normal-agent-path consumption.
+    - Interrupted and stopped entries remain retrievable; no automatic re-execution.
+    - Server API accepts text and ordered validated image payloads and a stable caller request ID.
+    - Keep the existing web text-send path functional by creating and retaining a stable request ID for retry of the same submission.
+    - Preserve existing transcript, rollback, conflict recovery, background work and user data; any inability to do so blocks the affected task.
+  excluded:
+    - Shared background daemon discovery and moving TUI execution into the service.
+    - Web image picker and complete synchronized live snapshot/replay; these remain required future work.
+    - Guarantees against older processes ignoring ownership locks; user must close them before upgrade.
+    - Automatic repair of a partially migrated database, automatic replay of interrupted work, exactly-once external tool effects, and per-user session ACLs.
+agent_decisions:
+  - Queue commands use a caller-generated UUIDv4 scoped to the session, as requested by the user; retry with the same payload reuses the same UUID and returns existing acceptance, and the same ID with differing payload yields a conflict. UUIDs are identifiers, not authorization tokens. Keep records for the lifetime of the session; deleting the session deletes its queue records.
+  - Serialize validated text and ordered image bytes, media type and persisted stable image identifier using an explicitly versioned canonical encoding. At first acceptance the server assigns each image its existing-format identifier and persists it in the same transaction; an idempotent retry returns the stored identifiers rather than regenerating them. The versioned fingerprint covers exact accepted text, ordered image bytes and MIME types, but excludes server-assigned image identifiers and timestamps. The caller cannot choose or overwrite the stored image identifier. Never use image IDs as authorization tokens.
+  - Materialize a draft session and its initial queue command in one SQLite transaction; update in-memory draft state only after successful commit.
+  - Add a STRICT queue table keyed by session_id and request_id, with ordered sequence, versioned payload, fingerprint, command kind, state, attempt ID, normal PydanticAI run ID and timestamps. Allowed states are accepted, claimed, delivered, finished, stopped and interrupted; model them as explicit validated transitions. Accepted may become claimed, stopped or interrupted; claimed may become delivered, stopped or interrupted; delivered may become finished, stopped or interrupted; finished, stopped and interrupted are terminal. On restart under exclusive ownership, reconcile all nonterminal entries to interrupted without replay. Persist the link to the actual run ID, never a fabricated pre-run ModelRequest.
+  - The consumer uses the existing normal agent.iter(prompt, previous history) path; bind persisted transcript and queue progress atomically when checkpointing, or stop if evidence shows that atomic binding requires scope changes.
+  - No work accepted under an earlier server ownership generation is automatically executed after restart; preserve it as interrupted. Stop freezes accepted undelivered commands as stopped.
+  - For this incremental server, acquire an exclusive stable OS advisory store lock before reconciliation and hold it for the server lifetime; a second cooperative server fails explicitly, without starting work. This is not protection from old processes or other non-cooperating writers.
+  - Implement the lock within the server entry lifecycle, do not unlink lock files while running, do not leak descriptors into child processes, fail closed on unsafe or ambiguous lock path, and test using real processes. This is not an inter-user sandbox.
+  - Limit durable ACK claims to clients that send the stable request ID; reject missing IDs at the new command boundary rather than claim safe retries. Update existing web text client within this plan; direct TUI path remains outside this guarantee.
+  - As selected by the user, accept at most ten images per message and 4 MiB per image before decoding. Bound the JSON command body to 64 MiB to accommodate base64 encoding, and validate image data and dimensions before acknowledgement. Reject excessive or invalid inputs; never treat a browser filename as a server path or emit raw image bytes in events/logs. Image selection UI remains out of scope.
+  - Use current event system only for best-effort notifications; a durable queue/status read is authoritative after a gap. Full coherent snapshot and event-replay design is a future phase.
+  - Upgrade current SQLite initialization with writer lock, post-lock version check and atomic schema stamp using complete SQL statements, not legacy executescript inside a transaction; reject newer schema versions and preserve supported old databases.
+  - Reuse in-repo tests and enforce integration at SQLite, runtime and process boundaries; use unit tests for fingerprint and serialization. No E2E is claimed for this backend increment.
+limitations:
+  - The current terminal still executes independently and will not yet consume this queue; do not use it simultaneously on the same session to claim exclusion.
+  - Without a shared background daemon, shutting down the owning server interrupts execution; client disconnection alone must not cancel a running server.
+  - Previous instances must be closed before migration; an advisory lock cannot detect or stop old versions reliably.
+  - FULL relies on correct local filesystem/hardware synchronization. Tests cannot prove resilience to every physical power failure.
+  - Pending steering accepted but not yet delivered must remain visible and stopped/interrupted after stop/crash; no UI resend action is implemented in this increment.
+scenario_paths: [specs/features/application/durable_session_queue.feature, specs/features/application/storage_migration_safety.feature]
+skill_assignment: .pas/state/active/00001-shared-session-events/skill-assignment.yaml
+quality_checks:
+  full: uv run pytest -q -p no:sugar -n 8
+  lint: uv run ruff check src tests
+  format: uv run ruff format --check src tests
+  web: npm --prefix web test && npm --prefix web run typecheck && npm --prefix web run lint && npm --prefix web run format:check && npm --prefix web run build
+  diff: git diff --check and inspect tracked and untracked affected paths
+  validator: Run experimental clean-python validator against the absolute workspace path and report actual result and newly introduced findings.
+tasks:
+  - id: queue-storage-v1
+    worker: pas_developer
+    objective: Atomic schema migration, synchronous FULL, durable queue schema and typed persistence operations including atomic draft acceptance.
+    edit_paths:
+      - src/engine/storage/database.py
+      - src/engine/storage/schema.py
+      - src/engine/storage/accepted_inputs.py
+      - src/engine/sessions/session_store.py
+      - docs/storage.md
+      - tests/test_storage_migration_safety.py
+      - tests/test_accepted_inputs.py
+      - tests/test_schema_documentation.py
+      - tests/test_session_store.py
+    regression_paths: [tests/test_storage.py, tests/test_session_sync.py, tests/test_session_measurement.py, tests/test_agent_notifications.py, tests/test_durable_prompt_characterization.py]
+    red_green_refactor: 'RED failing migration, draft, idempotency, images and power-sync tests; GREEN implementation with actual SQLite transactions; REFACTOR typed boundaries and resource handling.'
+    acceptance: '@integration migration safety; durable queue commit and idempotency storage boundary'
+    skills: [clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer]
+    escalation: Stop if durable ownership or draft atomicity requires paths outside edit_paths, unrecoverable schema assumptions, data repair, or new behavior decision.
+  - id: queue-runtime-v1
+    worker: pas_developer
+    objective: Server ownership, durable queue consumer, normal agent handoff, stop and restart reconciliation, authoritative queue status.
+    edit_paths:
+      - src/server/runtime.py
+      - src/server/app.py
+      - src/server/cli.py
+      - src/server/events.py
+      - src/server/views.py
+      - src/server/ownership.py
+      - src/engine/storage/accepted_inputs.py
+      - src/engine/sessions/session_store.py
+      - src/engine/sessions/recovery.py
+      - src/engine/attachments/content.py
+      - src/engine/attachments/image_attachment.py
+      - docs/architecture.md
+      - docs/domain.md
+      - tests/test_server_runtime.py
+      - tests/test_server_queue.py
+      - tests/test_server_ownership.py
+    regression_paths: [tests/test_history_recovery.py, tests/test_rollback.py, tests/test_storage.py, tests/test_session_sync.py, tests/test_steering_images.py, tests/test_durable_prompt_characterization.py, tests/test_session_isolation_foundation.py]
+    red_green_refactor: 'RED process owner conflicts, crash at each acceptance/claim/delivery/checkpoint boundary, stop race, steering, rollback correlation and duplicate requests; GREEN runtime and API integration; REFACTOR resource ownership and clean closure.'
+    acceptance: '@integration all durable_session_queue scenarios against the cooperative backend scope'
+    skills: [clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer]
+    escalation: Stop on need to edit another path, unbounded owner lock or unsafe path, inability to bind transcript and queue atomically, non-participating legacy ownership, or semantics of steer that differ from approved behavior.
+  - id: queue-web-text-v1
+    worker: pas_developer
+    objective: Keep existing browser text-send functional with stable request IDs and explicit handling of accepted, stopped and interrupted queue states.
+    edit_paths:
+      - web/src/api.ts
+      - web/src/store.ts
+      - web/src/types.ts
+      - web/src/Composer.tsx
+      - web/src/Transcript.tsx
+      - web/src/useEvents.ts
+      - web/src/queueCommands.test.ts
+      - web/dist/
+      - tests/test_web_dist.py
+    regression_paths: [web/src/notifications.test.ts, web/src/questionEvents.test.ts, web/src/toolPresentation.test.ts, tests/test_server_runtime.py]
+    red_green_refactor: 'RED retry with identical ID and no duplicate display, error retaining composer content, stop/interrupted presentation; GREEN client wiring; REFACTOR no state duplication and rebuild committed bundle.'
+    acceptance: '@integration durable_session_queue client-boundary subset; web image picker excluded'
+    skills: [clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer]
+    escalation: Stop if additional UI behavior, auth changes, dependencies, or paths outside edit_paths are required.
+execution: Each atomic task runs in the listed order, with independent QA and verdict adjudication before the next. Full Python and web checks run against the final tree; use earlier scoped checks for early diagnosis. Any path/scope expansion requires user approval.

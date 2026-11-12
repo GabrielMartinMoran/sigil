@@ -1,0 +1,55 @@
+version: 1
+status: completed
+objective: Characterize prompt-to-turn identity and rollback across actual PydanticAI and SQLite before choosing durable-acceptance architecture.
+scope:
+  included:
+    - Test normal agent execution and persist/reopen with text and image.
+    - Test stored trailing request handoff with actual PydanticAI 2.65 as installed, actual SQLite session storage and rollback associations.
+    - Record request/response run identifiers, turn identifiers, prompt count and bytes, and checkpoint/rollback associations before and after handoff.
+    - Compare observed behavior to existing project contracts; explicitly report inconsistencies instead of changing production code.
+  excluded:
+    - Production code, migrations, frontend, server protocol, event cursor implementation, durable acknowledgement and steering.
+    - Automatic recovery or replay after crash and any claim of successful durable acceptance.
+user_decisions:
+  - Acknowledged messages and images must be durable and idempotent; crashes interrupt work without automatic replay.
+  - Continue background execution without clients; model and effort apply at next step; agent at next turn.
+agent_decisions:
+  - Use one narrowly scoped pytest integration test file with deterministic TestModel, SQLite temporary storage, and no network.
+  - Characterize actual current behavior rather than asserting the desired new guarantee as already implemented.
+  - Keep the separate-inbox and pre-stored-prompt approaches open until evidence is available.
+  - No E2E: model-library and persistent-storage integration is the lowest reliable level for identity and rollback.
+scenario_path: specs/features/application/prompt_handoff_characterization.feature
+skill_assignment: .pas/state/active/00001-shared-session-events/skill-assignment.yaml
+tasks:
+  - id: characterize-prompt-handoff-v1
+    worker: pas_developer
+    edit_paths: [tests/test_durable_prompt_characterization.py]
+    read_only_reference_paths:
+      - src/engine/storage/history.py
+      - src/engine/storage/schema.py
+      - src/engine/sessions/session_store.py
+      - src/engine/agents/turn_map.py
+      - src/engine/agents/rollback.py
+      - tests/test_storage.py
+      - tests/test_rollback.py
+      - tests/test_history_recovery.py
+    checks: >-
+      RED: assert observed or documented identities with a deliberate test mutation or
+      demonstrable mismatched expectation, without changing product code; GREEN:
+      characterize actual behavior with deterministic tests and inspect exact SQLite
+      turn/checkpoint associations; REFACTOR: keep fixtures small and typed.
+      Run uv run pytest -q -p no:sugar tests/test_durable_prompt_characterization.py
+      and related focused regression tests, then uv run pytest -q -p no:sugar -n 8,
+      uv run ruff check src tests, uv run ruff format --check src tests,
+      and git diff --check. Record any experimental validator output honestly.
+    acceptance_tags: ['@integration']
+    skills: [clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer]
+    escalation: Stop if proving behavior requires editing any other file, if observed results contradict expectations, or if temp storage cannot preserve existing user data.
+qa:
+  worker: pas_qa
+  skills: [clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer]
+  objective: Independently validate characterization, evidence, test scope, and assigned skill application.
+risks:
+  - Results characterize the installed library version and must not be generalized to future versions without verification.
+  - An observed identity split is evidence, not proof of every downstream failure or a reason to weaken assertions.
+  - No product behavior is repaired in this slice; the existing acceptance-loss risk remains.

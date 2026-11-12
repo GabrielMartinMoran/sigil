@@ -1,0 +1,29 @@
+skill_assignment:
+  available_skills:
+    - clean-architecture
+    - clean-code
+    - clean-python
+    - documentation-lookup
+    - cognitive-writing
+    - docs-writer
+  required_by_role:
+    researcher:
+      - clean-architecture
+      - clean-code
+      - clean-python
+      - documentation-lookup
+    developer:
+      - clean-architecture
+      - clean-code
+      - clean-python
+      - cognitive-writing
+      - docs-writer
+    qa:
+      - clean-architecture
+      - clean-code
+      - clean-python
+      - cognitive-writing
+      - docs-writer
+  missing_skills:
+    - clean-backend-architecture (recommended companion to clean-python; unavailable in the skill inventory)
+  critical_missing: []

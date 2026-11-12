@@ -1,0 +1,64 @@
+version: 1
+status: proposed
+objective: Secure existing SQLite schema initialization and configure full synchronization as prerequisites for durable acceptance; do not implement message acceptance yet.
+user_decisions:
+  - Messages confirmed in the final system should survive process crash and power loss, subject to filesystem and hardware honoring sync.
+  - Accepted messages and images must not duplicate on retry and interrupted work must not automatically rerun.
+scope:
+  included:
+    - Atomic initialization and migration of coherent supported schemas without changing the current schema version or adding an inbox.
+    - Serialize concurrent initializers using SQLite writer ownership and re-read schema version under the acquired lock.
+    - Reject a newer schema version without stamping it down.
+    - Use SQLite WAL with synchronous FULL for the existing storage connection.
+    - Correct the documented current schema version and migration history and check version drift.
+  excluded:
+    - Automatic repair or modification of already partially migrated databases; fail with actionable error and preserve data.
+    - Durable prompt acceptance, idempotency records, draft materialization, UI, events, and restart reconciliation.
+    - Guarantees for storage hardware or filesystems that do not honor sync, or untested platforms.
+agent_decisions:
+  - Keep SQLite connection autocommit configuration and public transaction semantics unchanged; execute parsed complete SQL statements under one BEGIN IMMEDIATE using sqlite3.complete_statement, preserving complete trigger definitions, and never execute the existing scripts via executescript inside the protected transaction.
+  - Read user_version only after writer lock acquisition; apply supported migrations, complete current schema, and stamp version in that same transaction. Do not introduce a schema-version bump.
+  - Roll back on migration exception and close failed initialization resources; preserve original failure context. A previously partial or incompatible schema fails closed without attempting repair.
+  - Preserve legacy v0 handling and known migration steps 2, 4, 5, including empty step 3 and schema defaults. Guard a future user_version against downgrade.
+  - FULL affects the storage connection, not only future acceptance; report the potential write-latency impact without claiming a benchmark.
+  - Use integration tests for real SQLite files and processes, unit tests for statement parsing if useful. E2E is not needed to prove a database boundary.
+scenarios: specs/features/application/storage_migration_safety.feature
+skills: .pas/state/active/00001-shared-session-events/skill-assignment.yaml
+tasks:
+  - id: safe-sqlite-migrations-v1
+    worker: pas_developer
+    edit_paths:
+      - src/engine/storage/database.py
+      - tests/test_storage_migration_safety.py
+      - tests/test_schema_documentation.py
+      - docs/storage.md
+    reference_paths:
+      - src/engine/storage/schema.py
+      - tests/test_session_measurement.py
+      - tests/test_agent_notifications.py
+      - tests/test_storage.py
+    red_green_refactor: >-
+      RED: demonstrate rollback of a partially applied migration, future-version
+      guard, writer serialization and actual FULL pragma using temporary database
+      fixtures and deterministic barriers. GREEN: implement one explicit migration
+      transaction without executescript precommit; REFRACTOR: keep helpers narrow,
+      typed, and resource-safe, and preserve trigger parsing.
+    acceptance_tags: ['@integration']
+    required_checks:
+      - uv run pytest -q -p no:sugar tests/test_storage_migration_safety.py tests/test_schema_documentation.py tests/test_session_measurement.py tests/test_agent_notifications.py tests/test_storage.py
+      - uv run pytest -q -p no:sugar -n 8
+      - uv run ruff check src tests
+      - uv run ruff format --check src tests
+      - git diff --check
+      - Validate documentation version and links affected; report experimental clean-python validator exit honestly.
+    skills: [clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer]
+    escalation: Stop if fixing safety requires editing paths outside edit_paths, automatic repair of a damaged DB, schema design changes, or an unresolved behavior choice.
+qa:
+  worker: pas_qa
+  skills: [clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer]
+  required: Independent diff and tests, multi-process and injected failure evidence, documentation and assignment verification; exact PASS FAIL or BLOCKED.
+risks:
+  - Existing partially migrated databases may require separate recovery; do not overwrite data or stamp their version.
+  - Concurrent startup can still fail with a bounded SQLITE_BUSY; do not report success without a committed initialization.
+  - FULL depends on storage stack, and could increase write latency; no performance improvement is claimed.
+  - Existing validator is experimental and previously failed globally; do not present it as passing without a successful run.

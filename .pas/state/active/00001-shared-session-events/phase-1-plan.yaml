@@ -1,0 +1,104 @@
+version: 1
+status: completed
+feature: shared-session-events
+objective: >-
+  Establish a tested foundation for two fixed session compositions with separate
+  project roots and separately cancellable internal shell work. This phase does
+  not deliver shared live sessions.
+user_decisions:
+  - Shared background service, Linux/macOS and Windows via WSL; Windows native excluded.
+  - Session project context is explicit; no sandbox for arbitrary Python extensions.
+  - Ultimately stop cancels all work of that session, including background subagents.
+  - Tools receive session and project context; project tools are scoped to their project.
+  - Model and effort changes take effect on the next agent step for inheriting agents; agent changes take effect on the next turn.
+  - Accepted messages and images must be durable and retries must not duplicate them; crashes interrupt without automatic replay.
+  - Preserve remote web access and add image sending from web.
+agent_decisions:
+  - This phase tests two fixed compositions and does not change concurrent workspace switching.
+  - On switching projects, reload project agent profiles for the destination, preserve the active agent when available and otherwise select an available agent, and invalidate cached profile agents so old project definitions are not reused. User approved this scope amendment explicitly.
+  - Inject composition root through explicit parameters into internal file, image, permission, profile discovery, and shell paths. Legacy standalone call sites retain existing defaults; the fixed-composition path must never use those defaults.
+  - Use one explicitly owned shell process registry per composition and a cancellation/admission protocol that covers spawning in progress. Do not treat a global set partition alone as sufficient.
+  - Keep existing terminal workspace switching behavior until a later migration. Fixed-root scenarios do not rebind a composition while owned shell work is active; this is a test precondition, not a new runtime guard. Active-work rebind remains unsupported and unverified until a later phase.
+  - Preserve image-path authorization behavior, Git and skill-script cwd behavior, and existing external-file semantics; do not introduce a new sandbox.
+  - Apply integration tests to real composition and process boundaries; use unit tests for pure path and admission rules. No E2E test is required for this foundation.
+limitations:
+  - No daemon, client synchronization, new event protocol, web image upload, durable acceptance, or crash-recovery migration in this phase.
+  - No guarantee of isolation or cancellation for MCP, third-party extensions, skill scripts, Git processes, arbitrary subprocesses, or concurrent workspace switching.
+  - This phase does not by itself provide the final stop-all-session behavior or prove multi-platform support.
+  - WSL 1, Windows-mounted filesystems, and macOS require actual environment verification; do not claim an unrun check.
+scenarios: specs/features/application/session_isolation_foundation.feature
+skill_assignment: .pas/state/active/00001-shared-session-events/skill-assignment.yaml
+checks:
+  focused: >-
+    uv run pytest -q -p no:sugar tests/test_files.py tests/test_session_file_access.py
+    tests/test_agent_permissions.py tests/test_view_image_tool.py tests/test_shell.py
+    tests/test_shell_environment.py tests/test_steering_and_abort.py tests/test_workspace.py
+    tests/test_workspace_ui.py tests/test_server_runtime.py tests/test_skills.py
+    tests/test_workspace_rebind.py tests/test_tool_groups.py tests/test_tool_registry.py
+    tests/test_session_isolation_foundation.py
+  full: uv run pytest -q -p no:sugar -n 8
+  lint: uv run ruff check src tests
+  format: uv run ruff format --check src tests
+  validator: Run clean-python experimental validator when feasible; report execution failure or not-run without claiming success.
+  diff: git diff --check and inspect actual diff, including untracked files separately.
+tasks:
+  - id: isolation-paths-v1
+    worker: pas_developer
+    objective: Wire fixed composition roots through internal file, image, permission, and profile-discovery boundaries.
+    edit_paths:
+      - src/engine/bootstrap.py
+      - src/engine/files/paths.py
+      - src/engine/files/tools.py
+      - src/engine/files/conflicts.py
+      - src/engine/attachments/tools.py
+      - src/engine/agents/agent.py
+      - src/engine/agents/factory.py
+      - src/engine/agents/profile/capability.py
+      - src/engine/agents/profile/permissions.py
+      - src/engine/agents/profile/registry.py
+      - src/engine/agents/profile/discovery.py
+      - tests/test_files.py
+      - tests/test_session_file_access.py
+      - tests/test_agent_permissions.py
+      - tests/test_view_image_tool.py
+      - tests/test_session_isolation_foundation.py
+    regression_paths:
+      - tests/test_tool_groups.py
+      - tests/test_tool_registry.py
+      - tests/test_workspace.py
+      - tests/test_workspace_ui.py
+      - tests/test_workspace_rebind.py
+    tdd: 'RED: add isolated-root and existing-permission characterization tests; GREEN: pass root through the identified boundaries; REFACTOR: retain explicit ownership and legacy defaults.'
+    acceptance: '@integration Internal file and permission checks use the composition project root'
+    skills: [clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer]
+    escalation: Stop for any required path outside edit_paths, changes to external-file authorization, non-fixed workspace requirements, or inability to prove the complete composition wiring.
+  - id: isolation-shell-v1
+    worker: pas_developer
+    objective: Scope built-in shell execution and cancellation to a fixed composition, closing admission-versus-cancel race.
+    edit_paths:
+      - src/engine/bootstrap.py
+      - src/engine/shell/tools.py
+      - src/engine/shell/runner.py
+      - src/engine/shell/running.py
+      - src/engine/shell/process.py
+      - src/server/runtime.py
+      - src/sigil.py
+      - src/ui/app.py
+      - src/ui/turn_mixin.py
+      - src/ui/commands_mixin.py
+      - tests/test_shell.py
+      - tests/test_steering_and_abort.py
+      - tests/test_server_runtime.py
+      - tests/test_session_isolation_foundation.py
+    regression_paths:
+      - tests/test_shell_environment.py
+      - tests/test_workspace.py
+      - tests/test_workspace_ui.py
+      - tests/test_skills.py
+      - tests/test_tool_groups.py
+      - tests/test_tool_registry.py
+    tdd: 'RED: deterministic real-process selective-abort and spawn-admission race tests; GREEN: wire explicit owner and cwd to built-in shell and current abort call sites; REFACTOR: cleanly close resources and preserve legacy standalone callers.'
+    acceptance: '@integration Shell commands use the composition project root; Cancelling shell processes does not affect another composition; Cancellation covers shell process admission in progress'
+    skills: [clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer]
+    escalation: Stop for any required path outside edit_paths, need to change skill or Git semantics, ambiguity about active rebind, or inability to close the spawn race.
+execution: After user approval, run each developer task followed by independent pas_qa. Inspect each verdict and checkpoint before the next task. Run full project gates on stable final tree; QA must verify worker skill assignments and application.
