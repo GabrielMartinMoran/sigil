@@ -53,7 +53,7 @@ def _paths(tmp_path: Path):
 
 @pytest.fixture
 def runtime(composition: Composition) -> ServerRuntime:
-    return ServerRuntime(composition, EventHub())
+    return ServerRuntime(composition, EventHub(), require_ownership=False)
 
 
 def test_a_turn_publishes_start_deltas_and_finish(runtime: ServerRuntime) -> None:
@@ -344,3 +344,101 @@ def test_startup_does_not_resume_previous_session(composition: Composition, tmp_
     assert reopened.session.messages == []
     assert reopened.store.load(reopened.session.id) is None
     assert reopened.store.load(previous.id) is not None
+
+
+def test_abort_cancels_only_the_runtime_composition(runtime: ServerRuntime) -> None:
+    from src.engine.shell.running import RunningCommands
+
+    other = RunningCommands()
+    owner = runtime.composition.shell_commands
+    own_generation, other_generation = owner.generation(), other.generation()
+
+    async def check() -> None:
+        pending = asyncio.Event()
+        runtime._task = asyncio.create_task(pending.wait())
+        try:
+            assert runtime.abort()
+            assert owner.generation() == own_generation + 1
+            assert other.generation() == other_generation
+        finally:
+            runtime._task.cancel()
+            await asyncio.gather(runtime._task, return_exceptions=True)
+
+    asyncio.run(check())
+
+
+def test_the_durable_endpoint_is_registered(runtime: ServerRuntime) -> None:
+    from src.server.app import create_app
+    from src.server.config import ServerConfig
+
+    app = create_app(runtime, ServerConfig(password='x'), dist=runtime.composition.root / 'missing')
+
+    assert '/api/session/durable' in {getattr(route, 'path', '') for route in app.routes}
+
+
+def test_send_without_a_request_id_still_works(runtime: ServerRuntime) -> None:
+    async def go():
+        result = await runtime.send('hola')
+        await asyncio.wait_for(runtime.wait(), 5)
+        return result
+
+    result = asyncio.run(go())
+    assert result['accepted'] == 'turn'
+    assert isinstance(result['request_id'], str)
+
+
+def test_send_reuses_the_client_request_id_and_does_not_duplicate(runtime: ServerRuntime) -> None:
+    import uuid
+
+    request_id = str(uuid.uuid4())
+
+    async def go():
+        first = await runtime.send('hola', request_id=request_id)
+        await asyncio.wait_for(runtime.wait(), 5)
+        second = await runtime.send('hola', request_id=request_id)
+        await asyncio.wait_for(runtime.wait(), 5)
+        return first, second
+
+    first, second = asyncio.run(go())
+    assert first['request_id'] == second['request_id'] == request_id
+    assert second['duplicate'] is True
+    from src.engine.storage.accepted_inputs import AcceptedInputs
+
+    assert len(AcceptedInputs(runtime.composition.store.database).list(runtime.session.id)) == 1
+
+
+def test_send_rejects_an_empty_request_id(runtime: ServerRuntime) -> None:
+    async def go():
+        with pytest.raises(ValueError, match='request_id must not be empty'):
+            await runtime.send('hola', request_id='')
+
+    asyncio.run(go())
+
+
+def test_the_same_request_id_in_two_sessions_is_independent(runtime: ServerRuntime) -> None:
+    import uuid
+
+    from src.engine.storage.accepted_inputs import AcceptedInputs
+
+    store = runtime.composition.store
+    first = store.create_session()
+    second = store.create_session()
+    request_id = str(uuid.uuid4())
+    store.accept_input(first, request_id, 'one', [], 'turn')
+    store.accept_input(second, request_id, 'two', [], 'turn')
+    assert len(AcceptedInputs(store.database).list(first.id)) == 1
+    assert len(AcceptedInputs(store.database).list(second.id)) == 1
+
+
+def test_send_rejects_a_request_id_reused_with_different_text(runtime: ServerRuntime) -> None:
+    import uuid
+
+    request_id = str(uuid.uuid4())
+
+    async def go():
+        await runtime.send('first', request_id=request_id)
+        await asyncio.wait_for(runtime.wait(), 5)
+        with pytest.raises(ValueError):
+            await runtime.send('different', request_id=request_id)
+
+    asyncio.run(go())

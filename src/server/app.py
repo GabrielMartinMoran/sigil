@@ -61,6 +61,8 @@ class TurnBody(BaseModel):
     """A message from the composer."""
 
     text: str = Field(min_length=1)
+    request_id: str | None = None
+    """Client-generated UUIDv4, reused by a retry of the same deliberate send."""
 
 
 class AnswerBody(BaseModel):
@@ -99,6 +101,8 @@ def create_app(runtime: ServerRuntime, config: ServerConfig, *, dist: Path | Non
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        runtime.start()
+        runtime.ensure_workers()
         try:
             yield
         finally:
@@ -106,6 +110,7 @@ def create_app(runtime: ServerRuntime, config: ServerConfig, *, dist: Path | Non
             await runtime.wait()
             runtime.composition.summoner.cancel_all()
             await runtime.composition.extensions.close()
+            runtime.close()
 
     app = FastAPI(
         lifespan=lifespan,
@@ -201,6 +206,11 @@ def create_app(runtime: ServerRuntime, config: ServerConfig, *, dist: Path | Non
             'skills': views.skills_view(session.messages),
         }
 
+    @app.get('/api/session/durable')
+    async def durable() -> dict[str, Any]:
+        """The durable transcript, queue overlay and recovery facts in one read."""
+        return views.durable_session(runtime.composition.store.database, runtime.session.id)
+
     @app.get('/api/sessions')
     async def sessions() -> dict[str, Any]:
         """Every conversation of this repository's workspaces, newest first."""
@@ -255,7 +265,7 @@ def create_app(runtime: ServerRuntime, config: ServerConfig, *, dist: Path | Non
     async def turn(body: TurnBody) -> dict[str, Any]:
         """Sends a message: a new turn, or a steer into the running one."""
         try:
-            return await runtime.send(body.text)
+            return await runtime.send(body.text, request_id=body.request_id)
         except ValueError as exc:
             return JSONResponse({'error': str(exc)}, status_code=400)  # type: ignore[return-value]
 

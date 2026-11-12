@@ -26,6 +26,7 @@ from src.server import webbuild
 from src.server.app import create_app
 from src.server.config import PASSWORD_ENV, ServerConfig, ServerConfigError, banner, resolve_config
 from src.server.events import EventHub
+from src.server.ownership import OwnershipError
 from src.server.runtime import ServerRuntime
 
 
@@ -86,6 +87,11 @@ def run(argv: list[str] | None = None) -> int:
     composition = Composition(root=args.workspace, settings=settings)
     hub = EventHub()
     runtime = ServerRuntime(composition, hub)
+    try:
+        runtime.start()
+    except OwnershipError as exc:
+        print(f'sigil server: {exc}', file=sys.stderr)
+        return 2
     app = create_app(runtime, config)
 
     print(banner(config), flush=True)

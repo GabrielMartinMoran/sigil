@@ -17,9 +17,10 @@ Two rules from the architecture page apply here:
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
-from pydantic_ai.messages import BinaryContent, ModelMessage
+from pydantic_ai.messages import BinaryContent, ModelMessage, ModelMessagesTypeAdapter
 
 from src.engine.agents.tree.models.agent_node import AgentNode
 from src.engine.agents.tree.tree import AgentTree
@@ -28,6 +29,9 @@ from src.engine.mcp.tool_models.server_status import ServerStatus
 from src.engine.roadmap.models.todo_item import TodoItem
 from src.engine.sessions.session_store import Session, SessionSummary
 from src.engine.skills.loaded import loaded_skills
+from src.engine.storage.accepted_inputs import _record
+from src.engine.storage.database import Database
+from src.engine.storage.executions import root_id_for
 from src.engine.tooling.outputs import present_output
 from src.engine.tooling.presentation import human_bytes
 from src.engine.workspace.models.worktree import Workspace
@@ -249,6 +253,106 @@ def skills_view(messages: list[ModelMessage]) -> list[str]:
     remembered it would drift the moment a turn loaded another one.
     """
     return list(loaded_skills(messages))
+
+
+def durable_session(database: Database, session_id: str) -> dict[str, Any]:
+    """One coherent read of the durable session: transcript, queue and recovery facts.
+
+    The transcript is rebuilt from the messages rows, not from the live session in
+    memory. ``pending`` holds accepted or claimed inputs without an
+    ``input_deliveries`` fact; delivered rows are read from the transcript and never
+    reappear as pending. Recovery copies are listed with availability, and entries
+    whose delivery went to a recovery copy are kept in a separate section. Nothing
+    is merged across transcripts.
+    """
+    with database.transaction() as conn:
+        row = conn.execute('SELECT id, title, updated_at, preview FROM sessions WHERE id = ?', (session_id,)).fetchone()
+        if row is None:
+            raise LookupError(f'No session {session_id}.')
+        messages = [
+            ModelMessagesTypeAdapter.validate_python([json.loads(str(message['payload']))])[0]
+            for message in conn.execute(
+                'SELECT payload FROM messages WHERE execution_id = ? ORDER BY seq',
+                (root_id_for(session_id),),
+            )
+        ]
+        queue_rows = conn.execute(
+            'SELECT * FROM accepted_inputs WHERE session_id = ? ORDER BY sequence', (session_id,)
+        ).fetchall()
+        facts = {
+            str(fact['request_id']): fact
+            for fact in conn.execute(
+                'SELECT request_id, checkpointed, destination_id, destination_session_id '
+                'FROM input_deliveries WHERE session_id = ?',
+                (session_id,),
+            )
+        }
+        links = conn.execute(
+            'SELECT destination_id, destination_session_id FROM recovery_links '
+            'WHERE original_session_id = ? ORDER BY destination_id',
+            (session_id,),
+        ).fetchall()
+
+        def available(destination_id: Any, destination_session_id: Any) -> bool:
+            if destination_id is None or destination_session_id is None:
+                return False
+            return conn.execute('SELECT 1 FROM sessions WHERE id = ?', (destination_session_id,)).fetchone() is not None
+
+        entries: list[dict[str, Any]] = []
+        for queue_row in queue_rows:
+            record = _record(queue_row)
+            fact = facts.get(record.request_id)
+            destination = None if fact is None else str(fact['destination_id'])
+            destination_session = None if fact is None else fact['destination_session_id']
+            entries.append(
+                {
+                    'request_id': record.request_id,
+                    'sequence': record.sequence,
+                    'kind': record.kind,
+                    'state': record.state,
+                    'text': record.text,
+                    'image_count': len(record.images),
+                    'delivered': fact is not None,
+                    'checkpointed': None if fact is None else bool(fact['checkpointed']),
+                    'destination_id': destination,
+                    'destination_available': available(destination, destination_session),
+                }
+            )
+
+        recoveries = [
+            {
+                'recovery_session_id': str(link['destination_id']),
+                'available': available(link['destination_id'], link['destination_session_id']),
+            }
+            for link in links
+        ]
+        pending = [entry for entry in entries if entry['state'] in ('accepted', 'claimed') and not entry['delivered']]
+        conflicted = [
+            entry for entry in entries if entry['delivered'] and entry['destination_id'] not in (None, session_id)
+        ]
+        return {
+            'session': {
+                'id': str(row['id']),
+                'title': row['title'],
+                'updated_at': str(row['updated_at']),
+                'preview': row['preview'],
+            },
+            'transcript': transcript(messages),
+            'skills': skills_view(messages),
+            'queue': entries,
+            'pending': pending,
+            'deliveries': [
+                {
+                    'request_id': request_id,
+                    'checkpointed': bool(fact['checkpointed']),
+                    'destination_id': fact['destination_id'],
+                    'destination_available': available(fact['destination_id'], fact['destination_session_id']),
+                }
+                for request_id, fact in facts.items()
+            ],
+            'recoveries': recoveries,
+            'conflicted_entries': conflicted,
+        }
 
 
 def transcript(messages: list[ModelMessage]) -> list[dict[str, Any]]:
