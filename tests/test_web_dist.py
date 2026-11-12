@@ -9,6 +9,7 @@ bundle in the repository is the one the sources produce.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -128,6 +129,23 @@ def test_the_bundle_can_be_served() -> None:
     assert (dist / 'index.html').is_file()
     assert (dist / 'build.json').is_file()
     assert any((dist / 'assets').iterdir())
+
+
+def test_the_favicon_the_page_declares_is_shipped() -> None:
+    """The tab icon is a file the page names, and a build can forget to copy it.
+
+    It comes from `web/public`, so nothing in the bundle references it and no
+    import would fail: the only symptom is a blank icon, and the declaration in the
+    built page is the contract between the two.
+    """
+    dist = webbuild.dist_root()
+    page = (dist / 'index.html').read_text(encoding='utf-8')
+    icon = re.search(r'<link[^>]+rel="icon"[^>]+href="([^"]+)"', page)
+    assert icon is not None, 'the built page declares no icon'
+    asset = (dist / icon.group(1)).resolve()
+    assert dist.resolve() in asset.parents, f'{asset} is outside the bundle'
+    assert asset.is_file(), f'{asset} is declared but not shipped'
+    assert asset.read_text(encoding='utf-8').lstrip().startswith('<svg')
 
 
 def test_the_module_entry_point_reports_exit_codes(capsys: pytest.CaptureFixture[str]) -> None:

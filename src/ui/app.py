@@ -245,6 +245,9 @@ class SigilApp(
                         id='chat',
                         reasoning_visible=self._preferences.reasoning_visible,
                         tools_expanded=self._preferences.tools_expanded,
+                        # The mark of an empty transcript belongs to the app's
+                        # conversation, not to a subagent's view of its own.
+                        welcome=True,
                     ),
                     AgentDebugView(id='debug'),
                     AgentView(id='agent'),

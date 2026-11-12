@@ -41,6 +41,7 @@ from rich.panel import Panel
 from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
+from textual.color import Color
 from textual.events import Click
 from textual.selection import Selection
 from textual.timer import Timer
@@ -56,6 +57,7 @@ from src.ui.markdown_theme import markdown_themes
 from src.ui.messages import NodeOpened, RollbackRequested
 from src.ui.palette import color
 from src.ui.subagent_reports import split_reports
+from src.ui.widgets.empty_logo import logo_lines
 from src.ui.widgets.reading import ReadOnlyScroll
 from src.ui.widgets.rows import fit
 from src.ui.widgets.status_bar import SPINNER_FRAMES, SPINNER_INTERVAL
@@ -1056,7 +1058,14 @@ class ChatLog(ReadOnlyScroll):
     user goes back to the bottom, so whoever is reading history is respected.
     """
 
-    def __init__(self, *, reasoning_visible: bool = False, tools_expanded: bool = False, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        reasoning_visible: bool = False,
+        tools_expanded: bool = False,
+        welcome: bool = False,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self._tools_expanded = tools_expanded
         self._current: AssistantBlock | None = None
@@ -1066,6 +1075,57 @@ class ChatLog(ReadOnlyScroll):
         self._group_rows: list[ToolCallBlock] = []
         self._last_block: Static | None = None
         self._reasoning_visible = reasoning_visible
+        self._welcome = welcome
+        self._empty = True
+
+    # --- the empty transcript ------------------------------------------------
+
+    def render(self) -> Text:
+        """The Sigil mark, centered, while nothing has been said yet.
+
+        A container paints its own content behind its children, so the mark needs
+        no widget of its own: it is drawn until the first block arrives and then
+        it simply stops being drawn. Notices are the exception — a new session
+        announces itself and the transcript is still empty.
+        """
+        if not self._welcome or not self._empty:
+            return Text('')
+        width, height = self.content_size
+        lines = logo_lines(width, max(0, height - 2), *self._logo_colors())
+        block = max((len(line.plain) for line in lines), default=0)
+        left = ' ' * max(0, (width - block) // 2)
+        result = Text('\n' * max(0, (height - len(lines)) // 2), no_wrap=True, overflow='crop')
+        for index, line in enumerate(lines):
+            if index:
+                result.append('\n')
+            result.append(left)
+            result.append_text(line)
+        return result
+
+    def _logo_colors(self) -> tuple[str, str]:
+        """Top and bottom of the gradient, from the theme.
+
+        A theme names both ends when it has a gradient in mind; the rest fall back
+        to their own accent pair. A theme whose two ends are the same color would
+        paint a flat silhouette and lose the depth the mark is drawn for, so it is
+        blended toward the foreground by a step that still reads as light.
+        """
+        variables = getattr(self.app, 'theme_variables', None) or {}
+        start = variables.get('logo-start', '') or color(self, 'primary')
+        end = variables.get('logo-end', '') or color(self, 'secondary')
+        if Color.parse(start) == Color.parse(end):
+            base = Color.parse(end)
+            target = Color.parse(color(self, 'foreground'))
+            if base == target:
+                target = Color.parse('#000000' if base.brightness > 0.5 else '#ffffff')
+            end = base.blend(target, 0.4).hex
+        return start, end
+
+    def _mark_filled(self) -> None:
+        """The transcript is no longer empty: the mark goes away."""
+        if self._empty:
+            self._empty = False
+            self.refresh()
 
     def on_mount(self) -> None:
         # Anchors the view to the bottom from the start.
@@ -1147,6 +1207,8 @@ class ChatLog(ReadOnlyScroll):
     async def _append(self, widget: Static) -> None:
         # Anchoring takes care of the scroll; there is no need to force scroll_end.
         self._last_block = widget
+        if not isinstance(widget, LinkNotice):
+            self._mark_filled()
         await self.mount(widget)
 
     async def add_user(
@@ -1277,6 +1339,7 @@ class ChatLog(ReadOnlyScroll):
                 reasoning_visible=self._reasoning_visible,
                 classes='assistant-msg',
             )
+            self._mark_filled()
             await self.mount(self._current)
             self._last_block = self._current
 
@@ -1307,6 +1370,7 @@ class ChatLog(ReadOnlyScroll):
         Asking each block to rebuild from its own state is what makes the live
         preview in the theme picker real.
         """
+        self.refresh()
         for child in self.children:
             if isinstance(child, AssistantBlock):
                 child.finalize()
@@ -1317,6 +1381,8 @@ class ChatLog(ReadOnlyScroll):
         self._current = None
         self._open_tools.clear()
         await self.remove_children()
+        self._empty = True
+        self.refresh()
         # After clearing, the new history follows the bottom again.
         self.anchor()
 
@@ -1425,6 +1491,7 @@ class ChatLog(ReadOnlyScroll):
 
         if not batches:
             return
+        self._mark_filled()
         for block in batches:
             if isinstance(block, SummonBlock):
                 for node in subagents:
