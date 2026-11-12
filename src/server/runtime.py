@@ -386,10 +386,17 @@ class ServerRuntime:
         self._mcp_started = True
 
         async def load() -> None:
+            gateway = self.composition.mcp
             try:
-                await asyncio.to_thread(loader)
+                manager = await asyncio.to_thread(loader)
             except Exception as exc:  # noqa: BLE001 - startup must survive a broken server
+                # `fail` releases whoever is waiting on the layer. Without it the
+                # ready event is never set and `GET /api/mcp` waits forever on a
+                # manager that is not coming.
+                gateway.fail(str(exc))
                 self.hub.publish('notice', text=f'MCP: {exc}', tone='danger')
+            else:
+                gateway.install(manager)
             self.hub.publish_state('mcp')
 
         asyncio.get_running_loop().create_task(load())

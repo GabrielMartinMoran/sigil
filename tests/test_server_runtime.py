@@ -1174,3 +1174,75 @@ def test_an_unknown_mcp_server_changes_nothing(tmp_path: Path) -> None:
     stored = composition.store.load(session.id)
     assert stored is not None
     assert stored.mcp_overrides == {}
+
+
+# --- the MCP layer is installed, not merely built ----------------------------
+#
+# `_start_mcp` used to build the manager on a worker and drop it on the floor, so
+# `MCPGateway.install` was never called and its ready event never fired. The
+# symptom was not a wrong answer but no answer: `GET /api/mcp` awaits the layer,
+# so it waited on a manager that was never coming. These two tests are the shape
+# of that failure — one proves the route answers with the servers, the other that
+# a load which fails answers too, instead of suspending the request forever.
+
+
+def _mcp_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """One configured server, and only that one: the real home config is fenced off.
+
+    `config_paths` falls back to `~/.sigil/config.json`, so without this the list
+    this test reads would depend on the machine it ran on.
+    """
+    config = tmp_path / '.sigil' / 'config.json'
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(json.dumps({'mcp_servers': {'probe': {'command': 'npx', 'prefix': ''}}}), encoding='utf-8')
+    monkeypatch.setenv('SIGIL_CONFIG', str(config))
+    return config
+
+
+def test_the_mcp_route_answers_with_the_servers_the_loader_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _mcp_config(tmp_path, monkeypatch)
+    composition = _composition_with_mcp(tmp_path)
+    runtime = ServerRuntime(composition, EventHub(), require_ownership=False)
+
+    async def go() -> list[str]:
+        runtime.ensure_workers()
+        async with _signed_in(runtime, tmp_path) as client:
+            # Bounded on purpose: the defect was a request that never returned, and
+            # a test that waits without a ceiling would hang the suite instead of
+            # naming it.
+            response = await asyncio.wait_for(client.get('/api/mcp'), timeout=30)
+            assert response.status_code == 200, response.text
+            return [server['name'] for server in response.json()['servers']]
+
+    try:
+        assert asyncio.run(go()) == ['probe']
+    finally:
+        runtime.abort()
+
+
+def test_a_failed_mcp_load_answers_the_route_instead_of_blocking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _mcp_config(tmp_path, monkeypatch)
+    composition = _composition_with_mcp(tmp_path)
+    runtime = ServerRuntime(composition, EventHub(), require_ownership=False)
+
+    def boom() -> None:
+        raise RuntimeError('the layer could not start')
+
+    monkeypatch.setattr(composition, 'mcp_loader', lambda: boom)
+
+    async def go() -> int:
+        runtime.ensure_workers()
+        async with _signed_in(runtime, tmp_path) as client:
+            response = await asyncio.wait_for(client.get('/api/mcp'), timeout=30)
+            return response.status_code
+
+    try:
+        assert asyncio.run(go()) == 200
+    finally:
+        runtime.abort()
+    # The reason is kept, so the failure is diagnosable rather than an empty list.
+    assert any('the layer could not start' in error for error in composition.mcp.errors)

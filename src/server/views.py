@@ -29,6 +29,7 @@ from src.engine.context.images import image_size
 from src.engine.context.meter.cost import SessionCost
 from src.engine.context.meter.snapshot import ContextSnapshot
 from src.engine.mcp.tool_models.server_status import ServerStatus
+from src.engine.providers.domain.model_capability import ModelCatalog
 from src.engine.roadmap.models.todo_item import TodoItem
 from src.engine.sessions.session_store import Session, SessionSummary
 from src.engine.sessions.titling import shorten
@@ -606,8 +607,37 @@ def rollback_point_view(checkpoint: Checkpoint, *, preview: str) -> dict[str, An
     }
 
 
-def rollback_view(outcome: RollbackOutcome) -> dict[str, Any]:
-    """What a rollback did, as data: the counts are the engine's, not an estimate."""
+def catalog_view(catalog: ModelCatalog) -> dict[str, Any]:
+    """The models of one account, as data: the client builds its own rows.
+
+    ``source`` says whether the list came from the provider or from the engine's
+    fallback, and ``error`` why the remote one could not be read. The client needs
+    both: a fallback list presented as the provider's would be a quieter lie than
+    an error message.
+    """
+    return {
+        'source': catalog.source,
+        'error': catalog.error,
+        'models': [
+            {
+                'name': model.name,
+                'display_name': model.display_name,
+                'window': model.context_window,
+                'efforts': [str(level) for level in model.efforts],
+            }
+            for model in catalog.models
+        ],
+    }
+
+
+def rollback_view(outcome: RollbackOutcome, *, prompt: str | None = None, prompt_images: int = 0) -> dict[str, Any]:
+    """What a rollback did, as data: the counts are the engine's, not an estimate.
+
+    ``prompt`` is the text the user typed to open the turn that was dropped, read
+    from the rows *before* they were truncated and carried here so a client can put
+    it back in its composer. It is the argument the in-process terminal used to look
+    up itself; the field changes no row and no count.
+    """
     return {
         'target_turn_id': outcome.target_turn_id,
         'turns_dropped': outcome.turns_dropped,
@@ -617,6 +647,8 @@ def rollback_view(outcome: RollbackOutcome) -> dict[str, Any]:
         'files_deleted': outcome.files_deleted,
         'files_unavailable': outcome.files_unavailable,
         'undo_checkpoint': outcome.undo_checkpoint,
+        'prompt': prompt,
+        'prompt_images': prompt_images,
     }
 
 

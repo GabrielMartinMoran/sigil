@@ -72,7 +72,11 @@ def _composition(
     monkeypatch.setattr('src.engine.bootstrap.build_service', lambda *args, **kwargs: service)
     write_profile(tmp_path / '.sigil' / 'agents', 'reviewer', description='Reviews code.')
     if mcp_servers is not None:
-        (tmp_path / '.sigil' / 'config.json').write_text(json.dumps({'mcp_servers': mcp_servers}), encoding='utf-8')
+        config = tmp_path / '.sigil' / 'config.json'
+        config.write_text(json.dumps({'mcp_servers': mcp_servers}), encoding='utf-8')
+        # `config_paths` falls back to `~/.sigil/config.json`, so without this the
+        # servers a test sees would depend on the machine it ran on.
+        monkeypatch.setenv('SIGIL_CONFIG', str(config))
     composition = Composition(
         tmp_path,
         settings=load_settings(),
@@ -532,8 +536,11 @@ def test_stopping_a_node_cancels_it_and_the_tree_says_so(runtime: ServerRuntime,
             assert response.status_code == 200, response.text
 
             body = response.json()
-            assert body['node'] == views.node_view(node)
-            assert body['tree'] == views.tree_view(runtime.composition.agent_trees.active)
+            # The stopped node is still a live projection in this process, so its
+            # `elapsed` moves between the response and this read. Same rule as the
+            # background test: the clock leaves both sides, every other field stays.
+            assert _untimed(body['node']) == _untimed(views.node_view(node))
+            assert _untimed_tree(body['tree']) == _untimed_tree(views.tree_view(runtime.composition.agent_trees.active))
             assert body['node']['status'] == 'cancelled'
             assert 'stopped' in body['message']
 
@@ -654,7 +661,8 @@ def test_a_subagent_transcript_is_the_nodes_own_messages(runtime: ServerRuntime,
             assert response.status_code == 200, response.text
 
             body = response.json()
-            assert body['node'] == views.node_view(node, include_messages=True)
+            # A subagent may still be running, so its `elapsed` is the clock again.
+            assert _untimed(body['node']) == _untimed(views.node_view(node, include_messages=True))
             assert [item['text'] for item in body['node']['transcript']] == ['Say done.', 'done']
 
     asyncio.run(go())
@@ -675,7 +683,7 @@ def test_a_transcript_of_an_unknown_node_is_refused(runtime: ServerRuntime, tmp_
 
 
 def test_the_mcp_toggle_is_remembered_and_projected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    composition = _composition(tmp_path, monkeypatch, mcp_servers={'probe': {'command': 'npx'}})
+    composition = _inert_mcp(_composition(tmp_path, monkeypatch, mcp_servers={'probe': {'command': 'npx'}}))
     runtime = _runtime(composition)
 
     async def go() -> None:
@@ -702,7 +710,7 @@ def test_the_mcp_toggle_is_remembered_and_projected(tmp_path: Path, monkeypatch:
 def test_an_unknown_mcp_server_is_refused_without_changing_the_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    composition = _composition(tmp_path, monkeypatch, mcp_servers={'probe': {'command': 'npx'}})
+    composition = _inert_mcp(_composition(tmp_path, monkeypatch, mcp_servers={'probe': {'command': 'npx'}}))
     runtime = _runtime(composition)
 
     async def go() -> None:
@@ -823,8 +831,22 @@ async def _subagents_busy(summoner: Any) -> AsyncIterator[None]:
         await asyncio.gather(task, return_exceptions=True)
 
 
+def _inert_mcp(composition: Composition) -> Composition:
+    """Keeps the layer from starting while still answering whoever asks it.
+
+    `_start_mcp` runs the real loader as soon as a turn is sent, which would
+    spawn the configured stdio server. Returning `None` from `mcp_loader`
+    leaves it unstarted, and `fail` releases the ready event so `describe()`
+    answers an empty layer instead of waiting on a manager that is not coming.
+    Deterministic by construction: no process, no sleep, no thread.
+    """
+    composition.mcp_loader = lambda: None
+    composition.mcp.fail('the MCP layer is not started in this test')
+    return composition
+
+
 def test_the_mcp_toggle_is_refused_while_a_turn_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    composition = _composition(tmp_path, monkeypatch, mcp_servers={'probe': {'command': 'npx'}})
+    composition = _inert_mcp(_composition(tmp_path, monkeypatch, mcp_servers={'probe': {'command': 'npx'}}))
     runtime = _runtime(composition)
 
     async def go() -> None:
@@ -847,7 +869,7 @@ def test_the_mcp_toggle_is_refused_while_a_turn_runs(tmp_path: Path, monkeypatch
 def test_the_mcp_toggle_is_refused_while_a_subagent_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The terminal's second criterion: disabling a server mid-run closes its tools."""
 
-    composition = _composition(tmp_path, monkeypatch, mcp_servers={'probe': {'command': 'npx'}})
+    composition = _inert_mcp(_composition(tmp_path, monkeypatch, mcp_servers={'probe': {'command': 'npx'}}))
     runtime = _runtime(composition)
 
     async def go() -> None:

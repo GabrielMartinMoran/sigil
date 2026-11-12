@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field, StrictBool
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from src.engine.agents.profile.models.agent_not_found import AgentNotFound
-from src.engine.agents.rollback import RollbackError
+from src.engine.agents.rollback import RollbackError, prompt_of_turn
 from src.engine.agents.tree.models.summon_error import SummonError
 from src.engine.context.meter.cost import session_cost
 from src.engine.providers.domain.provider_error import BusyError, ProviderError
@@ -53,6 +53,14 @@ from src.server.webbuild import dist_root, staleness
 
 HEARTBEAT_SECONDS = 20.0
 """How often an idle stream says something, so a proxy does not close it."""
+
+CATALOG_TIMEOUT_SECONDS = 15.0
+"""Longest a client waits for one account's model list.
+
+A provider that is slow is normal; one that never answers is not something a route
+can hand back. The bound lives here and not only in the transport so the route cannot
+hang a caller: a provider that never answers becomes a refusal with a sentence.
+"""
 
 MAX_COMMAND_BYTES = 64 * 1024 * 1024
 """Ceiling for one JSON command body, counted as the bytes arrive.
@@ -626,6 +634,37 @@ def create_app(
             ],
         }
 
+    @app.get('/api/models/{alias}')
+    async def account_models(alias: str) -> dict[str, Any]:
+        """The catalogue of one account, with a bounded wait.
+
+        The picker needs the models of the account it is about to switch, and they
+        are a network call on the provider's side. The bound is here and not only in
+        the transport so the route cannot hang a client: a provider that never
+        answers becomes a refusal with a sentence, not a request that stays open.
+
+        An account the router does not know is a request that cannot be satisfied.
+        A catalogue the provider could not answer for is reported as its own refusal
+        with the engine's reason — the fallback list is deliberately not offered as
+        if it were the provider's, because a picker that shows invented options is
+        the failure this route exists to avoid.
+        """
+        service = runtime.composition.model_service
+        try:
+            catalog = await asyncio.wait_for(service.catalog_for(alias), timeout=CATALOG_TIMEOUT_SECONDS)
+        except TimeoutError:
+            return _refused(
+                RuntimeError(
+                    f'The model list of {alias!r} did not answer within '
+                    f'{CATALOG_TIMEOUT_SECONDS:.0f}s. Check the network and try /model again.'
+                )
+            )  # type: ignore[return-value]
+        except ProviderError as exc:
+            return _refused(exc)  # type: ignore[return-value]
+        if catalog.error is not None and not catalog.models:
+            return _refused(RuntimeError(f'{alias}: {catalog.error}'))  # type: ignore[return-value]
+        return {'account': alias, 'catalog': views.catalog_view(catalog)}
+
     @app.post('/api/model')
     async def change_model(body: ModelBody) -> dict[str, Any]:
         """Switches the model of the session, refused while a turn runs.
@@ -686,11 +725,22 @@ def create_app(
         projection because the transcript is shorter now and the client has to
         repaint from the new truth.
         """
+        # Read before the rows are truncated: the prompt lives in the messages the
+        # rollback drops, which is why the terminal used to look it up beforehand.
+        # Doing it here means every client gets it, and none has to own a database.
+        prompt = prompt_of_turn(runtime.composition.store.database, body.turn_id)
         try:
             outcome = await asyncio.to_thread(runtime.rollback, body.turn_id, files=body.files)
         except (RuntimeError, LookupError, RollbackError) as exc:
             return _conflict(exc)  # type: ignore[return-value]
-        return {'rollback': views.rollback_view(outcome), 'session': views.session_view(runtime.session)}
+        return {
+            'rollback': views.rollback_view(
+                outcome,
+                prompt=None if prompt is None else prompt[0],
+                prompt_images=0 if prompt is None else len(prompt[1]),
+            ),
+            'session': views.session_view(runtime.session),
+        }
 
     @app.post('/api/fork')
     async def fork(body: ForkBody) -> dict[str, Any]:
