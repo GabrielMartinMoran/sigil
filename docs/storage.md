@@ -620,10 +620,36 @@ The save runs inside one transaction, so a crash leaves the previous checkpoint
 intact: a checkpoint is all-or-nothing, the same guarantee `os.replace` gives
 with a file at a fraction of the cost.
 
-`SessionStore.save(session)` keeps its signature. The store compares the list it
-is given with what it last wrote (an in-memory counter, validated against
-`max(seq)`), so callers — `checkpoint`, `persist`, `title_mixin` — do not
-change.
+`SessionStore.save(session)` keeps its existing callers unchanged: the optional
+`confirmations` and `recovery_of` keywords default to none. The store compares
+the list it is given with what it last wrote (an in-memory counter, validated
+against `max(seq)`), so callers — `checkpoint`, `persist`, `title_mixin` — do not
+change. It returns a `SaveResult` naming the session row written and, when a
+recovery copy was made, that copy's id; an empty draft still returns `None`.
+
+### Delivery facts travel with the transcript
+
+A delivery fact cannot commit on its own. `SessionStore.save` takes an explicit
+set of `DeliveryConfirmation` values and applies them inside the same
+transaction that writes the session row and the transcript. Each confirmation
+names the accepting session, the request, and the attempt and run that carried
+it. `confirm_delivery` checks them against the claimed row and raises
+`DeliveryConflictError` on any mismatch. On success the input becomes
+`delivered` and the `input_deliveries` row is inserted, so a failed commit
+leaves the input claimed and the transcript unwritten. Each request is confirmed
+once: a second confirmation raises `DeliveryConflictError` and leaves the
+existing fact and state unchanged.
+
+`AcceptedInputs.transition` never accepts `delivered`; that state belongs only
+to this checkpoint path. A recovery save writes the original-to-recovery
+`recovery_links` row in the same transaction and sends the delivery fact to the
+recovery session. `save_progress` keeps returning the recovery id for existing
+callers, and `save_progress_result` exposes the full `SaveResult`.
+
+The bootstrap `flush` callback still calls `save_progress` without
+confirmations. That flush remains a best-effort snapshot: delivery confirmation
+belongs to the caller that owns the accepted inputs and can name the requests,
+attempt and run.
 
 ### Why rewriting the file was not fixable on its own
 
@@ -799,7 +825,7 @@ Two indexes were left out deliberately:
 
 ```python
 PRAGMA journal_mode = WAL;        # persists in the file; set once
-PRAGMA synchronous = NORMAL;      # a checkpoint survives a crash; a power cut may cost the last second
+PRAGMA synchronous = FULL;        # request durable synchronization on each commit
 PRAGMA foreign_keys = ON;         # per connection, not stored
 PRAGMA busy_timeout = 5000;       # a second Sigil (or a sqlite3 shell) waits instead of failing
 PRAGMA auto_vacuum = INCREMENTAL; # the DB grows with sessions and must be able to shrink
@@ -811,11 +837,9 @@ WAL is what makes the write path cheap: an append writes a page into the log and
 allows a `sqlite3` shell to inspect a live database, which is worth more than it
 sounds while a database is being inspected.
 
-`synchronous = NORMAL` is the honest setting: a crash of the process loses
-nothing already committed (the WAL is written), a power cut may lose the last
-transaction. Today a checkpoint is an atomic rename, so it loses nothing either
-way — but the file also took 332 ms, and the code that survives a crash
-(`recovery.py`) was written for exactly the state `NORMAL` can produce.
+`synchronous = FULL` asks SQLite to synchronize committed WAL writes. Protection
+against power loss depends on the local filesystem and hardware honoring those
+requests. See `src/engine/storage/database.py` for connection settings.
 
 One connection per process, `check_same_thread=False` and a `threading.Lock`,
 because the app already moves work to threads with `asyncio.to_thread` and one
@@ -943,7 +967,7 @@ vocabulary moves with [the domain](domain.md).
 | The database is one file, so corruption is one failure for everything | Sessions, roadmaps, and accounts at once, against one session today | `quick_check` on open after an unclean shutdown, JSON export per session, `VACUUM INTO` for a consistent backup |
 | pydantic-ai changes a message shape | Older rows fail to validate | The payload is the library's own JSON: a new field is additive. If a shape ever becomes incompatible, the export path keeps the data readable |
 | Two Sigil instances writing at once | Conflicting `updated_at`, interleaved appends to the same execution | WAL and `busy_timeout` serialize the writes; last write wins per session, which is what the file store does today |
-| A schema step that half-runs | A database that is neither the old shape nor the new | Numbered steps applied inside one transaction each, and `VACUUM INTO` before a step that rewrites rows |
+| A schema step that half-runs | A database that is neither the old shape nor the new | Initialization applies every numbered step and the full schema inside one transaction, and `VACUUM INTO` before a step that rewrites rows |
 | A `WITHOUT ROWID` table with big payloads wastes pages | Measured: 83 MB of database for 52.8 MB of payload | Acceptable, and 4.5 times smaller than today. `page_size = 8192` is the knob if it ever matters |
 
 ## Phases
@@ -1240,12 +1264,54 @@ CREATE TABLE accounts (
     last_model TEXT
 ) STRICT, WITHOUT ROWID;
 
+CREATE TABLE accepted_inputs (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    request_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL CHECK (sequence > 0),
+    payload TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('turn', 'steer')),
+    state TEXT NOT NULL CHECK (state IN ('accepted', 'claimed', 'delivered', 'finished', 'stopped', 'interrupted')),
+    attempt_id TEXT,
+    library_run_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (session_id, request_id),
+    UNIQUE (session_id, sequence)
+) STRICT, WITHOUT ROWID;
+
 CREATE TABLE app_state (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
-PRAGMA user_version = 4;
+CREATE TABLE roadmap_revisions (
+    execution_id TEXT PRIMARY KEY REFERENCES agent_executions(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL CHECK (revision >= 0)
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE input_deliveries (
+    session_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    checkpointed INTEGER NOT NULL CHECK (checkpointed IN (0, 1)),
+    destination_id TEXT,
+    destination_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    PRIMARY KEY (session_id, request_id),
+    FOREIGN KEY (session_id, request_id) REFERENCES accepted_inputs(session_id, request_id) ON DELETE CASCADE,
+    CHECK (destination_session_id IS NULL OR destination_session_id = destination_id),
+    CHECK ((checkpointed = 1 AND destination_id IS NOT NULL) OR
+           (checkpointed = 0 AND destination_id IS NULL AND destination_session_id IS NULL))
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE recovery_links (
+    original_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    destination_id TEXT NOT NULL,
+    destination_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    PRIMARY KEY (original_session_id, destination_id),
+    CHECK (destination_session_id IS NULL OR destination_session_id = destination_id)
+) STRICT, WITHOUT ROWID;
+
+PRAGMA user_version = 7;
 ```
 
 One consequence worth stating: `roadmap_items.execution_id` uses `''` for the
@@ -1265,6 +1331,30 @@ end in the same shape.
 | --- | --- |
 | 2 | `sessions.tools_tokens`, `sessions.instructions_tokens` |
 | 4 | `sessions.allow_external_files` |
+| 5 | `sessions.mcp_overrides` |
+| 6 | `accepted_inputs` durable queue |
+| 7 | Roadmap revisions, delivery facts, and recovery links |
+
+Version 7 adds the storage structures; delivery and recovery runtime behavior
+belongs to later slices. `roadmap_revisions` keeps a revision per execution even
+when its plan has no items. The replace/save path compares that revision inside
+its transaction and moves it forward, so a store holding a stale snapshot fails
+visibly instead of overwriting newer items. Delete and restore move the revision
+forward without comparing a caller's expectation. An absent `input_deliveries`
+row means delivery is unknown, including for all version 6 inputs. A present row
+is written by the checkpoint seam that carries the transcript, and records that
+delivery was checkpointed independently of the input state.
+
+Delivery and recovery rows retain `destination_id` if a destination session is
+deleted. Their `destination_session_id` foreign key becomes null, marking the
+destination unavailable. Deleting the original session cascades to its input
+facts and recovery links. See `src/engine/storage/schema.py` for constraints.
+
+Initialization holds the SQLite writer lock while checking the version, applying
+complete statements, and stamping the version in one transaction. Newer versions
+are rejected. Queue payloads and transition rules are defined in
+`src/engine/storage/accepted_inputs.py`; the behavior contract is in
+`specs/features/application/durable_session_queue.feature`.
 
 Step 2 exists because the two numbers the context meter measures per request — the
 cost of the tool schemas and of the instruction blocks — come from

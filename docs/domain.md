@@ -726,3 +726,25 @@ and both are cheap only because the storage change has not happened yet.
   turn is an aggregate, "the last three turns" is a bounded query instead of a
   scan whose target is unknown until parsed, and the wake is a row with `origin
   = 'wake'` instead of a synthetic prompt nobody can find later.
+
+## Durable delivery and ownership
+
+The server that owns a database is the only cooperating server allowed to work
+on it; ownership is an OS lock, not a convention. Accepted inputs move through
+typed states: `accepted` is queued, `claimed` has an attempt, `delivered` has a
+snapshot-backed delivery fact, and `finished` follows the final save. `stopped`
+means an explicit stop; `interrupted` means a restart or exit found the work
+unfinished, and that work is never replayed automatically.
+
+A delivery confirmation names the accepting session, the request, the attempt
+and the actual turn identifier, and is written with the transcript in one
+transaction. A destination is valid only for the accepting session or a recovery
+copy linked to it. Confirmation is one-shot. See `src/server/runtime.py`,
+`src/server/ownership.py` and `src/engine/storage/accepted_inputs.py`.
+
+The durable session contract distinguishes the transcript from the queue overlay:
+`pending` is accepted/claimed work without a checkpointed delivery; a delivery
+fact moves an entry out of the overlay and into the transcript. Recovery links
+carry availability, not a promise that the copy still exists, and entries whose
+delivery went to a recovery copy are domain facts of that copy, never messages of
+the original transcript. See `src/server/views.py::durable_session`.

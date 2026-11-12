@@ -260,3 +260,53 @@ and the boundary is where the thinking is.
   that the contract already allows.
 - **How a web client authenticates.** Out of scope until there is one, and it
   should be a decision of its own rather than a side effect of the boundary.
+
+## Durable server consumer (part A)
+
+The web server owns its database through an exclusive OS lock in
+`src/server/ownership.py`. A second cooperating server fails at startup with
+`OwnershipError` instead of serving. Ownership is taken before reconciliation
+and held until the process closes; legacy processes that never take the lock are
+outside this boundary.
+
+On startup, `ServerRuntime.start` marks every non-terminal accepted input as
+`interrupted` without executing it. A consumer task then claims `accepted` rows
+in sequence order and runs them through the normal `agent.iter` path. Inputs
+accepted while a turn is running are handed to `run.enqueue` at an existing
+steering seam; a steer that misses that seam, including the end-of-turn window,
+is left visibly stopped and is never promoted to a later turn. The consumer
+also uses a bounded poll, so an input accepted by another runtime is picked up
+without requiring a new `send`.
+
+Delivery is confirmed only inside a checkpoint: an `EnqueuedMessagesEvent`
+forces a save whose confirmations name requests whose content is present in
+`run.all_messages()`. The turn's own prompt is confirmed from the same snapshot.
+A previous throttled checkpoint is not proof. Confirmed rows become `delivered`
+and then `finished` only after the final save commits. Explicit stop marks
+undelivered accepted/claimed rows `stopped`; shutdown marks non-terminal rows
+`interrupted`. The pending overlay, recovery notice contract and web client are
+not part of this slice.
+
+Mid-turn recovery limit: a conflict during a throttled checkpoint saves the local
+progress into a recovery copy and binds the UI to it, while the running turn keeps
+its local session reference. The final save reconciles again and binds the winning
+session. A second conflicting write in that window can therefore leave more than
+one recovery copy; no transcript or delivery fact is merged across them. See
+`ServerRuntime._checkpoint` and `ServerRuntime._turn`.
+
+Abort and consumer death: abort sets `_aborting` so `_pump_steering` stops claiming
+new work and `stop_open(keep=...)` does not stop requests already handed to
+`run.enqueue`. Once the run unwinds, requests confirmed from its snapshot become
+`finished`; the rest become `stopped`. A consumer that dies calls the
+database-wide `interrupt_open`, so accepted rows become `interrupted` and `send`
+refuses new work instead of accepting rows nobody will consume.
+
+Durable read (B2): `GET /api/session/durable` calls `views.durable_session`, which
+opens one SQLite read transaction and returns the messages rows as the transcript,
+the accepted-input queue with state and sequence, `input_deliveries` facts,
+recovery links with availability, a `pending` overlay, and `conflicted_entries`.
+Pending means accepted or claimed without a delivery fact; delivered/finished rows
+never reappear there and are read from the transcript. A deleted recovery copy is
+reported unavailable without a broken link, and conflicted entries are kept
+separate from the current transcript. Live deltas are not mixed into this read.
+The web client is unchanged and not part of this slice.
