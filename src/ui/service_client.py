@@ -487,6 +487,92 @@ class ServiceClient:
         """Everything the screen paints from: session, workspace, model, tree, question."""
         return await self._get('/api/state')
 
+    async def context(self) -> dict[str, Any]:
+        """The meter's projection: how full the window is, what it costs.
+
+        The numbers are the service's own measurement of the session it owns. A
+        client that measured its own copy would be a second opinion about one
+        conversation, and the one on screen would be the wrong one.
+        """
+        return (await self._get('/api/context')).get('context') or {}
+
+    async def external_files(self, allow: bool) -> dict[str, Any]:
+        """Allows or denies outside-workspace file access for this session.
+
+        A session in the middle of a turn is refused by the service (``409``), which
+        arrives as `ServiceBusy` carrying the service's own reason.
+        """
+        return (await self._post('/api/external-files', {'allow': allow})).get('session') or {}
+
+    async def mcp_servers(self) -> list[dict[str, Any]]:
+        """Every configured MCP server, as the service projects it."""
+        return list((await self._get('/api/mcp')).get('servers') or ())
+
+    async def toggle_mcp(self, name: str, enabled: bool) -> list[dict[str, Any]]:
+        """Enables or disables one server for this session, returning the new list.
+
+        Refused mid-turn or while a subagent runs: both are ``409``, and the reason
+        is the service's, not one this client guessed.
+        """
+        payload = await self._post('/api/mcp', {'name': name, 'enabled': enabled})
+        return list((payload.get('mcp') or {}).get('servers') or ())
+
+    async def effort(self, level: str) -> dict[str, Any]:
+        """Sets the reasoning level and returns the model projection it produced."""
+        return (await self._post('/api/effort', {'effort': level})).get('model') or {}
+
+    async def select_agent(self, name: str) -> dict[str, Any]:
+        """Activates a profile for the next turn, answered by the service.
+
+        Refused while a turn runs (``409``) and for a name nothing declares
+        (``400``); both arrive as the client's typed failures carrying the
+        service's own reason.
+        """
+        return await self._post('/api/agent', {'name': name})
+
+    async def new_session(self) -> dict[str, Any]:
+        """Starts an empty conversation in the workspace the service owns."""
+        return (await self._post('/api/session/new', {})).get('session') or {}
+
+    async def sessions(self) -> dict[str, Any]:
+        """Every conversation of this repository, newest first, plus the current id."""
+        return await self._get('/api/sessions')
+
+    async def open_session(self, session_id: str) -> dict[str, Any]:
+        """Opens an existing conversation, wherever its workspace is."""
+        return (await self._post('/api/session/open', {'id': session_id})).get('session') or {}
+
+    async def models(self) -> dict[str, Any]:
+        """The model in effect and the accounts a client may offer."""
+        return await self._get('/api/models')
+
+    async def catalog_for(self, alias: str) -> dict[str, Any]:
+        """One account's model list, as the service projected it.
+
+        The route bounds its own wait, so a slow provider arrives here as a typed
+        refusal with a sentence rather than as a request that never returns.
+        """
+        return await self._get(f'/api/models/{alias}')
+
+    async def set_model(self, account: str, model: str, thinking: str | None = None) -> dict[str, Any]:
+        """Switches the model of the session, refused while a turn runs."""
+        body: dict[str, Any] = {'account': account, 'model': model}
+        if thinking is not None:
+            body['thinking'] = thinking
+        return await self._post('/api/model', body)
+
+    async def rollback_points(self) -> dict[str, Any]:
+        """The turns the open session can return to, newest first."""
+        return await self._get('/api/rollback')
+
+    async def rollback(self, turn_id: str, *, files: bool = True) -> dict[str, Any]:
+        """Returns the session to before a turn, and reports what it dropped."""
+        return await self._post('/api/rollback', {'turn_id': turn_id, 'files': files})
+
+    async def fork(self, turn_id: str) -> dict[str, Any]:
+        """Branches a new session at the instant before a turn."""
+        return await self._post('/api/fork', {'turn_id': turn_id})
+
     async def durable(self) -> dict[str, Any]:
         """The durable session: transcript, queue, deliveries and recovery facts.
 

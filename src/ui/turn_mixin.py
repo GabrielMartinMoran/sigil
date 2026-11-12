@@ -108,6 +108,24 @@ def pending_request(previous: TurnRequest | None, text: str, images: tuple[Outgo
     return TurnRequest(text=text, images=images)
 
 
+_BACK_IN_PROMPT = ' What you typed is back in the prompt.'
+"""Said once, so the sentences above can end with it without repeating themselves."""
+
+_BUSY_MARKERS = ('turn is running', 'turn is in progress', 'a turn is running')
+"""How the service words a busy refusal, lowercased.
+
+`/api/session/open` and `/api/rollback` answer `409` for other reasons too — a turn
+this session cannot reach, a session that does not exist. The marker is what tells
+those apart without matching a whole sentence that may be reworded.
+"""
+
+
+def _is_busy_reason(reason: str) -> bool:
+    """Whether a `409` sentence is the service saying a turn is in the way."""
+    text = reason.lower()
+    return any(marker in text for marker in _BUSY_MARKERS)
+
+
 def failure_notice(exc: ServiceClientError) -> str:
     """What the screen says about a refusal: the reason, then the way out.
 
@@ -118,9 +136,17 @@ def failure_notice(exc: ServiceClientError) -> str:
     nothing they can use.
     """
     if isinstance(exc, ServiceBusy):
+        reason = str(exc).strip()
+        if reason and not _is_busy_reason(reason):
+            # Not every `409` means a turn is in the way: the routes use it for
+            # anything the session cannot do *now*, including a turn it cannot
+            # reach. Saying "still working" over that sentence would be inventing
+            # a cause, so the server's own words are the answer.
+            return f'The service refused this: {reason}'
+        detail = f' The service said: {reason}' if reason else ''
         return (
-            'The agent is still working on this session. Wait for the turn to finish, or press Esc twice to '
-            'stop it. What you typed is back in the prompt.'
+            f'The agent is still working on this session.{detail} Wait for the turn to finish, or press Esc '
+            'twice to stop it. What you typed is back in the prompt.'
         )
     if isinstance(exc, Unauthorized):
         return (
@@ -136,11 +162,10 @@ def failure_notice(exc: ServiceClientError) -> str:
         return f'The service refused this message: {exc}'
     if isinstance(exc, ServiceUnavailable):
         if exc.launch_code == 'service_starting':
-            return 'The service is still starting. Try again in a moment. What you typed is back in the prompt.'
-        return (
-            f'No Sigil service answered ({exc}). Start it with `sigil server`, or check that it is still '
-            'running. What you typed is back in the prompt.'
-        )
+            return 'The service is still starting. Try again in a moment.' + _BACK_IN_PROMPT
+        # The exception already opens with "No Sigil service answered at …": repeating
+        # it here read as two failures instead of one.
+        return f'{exc} Start it with `sigil server`, or check that it is still running.' + _BACK_IN_PROMPT
     if isinstance(exc, UnexpectedResponse):
         return (
             'The service answered something this terminal cannot read. Restart Sigil; if it happens again, '

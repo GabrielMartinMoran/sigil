@@ -7,21 +7,66 @@ message when you decided.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 from textual.css.query import NoMatches
 
-from src.engine.agents.rollback import RollbackError, prompt_of_turn
+from src.engine.agents.rollback import Checkpoint, RollbackError, prompt_of_turn
 from src.engine.attachments.image_attachment import ImageAttachment, new_image_id
 from src.engine.attachments.tokens import numbers_in
 from src.engine.context.images import image_size
 from src.engine.sessions.titling import shorten
+from src.ui.service_client import ServiceClient, ServiceClientError
+from src.ui.turn_mixin import failure_notice
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.rollback_screen import (
     FORK,
     ROLLBACK_FILES,
+    Point,
     RollbackChoice,
     RollbackScreen,
 )
+
+
+def _files_report(*, unavailable: bool, restored: int, deleted: int) -> str:
+    """What a rollback did to the workspace, in the words both branches use.
+
+    One function so the attached terminal cannot drift from the one that owns the
+    engine: a rollback that could not restore files has to say so, and a notice
+    that only counted turns would be reporting half of what happened.
+    """
+    if unavailable:
+        return ', workspace unchanged (no snapshot to restore)'
+    if not (restored or deleted):
+        return ', no files changed'
+    return f', {restored} restored and {deleted} deleted'
+
+
+def _projected_point(row: Mapping[str, Any]) -> Point:
+    """One projected point, rebuilt as the row the screen paints.
+
+    The screen reads the turn id and the moment, so those come from the projection.
+    The other ``Checkpoint`` fields are carried empty because ``/api/rollback`` does
+    not send them, and ``files`` stays ``None`` because the route deliberately omits
+    the file cost of a restore: a guess would read as a promise.
+    """
+    turn_id = str(row.get('turn_id') or '')
+    return Point(
+        checkpoint=Checkpoint(
+            id=turn_id,
+            session_id='',
+            execution_id='',
+            turn_id=turn_id,
+            at=str(row.get('at') or ''),
+            reason=str(row.get('reason') or ''),
+            label=str(row.get('label') or ''),
+            tree_commit=row.get('tree_commit'),
+        ),
+        preview=str(row.get('preview') or ''),
+        files=None,
+    )
 
 
 class RollbackMixin:
@@ -34,7 +79,15 @@ class RollbackMixin:
 
         ``args`` is the index in the list or nothing. A number is a shortcut that skips
         the list; anything else opens it.
+
+        An attached terminal delegates both actions: the points, the truncation and
+        the fork belong to the session's owner. The screen stays here, and the index
+        shortcut keeps its meaning because the service lists the points in the same
+        order the terminal has always shown them.
         """
+        if self._client is not None:
+            await self._service_rollback(self._client, chat, args)
+            return
         rollback = getattr(self, '_rollback', None)
         session = getattr(self, '_session', None)
         if rollback is None or session is None:
@@ -61,6 +114,86 @@ class RollbackMixin:
         if choice is None:
             return
         await self.apply_rollback(chat, choice)
+
+    async def _service_rollback(self, client: ServiceClient, chat: ChatLog, args: str) -> None:
+        """Lists the service's points, opens the same screen, applies the choice there."""
+        if self._turn_active:
+            await chat.add_notice('A turn is running: finish or stop it before going back.', style='yellow')
+            return
+        try:
+            listing = await client.rollback_points()
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        points = [_projected_point(row) for row in listing.get('points') or []]
+        if not points:
+            await chat.add_notice('There is no message to go back to yet.', style='dim')
+            return
+
+        chosen = str(args).strip()
+        shorthand = chosen.isdigit() and 1 <= int(chosen) <= len(points)
+        preselected = points[int(chosen) - 1].checkpoint.turn_id if shorthand else None
+        choice = await self.push_screen_wait(
+            RollbackScreen(points, preselected=preselected, start_on_actions=shorthand)
+        )
+        if choice is None:
+            return
+        await self._service_apply_rollback(client, chat, choice)
+
+    async def _service_apply_rollback(self, client: ServiceClient, chat: ChatLog, choice: RollbackChoice) -> None:
+        """Runs the chosen action in the service and repaints from its answer."""
+        if choice.action == FORK:
+            try:
+                payload = await client.fork(choice.turn_id)
+            except ServiceClientError as exc:
+                await chat.add_notice(f'✖ Could not fork: {failure_notice(exc)}', style='red')
+                return
+            forked = payload.get('fork') or {}
+            turns = int(forked.get('turns_copied') or 0)
+            await chat.add_notice(
+                f'Forked to {str(forked.get("session_id") or "")[:8]} with {turns} '
+                f'turn{"" if turns == 1 else "s"}. `/load` opens it; this one is untouched.',
+                style='green',
+            )
+            return
+
+        files = choice.action == ROLLBACK_FILES
+        try:
+            payload = await client.rollback(choice.turn_id, files=files)
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ Could not roll back: {failure_notice(exc)}', style='red')
+            return
+
+        # The rows are shorter now, so the transcript is rebuilt from the service.
+        await chat.clear()
+        await self.refresh_service_state()
+        await self.load_service_history(rebuild=True)
+        self._service_cursor = self._state_cursor()
+
+        outcome = payload.get('rollback') or {}
+        dropped = int(outcome.get('turns_dropped') or 0)
+        files_note = _files_report(
+            unavailable=bool(outcome.get('files_unavailable')),
+            restored=int(outcome.get('files_restored') or 0),
+            deleted=int(outcome.get('files_deleted') or 0),
+        )
+        undo = str(outcome.get('undo_checkpoint') or '')
+        await chat.add_notice(
+            f'Rolled back: {dropped} turn{"" if dropped == 1 else "s"} dropped'
+            + files_note
+            + (f'. Undo with `/rollback {undo[:8]}` if you did not mean it.' if undo else '.'),
+            style='green',
+        )
+        prompt = outcome.get('prompt')
+        if isinstance(prompt, str) and prompt.strip():
+            self._restore_prompt((prompt, []))
+            if int(outcome.get('prompt_images') or 0):
+                # The text came back; an attached image does not travel through this
+                # route yet, and saying so beats a prompt that silently lost it.
+                await chat.add_notice(
+                    'The restored prompt had images; attach them again before sending.',
+                    style='yellow',
+                )
 
     def on_rollback_requested(self, message) -> None:
         """A user message was clicked: open the same screen, on that instant.
@@ -120,12 +253,12 @@ class RollbackMixin:
         self._restore_prompt(prompt)
 
     @staticmethod
-    def _files_report(outcome) -> str:
-        if outcome.files_unavailable:
-            return ', workspace unchanged (no snapshot to restore)'
-        if not outcome.touched_files:
-            return ', no files changed'
-        return f', {outcome.files_restored} restored and {outcome.files_deleted} deleted'
+    def _files_report(outcome: Any) -> str:
+        return _files_report(
+            unavailable=bool(outcome.files_unavailable),
+            restored=int(outcome.files_restored),
+            deleted=int(outcome.files_deleted),
+        )
 
     # --- helpers -------------------------------------------------------------
 
@@ -171,7 +304,7 @@ class RollbackMixin:
         composer.restore(entries)
         composer.focus()
 
-    def _rollback_points(self, rollback, session_id: str):
+    def _rollback_points(self, rollback: Any, session_id: str) -> list[Point]:
         """The points, with the file cost of each, newest first.
 
         The cost is the same diff the restore would apply, so the screen is telling the
@@ -260,7 +393,7 @@ class RollbackMixin:
         await chat.render_history(reloaded.messages, subagents=self.tree_nodes())
         chat.finalize()
 
-    def _chat_or_none(self):
+    def _chat_or_none(self) -> ChatLog | None:
         try:
             return self.query_one(ChatLog)
         except NoMatches:

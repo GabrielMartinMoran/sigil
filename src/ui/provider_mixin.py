@@ -9,10 +9,11 @@ split is what keeps the destructive and the network paths in one testable place.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from typing import Any
 
 from src.engine.providers.domain.auth_method import AuthMethod
-from src.engine.providers.domain.model_capability import ModelCatalog
+from src.engine.providers.domain.model_capability import ModelCapability, ModelCatalog
 from src.engine.providers.domain.provider_error import (
     AliasError,
     ProviderError,
@@ -21,6 +22,8 @@ from src.engine.providers.domain.thinking import EFFORT_LEVELS
 from src.engine.providers.snapshot import ModelSnapshot
 from src.ui.messages import ChatNotice
 from src.ui.model_view_mixin import effort_label
+from src.ui.service_client import ServiceClient, ServiceClientError
+from src.ui.turn_mixin import failure_notice
 from src.ui.widgets.account_form_screen import AccountFormScreen, NewAccount
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.confirm_screen import ConfirmScreen
@@ -31,6 +34,22 @@ from src.ui.widgets.provider_screen import ProviderAction, ProviderScreen
 from src.ui.widgets.sidebar_panel import ModelState
 
 
+def _projected_model(row: Mapping[str, Any]) -> ModelCapability:
+    """One projected model, rebuilt as the capability the picker paints.
+
+    Every field comes from `GET /api/models/{alias}`: the name, the window and the
+    levels the model accepts. The provider's own display name is used when it sent
+    one, and the id stands in when it did not, so a row never reads as blank.
+    """
+    name = str(row.get('name') or '')
+    return ModelCapability(
+        name=name,
+        display_name=str(row.get('display_name') or '') or name,
+        context_window=row.get('window'),
+        efforts=tuple(str(level) for level in row.get('efforts') or ()),
+    )
+
+
 class ProviderMixin:
     """`/provider`, `/model` and `/effort`, plus the screens behind them.
 
@@ -39,6 +58,7 @@ class ProviderMixin:
     """
 
     _model_service: Any
+    _client: ServiceClient | None
     _login_flow: Any
     _session: Any
     _meter: Any
@@ -77,7 +97,16 @@ class ProviderMixin:
         return True
 
     async def show_models(self, chat: ChatLog, query: str = '') -> None:
-        """Chooses a model and reasoning effort across all configured accounts."""
+        """Chooses a model and reasoning effort across all configured accounts.
+
+        An attached terminal delegates: the accounts, the model lists and the switch
+        all belong to the service. The picker stays here, fed by
+        `GET /api/models/{alias}`, and a list that cannot be read becomes the
+        service's error on screen instead of options this process made up.
+        """
+        if self._client is not None:
+            await self._service_models(self._client, chat)
+            return
         service = self._model_service
         if service is None or not service.list_accounts():
             await chat.add_notice('Configure a provider first: /provider', style='yellow')
@@ -112,12 +141,62 @@ class ProviderMixin:
         self._after_model_change(snapshot)
         await chat.add_notice(f'Model: {snapshot.label}', style='green')
 
+    async def _service_models(self, client: ServiceClient, chat: ChatLog) -> None:
+        """The picker over the service's catalogues, then the switch where it lives."""
+        try:
+            listing = await client.models()
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        accounts = [row for row in listing.get('accounts') or [] if str(row.get('alias') or '')]
+        if not accounts:
+            await chat.add_notice('Configure a provider first: /provider', style='yellow')
+            return
+
+        await chat.add_notice('Fetching the model lists…', style='cyan')
+        aliases = [str(row.get('alias')) for row in accounts]
+        results = await asyncio.gather(*(client.catalog_for(alias) for alias in aliases), return_exceptions=True)
+        catalogs: list[AccountCatalog] = []
+        for alias, result in zip(aliases, results, strict=True):
+            if isinstance(result, BaseException):
+                # The route's own sentence, not a paraphrase: it is the only one that
+                # knows whether the provider was slow, unknown or unreachable.
+                reason = failure_notice(result) if isinstance(result, ServiceClientError) else str(result)
+                await chat.add_notice(f'{alias}: {reason}', style='yellow')
+                continue
+            models = tuple(_projected_model(row) for row in (result.get('catalog') or {}).get('models') or ())
+            if not models:
+                continue
+            account_id = str((next(row for row in accounts if row.get('alias') == alias)).get('id') or '')
+            source = str((result.get('catalog') or {}).get('source') or 'remote')
+            catalogs.append(AccountCatalog(account_id, alias, ModelCatalog(models=models, source=source)))
+        if not catalogs:
+            await chat.add_notice('No model list could be read from the service.', style='yellow')
+            return
+
+        choice = await self.push_screen_wait(
+            GroupedModelScreen(catalogs, self._preferences.model_favorites, on_favorites=self._save_model_favorites)
+        )
+        if choice is None:
+            return
+        effort = await self.push_screen_wait(EffortScreen(accepted=choice.model.efforts, model=choice.model.name))
+        if effort is None:
+            return
+        try:
+            updated = await client.set_model(choice.alias, choice.model.name, effort.effort)
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        await self.refresh_service_state()
+        label = str((updated.get('model') or {}).get('label') or choice.model.name)
+        await chat.add_notice(f'Model: {label}', style='green')
+
     def _save_model_favorites(self, favorites: tuple[tuple[str, str], ...]) -> None:
         self._preferences = self._preferences.with_favorites(favorites)
         self.save_preferences()
 
     async def open_models(self) -> None:
-        """`alt+m` / `/model` with no argument: the picker, from any context.
+        """`ctrl+m` / `/model` with no argument: the picker, from any context.
 
         It goes through the same mid-turn refusal as the command: the shortcut
         is another door into the same room, and swapping the model under a
@@ -149,7 +228,15 @@ class ProviderMixin:
         chat.post_message(ChatNotice(f'Model: {snapshot.label}', style='green'))
 
     async def show_effort(self, chat: ChatLog, argument: str = '') -> None:
-        """Sets the reasoning level, or opens the picker when there is no argument."""
+        """Sets the reasoning level, or opens the picker when there is no argument.
+
+        An attached terminal delegates: the level belongs to the model the service
+        is running, and the levels the picker offers are the ones the service
+        reports for it (`model_view.efforts`), not this process's catalogue.
+        """
+        if self._client is not None:
+            await self._service_effort(self._client, chat, argument)
+            return
         service = self._model_service
         if service is None or not service.is_configured():
             await chat.add_notice('Configure a provider first: /provider', style='yellow')
@@ -166,6 +253,33 @@ class ProviderMixin:
             return
         self._after_model_change(updated)
         await chat.add_notice(f'Reasoning effort: {updated.thinking}', style='green')
+
+    async def _service_effort(self, client: ServiceClient, chat: ChatLog, argument: str) -> None:
+        """The reasoning level of the service's model, changed where it lives."""
+        try:
+            model = (await client.state()).get('model') or {}
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        level = argument.strip().lower()
+        if not level:
+            choice = await self.push_screen_wait(
+                EffortScreen(
+                    current=str(model.get('thinking') or 'default'),
+                    accepted=tuple(str(item) for item in model.get('efforts') or ()),
+                    model=str(model.get('model') or ''),
+                )
+            )
+            if choice is None:
+                return
+            level = choice.effort
+        try:
+            updated = await client.effort(level)
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        thinking = updated.get('thinking') or level
+        await chat.add_notice(f'Reasoning effort: {thinking}', style='green')
 
     async def _pick_effort(self, chat: ChatLog) -> None:
         """The effort screen, offering only the levels the model accepts."""

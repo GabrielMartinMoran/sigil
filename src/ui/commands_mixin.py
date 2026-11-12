@@ -3,16 +3,24 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
 
 from src.engine.context.meter.render import render_report
 from src.engine.mcp.tool_models.server_status import ServerStatus
 from src.engine.providers.domain.provider_error import ProviderError
-from src.engine.sessions.catalog import catalog
+from src.engine.sessions.catalog import CatalogEntry, catalog
+from src.engine.sessions.session_store import Session, SessionSummary
 from src.engine.workspace.arguments import UsageError, parse_new_args
 from src.engine.workspace.models.workspace_error import WorkspaceError
+from src.engine.workspace.models.worktree import Workspace, Worktree
+from src.ui.command_transport import TransportState, transport_for, unavailable_notice
 from src.ui.help_text import HELP_TEXT, KEYS_TEXT
 from src.ui.messages import ChatNotice
+from src.ui.service_client import ServiceClient, ServiceClientError
 from src.ui.session_refresh import bind_refreshed_session, render_refreshed_session, session_view
+from src.ui.turn_mixin import failure_notice
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.mcp_screen import MCPScreen
 from src.ui.widgets.prompt_input import PromptInput
@@ -34,12 +42,121 @@ service refuses the *change*, and only after the picker fetched the catalogue an
 opened a modal. Refusing up front is what makes the refusal nothing more than a
 line in the chat.
 
+In an attached terminal the same set is refused from the service's own `busy`
+flag, read from `/api/state`. Which process notices first is not the point: a
+command whose action would change the session must not open a panel it cannot
+complete, and the service would refuse the change anyway.
+
 The rest read state and are safe mid-turn: `/context`, `/debug`, `/sidebar`,
 and `/help` do not touch the conversation or the model. `/mcp` changes the tool set.
 """
 
-BUSY_REFUSAL = '{name} is not available while the agent works. Esc twice stops the turn first.'
+BUSY_REFUSAL = 'A turn is running: finish or stop it before you use {name}. Esc twice stops the turn first.'
 """What a refused command says. It names the way out, so the refusal is not a dead end."""
+
+
+def _tokens(value: Any) -> str:
+    """A token count the service sent, or a plain statement that it did not."""
+    return f'{value:,}' if isinstance(value, int) else 'not reported by the service'
+
+
+def _percent(value: Any) -> str:
+    return f'{value:.0f}%' if isinstance(value, (int, float)) else 'not reported'
+
+
+def render_service_context(context: Mapping[str, Any], workspace: Mapping[str, Any] | None = None) -> str:
+    """The `/context` report, built from the numbers the service measured.
+
+    Nothing here is measured locally: the session belongs to the service, and one
+    conversation cannot have two meters that disagree. A datum the service did not
+    send is named as absent rather than printed as a zero, because a zero is a
+    claim about the session and this terminal is in no position to make it. That is
+    also why a cold session reads `0 (0%)` and never `?`: the service sends the real
+    zero for a session that has not made a request yet.
+
+    The scope section of the old report is absent, not empty: no endpoint projects
+    the active directories or the instruction files (see docs/architecture.md).
+    """
+    budget = context.get('budget') or {}
+    cost = context.get('cost') or {}
+    lines = ['Context (from the service)']
+    lines.append(f'  window           : {_tokens(context.get("window"))}')
+    used = context.get('used')
+    if used is None:
+        lines.append('  used             : the service reported no projection')
+    else:
+        lines.append(f'  used             : {used:,} ({_percent(context.get("percent"))})')
+    lines.append(f'  measured         : {_tokens(context.get("measured"))}')
+    lines.append(f'  projected        : {_tokens(context.get("projected"))}')
+
+    lines.append('')
+    lines.append('Cost')
+    total = cost.get('total')
+    if total is None:
+        lines.append('  total            : not priced yet')
+    else:
+        suffix = ' (at list price)' if cost.get('approximate') else ''
+        lines.append(f'  total            : {total}{suffix}')
+    lines.append(f'  requests         : {_tokens(cost.get("requests"))}')
+
+    lines.append('')
+    lines.append('Budget')
+    lines.append(f'  tools            : {_tokens(budget.get("tools"))}')
+    lines.append(f'  instructions     : {_tokens(budget.get("instructions"))}')
+    lines.append(f'  output reserve   : {_tokens(budget.get("output_reserve"))}')
+    lines.append(f'  safety reserve   : {_tokens(budget.get("safety_reserve"))}')
+    lines.append(f'  available        : {_tokens(budget.get("available_for_history"))}')
+
+    if workspace:
+        worktree = workspace.get('worktree') or {}
+        lines.append('')
+        lines.append('Workspace')
+        lines.append(f'  name             : {workspace.get("label") or "(unnamed)"}')
+        lines.append(f'  root             : {workspace.get("root") or "(not reported)"}')
+        lines.append(f'  branch           : {workspace.get("branch") or "(none)"}')
+        if worktree:
+            lines.append(f'  worktree         : {"main" if worktree.get("is_main") else "linked"}')
+    return '\n'.join(lines)
+
+
+def _catalog_entry(row: Mapping[str, Any], *, current: str) -> CatalogEntry:
+    """One projected session, rebuilt as the row the picker paints.
+
+    Every field comes from `/api/sessions`: the id, the title, the preview, the
+    date, the workspace label and whether it is a worktree. Nothing is looked up
+    locally, so the list a terminal shows is the list the service has, and the
+    same session appears in the same place in both clients. The workspace object
+    is a display carrier built from those facts — its label and `is_worktree` are
+    the projection's, not a guess from the directory name.
+    """
+    root = Path(str(row.get('workspace') or '.'))
+    worktree = Worktree(path=root, is_main=not bool(row.get('is_worktree')))
+    session = SessionSummary(
+        id=str(row.get('id') or ''),
+        workspace=str(row.get('workspace') or ''),
+        title=row.get('title'),
+        preview=str(row.get('preview') or ''),
+        updated_at=str(row.get('updated_at') or ''),
+        profile=str(row.get('profile') or ''),
+    )
+    return CatalogEntry(
+        session=session,
+        workspace=Workspace(root=root, worktree=worktree),
+        is_current=session.id == current,
+    )
+
+
+def _server_status(row: Mapping[str, Any]) -> ServerStatus:
+    """One MCP server, as the modal's own model. The wire is not the widget."""
+    return ServerStatus(
+        name=str(row.get('name') or ''),
+        transport=str(row.get('transport') or ''),
+        enabled=bool(row.get('enabled')),
+        prefix=str(row.get('prefix') or ''),
+        tools=[str(tool) for tool in row.get('tools') or ()],
+        error=None if row.get('error') is None else str(row['error']),
+        source=str(row.get('source') or ''),
+    )
 
 
 class CommandsMixin:
@@ -52,6 +169,7 @@ class CommandsMixin:
     """
 
     _turn_active: bool
+    _client: ServiceClient | None
 
     async def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
         """Enter on the composer: slash command, a new turn, or steering the current one.
@@ -110,10 +228,21 @@ class CommandsMixin:
         ``_turn_active`` and not ``_current_run``: the flag is set the moment the
         message is accepted, so a command typed in the gap before the worker
         starts is refused too.
+
+        An attached terminal has no turn of its own, so the flag it reads is the
+        service's: ``/api/state`` carries ``busy``, and that is the same fact the
+        service would use to refuse the change. Reading it here is what keeps the
+        refusal free of a panel — the picker would otherwise open, fetch a
+        catalogue and only then be told the session is in the way.
         """
+        if name not in BUSY_COMMANDS:
+            return False
         if name == '/mcp' and getattr(self, '_summoner', None) is not None and self._summoner.running():
             return True
-        return self._turn_active and name in BUSY_COMMANDS
+        if self._client is not None:
+            state = getattr(self, '_service_state', None)
+            return bool(isinstance(state, dict) and state.get('busy'))
+        return self._turn_active
 
     async def refuse_while_busy(self, command: str, chat: ChatLog) -> None:
         """The one refusal: a notice in the chat, the command back in the prompt.
@@ -139,10 +268,29 @@ class CommandsMixin:
         The busy check is here too, at the choke point every path goes through,
         and not only in the callers: it is the last chance to stop a command that
         would swap the session out from under a running turn.
+
+        So is the transport decision. An attached terminal cannot run a command
+        whose effect belongs to the service — the handler would reach for a store
+        and an engine this process does not own, and fail somewhere the user
+        cannot read. The transport table says, once, which commands run here and
+        which only have a sentence to say; this is the only place that reads it.
         """
         chat = self.query_one(ChatLog)
         if self.is_refused_while_busy(name):
             await self.refuse_while_busy(f'{name} {args}'.strip(), chat)
+            return
+
+        transport = transport_for(name)
+        if (
+            self._client is not None
+            and transport is not None
+            and transport.state in {TransportState.NOT_WIRED, TransportState.BLOCKED}
+        ):
+            # A row that cannot act here answers once and does nothing else: no
+            # panel, no queue row, no local write. A delegated row is not refused
+            # here — its handler is the sender, and it runs below. Only the two
+            # rows with no way out are answered at the door.
+            await chat.add_notice(unavailable_notice(transport), style='yellow')
             return
 
         handlers = {
@@ -181,6 +329,9 @@ class CommandsMixin:
         value = args.strip().lower()
         if value not in {'', 'allow', 'deny'}:
             await chat.add_notice('Usage: /external-files [allow|deny]', style='yellow')
+            return
+        if self._client is not None:
+            await self._service_external_files(self._client, value, chat)
             return
         await self.refresh_active_session(chat)
         if value:
@@ -232,11 +383,15 @@ class CommandsMixin:
         self.exit()
 
     async def new_session(self, chat: ChatLog, args: str = '') -> None:
-        """Starts an empty session, in the current workspace or in a new worktree."""
+        """Starts an empty session, in the service when this terminal is attached."""
         try:
             request = parse_new_args(args)
         except UsageError as exc:
             await chat.add_notice(str(exc), style='yellow')
+            return
+
+        if self._client is not None:
+            await self._service_new_session(self._client, request, chat)
             return
 
         if request.worktree is not None:
@@ -280,8 +435,71 @@ class CommandsMixin:
             await self.announce_switch(switch, chat)
         await chat.add_notice(f'New session {self._session.short_id}.', style='green')
 
+    async def _service_new_session(self, client: ServiceClient, request: Any, chat: ChatLog) -> None:
+        """Creates the session in the service and repaints from what it returned.
+
+        `--worktree` is refused rather than simulated: the route creates a session
+        in the workspace the service already runs in, and a terminal that cut a
+        worktree behind its back would leave the user in a directory the service is
+        not executing in. The honest answer is cheaper than a convincing lie.
+        """
+        if request.worktree is not None:
+            await chat.add_notice(
+                '/new --worktree is not supported from an attached terminal yet: the service '
+                'creates the session in the workspace it is already running in. Create the '
+                'worktree first, then start Sigil there.',
+                style='yellow',
+            )
+            return
+        try:
+            session = await client.new_session()
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        await chat.clear()
+        await self.refresh_service_state()
+        await self.load_service_history(rebuild=True)
+        # The cursor restarts from the state just read: the new session has its own
+        # sequence, and keeping the old number would skip whatever it publishes.
+        self._service_cursor = self._state_cursor()
+        await chat.add_notice(f'New session {session.get("short_id") or ""}.', style='green')
+
+    async def _service_load_session(self, client: ServiceClient, chat: ChatLog) -> None:
+        """Lists, opens and repaints from the service, never from a local catalog."""
+        try:
+            listing = await client.sessions()
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        current = str(listing.get('current') or '')
+        entries = [_catalog_entry(row, current=current) for row in listing.get('sessions') or []]
+        if not entries:
+            await chat.add_notice('No saved sessions.', style='yellow')
+            return
+        chosen = await self.push_screen_wait(SessionPicker(entries))
+        if not chosen:
+            return
+        try:
+            session = await client.open_session(chosen)
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        await chat.clear()
+        await self.refresh_service_state()
+        await self.load_service_history(rebuild=True)
+        self._service_cursor = self._state_cursor()
+        # Opening a session can move the service to its workspace; the header is
+        # repainted from the same state read above rather than from a local guess.
+        repaint_badge = getattr(self, 'refresh_workspace_badge', None)
+        if callable(repaint_badge):
+            repaint_badge()
+        await chat.add_notice(f'Loaded session {session.get("short_id") or ""}.', style='green')
+
     async def load_session(self, chat: ChatLog) -> None:
         """Loads a session chosen by the user, switching workspace when needed."""
+        if self._client is not None:
+            await self._service_load_session(self._client, chat)
+            return
         entries = catalog(self._store.cwd, base_dir=self._store.base_dir)
         if not entries:
             await chat.add_notice('No saved sessions.', style='yellow')
@@ -325,7 +543,7 @@ class CommandsMixin:
         chat.finalize()
         await chat.add_notice(f'Loaded session {loaded.short_id}.', style='green')
 
-    def bind_session(self, session: object) -> None:
+    def bind_session(self, session: Session) -> None:
         """Points the app at ``session``: history, agent, tree, roadmap and persistence."""
         self._session = session
         mcp = getattr(self, '_mcp_manager', None)
@@ -457,7 +675,16 @@ class CommandsMixin:
         await chat.add_notice(f'Debug view {"shown" if self.debug_visible else "hidden"}.', style='cyan')
 
     async def show_context(self, chat: ChatLog) -> None:
-        """Context breakdown: measured, projected, budget and turns."""
+        """Context breakdown: the service's measurement when attached.
+
+        An attached terminal paints the service's numbers, never this process's
+        meter: the session it is looking at is the service's, and a local meter
+        would report a second, disagreeing truth about it. The scope section is
+        absent because no endpoint projects it (see docs/architecture.md).
+        """
+        if self._client is not None:
+            await self._service_context(self._client, chat)
+            return
         view = self._context_capability.last_view if self._context_capability is not None else None
         report = self._meter.report(self._history, view=view)
         lines = [render_report(report)]
@@ -484,7 +711,15 @@ class CommandsMixin:
         await chat.add_notice('\n'.join(lines), style='white')
 
     async def show_mcp(self, chat: ChatLog) -> None:
-        """State of the configured MCP servers."""
+        """State of the configured MCP servers, from the service when attached.
+
+        The modal is still this terminal's: only the list and the toggle travel. A
+        terminal that read its own manager would report the servers *it* loaded,
+        which in an attached terminal is none of them.
+        """
+        if self._client is not None:
+            await self._service_mcp(self._client, chat)
+            return
         if self._mcp_manager is None or not self._mcp_manager:
             await chat.add_notice(
                 'No MCP servers configured. Create .sigil/config.json with an `mcp_servers` section.',
@@ -497,6 +732,78 @@ class CommandsMixin:
             MCPScreen(statuses, self._toggle_session_mcp, lambda: self._mcp_manager.describe(connect=True))
         )
         self.refresh_mcp_status()
+
+    async def _service_context(self, client: ServiceClient, chat: ChatLog) -> None:
+        """The meter, the budget and the bill, as the service measured them.
+
+        Two reads and no arithmetic: `/api/context` answers for the session the
+        service owns, and `/api/state` carries the workspace it is running in. A
+        terminal that measured its own history would describe a conversation it
+        never had, which is exactly the false zero this replaces.
+        """
+        try:
+            context = await client.context()
+            state = await client.state()
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        workspace = state.get('workspace')
+        await chat.add_notice(
+            render_service_context(context, workspace if isinstance(workspace, dict) else None), style='white'
+        )
+
+    async def _service_external_files(self, client: ServiceClient, value: str, chat: ChatLog) -> None:
+        """Shows, or changes, the service's file boundary for this session."""
+        try:
+            if value:
+                session = await client.external_files(value == 'allow')
+            else:
+                session = (await client.state()).get('session') or {}
+        except ServiceClientError as exc:
+            # The refusal is the server's, with the server's reason, and the
+            # message it refused did not change it: nothing is painted as done.
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        allowed = session.get('external_files')
+        if not isinstance(allowed, bool):
+            await chat.add_notice("The service did not report this session's file-access setting.", style='yellow')
+            return
+        state = 'allowed' if allowed else 'denied'
+        await chat.add_notice(f'Outside-workspace file access is {state} for this session.', style='yellow')
+
+    async def _service_mcp(self, client: ServiceClient, chat: ChatLog) -> None:
+        """Lists the service's MCP servers; the modal stays this terminal's."""
+        try:
+            rows = await client.mcp_servers()
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        statuses = [_server_status(row) for row in rows]
+        if not statuses:
+            await chat.add_notice(
+                'No MCP servers configured. Create .sigil/config.json with an `mcp_servers` section.',
+                style='yellow',
+            )
+            return
+        current = {status.name: status for status in statuses}
+
+        async def toggle(name: str, enabled: bool) -> ServerStatus:
+            """Toggles through the service, keeping the row honest on a refusal."""
+            try:
+                updated = await client.toggle_mcp(name, enabled)
+            except ServiceClientError as exc:
+                # A refusal changed nothing, so the row keeps the state the service
+                # still has. Annotated here, and not by repainting a change that
+                # did not happen.
+                await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+                return current[name]
+            for row in updated:
+                status = _server_status(row)
+                current[status.name] = status
+            return current[name]
+
+        await self.push_screen_wait(MCPScreen(statuses, toggle))
+        await self.refresh_service_state()
 
     async def _toggle_session_mcp(self, name: str, enabled: bool) -> ServerStatus:
         self._session.mcp_overrides[name] = enabled

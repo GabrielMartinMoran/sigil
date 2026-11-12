@@ -337,10 +337,11 @@ class SigilApp(
         self._naming_workers: dict[str, Any] = {}
         if client is not None:
             # What the unmigrated mixins expect of a local store, answered by the
-            # service instead of a second copy of its row, and the commands that would
-            # write locally refused where the user can read the refusal.
+            # service instead of a second copy of its row. Which commands may run
+            # here is decided in `handle_command` from the transport table, and not
+            # by replacing the dispatcher: a replaced dispatcher refused `/theme`
+            # along with `/rollback`, because it could not tell them apart.
             self._store = _ServiceOwnedSession(session)
-            self.handle_command = self._refuse_command  # type: ignore[method-assign]
         self._wire_busy_flag()
 
     def _wire_busy_flag(self) -> None:
@@ -596,25 +597,6 @@ class SigilApp(
         self.refresh_debug()
 
     # --- the service ------------------------------------------------------
-
-    async def _refuse_command(self, name: str, args: str = '') -> None:
-        """A slash command in an attached terminal, answered instead of attempted.
-
-        The command handlers reach for the store and the engine this terminal does not
-        own, so one of them would fail somewhere the user cannot see — in a worker,
-        after the composer has already cleared itself. Saying it plainly is both more
-        honest and more useful: the conversation works, the commands move over with
-        their own cut.
-
-        Async, matching `handle_command`: the notice is appended by awaiting the chat
-        log, so a refusal that was never awaited would paint nothing at all — which is
-        the one outcome a user cannot tell apart from a command that worked.
-        """
-        await self.query_one(ChatLog).add_notice(
-            f"{name} still runs in the terminal's own process, and this terminal is attached to the "
-            'service. The conversation works; the commands move over in a later cut.',
-            style='yellow',
-        )
 
     @work(exclusive=True, group=SERVICE_EVENTS)
     async def follow_service_events(self) -> None:

@@ -319,18 +319,21 @@ class PromptInput(TextArea):
         if event.key == CTRL_MODELS:
             event.stop()
             event.prevent_default()
-            self.run_worker(self.app.open_models())
+            # Through the dispatcher, not straight into the picker: the key is
+            # another door into the same room, and an attached terminal has to
+            # answer it exactly as the typed command would.
+            self.run_worker(self.app.handle_command('/model'))
             return
 
         if event.key == CTRL_EFFORT:
             event.stop()
             event.prevent_default()
-            self.run_worker(self.app.open_effort())
+            self.run_worker(self.app.handle_command('/effort'))
             return
         if event.key == CTRL_AGENT:
             event.stop()
             event.prevent_default()
-            self.run_worker(self.app.open_agent())
+            self.run_worker(self.app.handle_command('/agent'))
             return
         if event.key == CTRL_PASTE:
             event.stop()
