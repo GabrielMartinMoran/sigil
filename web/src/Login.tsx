@@ -27,6 +27,7 @@ export function Login({ status }: { status: LoginState | null }) {
   return (
     <main className="flex min-h-full items-center justify-center p-6">
       <form onSubmit={submit} className="w-full max-w-sm">
+        <img src="./sigil-logo.svg" alt="" aria-hidden="true" className="mb-5 h-16 w-auto" />
         <h1 className="text-ink font-mono text-2xl tracking-tight">sigil</h1>
         <p className="text-ink-muted mt-1 text-sm">The password is printed in the terminal that started the server.</p>
 
