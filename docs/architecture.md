@@ -753,6 +753,14 @@ The commands are thin for the same reason as part D's: a route calls a
 | `POST /api/external-files` | Allows or denies reads outside the workspace | `views.session_view` |
 | `GET /api/context` | Window usage and the session's bill | `views.context_view` |
 
+`/context` in an attached terminal paints that projection and the workspace from
+`/api/state`. It shows no scope section — the active directories and the instruction
+files have no projection on the server, so the report omits them rather than filling
+them from local trackers, which would describe a session the service is not running.
+A datum the service did not send is named as absent; it is never printed as zero,
+because a zero is a claim. A cold session is the exception that proves the rule: the
+service reports the real zero there, so the screen reads `0 (0%)` and never `?`.
+
 The tree actions answer with the whole tree, not only the node: stopping a node
 stops its descendants, and a client that repainted one row would leave the branch
 saying it is still working.
@@ -978,13 +986,123 @@ own cut instead of half-moving all of them at once.
 | Images | ordered `OutgoingImage`s with the `[Image #n]` marker | the picture that was attached is the one stored |
 | Reconnection | `events(after=last_event_id)`, then a state read | a gap is announced, never silently painted over |
 | Restart recovery | `ServiceClient.refresh_endpoint()` before the retry, then a fresh `/api/state` | the client re-discovers through the injected launcher, rebuilds its pool over the transport it was given, and restarts the cursor with the new run (see [When the service restarts](#when-the-service-restarts)) |
-| Commands | refused by `_refuse_command` | the handler would reach for a store and an engine this process does not own; the conversation works, the commands move over in a later cut (see below) |
+| Commands | `handle_command`, through `src/ui/command_transport.py` | client commands run here; core commands name the route that serves them and what is still missing (see [Which commands run here](#which-commands-run-here)) |
 | Provider, agent, rollback, tree | unchanged, still local | those panels read files and rows this process can see |
 
-A slash command in an attached terminal does not run. `_refuse_command` answers it
-in the transcript and says why: the handler would reach for a store and an engine
-this process does not own, and failing inside a worker is a failure the user cannot
-read.
+The dispatcher is not replaced any more. An earlier version swapped `handle_command`
+for a single refusal, which was honest about the missing senders and wrong about
+everything else: it refused `/theme` along with `/rollback`. The decision now comes
+from one table, read once, at the choke point every path goes through.
+
+### Which commands run here
+
+The catalogue decides **who may serve a command**. The transport table decides
+**whether this terminal can reach that server**, and the two are different questions:
+the first is shared vocabulary, the second changes with each cut.
+
+`src/ui/command_transport.py` holds one row per command. A row carries the name, the
+owner the catalogue already declared, the route the service serves it at, and exactly
+one state:
+
+| State | Meaning | What the terminal does |
+| --- | --- | --- |
+| `client` | this window does the work | runs the handler here; sends nothing |
+| `delegated` | the service does the work and a sender exists | calls the route |
+| `not_wired` | the service does the work and has the route; no sender here yet | one notice: the command, the route, and what is missing |
+| `blocked` | the service has no endpoint for it | one notice: the command and why there is nothing to call |
+
+Eight commands are `client`: `/theme`, `/sidebar`, `/debug`, `/alerts`, `/tools`,
+`/reasoning-visibility`, `/help` and `/quit`. They repaint this window, so they never
+travel, and an attached terminal runs them exactly as one that owns the engine does.
+
+Nine core commands are `delegated`: `/context`, `/external-files`, `/mcp`, `/effort`,
+`/agent`, `/new`, `/load`, `/model` and `/rollback`. Their handlers send to the service and paint the answer
+it returns, and none of them writes the session locally — the row it changed belongs
+to the service, and a second copy here would be a second truth about one
+conversation. The pickers stay in the terminal; only the list and the effect travel.
+
+`/agent` is the clearest case of that rule. The switch is `POST /api/agent`, and what
+lands on screen afterwards is the service's `state.session.agent` — the terminal no
+longer stamps `session.agent` itself, because the profile a session runs under is a
+fact about the session and not about the window looking at it. For the same reason a
+second attached terminal shows the new agent after it refreshes, without either one
+telling the other anything.
+
+`/new` and `/load` repaint the transcript and restart the event cursor from the state
+they just read, instead of reusing what the terminal had: the cursor is a position in
+the running service's sequence, and an old number would silently skip everything the
+new session publishes. Opening a session can also move the service to another
+workspace; the header follows the projection, not a local guess.
+
+No core command is `not_wired` any more: every command the service serves has a sender
+here. `/provider` is the only `blocked` one — the service exposes no accounts endpoint — so its notice says
+that instead of sending the user to configure a provider they already have. A
+`delegated` row is never asked for a refusal sentence: it has a sender, so reaching
+that code is a dispatcher bug and the table raises instead of printing a sentence
+about a sender that exists.
+
+`/model` needed one route the service did not have: `GET /api/models` lists the
+accounts, not the models of each one. `GET /api/models/{alias}` answers that list from
+`ModelService.catalog_for` — the same call the in-process terminal makes — and bounds the
+wait at fifteen seconds so a provider that never answers becomes a refusal with a
+sentence instead of a request that stays open. When the provider cannot be read, the
+route refuses with the engine's own reason: the fallback list the in-process terminal
+shows next to a warning is deliberately **not** offered here, because a picker listing
+options the provider did not send is exactly the invented answer a delegated client must
+not produce. The picker itself stays in the terminal, built from that projection.
+
+`/rollback` needed the prompt of the turn it drops. The rows that hold it are truncated
+by the rollback, so the route reads it first — `prompt_of_turn` — and carries the text in
+the `rollback` reply. That is the field the in-process terminal used to look up before
+applying; projecting it changes no count and no row, and it means no client needs a
+database of its own. The fork reply already carried its session id, so `/fork` needed
+nothing on the server side. Images attached to a restored prompt do not travel through
+the route yet: the reply reports how many there were and the terminal says so instead of
+restoring a prompt that silently lost its picture.
+
+Still pending from the attached terminal, and deliberately not faked:
+
+| Pending | Why it waits |
+| --- | --- |
+| `/new --worktree` | the service creates sessions in the workspace it already runs in; there is no route that cuts a worktree, so the command says so instead of simulating one |
+| `/provider` | no accounts endpoint exists at all, which is what its notice says |
+| images on a restored prompt | the rollback reply carries the text and the count, not the bytes; the terminal says so rather than losing them quietly |
+| the click preselection of `/rollback` | a clicked message carries a `seq`, and the projected points carry turn ids; the click still opens the list, without the row highlighted |
+
+A command that cannot act answers in one notice, opens no panel and writes no queue
+row. An unknown command keeps its own answer, because a name the catalogue never
+declared is not a transport decision in the first place.
+
+The order at the choke point is the decision, in this order: a `client` row runs
+here, a `delegated` row runs its handler (which sends), and a `not_wired` or
+`blocked` row answers once and returns.
+
+A delegated command whose action would change the session is refused **before** it
+opens anything, while a turn runs. The terminal reads `busy` from `/api/state` — the
+same fact the service would use — so `/agent`, `/model`, `/effort`, `/new`, `/load`,
+`/mcp` and `/external-files` answer with one line instead of opening a picker, fetching
+a catalogue and only then being told the session is in the way. The sentence is the
+service's own ("a turn is running: finish or stop it before you …"), so there is one
+wording for one fact rather than two that drift apart.
+
+Not every `409` is that fact, though. `/api/session/open` and `/api/rollback` also use
+it for a turn this session cannot reach or a session that does not exist, so
+`failure_notice` reads the service's sentence: when it is not about a running turn, the
+notice repeats what the service said instead of claiming the agent is busy. A rollback
+that could not restore files says so in the same words the in-process terminal uses,
+because both call one `_files_report`.
+
+The table is imported against the catalogue and fails at import when a row is missing
+or extra, so a new command cannot become a menu entry that silently does nothing. Two
+tests hold the same line: `tests/test_commands_ownership.py` for the table and
+`tests/test_ui_client.py` for the behaviour behind it.
+
+The three side doors — `ctrl+m`, `ctrl+l` and `ctrl+a` — call `handle_command` instead
+of `open_models`, `open_effort` and `open_agent`. A key is another door into the same
+room, and a door with a path of its own is a door that answers differently. Because
+`/effort` is delegated, `ctrl+l` opens the picker fed by the service rather than
+answering a refusal; the levels it offers are the ones `model_view.efforts` reports
+for the model the service is actually running.
 
 ### The first connection starts after the state, not at zero
 
