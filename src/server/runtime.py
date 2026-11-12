@@ -22,6 +22,7 @@ here formats text for a human — that is the client's job.
 from __future__ import annotations
 
 import asyncio
+import base64
 import time
 import uuid
 from collections.abc import Sequence
@@ -49,12 +50,14 @@ from pydantic_ai.usage import UsageLimits
 from src.engine.agents.step_budget import StepBudget
 from src.engine.agents.turn_map import library_run_id
 from src.engine.attachments.content import stored_content, stored_parts, user_content
+from src.engine.attachments.images import MAX_IMAGE_BYTES, ImageError, prepare_image
 from src.engine.bootstrap import Composition, model_settings
+from src.engine.context.media_compatibility import PORTABLE_IMAGE_TYPES
 from src.engine.interaction.models.question_answer import QuestionAnswer
 from src.engine.interaction.models.question_item import QuestionItem
 from src.engine.providers.domain.provider_error import ProviderError
 from src.engine.sessions.recovery import recover_history
-from src.engine.storage.accepted_inputs import AcceptedInput, AcceptedInputs, DeliveryConfirmation
+from src.engine.storage.accepted_inputs import AcceptedInput, AcceptedInputs, DeliveryConfirmation, ImageInput
 from src.engine.tooling.outputs import present_output
 from src.server.events import EventHub
 from src.server.ownership import OwnershipError, ServerOwnership
@@ -67,6 +70,71 @@ QUEUE_POLL_INTERVAL = 0.25
 
 PREVIEW_CHARS = 400
 """How much of a tool result travels in the event. The full text is in the transcript."""
+
+MAX_IMAGES = 10
+"""Pictures one message may carry.
+
+The number is a ceiling on what a single turn is worth in tokens and bandwidth, and
+it is checked before anything is written: a rejected message must not leave a row.
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class IncomingImage:
+    """One image as the client sent it: the type it declared and base64 bytes.
+
+    Nothing here is ever a path. A client sends the picture itself, never a filename
+    the server would open, and the declared type is only a claim: the bytes are
+    decoded and re-encoded before they are trusted.
+    """
+
+    media_type: str
+    data: str
+
+
+def decode_images(images: Sequence[IncomingImage]) -> list[ImageInput]:
+    """Validates and normalizes the ordered images of one message.
+
+    The order is the identity: the position of an image in the list is the
+    ``[Image #n]`` number in the text, and the bytes are what the fingerprint
+    covers, so a retry of the same message must send the same list in the same
+    order.
+
+    The bytes are decoded and re-encoded by `prepare_image`, so what is stored is
+    bounded in dimensions and in size and carries the media type the picture
+    actually is, not the one the client claimed.
+
+    Raises:
+        ValueError: when a message carries too many images, a declared type is not
+            portable, a payload is not base64, an image is over the byte ceiling, or
+            the bytes are not a picture that can be decoded. Nothing is written
+            before the whole list is validated.
+    """
+    if len(images) > MAX_IMAGES:
+        raise ValueError(f'A message carries at most {MAX_IMAGES} images.')
+    return [_decode_image(number, image) for number, image in enumerate(images, start=1)]
+
+
+def _decode_image(number: int, image: IncomingImage) -> ImageInput:
+    """One image of the list, or the reason it cannot be accepted."""
+    media_type = image.media_type.strip().lower()
+    if media_type not in PORTABLE_IMAGE_TYPES:
+        raise ValueError(f'Image {number} has an unsupported media type: {media_type or "missing"}.')
+    try:
+        raw = base64.b64decode(image.data, validate=True)
+    except ValueError as exc:  # binascii.Error is a ValueError: bad alphabet, bad padding
+        raise ValueError(f'Image {number} is not valid base64.') from exc
+    if not raw:
+        raise ValueError(f'Image {number} is empty.')
+    # Before decoding the picture: a payload this large is refused without asking
+    # Pillow to read it, which is what makes the ceiling cheap to enforce.
+    if len(raw) > MAX_IMAGE_BYTES:
+        raise ValueError(f'Image {number} is larger than {MAX_IMAGE_BYTES // (1024 * 1024)} MiB.')
+    try:
+        prepared = prepare_image(raw)
+    except ImageError as exc:
+        raise ValueError(f'Image {number} could not be read: {exc}') from exc
+    return ImageInput(prepared.data, prepared.media_type)
 
 
 @dataclass
@@ -185,7 +253,9 @@ class ServerRuntime:
 
     # --- a turn --------------------------------------------------------------
 
-    async def send(self, text: str, request_id: str | None = None) -> dict[str, Any]:
+    async def send(
+        self, text: str, request_id: str | None = None, images: Sequence[IncomingImage] = ()
+    ) -> dict[str, Any]:
         """Accepts a message durably; the consumer turns it or steers it.
 
         ``accepted`` keeps its meaning, ``request_id`` is the durable identity, and
@@ -193,12 +263,18 @@ class ServerRuntime:
         means the steer was accepted durably as a steer, not that it entered the
         run yet; the run confirms it later inside a checkpoint. The fields are
         additive; the old response remains readable.
+
+        ``images`` are the pictures of the message, in the order the text marks
+        them. They are validated and re-encoded before the queue is touched, so a
+        refusal leaves nothing behind; ``images`` in the response carries the
+        identifiers that were persisted, which a retry gets back unchanged.
         """
         cleaned = text.strip()
         if not cleaned:
             raise ValueError('The message is empty.')
         if request_id == '':
             raise ValueError('request_id must not be empty')
+        payload = decode_images(images)
         self.ensure_workers()
         if self._consumer_error is not None or (self._consumer is not None and self._consumer.done()):
             raise RuntimeError(f'Queue consumer stopped: {self._consumer_error or "closed"}')
@@ -212,13 +288,14 @@ class ServerRuntime:
             'SELECT kind, state FROM accepted_inputs WHERE session_id = ? AND request_id = ?',
             (self.session.id, identifier),
         )
-        accepted = self.composition.store.accept_input(self.session, identifier, cleaned, [], kind)
+        accepted = self.composition.store.accept_input(self.session, identifier, cleaned, payload, kind)
         self._settled.clear()
         self._wake.set()
         response = {
             'accepted': kind if existing is None else str(existing['kind']),
             'request_id': accepted.request_id,
             'duplicate': existing is not None,
+            'images': [{'id': image.image_id, 'media_type': image.media_type} for image in accepted.images],
         }
         if existing is not None:
             response['state'] = str(existing['state'])
