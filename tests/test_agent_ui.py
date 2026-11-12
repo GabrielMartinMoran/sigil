@@ -360,14 +360,20 @@ def test_selecting_agent_applies_its_model_but_binding_session_does_not(tmp_path
     asyncio.run(run())
 
 
-def test_new_session_applies_default_for_inherited_agent(tmp_path):
+def test_new_session_binds_the_inherited_agent_so_its_model_resolves(tmp_path):
+    """`/new` inherits the agent, and binding is where the model is resolved.
+
+    The profile travels with the session and the composition applies that profile's
+    model — or `default_model`, or the last one used — when the session is bound. The
+    app no longer reaches for the agent's model on its own: one seam, one answer.
+    """
     app = _app(str(tmp_path))
-    selected = []
-    app._on_agent_selected = lambda name: selected.append(name)
+    bound: list[tuple[str, object]] = []
+    app._on_bind_session = lambda session: bound.append((session.agent, session.selection))
 
     async def run():
         async with app.run_test(size=(120, 40)):
             await app.new_session(app.query_one(ChatLog))
-            assert selected == ['wizard']
+            assert [agent for agent, _ in bound] == ['wizard']
 
     asyncio.run(run())

@@ -48,6 +48,7 @@ def load_config(
     servers: dict[str, MCPServerSpec] = {}
     agents = {}
     invalid_agents: set[str] = set()
+    default_model = None
     sources: list[Path] = []
 
     # From lowest to highest precedence: the last one read overrides the previous one.
@@ -57,7 +58,7 @@ def load_config(
                 errors.append(f'Config file not found: {path}')
             continue
         sources.append(path)
-        file_servers, file_agents, file_invalid, file_errors = load_file(path, env)
+        file_servers, file_agents, file_invalid, file_default, file_errors = load_file(path, env)
         errors.extend(file_errors)
         servers.update(file_servers)
         for name in file_invalid:
@@ -65,11 +66,16 @@ def load_config(
         invalid_agents.difference_update(file_agents)
         invalid_agents.update(file_invalid)
         agents.update(file_agents)
+        # A file that sets no `default_model` says nothing about it, so the one from a
+        # lower-precedence file stands. One that sets it badly is reported and stands
+        # down: the error names the file, and the previous default keeps working.
+        default_model = file_default if file_default is not None else default_model
 
     return LoadedConfig(
         servers=servers,
         agents=agents,
         invalid_agents=frozenset(invalid_agents),
+        default_model=default_model,
         errors=tuple(errors),
         sources=tuple(reversed(sources)),
     )

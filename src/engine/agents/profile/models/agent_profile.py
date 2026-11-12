@@ -52,5 +52,9 @@ class AgentProfile:
 
     @property
     def label(self) -> str:
-        """Display name: capitalized, with the dashes turned into spaces."""
-        return self.name.replace('-', ' ').title()
+        """Display name: capitalized, with the separators turned into spaces.
+
+        Both separators: a profile is named with dashes in some trees and with
+        underscores in others, and `Pas_Developer` reads like a variable name.
+        """
+        return self.name.replace('-', ' ').replace('_', ' ').title()

@@ -239,6 +239,33 @@ ThemePickerScreen {
     height: 1fr;
 }
 
+/* The selected row is a tint of the accent, not the accent itself.
+ *
+ * Textual derives `$block-cursor-background` from the theme's accent, so the cursor
+ * used to be the same saturated orange this palette uses for running work, for the
+ * worktree badge and for tool titles. A row that paints text in those colours lost it
+ * inside its own selection: in `sigil`, the accent on the accent is a contrast ratio
+ * of 1.00 and the selected session's workspace badge measured 1.03, which is why the
+ * branch of the selected row could not be read. A tint leaves every colour in the row
+ * legible on top of it, in every theme, without a list having to know that it is
+ * selected.
+ *
+ * The percentages are measured, not guessed: the dimmest span of a selected row lands
+ * at 3.50 in `sigil`, 3.15 in `dark` and 3.30 in `synthwave`. A heavier band reads as
+ * a stronger highlight and pushes those numbers back under 3.0 — at 20% `dark` sits at
+ * 2.89 — which is the bug this fixes. */
+OptionList > .option-list--option-highlighted {
+    background: $accent 10%;
+    color: $foreground;
+    text-style: bold;
+}
+
+OptionList:focus > .option-list--option-highlighted {
+    background: $accent 15%;
+    color: $foreground;
+    text-style: bold;
+}
+
 /* The questions take the composer's place: same width as the screen, same accent
  * border, same padding, right above the status bar. That is the whole point of the
  * layout — the box that owns the keyboard is the box that looks like it does, and
@@ -374,6 +401,7 @@ TextPromptScreen {
 #grouped-filter,
 #palette-filter,
 #agent-filter,
+#tree-filter,
 #prompt-text {
     margin-top: 1;
 }

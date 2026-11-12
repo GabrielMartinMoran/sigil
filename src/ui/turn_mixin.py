@@ -589,7 +589,9 @@ class TurnMixin:
         self.refresh_diff()
         timings.finish()
         if attention is not None:
-            self.notify_attention(attention)
+            # Not the end of the whole job: a subagent may still be working, and the
+            # notification waits for it rather than calling the user back early.
+            self.settle_attention(attention)
         # The debug view shows the cost of the turn just closed.
         refresh_debug = getattr(self, 'refresh_debug', None)
         if callable(refresh_debug):

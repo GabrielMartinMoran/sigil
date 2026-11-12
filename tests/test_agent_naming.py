@@ -93,8 +93,32 @@ def test_a_resume_takes_the_name_from_the_result():
 
     text = _text_of(block)
     assert 'Pulsar Researcher' in text
-    assert 'resume' in text
     assert 'Subagent' not in text
+    # The id beside the name is the resume mark: a spawn never shows one there.
+    assert 'Pulsar Researcher (#1a2b3c4d)' in text
+
+
+def test_an_async_resume_takes_the_name_from_its_answer():
+    """An async resume answers `#id (Pas Developer) is working…`.
+
+    That is the whole block a replayed transcript has to name itself from, and
+    painting only the id left the user guessing which subagent was running.
+    """
+    block = SummonBlock('summon', {'task': 'keep going', 'agent_id': 'f7c01c8a', 'mode': 'async'})
+    block.set_result('#f7c01c8a (pas-developer) is working in the background. The answer arrives later.')
+
+    assert 'Pas Developer (#f7c01c8a)' in block._spawn_header().plain
+
+
+def test_an_async_resume_asks_its_node_for_the_name_when_the_answer_does_not():
+    """The tree knows the node the id names, so the block asks it instead of guessing."""
+    node = _node()
+    node.start()
+    block = SummonBlock('summon', {'task': 'keep going', 'agent_id': node.short_id, 'mode': 'async'})
+    block.set_result(f'#{node.short_id} is working in the background.')
+    block.set_node(node)
+
+    assert f'Pulsar Researcher (#{node.short_id})' in block._spawn_header().plain
 
 
 def test_a_block_with_nothing_to_go_on_does_not_invent_a_name():
@@ -115,6 +139,16 @@ def test_the_tree_row_names_the_agent_once():
     assert 'Pulsar Researcher' in row
     assert 'pulsar-researcher' not in row
     assert '#676031c4'[:1] in row or '#' in row
+
+
+def test_an_underscore_name_is_humanized_like_a_dashed_one():
+    """Profiles are named both ways; both read as a name in the list, not a symbol."""
+    tree = AgentTreeStore().active
+    root = tree.ensure_root('pulsar-lead')
+    node = tree.add(parent_id=root.id, name='pas_developer', role=AgentRole.SUBAGENT, task='go')
+
+    assert node.label == 'Pas Developer'
+    assert 'Pas Developer' in render_text(node_row(node).prompt)
 
 
 def test_the_node_header_names_the_agent_once():
