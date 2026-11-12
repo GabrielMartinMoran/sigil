@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import uuid
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,6 +27,15 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from src.engine.agents.tree.tree import AgentTree
 from src.engine.providers.domain.selection import Selection
 from src.engine.sessions.titling import first_user_message, shorten
+from src.engine.storage.accepted_inputs import (
+    AcceptedInput,
+    DeliveryConfirmation,
+    DeliveryConflictError,
+    ImageInput,
+    InputKind,
+    accept,
+    confirm_delivery,
+)
 from src.engine.storage.blobs import Blobs
 from src.engine.storage.database import Database, database_path
 from src.engine.storage.executions import (
@@ -77,6 +88,23 @@ class SessionSummary:
 
 class SessionConflictError(RuntimeError):
     """Another process changed this session; reload it before saving."""
+
+
+@dataclass(frozen=True, slots=True)
+class SaveResult:
+    """Which session row a checkpoint wrote.
+
+    ``session_id`` is the logical session; when a recovery copy was written,
+    ``recovery_session_id`` names it and ``destination_id`` is the session whose
+    transcript received any confirmed deliveries.
+    """
+
+    session_id: str
+    recovery_session_id: str | None = None
+
+    @property
+    def destination_id(self) -> str:
+        return self.recovery_session_id or self.session_id
 
 
 @dataclass
@@ -211,20 +239,39 @@ class SessionStore:
         self.save(session)
         return session
 
-    def save(self, session: Session) -> None:
+    def save(
+        self,
+        session: Session,
+        *,
+        _inside_transaction: Callable[[sqlite3.Connection], None] | None = None,
+        confirmations: Sequence[DeliveryConfirmation] = (),
+        recovery_of: str | None = None,
+    ) -> SaveResult | None:
         """Persists the session: the row, its executions and what is new of the history.
 
         One transaction, so a crash leaves the previous checkpoint intact instead of
         a half-written one. The session's size stopped mattering: an append is
         rows, not a rewrite.
+
+        ``confirmations`` are applied in that same transaction, after the transcript
+        and before the optional callback: a checkpoint cannot record a delivery
+        without the messages it carried. ``recovery_of`` writes the
+        original-to-recovery link in the same unit. Returns which session was
+        written, or ``None`` when an empty draft is skipped.
         """
-        if session._draft and not any(
-            isinstance(part, UserPromptPart)
-            for message in session.messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
+        if confirmations and not session.messages:
+            raise ValueError('Delivery cannot be confirmed without a transcript')
+        if (
+            _inside_transaction is None
+            and session._draft
+            and not any(
+                isinstance(part, UserPromptPart)
+                for message in session.messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+            )
         ):
-            return
+            return None
         selection = session.selection
         with self.database.transaction() as conn:
             row = conn.execute('SELECT updated_at FROM sessions WHERE id = ?', (session.id,)).fetchone()
@@ -295,10 +342,46 @@ class SessionStore:
                     carry_plan=False,
                     conn=conn,
                 )
+            if recovery_of is not None:
+                conn.execute(
+                    'INSERT INTO recovery_links (original_session_id, destination_id, destination_session_id) '
+                    'VALUES (?, ?, ?) '
+                    'ON CONFLICT(original_session_id, destination_id) DO UPDATE SET '
+                    'destination_session_id = excluded.destination_session_id',
+                    (recovery_of, session.id, session.id),
+                )
+            if confirmations:
+                confirm_delivery(conn, confirmations, destination_id=session.id)
+            if _inside_transaction is not None:
+                _inside_transaction(conn)
 
         session._persisted_at = session.updated_at
         session._draft = False
         session._baseline = self._fingerprint(session)
+        return SaveResult(
+            session_id=session.id if recovery_of is None else recovery_of,
+            recovery_session_id=session.id if recovery_of is not None else None,
+        )
+
+    def accept_input(
+        self, session: Session, request_id: str, text: str, images: list[ImageInput], kind: InputKind
+    ) -> AcceptedInput:
+        """Accept one input, materializing a draft in the same transaction."""
+        if not session._draft:
+            with self.database.transaction() as conn:
+                return accept(conn, session.id, request_id, text, images, kind)
+        pending: list[AcceptedInput] = []
+        candidate = replace(session)
+
+        def enqueue(conn: sqlite3.Connection) -> None:
+            pending.append(accept(conn, session.id, request_id, text, images, kind))
+
+        self.save(candidate, _inside_transaction=enqueue)
+        session.updated_at = candidate.updated_at
+        session._persisted_at = candidate._persisted_at
+        session._draft = candidate._draft
+        session._baseline = candidate._baseline
+        return pending[0]
 
     @staticmethod
     def _fingerprint(session: Session) -> str:
@@ -332,29 +415,43 @@ class SessionStore:
         recovery.tree = copy_tree(session.tree, recovery.id)
         return recovery
 
-    def _preserve_local(self, session: Session) -> str | None:
+    def _preserve_local(
+        self, session: Session, *, confirmations: Sequence[DeliveryConfirmation] = ()
+    ) -> SaveResult | None:
         if session._baseline == self._fingerprint(session):
+            if confirmations:
+                raise DeliveryConflictError('Delivery cannot be confirmed without a progress save')
             return None
         recovery = self._recovery_copy(session)
         try:
-            self.save(recovery)
+            result = self.save(recovery, confirmations=confirmations, recovery_of=session.id)
         except SessionConflictError:
             # A recovery session can itself be opened elsewhere. Keep that edit
             # and checkpoint this writer into a fresh copy instead of retrying it.
             session._recovery_session = None
             recovery = self._recovery_copy(session)
-            self.save(recovery)
+            result = self.save(recovery, confirmations=confirmations, recovery_of=session.id)
         session._recovery_session = recovery
         self.database.execute('UPDATE workspaces SET last_session_id = ? WHERE id = ?', (session.id, self.workspace_id))
-        return recovery.id
+        return result
 
-    def save_progress(self, session: Session) -> str | None:
-        """Checkpoint without replacing newer disk state or interrupting a live run."""
+    def save_progress_result(
+        self, session: Session, *, confirmations: Sequence[DeliveryConfirmation] = ()
+    ) -> SaveResult | None:
+        """Checkpoint progress and report which session row was written.
+
+        ``recovery_session_id`` names the copy when a conflicting writer forced one;
+        the link and any delivery facts were written in that copy's transaction.
+        """
         try:
-            self.save(session)
+            return self.save(session, confirmations=confirmations)
         except SessionConflictError:
-            return self._preserve_local(session)
-        return None
+            return self._preserve_local(session, confirmations=confirmations)
+
+    def save_progress(self, session: Session, *, confirmations: Sequence[DeliveryConfirmation] = ()) -> str | None:
+        """Checkpoint without replacing newer disk state or interrupting a live run."""
+        result = self.save_progress_result(session, confirmations=confirmations)
+        return None if result is None else result.recovery_session_id
 
     def refresh(self, session: Session) -> Session | None:
         """Return a newer consistent snapshot, preserving any divergent local work."""

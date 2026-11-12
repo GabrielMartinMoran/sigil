@@ -318,6 +318,27 @@ def test_the_plan_comes_back_from_its_snapshot(tmp_path):
     assert [item.title for item in plans.root.snapshot()] == ['step one']
 
 
+def test_a_rollback_restored_plan_is_visible_after_reopening(tmp_path):
+    """The restored rows are durable, not just a reload of the store that saw it."""
+    store, session = _session(tmp_path)
+    plans = RoadmapStores(session_id=session.id, base_dir=tmp_path / 'home')
+    session.messages = _turn(0)
+    plans.root.set_items([TodoItem(title='step one')])
+    store.save(session)
+
+    session.messages += _turn(1)
+    store.save(session)
+    plans.root.add_items([TodoItem(title='step two')])
+    store.save(session)
+
+    points = Rollback(store, workspace=tmp_path / 'workspace').points(session.id)
+    Rollback(store, workspace=tmp_path / 'workspace').to_turn(session.id, points[0].turn_id, files=False)
+
+    reopened = RoadmapStores(session_id=session.id, base_dir=tmp_path / 'home').root
+    assert [item.title for item in reopened.snapshot()] == ['step one']
+    assert reopened.persistence_error is None
+
+
 def test_rolling_back_while_a_turn_runs_is_refused(tmp_path):
     store, session = _session(tmp_path)
     session.messages = _turn(0)

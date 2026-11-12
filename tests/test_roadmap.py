@@ -6,12 +6,21 @@ that a plan belongs to an execution, so each test starts from a real session —
 is what the app does too.
 """
 
+import json
+from pathlib import Path
+
 import pytest
 
 from src.engine.roadmap.models.todo_item import TodoItem
 from src.engine.roadmap.store import RoadmapStore
 from src.engine.roadmap.tools import RoadmapItemInput, register_roadmap_tools
 from src.engine.sessions.session_store import SessionStore
+from src.engine.storage.roadmap import (
+    RoadmapConflictError,
+    read_revision,
+    replace_items,
+    restore_plan_from_json,
+)
 
 
 def _session(tmp_path):
@@ -157,6 +166,94 @@ def test_bind_notifies_listeners(tmp_path):
     # Binding to the same execution is a no-op.
     store.bind('a' * 32)
     assert calls == [1]
+
+
+def test_stale_store_preserves_dirty_items_and_reports_conflict(tmp_path: Path) -> None:
+    first = _store(tmp_path)
+    first.set_items([TodoItem(title='baseline')])
+    second = RoadmapStore(first.execution_id, base_dir=tmp_path)
+    assert [item.title for item in first.snapshot()] == ['baseline']
+    assert [item.title for item in second.snapshot()] == ['baseline']
+
+    first.add_items([TodoItem(title='first update')])
+    after_first = RoadmapStore(first.execution_id, base_dir=tmp_path)
+    assert [item.title for item in after_first.snapshot()] == ['baseline', 'first update']
+    second.add_items([TodoItem(title='second update')])
+
+    reopened = RoadmapStore(first.execution_id, base_dir=tmp_path)
+    assert first.persistence_error is None
+    assert second.persistence_error is not None
+    assert 'conflict' in second.persistence_error.lower()
+    assert [item.title for item in first.snapshot()] == ['baseline', 'first update']
+    assert [item.title for item in second.snapshot()] == ['baseline', 'second update']
+    assert [item.title for item in reopened.snapshot()] == ['baseline', 'first update']
+
+
+def test_a_conflict_does_not_move_the_stored_revision(tmp_path):
+    """A refused write leaves the rows and the stored revision exactly as they were."""
+    store = _store(tmp_path)
+    store.set_items([TodoItem(title='A')])
+    before = read_revision(store.database, store.execution_id)
+
+    with pytest.raises(RoadmapConflictError):
+        replace_items(
+            store.database,
+            store.execution_id,
+            [TodoItem(title='B')],
+            expected_revision=before - 1,
+        )
+
+    assert read_revision(store.database, store.execution_id) == before
+    assert [item.title for item in store.snapshot()] == ['A']
+
+
+def test_clear_keeps_the_revision_moving_forward(tmp_path):
+    """An empty plan is still a plan at a revision, not a plan that never moved."""
+    store = _store(tmp_path)
+    store.set_items([TodoItem(title='A')])
+    store.clear()
+    assert store.persistence_error is None
+
+    execution = store.execution_id
+    revision = store.database.value('SELECT revision FROM roadmap_revisions WHERE execution_id = ?', (execution,))
+    assert revision == 2
+
+    reopened = RoadmapStore(execution, base_dir=tmp_path)
+    assert reopened.snapshot() == []
+    reopened.add_items([TodoItem(title='B')])
+    assert reopened.persistence_error is None
+    assert reopened.database.value('SELECT revision FROM roadmap_revisions WHERE execution_id = ?', (execution,)) == 3
+
+
+def test_forget_empties_the_plan_without_resetting_the_revision(tmp_path):
+    store = _store(tmp_path)
+    store.set_items([TodoItem(title='A')])
+    store.forget()
+    assert store.persistence_error is None
+    assert store.snapshot() == []
+
+    execution = store.execution_id
+    assert store.database.value('SELECT revision FROM roadmap_revisions WHERE execution_id = ?', (execution,)) == 2
+    assert RoadmapStore(execution, base_dir=tmp_path).snapshot() == []
+
+
+def test_restoring_a_plan_moves_the_revision_forward(tmp_path):
+    store = _store(tmp_path)
+    store.set_items([TodoItem(title='A')])
+    raw = json.dumps([TodoItem(title='B').model_dump()])
+
+    assert restore_plan_from_json(store.database, store.execution_id, raw) == 1
+    assert [item.title for item in store.snapshot()] == ['A']
+
+    reopened = RoadmapStore(store.execution_id, base_dir=tmp_path)
+    assert [item.title for item in reopened.snapshot()] == ['B']
+    assert (
+        reopened.database.value(
+            'SELECT revision FROM roadmap_revisions WHERE execution_id = ?',
+            (store.execution_id,),
+        )
+        == 2
+    )
 
 
 def test_a_store_without_an_execution_is_memory_only(tmp_path):

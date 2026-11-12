@@ -22,7 +22,12 @@ from pathlib import Path
 from src.engine.roadmap.models.todo_item import TodoItem, now_iso
 from src.engine.roadmap.models.todo_status import TODO_STATUSES, TodoStatus
 from src.engine.storage.database import Database, database_path
-from src.engine.storage.roadmap import delete_items, read_items, replace_items
+from src.engine.storage.roadmap import (
+    RoadmapConflictError,
+    delete_items,
+    read_plan,
+    replace_items,
+)
 
 
 class RoadmapStore:
@@ -42,6 +47,7 @@ class RoadmapStore:
         self._lock = threading.RLock()
         self._listeners: list[Callable[[], None]] = []
         self._items: list[TodoItem] = []
+        self._revision = 0
         self.persistence_error: str | None = None
         self._database = Database.at(database_path(base_dir))
         self._execution_id = execution_id
@@ -177,12 +183,14 @@ class RoadmapStore:
     def _load(self) -> None:
         if not self._execution_id:
             self._items = []
+            self._revision = 0
             return
         try:
-            self._items = read_items(self._database, self._execution_id)
+            self._items, self._revision = read_plan(self._database, self._execution_id)
             self.persistence_error = None
         except sqlite3.Error as exc:
             self._items = []
+            self._revision = 0
             self.persistence_error = str(exc)
 
     def _save_locked(self) -> None:
@@ -190,8 +198,17 @@ class RoadmapStore:
             self.persistence_error = None
             return
         try:
-            replace_items(self._database, self._execution_id, self._items)
+            self._revision = replace_items(
+                self._database,
+                self._execution_id,
+                self._items,
+                expected_revision=self._revision,
+            )
             self.persistence_error = None
+        except RoadmapConflictError as exc:
+            # Another store wrote first. The dirty items stay in memory: overwriting
+            # the winner would lose its work, and clearing ours would lose the user's.
+            self.persistence_error = str(exc)
         except sqlite3.IntegrityError as exc:
             # The execution is not a row yet: a subagent whose node lives only in
             # the tree. Ask the app to persist the session, which creates it, and
@@ -202,7 +219,12 @@ class RoadmapStore:
                 return
             try:
                 self._flush()
-                replace_items(self._database, self._execution_id, self._items)
+                self._revision = replace_items(
+                    self._database,
+                    self._execution_id,
+                    self._items,
+                    expected_revision=self._revision,
+                )
                 self.persistence_error = None
             except Exception as retry:  # noqa: BLE001 - reported, not raised
                 self.persistence_error = str(retry)
@@ -217,10 +239,11 @@ class RoadmapStore:
             return
         with self._lock:
             self._items = []
-        try:
-            delete_items(self._database, self._execution_id)
-        except sqlite3.Error as exc:
-            self.persistence_error = str(exc)
+            try:
+                self._revision = delete_items(self._database, self._execution_id)
+                self.persistence_error = None
+            except sqlite3.Error as exc:
+                self.persistence_error = str(exc)
 
 
 __all__ = ['RoadmapStore']

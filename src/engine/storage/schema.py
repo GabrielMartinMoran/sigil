@@ -195,13 +195,59 @@ CREATE TABLE IF NOT EXISTS accounts (
     last_model TEXT
 ) STRICT, WITHOUT ROWID;
 
+CREATE TABLE IF NOT EXISTS accepted_inputs (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    request_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL CHECK (sequence > 0),
+    payload TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('turn', 'steer')),
+    state TEXT NOT NULL CHECK (state IN ('accepted', 'claimed', 'delivered', 'finished', 'stopped', 'interrupted')),
+    attempt_id TEXT,
+    library_run_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (session_id, request_id),
+    UNIQUE (session_id, sequence)
+) STRICT, WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS app_state (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 """
 
-USER_VERSION = 5
+V7_SCHEMA = """
+CREATE TABLE IF NOT EXISTS roadmap_revisions (
+    execution_id TEXT PRIMARY KEY REFERENCES agent_executions(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL CHECK (revision >= 0)
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS input_deliveries (
+    session_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    checkpointed INTEGER NOT NULL CHECK (checkpointed IN (0, 1)),
+    destination_id TEXT,
+    destination_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    PRIMARY KEY (session_id, request_id),
+    FOREIGN KEY (session_id, request_id) REFERENCES accepted_inputs(session_id, request_id) ON DELETE CASCADE,
+    CHECK (destination_session_id IS NULL OR destination_session_id = destination_id),
+    CHECK ((checkpointed = 1 AND destination_id IS NOT NULL) OR
+           (checkpointed = 0 AND destination_id IS NULL AND destination_session_id IS NULL))
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS recovery_links (
+    original_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    destination_id TEXT NOT NULL,
+    destination_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    PRIMARY KEY (original_session_id, destination_id),
+    CHECK (destination_session_id IS NULL OR destination_session_id = destination_id)
+) STRICT, WITHOUT ROWID;
+"""
+
+SCHEMA += V7_SCHEMA
+
+USER_VERSION = 7
 """The version `SCHEMA` describes.
 
 Steps start above the empty file: a database created today is written whole and its
@@ -210,6 +256,7 @@ written by an older Sigil.
 """
 
 MIGRATIONS: dict[int, str] = {
+    7: V7_SCHEMA,
     5: "ALTER TABLE sessions ADD COLUMN mcp_overrides TEXT NOT NULL DEFAULT '{}';",
     4: 'ALTER TABLE sessions ADD COLUMN allow_external_files INTEGER NOT NULL DEFAULT 0;',
     2: (
