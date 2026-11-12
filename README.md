@@ -240,7 +240,9 @@ read and the project one wins:
 2. `~/.sigil/config.json`
 
 `SIGIL_CONFIG=/path/config.json` replaces both. The merge is per server: a
-project entry with the same name replaces the global one entirely.
+project entry with the same name replaces the global one entirely. The same file
+also carries `agents` (a model per profile) and `default_model` (the model a
+conversation starts on); see [Model and effort per agent](#model-and-effort-per-agent).
 
 ### Minimal example
 
@@ -566,6 +568,36 @@ profile default. A configured
 subagent always uses its own selection; an unconfigured subagent inherits the
 model and effort of the agent that summoned it, including when nested.
 
+### The default model
+
+Not every profile needs to name a model. `default_model` sets the one a
+conversation starts on when the agent has no preference of its own, in the same
+shape as an `agents` entry:
+
+```json
+{
+  "default_model": {"account": "work", "model": "anthropic/claude-sonnet-4", "effort": "high"}
+}
+```
+
+The project file wins over the global one, exactly like `agents`. It is read
+with its effort, validated the same way, and reported by name when it is wrong —
+a bad entry leaves the global default in place instead of clearing it.
+
+What a conversation runs on, in order:
+
+| Order | Source |
+| --- | --- |
+| 1 | The model the session was last on. Changing it with `/model` stores it with the conversation, and nowhere else |
+| 2 | The agent's own model, from `agents.<name>` |
+| 3 | `default_model` from `.sigil/config.json` |
+| 4 | The last model used, whatever session it was used in |
+
+So a profile that names a model always wins over the global default, the global
+default always wins over a memory, and a conversation that has one of its own
+keeps it when you come back to it — closing the app, loading another session, or
+switching workspaces does not move it.
+
 ## Subagents
 
 A session is not one agent: it is a **tree**. The agent at the root is the one you
@@ -749,8 +781,45 @@ being reachable the moment it does.
 | `Enter` | Open the highlighted node |
 | `b` | Send it to the background: stop waiting, keep the work going |
 | `k` | Stop it, and everything it summoned |
+| `/` | Filter the list by name, id, state or task |
+| `Esc` (inside the filter) | Clear it and hand the keys back to the list |
 | `Esc` (inside a subagent) | Back to its parent |
 | **Click a spawn in the chat** | Open that subagent |
+
+The list is ordered by attention, not by age. The root heads it, then the branches
+that still hold work, then the branches that are finished under a `finished` rule,
+newest first. A branch is a subtree and it moves as one, so a developer and the QAs
+it summoned stay together whether they are live or history, and forty finished
+siblings sit below the two that are working instead of burying them. The same rule
+repeats inside every branch, so a running QA under a developer stays above that
+developer's finished ones.
+
+A flat tree — every node one level down, which is what one turn of a squad produces
+— is painted with plain indentation. As soon as a subagent summons another, the
+indent becomes the ancestry: `│` for an ancestor whose branch goes on below, `├` and
+`└` for the row's own. A running subagent spins while it works; the root does not,
+because it reports `running` for as long as the session is open.
+
+```
+●  Pulsar Agent Squad  #c0f8e1e8  running  27h42m
+├ ⠋  Pas Developer  #cd496a20  running  39m24s
+│    Close the lock end to end: taken before the engine is built and held until.
+│ ├ ⠋  Pas Qa  #94a909f8  running  6m41s  async
+│ └ ✓  Pas Researcher  #47aa7cc8  done  12m02s  async
+── finished · 3 ─────────────────────────────────────────────────────────────────
+├ ✓  Pas Qa  #0bad2c62  done  7m54s  async
+└ ✓  Pas Developer  #c037b53e  done  6m33s  async
+  └ ✓  Pas Qa  #162014e7  done  1m48s  async
+```
+
+Filtering is a search over the same rows and not a second list: the tree, the branch
+order and the rules stay where they are, and the line above the list says how many
+matched. The root stays whether or not it matches — it is the trunk, and the list
+needs a top.
+
+`ctrl+t` opens the list even when the session agent has summoned nobody: it says
+`No subagents in this session yet.` and the row under the trunk says what will appear
+there. A shortcut that answers with a toast instead of a window reads as broken.
 
 `b` is the intuitive version of the tool's `mode="async"` on a call that is already
 blocking the turn: the caller stops waiting, the node keeps working, and its answer
@@ -769,6 +838,12 @@ The spawn block in the chat is the other way in: once it knows which execution i
 started, its name is underlined, the block highlights on hover, and a click opens the
 node. It works on a session loaded from disk too, where the id comes back inside the
 answer rather than in the call.
+
+The block names who is working. A fresh hand-off carries the profile in its
+arguments; a resume carries only an id, so the block reads the name from its answer
+or from the node, and paints the id beside it: `Pas Developer (#f7c01c8a)`. The mark
+on the left follows the node — an animated spinner while it works, `✓` when it
+finishes, `✖` when it fails, `◼` when it was stopped.
 
 The tree is **persisted with the session**, like the history: `/load` brings back
 the subagents that conversation summoned, with their transcripts and how each one
@@ -1595,8 +1670,11 @@ taking keyboard focus. Long stacks scroll within the upper part of the screen
 instead of covering the input or question panel.
 
 Desktop notifications announce a completed turn, a failed turn, or a batch of
-questions waiting for your answer. Cancelling a turn does not send a completion
-notification. Each notification identifies the project and conversation title;
+questions waiting for your answer. A turn that ends while a background subagent
+keeps working is not announced on its own: the terminal client holds the alert
+until the last subagent stops, which is normally the turn that reads its report.
+Cancelling a turn does not send a completion notification. Each notification
+identifies the project and conversation title;
 these names can be visible on a locked screen. The message is generic and does
 not include prompts, answers, question text, or exception details. If the session
 has no title yet, the notification uses its short ID instead of message content.
@@ -1769,6 +1847,13 @@ reports the files that could not be read; `/theme <name>` applies one directly.
 
 The picker re-reads the directory before opening, so a theme dropped in while
 Sigil is running shows up without a restart.
+
+Every list paints its selection as a tint of the theme's accent — 15% while the list
+has the keyboard, 10% otherwise — instead of the accent itself. A row keeps its own
+colours inside the row you are looking at: the worktree badge, a running mark, a state
+word. A full accent band is the same colour some of those are, which made the selected
+session's workspace unreadable in `sigil`, where the accent on the accent is a contrast
+ratio of 1.0.
 
 ## Context management
 

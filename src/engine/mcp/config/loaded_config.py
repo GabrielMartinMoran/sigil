@@ -16,6 +16,12 @@ class LoadedConfig:
     servers: dict[str, MCPServerSpec]
     agents: dict[str, AgentModelConfig] = field(default_factory=dict)
     invalid_agents: frozenset[str] = frozenset()
+    default_model: AgentModelConfig | None = None
+    """The model a conversation starts on when nothing else decides.
+
+    Set by `default_model` in the Sigil config, with the project file winning over the
+    user's global one. ``agents.<name>`` beats it, and it beats the last model used.
+    """
     errors: tuple[str, ...] = ()
     sources: tuple[Path, ...] = ()
 

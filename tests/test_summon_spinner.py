@@ -19,6 +19,26 @@ def test_pending_resume_also_uses_spinner():
     assert 'resume' in block._spawn_header().plain
 
 
+def test_finished_subagent_is_marked_as_done():
+    """`●` is the mark of a node that is *running*; a finished one gets the check."""
+    block = SummonBlock('summon', {'agent': 'scout', 'task': 'inspect'})
+    block.set_result('[subagent Scout (scout #abcd1234, sync) finished]')
+
+    header = block._spawn_header().plain
+    assert '✓' in header
+    assert '●' not in header
+
+
+def test_failed_and_stopped_subagents_keep_their_own_marks():
+    failed = SummonBlock('summon', {'agent': 'scout', 'task': 'inspect'})
+    failed.set_error('PermissionDenied')
+    assert '✖' in failed._spawn_header().plain
+
+    stopped = SummonBlock('summon', {'agent': 'scout', 'mode': 'async', 'task': 'inspect'})
+    stopped.set_result('#abcd1234 (Scout) was stopped before it answered.')
+    assert '◼' in stopped._spawn_header().plain
+
+
 def test_background_summon_tracks_node_until_completion():
     from src.engine.agents.profile.models.agent_role import AgentRole
     from src.engine.agents.tree.store import AgentTreeStore

@@ -20,6 +20,7 @@ import asyncio
 import tempfile
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -33,6 +34,7 @@ from src.engine.agents.tree.store import AgentTreeStore
 from src.engine.agents.tree.summoner import SubagentSummoner
 from src.engine.sessions.session_store import SessionStore
 from src.ui.app import SigilApp
+from src.ui.desktop_notifications import Attention
 from src.ui.widgets.chat_log import ChatLog
 
 
@@ -236,7 +238,21 @@ def test_a_resumed_summon_says_so():
 
     block = SummonBlock('summon', {'agent': 'scout', 'task': 'keep going', 'agent_id': 'abcdef1234'})
     text = _text_of(block)
-    assert 'resume' in text
+    # The id in parentheses after the name is what a resume adds to a spawn: it is
+    # the execution that continues, and no fresh hand-off carries one.
+    assert 'Scout (#abcdef12)' in text
+
+
+def test_a_resume_paints_the_id_once():
+    """The header carries the id of a resume; the meta line does not repeat it."""
+    from src.ui.widgets.chat_log import SummonBlock
+
+    block = SummonBlock('summon', {'task': 'keep going', 'agent_id': 'abcdef1234', 'mode': 'async'})
+    block.set_result('#abcdef1234 (Scout) is working in the background.')
+    text = _text_of(block)
+
+    assert text.count('#abcdef12') == 1
+    assert 'async · working' in block._meta_line().plain
 
 
 def test_an_exhausted_subagent_reads_as_out_of_steps():
@@ -253,6 +269,41 @@ def test_a_refused_summon_reads_as_refused():
     block = SummonBlock('summon', {'agent': 'nobody', 'task': 'go'})
     block.set_error('Unknown subagent')
     assert 'refused' in _text_of(block)
+
+
+def test_the_notification_waits_for_the_last_subagent():
+    """The end of the turn is not the end of the work: the last report is.
+
+    The turn that dispatched the squad ends while the subagent keeps working, and
+    notifying then would call the user back to a screen that is still busy. The
+    wake-up turn that reads the report is the one that has something to announce.
+    """
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _app(tmp, with_summoner=True)
+            app.notify_attention = Mock()
+            running = {'count': 1}
+            app.subagents_running = lambda: running['count']
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                app.run_turn('dispatch the researcher')
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                assert app.notify_attention.call_args_list == [], 'notified while a subagent ran'
+                # The subagent finishes: the app wakes, and that turn ends quiet.
+                running['count'] = 0
+                node = _finished_node(app)
+                app.subagents_idle()
+                app._wake_from_subagents()
+                for _ in range(60):
+                    await pilot.pause()
+                    if node.delivered and not app._turn_active:
+                        break
+            return app
+
+    app = asyncio.run(inner())
+    app.notify_attention.assert_called_once_with(Attention.FINISHED)
 
 
 def test_a_plain_tool_is_still_a_plain_block():

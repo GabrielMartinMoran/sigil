@@ -96,19 +96,18 @@ class TreeMixin:
             return None
 
     async def open_tree(self) -> None:
-        """`ctrl+t`: the list of agents of the session, and what to do with one."""
+        """`ctrl+t`: the list of agents of the session, and what to do with one.
+
+        It opens even when the session agent has summoned nobody: the empty state is
+        information — what the tree is, and that it fills in while the agent works —
+        and a shortcut that answers with a toast instead of a window reads as broken.
+        """
         chat = self.query_one(ChatLog)
         tree = self.agent_tree()
         if tree is None:
             await chat.add_notice(NO_TREE_NOTICE, style='yellow')
             return
-        nodes = self.tree_nodes()
-        if len(nodes) <= 1:
-            # Only the root: the tree exists, it is just not a tree yet. Saying so
-            # is better than opening a box with one row the user already knows.
-            await chat.add_notice('No subagents in this session yet.', style='yellow')
-            return
-        chosen = await self.push_screen_wait(AgentTreeScreen(nodes, viewed=self.viewed_node_id()))
+        chosen = await self.push_screen_wait(AgentTreeScreen(self.tree_nodes(), viewed=self.viewed_node_id()))
         if chosen is None:
             return
         await self.run_tree_action(chosen)

@@ -117,8 +117,13 @@ class AgentNode:
 
     @property
     def label(self) -> str:
-        """Display name: capitalized, with the dashes turned into spaces."""
-        return self.name.replace('-', ' ').title() if self.name else 'Agent'
+        """Display name: capitalized, with the separators turned into spaces.
+
+        Both separators, because a profile is named with dashes in some trees and with
+        underscores in others, and a list of forty `Pas_Developer` rows reads like a
+        variable name instead of a name.
+        """
+        return self.name.replace('-', ' ').replace('_', ' ').title() if self.name else 'Agent'
 
     @property
     def short_id(self) -> str:

@@ -6,7 +6,6 @@ import inspect
 
 from src.engine.context.meter.render import render_report
 from src.engine.mcp.tool_models.server_status import ServerStatus
-from src.engine.providers.domain.provider_error import ProviderError
 from src.engine.sessions.catalog import catalog
 from src.engine.shell import running as running_commands
 from src.engine.workspace.arguments import UsageError, parse_new_args
@@ -254,29 +253,25 @@ class CommandsMixin:
             switch = None
 
         session = self._store.draft_session()
-        service = getattr(self, '_model_service', None)
-        if service is not None:
-            session.selection = service.snapshot().selection
         # A new session inherits the agent in effect: starting a conversation
         # should not silently drop back to the default profile.
         profile = self.active_agent()
         session.agent = profile.name if profile is not None else ''
+        # `bind_session` resolves the model: the agent's own if it declares one, then
+        # `default_model`, then the last one used. The session keeps the answer, and a
+        # model chosen later reaches this session only.
         self.bind_session(session)
-        model_error = None
-        select_model = getattr(self, '_on_agent_selected', None)
-        if select_model is not None and profile is not None:
-            try:
-                snapshot = select_model(profile.name)
-                if snapshot is not None:
-                    self._after_model_change(snapshot)
-            except ProviderError as exc:
-                model_error = str(exc)
+        service = getattr(self, '_model_service', None)
+        if session.selection is None and service is not None:
+            # Nothing to resolve it with — a bare app in a test — so the session
+            # starts on what is in effect, the way it always did.
+            session.selection = service.snapshot().selection
+        if service is not None:
+            self._after_model_change(service.snapshot())
         if self._scope is not None:
             self._scope.reset()
         self.refresh_sidebar()
         await chat.clear()
-        if model_error is not None:
-            await chat.add_notice(f'Agent model: {model_error}', style='bold red')
         if switch is not None:
             await self.announce_switch(switch, chat)
         await chat.add_notice(f'New session {self._session.short_id}.', style='green')
@@ -395,7 +390,6 @@ class CommandsMixin:
 
     def persist(self) -> None:
         """Saves the current session if it has messages."""
-        self._sync_session_selection()
         if self._session.messages:
             # What the meter measured rides with the row: `/load` reads it back.
             self._meter.stamp(self._session)
@@ -406,13 +400,6 @@ class CommandsMixin:
                 view.post_message(
                     ChatNotice('Session updated by another process; reloaded the latest version.', style='yellow')
                 )
-
-    def _sync_session_selection(self) -> None:
-        """Copies the active model into the session before it is written."""
-        service = getattr(self, '_model_service', None)
-        if service is None:
-            return
-        self._session.selection = service.snapshot().selection
 
     async def handle_sidebar(self, args: str, chat: ChatLog) -> None:
         """`/sidebar` toggles; `/sidebar on|off` sets the state.

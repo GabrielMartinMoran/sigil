@@ -40,6 +40,48 @@ def test_should_notify_once_after_turn_is_saved(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize('event', [Attention.FINISHED, Attention.FAILED])
+def test_should_hold_attention_while_a_subagent_still_works(tmp_path: Path, event: Attention) -> None:
+    """The turn is over, the squad is not: the user is not done being waited for."""
+
+    async def scenario() -> None:
+        app = make_app(tmp_path)
+        app.notify_attention = Mock()
+        running = {'count': 1}
+        app.subagents_running = lambda: running['count']
+        async with app.run_test():
+            app.settle_attention(event)
+            app.notify_attention.assert_not_called()
+            # The last subagent finishes; the next turn ends with nothing running.
+            running['count'] = 0
+            app.settle_attention(event)
+            app.notify_attention.assert_called_once_with(event)
+
+    asyncio.run(scenario())
+
+
+def test_should_delay_the_notification_until_the_last_subagent_finishes(tmp_path: Path) -> None:
+    """Wiring, not just the policy: the end of a turn is what asks for the signal."""
+
+    async def scenario() -> None:
+        app = make_app(tmp_path)
+        app.notify_attention = Mock()
+        running = {'count': 1}
+        app.subagents_running = lambda: running['count']
+        async with app.run_test() as pilot:
+            app.run_turn('hello')
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            app.notify_attention.assert_not_called()
+            running['count'] = 0
+            app.run_turn('and now?')
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            app.notify_attention.assert_called_once_with(Attention.FINISHED)
+
+    asyncio.run(scenario())
+
+
 def test_should_notify_for_question_but_not_empty_batch(tmp_path: Path) -> None:
     async def scenario() -> None:
         app = make_app(tmp_path)

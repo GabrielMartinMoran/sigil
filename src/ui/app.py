@@ -220,6 +220,9 @@ class SigilApp(
         # window stops the turn.
         self._abort_deadline: float | None = None
         self._abort_timer: Any = None
+        # Desktop attention held back because a subagent outlived its turn
+        # (see `settle_attention`).
+        self._held_attention: Attention | None = None
         # The window title: what was last written to the terminal (the terminal
         # cannot be read back), how many times naming each session was tried and
         # the worker of the request in flight, so an unnameable session does not
@@ -557,6 +560,29 @@ class SigilApp(
                 self.repository_label(), self._session.title or f'Session {self._session.short_id}'
             )
             self._deliver_attention(event, context)
+
+    def settle_attention(self, event: Attention) -> None:
+        """Raises the attention of a finished turn, once the squad is quiet.
+
+        A turn can end while a background subagent keeps working, and the answer the
+        user is waiting for is the one that is still being written. Notifying the end
+        of the parent's turn would pull them back to a screen where the work goes on;
+        the signal waits for the last running node instead, and the turn that reads
+        the answers ends by delivering it.
+
+        Only the latest event is kept: what matters when everything stops is how the
+        turn that just closed went, not how an earlier one did.
+        """
+        self._held_attention = event
+        if self.subagents_running():
+            return
+        held, self._held_attention = self._held_attention, None
+        if held is not None:
+            self.notify_attention(held)
+
+    def subagents_running(self) -> int:
+        """How many subagents are working now, counting the ones that outlived their turn."""
+        return self._summoner.running() if self._summoner is not None else 0
 
     @work(thread=True, group='desktop-notifications', exit_on_error=False)
     def _deliver_attention(self, event: Attention, context: NotificationContext) -> None:
