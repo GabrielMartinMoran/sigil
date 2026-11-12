@@ -310,3 +310,138 @@ never reappear there and are read from the transcript. A deleted recovery copy i
 reported unavailable without a broken link, and conflicted entries are kept
 separate from the current transcript. Live deltas are not mixed into this read.
 The web client is unchanged and not part of this slice.
+
+### The turn command
+
+`POST /api/turn` is the one way a message enters a session, and its shape is the
+contract a retry depends on: `text`, an optional caller-generated `request_id`,
+and `images`, a list of `{media_type, data}` where `data` is base64. The
+position of an image in that list **is** its `[Image #n]` number in the text, so
+the order is part of the message's identity. A client sends picture bytes; there
+is no filename field and no path is ever opened, because a name in a JSON body
+would be a request to read a file on the server.
+
+`request_id` is the durable identity. The same id with the same source payload
+— the same text and the same images as the client sent them — is the same
+message: the response repeats `duplicate: true`, the same persisted image
+identifiers, and nothing executes twice. The same id with a different payload
+is a conflict and is refused. The identifiers in the response are the ones
+stored, never regenerated, so a client can retry without losing track of images
+it already sent.
+
+The fingerprint covers the accepted text and the normalized image bytes and
+media types, because `prepare_image` re-encodes every payload before it is
+stored. That normalization is deterministic for a given input, so a retry of
+the same original payload is idempotent, but it is not a fixed point for JPEG:
+sending back bytes the server already normalized can produce different bytes
+and is refused as a conflict, not recognized as a duplicate. The ids and
+timestamps the server assigns are excluded from the fingerprint. See
+`src/engine/storage/accepted_inputs.py`.
+
+Validation happens in `ServerRuntime.decode_images` before the queue is touched,
+so a refusal writes nothing:
+
+| Refused | Limit |
+| --- | --- |
+| Too many images | 10 per message |
+| Image too large | 4 MiB per image, checked after base64 decoding and before the image is decoded |
+| Media type | only `image/png`, `image/jpeg`, `image/gif`, `image/webp` |
+| Payload | must be valid base64 and must decode as an image |
+| Request body | 64 MiB of JSON |
+
+Images are re-encoded by `src/engine/attachments/images.py` before they are
+stored, which bounds their dimensions and makes the stored media type the one
+the bytes actually are.
+
+The browser still sends text and a request id only; the image picker is not part
+of this slice. `BodyLimitMiddleware` is registered inside `AuthMiddleware`, so
+an unauthenticated request is answered without its body being read. For an
+authenticated one, a declared `Content-Length` is refused before the body is
+read, and a chunked body is counted as it arrives; either way the `413` is sent
+without the route's parser ever seeing a complete body.
+
+## The local endpoint (part B)
+
+The server publishes where it listens, and with which token, in a file next to
+the database. A local client reads that file instead of guessing a port. This
+slice adds no route: the endpoints a client calls are the ones the browser
+already uses.
+
+| Item | Value |
+| --- | --- |
+| Directory | `$SIGIL_HOME/service`, mode `0700`, overridable with `SIGIL_SERVICE_DIR` |
+| File | `endpoint.json` inside that directory, mode `0600` |
+| Fields | `host`, `port`, `pid`, `token`, `started_at` |
+| Token | `secrets.token_urlsafe(32)`, generated once per process |
+| Written | From the application's lifespan, after the port is listening |
+| Removed | When the same lifespan ends |
+
+`src/engine/paths.py` owns both locations, like every other directory Sigil
+writes to. `src/server/endpoint.py` owns the contract.
+
+### Why TCP on loopback and not a UNIX socket
+
+uvicorn creates a UNIX socket with mode `0666`, whatever the umask says
+(`uvicorn.server.Server.startup`). A socket that every local user may open does
+not separate users, so the isolation would have to come from somewhere else
+anyway, and a `0666` socket is a false sense of one. A socket on a
+Windows-mounted path under WSL does not work at all. TCP on `127.0.0.1` plus a
+token in a `0600` file puts the barrier where it can be checked.
+
+The limitation is stated rather than hidden: any local user who can reach the
+port can send requests, and what they cannot do is read the token. The login
+throttle still applies to the password.
+
+### The file is published after the port listens
+
+A file that names a closed port is worse than no file, so the order is part of
+the contract. uvicorn's own order is the obstacle: `Server.startup` runs the
+application's lifespan *before* it creates a listening socket. `src/server/cli.py`
+therefore binds and listens itself (`listening_socket`) and hands the finished
+socket to `uvicorn.Server(...).run(sockets=[socket])`. The lifespan publishes
+once the kernel is already accepting connections, so a client that reads the
+file immediately is queued instead of refused.
+
+Publication is atomic: the payload goes to a sibling temporary file and is moved
+into place with `os.replace`. A reader sees the previous publication or the next
+one, never a truncated file, and the temporary is removed if the write fails.
+Shutdown unpublishes before the runtime unwinds, so a client that finds the file
+late fails to connect instead of attaching to a service that is stopping. A run
+that finds a file with a different token leaves it alone: it belongs to the
+service that replaced this one.
+
+The ownership lock in `src/server/ownership.py` is untouched by any of this and
+is still never unlinked, for the reason it already documents.
+
+### What a reader trusts
+
+Nothing in the file is authority. `read_endpoint` returns `None` for a missing
+file, invalid JSON, a missing or mistyped field, a port outside `1-65535`, any
+group or other permission bit on the file, a file owned by another user, and a
+symlink. Every check is about the file: they say whether that JSON is a
+well-formed endpoint, not whether the process behind it still exists.
+
+A file left behind by `SIGKILL` therefore passes. It keeps its fields, its mode
+and its owner, so `read_endpoint` returns it as a valid endpoint while nothing
+listens on the port. Liveness is a different question and belongs to the
+launcher in the following slice: it is the one that must confirm the `pid` is
+alive, or the port answers, before attaching to what the file names. Until that
+exists, a client that reads a stale file learns the truth when it connects, not
+when it reads.
+
+### The token is a second credential, not a second password
+
+`AuthMiddleware` accepts `Authorization: Bearer <token>` from the endpoint file
+next to the cookie the browser keeps. The protected set does not change: `/api/*`
+needs a credential unless the path is free, and `/events` needs one too. A
+missing, malformed or wrong token is the same `401` with the same
+`unauthenticated` body as a missing cookie; the token is never repeated in a
+response or a log line. See `src/server/auth.py`.
+
+The token does not log into the web client: `Auth.check_password` compares it
+against the password and refuses it. It also dies with the process, which is what
+makes a restart a revocation.
+
+Not in this slice: launching or discovering the service from the terminal, idle
+shutdown, and the parity endpoints the terminal needs before it can become a
+client. Those are separate, smaller steps.

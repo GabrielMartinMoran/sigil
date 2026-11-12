@@ -32,6 +32,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from src.engine.sessions.catalog import catalog
 from src.engine.sessions.catalog import workspaces as discover_workspaces
@@ -40,12 +41,116 @@ from src.engine.workspace.repository import GitRepository
 from src.server import views
 from src.server.auth import Auth, AuthMiddleware, LoginThrottle, cleared_cookie, client_key, session_cookie
 from src.server.config import ServerConfig
+from src.server.endpoint import EndpointPublisher
 from src.server.events import EventHub
-from src.server.runtime import ServerRuntime
+from src.server.runtime import IncomingImage, ServerRuntime
 from src.server.webbuild import dist_root, staleness
 
 HEARTBEAT_SECONDS = 20.0
 """How often an idle stream says something, so a proxy does not close it."""
+
+MAX_COMMAND_BYTES = 64 * 1024 * 1024
+"""Ceiling for one JSON command body, counted as the bytes arrive.
+
+Ten images at the per-image limit are about 53 MiB once base64 adds a third; the
+rest is the text and the envelope. A request over this is refused before it is
+parsed, so an accidental upload cannot become a memory problem first.
+"""
+
+
+class _BodyTooLarge(BaseException):
+    """The body of the request passed `MAX_COMMAND_BYTES` while it was being read.
+
+    It inherits ``BaseException`` on purpose. FastAPI reads a JSON body inside an
+    ``except Exception`` and turns anything raised there into ``HTTPException(400)``,
+    so a regular exception raised from ``receive`` would never reach this
+    middleware and the client would see a parse error instead of the ``413``. This
+    is deliberate control flow between the wrapped app and the middleware, not a
+    program error, and it must not be caught by code that handles ordinary
+    failures.
+    """
+
+
+class BodyLimitMiddleware:
+    """Refuses an HTTP request whose body exceeds the command ceiling.
+
+    A declared ``Content-Length`` is checked first, which is the common case and
+    costs nothing. A chunked body has no length to check, so the bytes are counted
+    as they arrive and the request is refused at the ceiling instead of after it.
+    """
+
+    def __init__(self, app: ASGIApp, *, limit: int = MAX_COMMAND_BYTES) -> None:
+        self.app = app
+        self.limit = limit
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope['type'] != 'http':
+            await self.app(scope, receive, send)
+            return
+        declared = _content_length(scope)
+        if declared is not None and declared > self.limit:
+            await _too_large(send, self.limit)
+            return
+        counted = 0
+        started = False
+
+        async def limited() -> Message:
+            nonlocal counted
+            message = await receive()
+            if message['type'] == 'http.request':
+                counted += len(message.get('body', b''))
+                if counted > self.limit:
+                    raise _BodyTooLarge
+            return message
+
+        async def watched(message: Message) -> None:
+            nonlocal started
+            if message['type'] == 'http.response.start':
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited, watched)
+        except _BodyTooLarge:
+            if started:  # the response is already going out; nothing left to refuse
+                raise
+            await _too_large(send, self.limit)
+
+
+def _content_length(scope: Scope) -> int | None:
+    for name, value in scope.get('headers', ()):
+        if name.lower() == b'content-length':
+            try:
+                return int(value)
+            except ValueError:
+                return None
+    return None
+
+
+async def _too_large(send: Send, limit: int) -> None:
+    body = json.dumps({'error': f'The request body is larger than {_size(limit)}.'}).encode('utf-8')
+    await send(
+        {
+            'type': 'http.response.start',
+            'status': 413,
+            'headers': [
+                (b'content-type', b'application/json; charset=utf-8'),
+                (b'content-length', str(len(body)).encode()),
+            ],
+        }
+    )
+    await send({'type': 'http.response.body', 'body': body})
+
+
+def _size(limit: int) -> str:
+    """The ceiling as a person reads it: MiB when it is whole, bytes otherwise.
+
+    The second branch exists because the limit is injectable — a test drives it with
+    a few hundred bytes, and ``0 MiB`` would be a message that says nothing.
+    """
+    if limit >= 1024 * 1024 and limit % (1024 * 1024) == 0:
+        return f'{limit // (1024 * 1024)} MiB'
+    return f'{limit} bytes'
 
 
 # --- payloads ---------------------------------------------------------------
@@ -57,12 +162,31 @@ class LoginBody(BaseModel):
     password: str = Field(min_length=1)
 
 
+class ImageBody(BaseModel):
+    """One image of a message, in the order the text marks it.
+
+    The shape is deliberately the bytes and nothing else: ``media_type`` is what the
+    picture claims to be and ``data`` is its base64 payload. There is no filename
+    field, because a client that sent a path would be asking the server to open a
+    file, and the API never does that.
+    """
+
+    media_type: str = Field(min_length=1)
+    data: str = Field(min_length=1)
+
+
 class TurnBody(BaseModel):
-    """A message from the composer."""
+    """A message from the composer: text, an optional request id, ordered images.
+
+    ``images[0]`` is ``[Image #1]`` in the text; the position is the number, and it
+    is part of what a retry has to match to be treated as the same message.
+    """
 
     text: str = Field(min_length=1)
     request_id: str | None = None
     """Client-generated UUIDv4, reused by a retry of the same deliberate send."""
+    images: list[ImageBody] = Field(default_factory=list)
+    """Pictures in the order the text refers to them; bounded by the runtime."""
 
 
 class AnswerBody(BaseModel):
@@ -88,13 +212,25 @@ class SessionBody(BaseModel):
 # --- the app ----------------------------------------------------------------
 
 
-def create_app(runtime: ServerRuntime, config: ServerConfig, *, dist: Path | None = None) -> FastAPI:
+def create_app(
+    runtime: ServerRuntime,
+    config: ServerConfig,
+    *,
+    dist: Path | None = None,
+    publisher: EndpointPublisher | None = None,
+) -> FastAPI:
     """Builds the application around a runtime that is already wired.
 
     The runtime is passed in rather than built here so a test can hand over one with
     a stub model and assert on the routes without a workspace or a network.
+
+    ``publisher`` is the file a local client reads to find this service. It is
+    published from the lifespan below and removed when the lifespan ends, because
+    the lifespan is the only hook that runs *after* the listening socket exists and
+    *before* the process is gone. ``None`` means "this app is not a discoverable
+    service": a test that mounts the app in-process publishes nothing.
     """
-    auth = Auth(config.password)
+    auth = Auth(config.password, service_token=publisher.token if publisher is not None else None)
     throttle = LoginThrottle()
     hub = runtime.hub
     assets = dist if dist is not None else dist_root()
@@ -103,9 +239,18 @@ def create_app(runtime: ServerRuntime, config: ServerConfig, *, dist: Path | Non
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         runtime.start()
         runtime.ensure_workers()
+        # The port is bound and listening before this app is started: `src/server/cli.py`
+        # binds the socket and hands it to uvicorn, so a client that reads the file is
+        # never told about a port that is not there yet.
+        if publisher is not None:
+            publisher.publish(host=config.host, port=config.port)
         try:
             yield
         finally:
+            # Unpublish first: a client that finds the file while the server is closing
+            # should fail to connect rather than attach to a runtime that is unwinding.
+            if publisher is not None:
+                publisher.clear()
             runtime.abort()
             await runtime.wait()
             runtime.composition.summoner.cancel_all()
@@ -134,8 +279,12 @@ def create_app(runtime: ServerRuntime, config: ServerConfig, *, dist: Path | Non
             allow_headers=['content-type', 'last-event-id'],
         )
 
-    # `add_middleware` wraps in reverse order, so this one runs first: nothing
-    # reaches a route before the cookie is checked.
+    # `add_middleware` wraps in reverse order, so the *last* one added runs first.
+    # The body ceiling is added before the cookie check on purpose: auth ends up
+    # outermost, so an unauthenticated request is refused without a single byte of
+    # its body being read. The cap only bounds what an authenticated caller may
+    # send, which is the point — refusing early is a cost saving, not a boundary.
+    app.add_middleware(BodyLimitMiddleware, limit=MAX_COMMAND_BYTES)
     app.add_middleware(AuthMiddleware, auth=auth)
 
     # --- session -------------------------------------------------------
@@ -263,9 +412,17 @@ def create_app(runtime: ServerRuntime, config: ServerConfig, *, dist: Path | Non
 
     @app.post('/api/turn')
     async def turn(body: TurnBody) -> dict[str, Any]:
-        """Sends a message: a new turn, or a steer into the running one."""
+        """Sends a message: a new turn, or a steer into the running one.
+
+        The images travel validated and ordered; a refusal is a `ValueError` from the
+        runtime, which becomes a 400 with the reason and leaves the queue untouched.
+        """
         try:
-            return await runtime.send(body.text, request_id=body.request_id)
+            return await runtime.send(
+                body.text,
+                request_id=body.request_id,
+                images=[IncomingImage(media_type=image.media_type, data=image.data) for image in body.images],
+            )
         except ValueError as exc:
             return JSONResponse({'error': str(exc)}, status_code=400)  # type: ignore[return-value]
 
