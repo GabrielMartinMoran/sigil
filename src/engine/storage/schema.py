@@ -195,6 +195,13 @@ CREATE TABLE IF NOT EXISTS accounts (
     last_model TEXT
 ) STRICT, WITHOUT ROWID;
 
+CREATE TABLE IF NOT EXISTS app_state (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
+"""
+
+V6_SCHEMA = """
 CREATE TABLE IF NOT EXISTS accepted_inputs (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     request_id TEXT NOT NULL,
@@ -210,12 +217,15 @@ CREATE TABLE IF NOT EXISTS accepted_inputs (
     PRIMARY KEY (session_id, request_id),
     UNIQUE (session_id, sequence)
 ) STRICT, WITHOUT ROWID;
-
-CREATE TABLE IF NOT EXISTS app_state (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-) STRICT, WITHOUT ROWID;
 """
+"""The durable input queue: one row per accepted message, append-only in practice.
+
+It lives in its own step because a file written before it existed has no table at
+all, and step 8 indexes exactly this table: a migration may not assume a structure
+that only the base schema creates.
+"""
+
+SCHEMA += V6_SCHEMA
 
 V7_SCHEMA = """
 CREATE TABLE IF NOT EXISTS roadmap_revisions (
@@ -247,7 +257,23 @@ CREATE TABLE IF NOT EXISTS recovery_links (
 
 SCHEMA += V7_SCHEMA
 
-USER_VERSION = 7
+V8_SCHEMA = """
+CREATE INDEX IF NOT EXISTS accepted_inputs_open
+    ON accepted_inputs(state)
+    WHERE state IN ('accepted', 'claimed', 'delivered');
+"""
+"""The queue's ``is anything still open`` question, answered without a scan.
+
+``accepted_inputs`` is append-only and ``AcceptedInputs.has_open`` runs on a timer for
+the life of the service, so the question is asked thousands of times against a table
+that never shrinks. The predicate repeats the query's own, which is what lets SQLite
+use the index at all; the three states are the non-terminal ones, so the index stays
+small however long the history gets.
+"""
+
+SCHEMA += V8_SCHEMA
+
+USER_VERSION = 8
 """The version `SCHEMA` describes.
 
 Steps start above the empty file: a database created today is written whole and its
@@ -256,6 +282,8 @@ written by an older Sigil.
 """
 
 MIGRATIONS: dict[int, str] = {
+    8: V8_SCHEMA,
+    6: V6_SCHEMA,
     7: V7_SCHEMA,
     5: "ALTER TABLE sessions ADD COLUMN mcp_overrides TEXT NOT NULL DEFAULT '{}';",
     4: 'ALTER TABLE sessions ADD COLUMN allow_external_files INTEGER NOT NULL DEFAULT 0;',

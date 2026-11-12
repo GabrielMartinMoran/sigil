@@ -25,7 +25,7 @@ import asyncio
 import base64
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -47,7 +47,11 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import UsageLimits
 
+from src.engine.agents.profile.models.agent_profile import AgentProfile
+from src.engine.agents.rollback import Checkpoint, ForkOutcome, RollbackOutcome
 from src.engine.agents.step_budget import StepBudget
+from src.engine.agents.tree.models.agent_node import AgentNode
+from src.engine.agents.tree.models.summon_error import SummonError
 from src.engine.agents.turn_map import library_run_id
 from src.engine.attachments.content import stored_content, stored_parts, user_content
 from src.engine.attachments.images import MAX_IMAGE_BYTES, ImageError, prepare_image
@@ -67,6 +71,22 @@ CHECKPOINT_INTERVAL = 1.0
 
 QUEUE_POLL_INTERVAL = 0.25
 """Bounded wait for an input accepted outside this runtime. Not a busy loop."""
+
+IDLE_POLL_INTERVAL = 0.5
+"""Seconds between two looks at "is there any work left".
+
+A timer, not a busy loop: the question is one indexed row lookup, and the whole
+point of the shutdown is that answering it costs less than staying alive.
+"""
+
+DEFAULT_IDLE_GRACE = 900.0
+"""Seconds without work before a service stops itself.
+
+Fifteen minutes: long enough that a user reading a long answer, or stepping away
+mid-thought, is not punished with a relaunch; short enough that a forgotten
+service does not outlive the day. ``--idle-grace`` overrides it.
+"""
+
 
 PREVIEW_CHARS = 400
 """How much of a tool result travels in the event. The full text is in the transcript."""
@@ -148,6 +168,58 @@ class PendingQuestion:
     )
 
 
+class IdleShutdown:
+    """Decides when a service that has had no work for a while should stop.
+
+    Two facts keep the service alive: a turn that is running, and any queue row
+    that is not terminal — in *any* session, because the service serves one
+    database, not one browser. Connected event subscribers are deliberately not on
+    that list: a page can reconnect to whatever service is there, so an open tab is
+    not a reason for a process to outlive the work.
+
+    A pending question needs no rule of its own. The agent asks from inside the
+    turn that is waiting for the answer, so the turn is still running and the
+    question is covered by the first fact; there are no interactive approvals.
+
+    The clock and the work check are arguments, so a test advances the window
+    instead of sleeping through it, and the thirty-minute decision costs nothing.
+    """
+
+    def __init__(
+        self,
+        has_work: Callable[[], bool],
+        *,
+        grace: float,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._has_work = has_work
+        self._grace = grace
+        self._clock = clock
+        self._idle_since: float | None = None
+
+    @property
+    def grace(self) -> float:
+        """Seconds of no work this decision waits for."""
+        return self._grace
+
+    def expired(self) -> bool:
+        """Whether the service has gone ``grace`` seconds without work.
+
+        Called repeatedly: the first look starts the window, work drops it and
+        starts it again later, so a burst of short turns never adds up to a
+        shutdown. A work check that raises is not proof of idleness — the exception
+        propagates, and the caller decides that an unanswerable question means
+        "keep serving".
+        """
+        now = self._clock()
+        if self._has_work():
+            self._idle_since = None
+            return False
+        if self._idle_since is None:
+            self._idle_since = now
+        return now - self._idle_since >= self._grace
+
+
 class ServerRuntime:
     """Drives one workspace for one browser session.
 
@@ -157,7 +229,14 @@ class ServerRuntime:
     resolving paths against the process cwd.
     """
 
-    def __init__(self, composition: Composition, hub: EventHub, *, require_ownership: bool = True) -> None:
+    def __init__(
+        self,
+        composition: Composition,
+        hub: EventHub,
+        *,
+        require_ownership: bool = True,
+        ownership: ServerOwnership | None = None,
+    ) -> None:
         self.composition = composition
         self.hub = hub
         self._require_ownership = require_ownership
@@ -172,7 +251,14 @@ class ServerRuntime:
         # Durable consumer. The queue is the source of truth for accepted work;
         # the in-memory maps only connect a request to the enqueue it produced.
         self._accepted = AcceptedInputs(composition.store.database)
-        self._ownership = ServerOwnership(composition.store.database.path)
+        # An ownership taken before this runtime existed, or one for it to take.
+        # Adopting is what lets `cli.run` hold the lock across `Composition`: `flock`
+        # treats two descriptors of one process as two holders, so opening the same
+        # file here would refuse this very process after it had already paid to
+        # compose the engine. `acquire` on an object that already holds it does
+        # nothing, so `start` needs no special case and no second descriptor is
+        # ever opened.
+        self._ownership = ownership if ownership is not None else ServerOwnership(composition.store.database.path)
         self._started = False
         self._closing = False
         self._consumer: asyncio.Task[None] | None = None
@@ -192,6 +278,12 @@ class ServerRuntime:
         # The agent asks through the hub; the browser answers over HTTP.
         composition.question_hub.set_asker(self._ask)
 
+        # "Busy" is this runtime's fact, and the model service is the object that
+        # refuses a swap while it holds. Pointing the service at this flag is what
+        # makes the HTTP command get the engine's own `BusyError` instead of a
+        # second rule written in a route — the same refusal the terminal gets.
+        composition.model_service.is_busy = lambda: self.busy
+
         # Every tool call and result travels as an event. The sink is sync and never
         # raises: a broken client must not fail the tool that triggered it.
         composition.tool_logger.add_sink(self._on_tool_event)
@@ -209,6 +301,57 @@ class ServerRuntime:
     @property
     def busy(self) -> bool:
         return self._task is not None and not self._task.done()
+
+    def has_active_work(self) -> bool:
+        """Whether stopping now would cut something short.
+
+        A running turn is work in this process; a non-terminal row is work the
+        database says exists, including rows another session accepted, because the
+        service serves the whole database. A connected event subscriber is not work:
+        it reconnects to whatever service is there.
+        """
+        return self.busy or self._accepted.has_open()
+
+    async def stop_when_idle(
+        self,
+        request_shutdown: Callable[[], None],
+        *,
+        grace: float,
+        poll: float = IDLE_POLL_INTERVAL,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        """Asks for a graceful stop after ``grace`` seconds with no work left.
+
+        The request is the only thing this does: it does not abandon a turn, stop a
+        row or touch the endpoint file. Ending the serving loop is what runs the
+        lifespan shutdown, which unpublishes the endpoint, closes the runtime and
+        lets go of the ownership lock — in that order, through the path every other
+        exit already uses.
+
+        A work check that raises keeps the service alive and says so once per
+        streak: a database that cannot answer is not proof that nothing is left to
+        do, and a service that dies because its store hiccuped is worse than one
+        that lives an extra window.
+        """
+        decision = IdleShutdown(self.has_active_work, grace=grace, clock=clock)
+        # `poll` bounds how often the queue is asked, never how long the window is
+        # observed late: a 50 ms window looked at every 5 s would make the flag a lie.
+        interval = poll if decision.grace <= 0 else min(poll, decision.grace)
+        complaining = False
+        while not self._closing:
+            try:
+                idle = decision.expired()
+            except Exception as exc:  # noqa: BLE001 - a failed question is not a stop
+                if not complaining:
+                    complaining = True
+                    self.hub.publish('notice', text=f'Idle check: {exc}', tone='warn')
+                await asyncio.sleep(interval)
+                continue
+            complaining = False
+            if idle:
+                request_shutdown()
+                return
+            await asyncio.sleep(interval)
 
     def start(self) -> None:
         """Owns the database before touching it, then reconciles the queue.
@@ -291,6 +434,13 @@ class ServerRuntime:
         accepted = self.composition.store.accept_input(self.session, identifier, cleaned, payload, kind)
         self._settled.clear()
         self._wake.set()
+        if existing is None:
+            # Other clients have to learn that a message entered the queue. The event
+            # carries the fact and not the text: the rows are the text, and a copy in
+            # the event would be a second version of it to keep in step — the screen
+            # reads the rows again instead. A duplicate retry wrote no row, so it
+            # announces nothing.
+            self.hub.publish_state('queue')
         response = {
             'accepted': kind if existing is None else str(existing['kind']),
             'request_id': accepted.request_id,
@@ -769,6 +919,187 @@ class ServerRuntime:
     def _on_tree_idle(self) -> None:
         self.hub.publish_state('tree_idle')
 
+    # --- tree and session settings -------------------------------------------
+
+    def node(self, ref: str) -> AgentNode:
+        """The node a reference names, accepting a unique prefix of its id.
+
+        The resolution is the summoner's, so a client addresses a node with the
+        same shorthand the terminal's tree shows. The failure is translated to a
+        lookup because "no such node" is a request that names nothing, not a
+        session one has to wait for.
+
+        Raises:
+            LookupError: when nothing in this session's tree matches.
+        """
+        try:
+            return self.composition.summoner.resolve(ref)
+        except SummonError as exc:
+            raise LookupError(str(exc)) from exc
+
+    def stop_node(self, node_id: str) -> tuple[AgentNode, str]:
+        """Stops a node and everything it summoned.
+
+        Returns the node and the sentence the terminal paints for it.
+
+        Raises:
+            LookupError: when no node has that reference.
+            SummonError: when the node cannot be stopped, the session's agent most
+                of all.
+        """
+        node = self.node(node_id)
+        return node, self.composition.stop_subagent(node.id)
+
+    def background_node(self, node_id: str) -> tuple[AgentNode, str]:
+        """Sends a running node to the background: it keeps working, answers later.
+
+        Raises:
+            LookupError: when no node has that reference.
+            SummonError: when the node is the session's agent or already finished.
+        """
+        node = self.node(node_id)
+        return node, self.composition.background_subagent(node.id)
+
+    def set_external_files(self, allow: bool) -> Any:
+        """Allows or denies file access outside the workspace for this session.
+
+        Refused mid-turn, like the terminal's `/external-files`: the flag is read
+        per tool call, and a turn that is already running would change the boundary
+        under a call it has not made yet.
+
+        Raises:
+            RuntimeError: while a turn is running.
+        """
+        self._refuse_while_busy('change file access')
+        session = self.composition.apply_external_files(allow)
+        self.hub.publish_state('session')
+        return session
+
+    async def toggle_mcp(self, name: str, enabled: bool) -> Any:
+        """Enables or disables one MCP server for this session.
+
+        Refused mid-turn and while a subagent runs, the two criteria the terminal
+        applies to `/mcp`.
+
+        Raises:
+            RuntimeError: while a turn or a subagent is running.
+            LookupError: when the config declares no server with that name.
+        """
+        self._refuse_while_busy('change MCP servers')
+        session = await self.composition.apply_mcp_override(name, enabled)
+        self.hub.publish_state('mcp')
+        return session
+
+    # --- selection and history -----------------------------------------------
+
+    def set_model(self, account: str, model: str, thinking: str = 'default') -> Any:
+        """Switches the model of the session.
+
+        The decision is `ModelService.select`, which refuses while a turn runs:
+        the refusal is the engine's, not a rule repeated here. The agent is
+        rebuilt afterwards because it closes over the model it was built with, so
+        without it the change would be visible in the projection and nowhere else.
+
+        Raises:
+            BusyError: while a turn is running.
+            ProviderError: when the account, the model or the level is refused.
+        """
+        snapshot = self.composition.model_service.select(account, model, thinking)
+        self.composition.apply_model_change(snapshot)
+        self.composition.rebuild_agent()
+        self.hub.publish_state('model')
+        return snapshot
+
+    def set_effort(self, thinking: str) -> Any:
+        """Sets the reasoning level of the active model, effective on the next step.
+
+        `model_settings` is read when a turn starts, so nothing else has to move:
+        the run already in flight keeps the level it began with, which is what the
+        terminal does when it lets `/effort` through.
+
+        Raises:
+            NoAccountError: when nothing is configured.
+            BusyError: while a turn is running.
+            ProviderError: when the model does not accept that level.
+        """
+        snapshot = self.composition.model_service.set_thinking(thinking)
+        self.composition.apply_model_change(snapshot)
+        self.hub.publish_state('model')
+        return snapshot
+
+    def select_agent(self, name: str) -> AgentProfile:
+        """Activates an agent profile for the next turn.
+
+        Refused while a turn runs, like the terminal's `/agent`: an agent swap
+        changes the instructions *and* which tools exist in a run whose tool set
+        was already computed. The profile's own model default, if it declares one,
+        is applied through the same path as `/model`.
+
+        Raises:
+            RuntimeError: while a turn is running.
+            AgentNotFound: when no selectable profile has that name.
+            ProviderError: when the profile's model configuration is invalid.
+        """
+        self._refuse_while_busy('switch agent')
+        self.composition.agent_registry.refresh()
+        profile, _snapshot = self.composition.apply_agent(name)
+        self.hub.publish_state('agent')
+        return profile
+
+    def rollback_points(self) -> list[Checkpoint]:
+        """The turns the open session can return to, newest first.
+
+        The list is the engine's (`composition.rollback`, the same object the
+        terminal uses), so both clients offer the same points in the same order.
+        """
+        return self.composition.rollback.points(self.session.id)
+
+    def rollback(self, turn_id: str, *, files: bool = True) -> RollbackOutcome:
+        """Puts the session back to before ``turn_id``, rows included.
+
+        Blocks: it diffs and restores the workspace. The route runs it off the
+        event loop, the way the terminal runs it off its worker.
+
+        Raises:
+            RuntimeError: while a turn is running.
+            RollbackError: when the turn is not a point this session can reach.
+        """
+        self._refuse_while_busy('roll back')
+        outcome = self.composition.rollback.to_turn(self.session.id, turn_id, files=files)
+        self._reload_session()
+        self.hub.publish_state('rollback')
+        return outcome
+
+    def fork(self, turn_id: str) -> ForkOutcome:
+        """Branches a new session at the instant before ``turn_id``.
+
+        Nothing is destroyed and the workspace is not touched: the session stays
+        open and the new one is reported, exactly as the terminal's picker does.
+
+        Raises:
+            RuntimeError: while a turn is running.
+            RollbackError: when the turn is not a fork point of this session.
+        """
+        self._refuse_while_busy('fork')
+        return self.composition.rollback.fork_to(self.session.id, turn_id)
+
+    def _refuse_while_busy(self, action: str) -> None:
+        """The one refusal for the history commands: a turn is still running."""
+        if self.busy:
+            raise RuntimeError(f'A turn is running: finish or stop it before you {action}.')
+
+    def _reload_session(self) -> None:
+        """Rebinds the open session to its rows after a rollback shortened them.
+
+        The rollback wrote behind the session object's back; the rows are the
+        truth now, so the object the server answers from is replaced by the one
+        the store loads. A rollback that removed every message leaves nothing to
+        load, and the session keeps the object it has.
+        """
+        reloaded = self.composition.store.load(self.session.id)
+        if reloaded is not None:
+            self.composition.bind_session(reloaded)
+
     # --- workspace -----------------------------------------------------------
 
     def switch_workspace(self, root: str) -> dict[str, Any]:
@@ -777,8 +1108,7 @@ class ServerRuntime:
         Refused mid-turn: `os.chdir` while a tool is running would make the tool read
         a different tree than the one it started in.
         """
-        if self.busy:
-            raise RuntimeError('Cannot switch workspace while a turn is running.')
+        self._refuse_while_busy('switch workspace')
         switch = self.composition.workspace_manager.switch(root)
         self.composition.root = switch.workspace.root
         store = self.composition.store
@@ -790,8 +1120,7 @@ class ServerRuntime:
 
     def new_session(self) -> Any:
         """Starts an empty conversation in the current workspace."""
-        if self.busy:
-            raise RuntimeError('Cannot start a session while a turn is running.')
+        self._refuse_while_busy('start a session')
         session = self.composition.store.draft_session()
         session.agent = self.composition.agent_registry.active_name
         try:
@@ -805,8 +1134,7 @@ class ServerRuntime:
 
     def open_session(self, session_id: str) -> Any:
         """Opens an existing conversation, wherever its workspace is."""
-        if self.busy:
-            raise RuntimeError('Cannot switch session while a turn is running.')
+        self._refuse_while_busy('open another session')
         target = self.composition.store.load(session_id)
         if target is None:
             raise LookupError(f'No session {session_id}.')
@@ -818,18 +1146,28 @@ class ServerRuntime:
         return target
 
     def close(self) -> None:
+        """Releases everything, and leaves the queue exactly as it found it.
+
+        Interruption is crash reconciliation, and it belongs to `start`: a process
+        that is leaving on purpose must not claim that the rows it never executed
+        were lost. A row can land between the last idle look and this call, and
+        marking it ``interrupted`` would be a lie the next run would act on. The
+        lock is released last, so the store is never writable by a second process
+        while this one is still closing.
+        """
         self._closing = True
         if self._consumer is not None and not self._consumer.done():
             try:
                 self._consumer.cancel()
             except RuntimeError:  # pragma: no cover - the loop already stopped
                 pass
-        if self._started:
-            try:
-                self._accepted.interrupt_open()
-            finally:
-                self._ownership.release()
-                self._started = False
+        self._started = False
+        # Released whether this runtime took the lock or adopted one taken before
+        # it existed, and whether or not `start` ever ran: a runtime that exists
+        # but never served must not keep the store locked, and the process that
+        # composed the engine is waiting on exactly this. `release` is idempotent,
+        # so closing twice is a no-op rather than a double release.
+        self._ownership.release()
         self.composition.question_hub.set_asker(None)
         self.composition.tool_logger.remove_sink(self._on_tool_event)
         self.composition.close()

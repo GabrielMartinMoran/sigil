@@ -19,7 +19,7 @@ def test_v7_structures_preserve_facts_and_deletions(tmp_path: Path) -> None:
     first = store.create_session()
     second = store.create_session()
     db = store.database
-    assert db.value('PRAGMA user_version') == 7
+    assert db.value('PRAGMA user_version') == USER_VERSION
     execution = db.value('SELECT id FROM agent_executions WHERE session_id = ?', (original.id,))
     db.execute('INSERT INTO roadmap_revisions VALUES (?, ?)', (execution, 3))
     assert db.value('SELECT count(*) FROM roadmap_items WHERE execution_id = ?', (execution,)) == 0
@@ -78,9 +78,42 @@ def test_v6_delivery_is_unknown_after_upgrade(tmp_path: Path) -> None:
     db.execute('PRAGMA user_version = 6')
     Database.forget(path)
     db = Database(path)
-    assert db.value('PRAGMA user_version') == 7
+    assert db.value('PRAGMA user_version') == USER_VERSION
     assert db.value('SELECT count(*) FROM accepted_inputs') == 1
     assert db.value('SELECT count(*) FROM input_deliveries') == 0
+    db.close()
+
+
+def test_v7_gains_the_open_input_index_without_losing_rows(tmp_path: Path) -> None:
+    """Step 8 is one index: a database written before it keeps every row it had.
+
+    The index is not cosmetic. `AcceptedInputs.has_open` runs on a timer, and
+    `accepted_inputs` only grows, so an unindexed question would scan the table once
+    per poll. This asserts the rows survive the step and the plan becomes a lookup.
+    """
+    from src.engine.sessions.session_store import SessionStore
+    from src.engine.storage.accepted_inputs import OPEN_INPUTS_SQL
+
+    store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
+    session = store.create_session()
+    db = store.database
+    db.execute(
+        'INSERT INTO accepted_inputs VALUES '
+        "(?, 'request', 1, '{}', 'hash', 'turn', 'accepted', NULL, NULL, 'now', 'now')",
+        (session.id,),
+    )
+    path = db.path
+    db.execute('DROP INDEX accepted_inputs_open')
+    db.execute('PRAGMA user_version = 7')
+    Database.forget(path)
+
+    db = Database(path)
+
+    assert db.value('PRAGMA user_version') == USER_VERSION
+    assert db.value('SELECT count(*) FROM accepted_inputs') == 1
+    assert db.value('SELECT state FROM accepted_inputs') == 'accepted'
+    plan = ' '.join(str(row['detail']) for row in db.query(f'EXPLAIN QUERY PLAN {OPEN_INPUTS_SQL}'))
+    assert 'accepted_inputs_open' in plan, plan
     db.close()
 
 
@@ -100,7 +133,7 @@ def test_v7_failure_rolls_back_all_structures_and_retries(tmp_path: Path, monkey
         assert conn.execute('PRAGMA user_version').fetchone()[0] == 5
         assert conn.execute('SELECT title FROM sessions WHERE id = ?', (session_id,)).fetchone() == ('preserved title',)
     db = Database(path)
-    assert db.value('PRAGMA user_version') == 7
+    assert db.value('PRAGMA user_version') == USER_VERSION
     assert db.query('PRAGMA foreign_key_check') == []
     db.close()
 

@@ -283,9 +283,12 @@ forces a save whose confirmations name requests whose content is present in
 `run.all_messages()`. The turn's own prompt is confirmed from the same snapshot.
 A previous throttled checkpoint is not proof. Confirmed rows become `delivered`
 and then `finished` only after the final save commits. Explicit stop marks
-undelivered accepted/claimed rows `stopped`; shutdown marks non-terminal rows
-`interrupted`. The pending overlay, recovery notice contract and web client are
-not part of this slice.
+undelivered accepted/claimed rows `stopped`. Interrupting is reserved for
+reconciliation: `ServerRuntime.start` marks every non-terminal row `interrupted`
+on the next start, and a consumer that dies does the same so nobody waits for
+work that will never run. An orderly shutdown never interrupts — see
+[idle shutdown](#idle-shutdown). The pending overlay, recovery notice contract
+and web client are not part of this slice.
 
 Mid-turn recovery limit: a conflict during a throttled checkpoint saves the local
 progress into a recovery copy and binds the UI to it, while the running turn keeps
@@ -300,6 +303,59 @@ new work and `stop_open(keep=...)` does not stop requests already handed to
 `finished`; the rest become `stopped`. A consumer that dies calls the
 database-wide `interrupt_open`, so accepted rows become `interrupted` and `send`
 refuses new work instead of accepting rows nobody will consume.
+
+### Idle shutdown
+
+A service nobody needs should not outlive the work, so the server stops itself
+instead of waiting to be killed. `IdleShutdown` in `src/server/runtime.py` asks two
+questions, in this order:
+
+- **Is a turn running?** `ServerRuntime.busy`. A pending question needs no rule of
+  its own: the agent asks from inside the turn that is waiting for the answer, so the
+  turn is still running and the question is covered. There are no interactive
+  approvals (see [Risks](#risks)).
+- **Is any row still open?** `AcceptedInputs.has_open`, which is database-wide:
+  `accepted`, `claimed` or `delivered`, in *any* session, because one service serves
+  the whole database. A row another browser accepted is work this process must not
+  stop in the middle of.
+
+Connected event subscribers are deliberately **not** work. A page reconnects to
+whatever service is there, so a tab left open must not keep a process alive for ever:
+`/events` is a view, not a claim on execution.
+
+While work exists the service stays up, however much time passes. When it does not,
+the window starts: `--idle-grace` seconds (900 by default, `DEFAULT_IDLE_GRACE`) with
+no work expires it, and one poll that sees work drops the window and starts it again
+later, so a burst of short turns never adds up to a shutdown. The poll is
+`IDLE_POLL_INTERVAL` (0.5 s), and the question it asks is one lookup rather than a
+scan: `AcceptedInputs.has_open` is a single statement over `accepted_inputs_open`, the
+partial index this cut added over exactly the three open states (see
+[the storage page](storage.md#schema-steps) for the measurement that motivated it).
+A work check that raises is not proof of idleness: the watch keeps serving and says so
+once per streak, because a service that dies of a store hiccup is worse than an extra
+window.
+
+The stop itself is graceful and does nothing else. `ServerRuntime.stop_when_idle`
+calls the one request it was given — `GracefulStop.request`, bound in
+`src/server/cli.py` to uvicorn's own `should_exit`. The process is never killed and
+the endpoint is never removed by hand: uvicorn leaves its loop, the lifespan shutdown
+runs in its normal order (watch cancelled, endpoint unpublished by
+`EndpointPublisher.clear`, runtime closed, ownership lock released), and the next
+client that asks for a service finds the store free and launches a new one.
+
+Idle shutdown never relabels a row at the moment it leaves. A request can be accepted
+between the last idle look and the loop leaving, and `ServerRuntime.close` releases the
+lock and closes the composition without touching the queue, so that row keeps the state
+it has (`accepted`) instead of being written as executed, delivered or interrupted. That
+is the honesty this path owes: the exit reports what it did, which is nothing to that
+row.
+
+It does not save the row from the label. The row was never executed, and the next
+start's reconciliation (`ServerRuntime.start`) marks every non-terminal row
+`interrupted` — correctly, because that is what happened to it. What the exit avoids is
+the *false* claim, made by the process itself while it was still serving, that the row
+was lost to a crash; the label that follows is a statement about execution, and only
+reconciliation is entitled to make it.
 
 Durable read (B2): `GET /api/session/durable` calls `views.durable_session`, which
 opens one SQLite read transaction and returns the messages rows as the transcript,
@@ -423,11 +479,10 @@ well-formed endpoint, not whether the process behind it still exists.
 
 A file left behind by `SIGKILL` therefore passes. It keeps its fields, its mode
 and its owner, so `read_endpoint` returns it as a valid endpoint while nothing
-listens on the port. Liveness is a different question and belongs to the
-launcher in the following slice: it is the one that must confirm the `pid` is
-alive, or the port answers, before attaching to what the file names. Until that
-exists, a client that reads a stale file learns the truth when it connects, not
-when it reads.
+listens on the port. Liveness is a different question, and the answer is
+`live_endpoint` in [the launcher](#the-launcher-part-c): it confirms the `pid`
+still exists and that the port answers `/health` before anything attaches to what
+the file names.
 
 ### The token is a second credential, not a second password
 
@@ -442,6 +497,646 @@ The token does not log into the web client: `Auth.check_password` compares it
 against the password and refuses it. It also dies with the process, which is what
 makes a restart a revocation.
 
-Not in this slice: launching or discovering the service from the terminal, idle
-shutdown, and the parity endpoints the terminal needs before it can become a
-client. Those are separate, smaller steps.
+Not in that slice: launching or discovering the service from the terminal, and the
+parity endpoints the terminal needs before it can become a client. Launching is
+[part C](#the-launcher-part-c) and the stop-when-idle behaviour is
+[idle shutdown](#idle-shutdown); the parity endpoints are
+[part D](#parity-commands-part-d).
+
+## The launcher (part C)
+
+A client that needs a service calls `ensure_service` in `src/server/launch.py` and
+gets one of two things: a live endpoint to talk to, or a named failure that says
+what to do next. "Start one if it is not running" is not a sentence in the code
+either — it is the algorithm below, because the interesting part is who is
+allowed to start it.
+
+`Launch` carries the endpoint and, when this call started the process, the `Child`
+handle for it. `Launch.launched` is true only when the endpoint's `pid` is that
+child's: a candidate that spawned a process, lost the lock and attached to another
+candidate's service did not launch anything.
+
+### The algorithm
+
+Called with a database path (normally `database_path()`), an optional command and
+an optional endpoint path:
+
+1. Read the endpoint file and prove it alive. `live_endpoint` is `read_endpoint`
+   plus two facts: the recorded `pid` still exists, and a `GET /health` carrying
+   the run token answers `200` within `probe_timeout` (0.5 s by default). A live
+   endpoint is returned immediately — attaching is the common case.
+2. Otherwise ignore the file and **do not delete it**. It may belong to a run that
+   is publishing right now, or to one another client is about to read. Ignoring it
+   is enough: the next publication replaces it with `os.replace`.
+3. Ask the ownership lock whether the store is free, with `ServerOwnership.free`.
+   It locks and lets go without writing: the lock is the only arbiter, and the
+   `pid=` record it leaves behind is the evidence used two steps later. A probe that
+   recorded itself would destroy that evidence.
+4. Free ⇒ this call is the candidate. `spawn_server` starts the server, and the
+   child takes the lock for real. The child acquires it in `cli.run` *before* it
+   composes the engine, so a candidate that loses the store exits there — before
+   settings, MCP config, the skill registry or a port — and a lost race never
+   produces a second listening server.
+5. Not free ⇒ another process is starting one. Wait for its publication instead of
+   starting a competitor. If the store stays free and the **recorded holder is
+   gone**, nobody is coming back to publish, and that is a `ServiceDied` naming the
+   pid rather than a wait until the deadline.
+6. Either way, look at the endpoint file — and at the child, when there is one —
+   every `interval` (50 ms) until `wait` expires (20 s by default). The first live
+   endpoint wins and is returned.
+7. If no endpoint appears, the deadline picks the failure from what was observed,
+   not from a guess: see the table below.
+
+Every call that returns has either an endpoint or a typed error, and no path waits
+longer than `wait`. The deadline is a parameter so a caller can shorten it, and
+every test passes its own.
+
+### The typed failures
+
+| Error | `code` | What was observed | What the caller does |
+| --- | --- | --- | --- |
+| `ServiceStarting` | `service_starting` | Another process owns the lock and published nothing within `wait` | Retry: someone else is winning, slowly |
+| `ServiceDied` | `service_died` | The recorded owner of the lock is gone, or our own child exited, without publishing | Show the quoted output; a retry starts the service |
+| `ServiceUnpublished` | `service_unpublished` | The child this call started is alive and published nothing | Keep the handle: wait, or `terminate()` it |
+
+`ServiceDied` quotes the child's own last words (up to 2 KB): a stale bundle, a
+taken port and a refused nested invocation all end here, and the message is
+already the fix. `ServiceUnpublished` carries the `Child` because a process that
+is alive may still succeed; nothing here kills it on the caller's behalf.
+
+An unsafe lock path is not one of these. `OwnershipError` propagates, because no
+amount of waiting repairs a lock file that is a symlink.
+
+### How the child is launched
+
+`spawn_server` uses `subprocess`, and the command is
+`[sys.executable, <checkout>/main.py, 'server']` (`default_command`):
+
+- **`sys.executable`, not the `sigil` wrapper.** The wrapper exists so a human can
+  call it from any directory; this process already knows where the code it imported
+  lives, and resolving `PATH` could start a server from a different installation
+  than the endpoint file it is watching.
+- **`close_fds=True`.** The child inherits the three standard streams and nothing
+  else: no lock descriptor, no database handle, no event-loop descriptor.
+- **`start_new_session=True`.** It is not in the launching terminal's process
+  group, so `ctrl+c` there is not a shutdown here and no terminal hangup reaches
+  it. The service deliberately outlives the client that started it; the ownership
+  lock and the idle shutdown are what end it, not the window.
+- **`stdin` is `/dev/null`; `stdout` and `stderr` share one anonymous temporary
+  file.** A pipe would block the child once it filled, and the terminal would show
+  a banner over a full-screen interface. The file is unbounded, invisible, read
+  only to explain a death, and unlinked when the handle is closed.
+- **Death is `poll()`, not a timeout.** The kernel reports it as it happens, the
+  same call reaps it — so a watched child leaves no zombie — and the launcher
+  reacts at the next `interval` instead of waiting out the deadline.
+
+The environment is inherited unchanged. If `SIGIL_SELF_GUARD` is set — a client
+running under the agent — the child refuses to start and this launcher reports a
+`ServiceDied` carrying the child's own message. The guard is a rule of the product,
+not an obstacle to route around, so it is not stripped. That is also why the launch
+tests drive a process double: a real child that takes the same ownership lock,
+publishes the same endpoint file and answers `/health` over a real socket, so no
+test depends on the guard being absent.
+
+### What this does not decide
+
+- **The port.** The child publishes what it bound; the launcher reads it. Nothing
+  here guesses or negotiates one.
+- **When the service stops.** Not this call: the launcher starts a service, it never
+  ends one. A service stops itself when no work is left anywhere in the database, as
+  described in [idle shutdown](#idle-shutdown) — a running turn or any non-terminal
+  queue row keeps it up, and the end is a graceful exit that unpublishes the endpoint
+  and releases the lock rather than a kill.
+- **The engine.** `ensure_service` spawns a process; it does not compose one. The
+  child builds its own `Composition`, and `sigil server` takes the lock *before*
+  building it: a losing candidate pays nothing for settings, MCP config or the
+  skill registry. The runtime adopts that already-held lock (`ownership=` in
+  `ServerRuntime`), so the lock is opened once and covers the whole life of the
+  process — from before `Composition` to `close`. `flock` treats two descriptors of
+  one process as two holders, so composing first and acquiring after would refuse
+  the server its own store.
+
+### The known limits
+
+`/health` is unauthenticated, so it proves that a Sigil-like server answers on that
+port, not that it is the run whose token is in the file; a port reused by a
+different service is caught at the first authenticated call, not at discovery.
+
+The start race has one window left, and it is stated rather than hidden. Two
+candidates can both see a free lock if the first asks, releases, and the second
+asks before the first child has taken it; both then spawn. **No lock descriptor is
+passed to the child** in this cut, so the child's own `acquire` is what decides, and
+the worst case is a losing child that leaves in `cli.run` the moment the lock is
+refused — before it composes a `Composition`, before it binds a port — one wasted
+process, never a second server listening. Closing the window entirely means handing
+the locked descriptor to the child, which changes how a process is launched
+(inherited fd, `pass_fds`, an ownership the child does not take) and is not needed
+for correctness: the loser already pays nothing but its own start-up.
+
+## Parity commands (part D)
+
+The terminal already had five commands that never reached HTTP: change the model,
+change the effort, switch the agent, roll back, and fork. Without them a client
+can watch a session and cannot drive one, so they are the last contract the
+terminal needs before it becomes a client rather than an executor. This part adds
+the routes and the shared decision behind them; it does not migrate the terminal.
+
+### One decision, two transports
+
+The command logic does not live in a route. Each route calls a `ServerRuntime`
+method, and each of those calls the same engine object the terminal already calls:
+
+- **Model and effort.** `ModelService.select` and `ModelService.set_thinking`. The
+  service already refuses while a turn runs; `ServerRuntime` points
+  `model_service.is_busy` at its own `busy` flag, so the HTTP command gets that
+  `BusyError` instead of a second rule written in a route.
+- **Agent.** `AgentRegistry.activate` plus `Composition.select_agent_model`.
+- **Rollback and fork.** `composition.rollback`, the instance the terminal's
+  picker uses.
+
+The state a selection leaves behind is recorded once, in
+`Composition.apply_model_change` and `Composition.apply_agent` — the session's
+selection, the meter's window, `save_progress` when the conversation has messages,
+the stamped agent, and the tree root's name. Both clients will call those; for this
+cut only the server does.
+
+The terminal's `ProviderMixin._after_model_change` and `AgentMixin.apply_agent`
+still carry their own copy of those lines. That is deliberate and temporary: the
+terminal is the only client in use, it is not migrated yet, and rewriting a path
+this part does not exercise would be an unverified change to it. The copies go in
+`tui-attach-v1`, when the terminal stops mutating state locally.
+
+`Composition.rebuild_agent` is the server's responsibility after a model change,
+because the agent closes over the model it was built with. It is not part of
+`apply_model_change`: whether a client needs it depends on whether that client
+holds its own agent, which is a fact about the client.
+
+### The routes
+
+| Route | Does | Reply |
+| --- | --- | --- |
+| `POST /api/model` | Switches account, model and optionally the level | `views.model_view` |
+| `POST /api/effort` | Sets the level of the current model | `views.model_view` |
+| `POST /api/agent` | Activates a profile for the next turn | `views.agent_view` plus the list |
+| `GET /api/rollback` | Lists the turns the session can return to | `views.rollback_points` |
+| `POST /api/rollback` | Returns to before a turn, rows and optionally files | outcome plus the session view |
+| `POST /api/fork` | Branches a new session at an instant, destroying nothing | `views.fork_view` |
+
+Every reply is a projection from `src/server/views.py`, and the parity contract in
+`tests/test_server_parity.py` compares the reply to that projection rather than to
+a literal, so a route cannot invent a shape the views module does not define.
+
+### What is refused, and with which status
+
+The refusals are the in-process ones, carried over HTTP rather than re-decided:
+
+- **`409`** when the session is in the way and the same request would work later:
+  a turn is running (`BusyError` for model and effort, the runtime's own check for
+  agent, rollback and fork), or the named turn is not a point of this session
+  (`RollbackError`).
+- **`400`** when the request itself names something unusable and a different
+  request would be needed: an unknown account or profile, a level the model does
+  not accept (`ProviderError`, `AgentNotFound`).
+
+A refusal changes nothing. The tests assert that, reading the session, the model
+snapshot or the message rows after the rejected call rather than trusting the
+status code.
+
+### Not decided here
+
+The terminal migration, its five mixins, and removing the duplicate selection
+logic are `tui-attach-v1`. The transport that cut consumes is
+[part F](#the-terminals-transport-part-f). Tree actions, subagent transcripts, the
+MCP toggle, external files and context are `parity-extra-v1`, in the next section;
+debug and themes stay in the terminal, because they are about a client, not a
+session.
+
+## Parity commands (part E)
+
+Part D gave a client the commands that change what the next turn runs on. What it
+left out is what the terminal draws around the chat: the tree of agents, the
+transcript of one subagent, the two session toggles, and the context meter. This
+part adds those six routes. Theme selection and the `/debug` report are still
+client work, so they are in no route here.
+
+### One decision, two transports
+
+The commands are thin for the same reason as part D's: a route calls a
+`ServerRuntime` method, and the method calls the object that already decides.
+
+- **The tree.** `SubagentSummoner.detach` and `SubagentSummoner.kill`, reached
+  through `Composition.background_subagent` and `Composition.stop_subagent`. The
+  summoner is the object the terminal's `tree_mixin` calls, so the refusals are
+  the engine's own: an unknown id, a node that already finished, and the session's
+  own agent. The root rule lives in the summoner on purpose — `agent_tree_screen`
+  lists every node and binds `b` and `k` on the highlighted row, the root
+  included, so a guard in one caller would leave the action reachable from the
+  other. `detach` and `kill` answer the root with the same sentence.
+- **The toggles.** `Composition.apply_mcp_override` and
+  `Composition.apply_external_files`, the same pair `commands_mixin` performs.
+  `mcp_overrides` and `allow_external_files` are columns of the session row, so
+  the change is written with `SessionStore.save_current`: a concurrent writer's
+  copy is adopted instead of becoming a server error, and an empty draft writes
+  nothing.
+- **The context.** `Composition.meter` and `session_cost`, the two objects the
+  terminal's sidebar reads. Nothing is computed in the route beyond the
+  projection.
+
+### The routes
+
+| Route | Does | Reply |
+| --- | --- | --- |
+| `POST /api/tree/stop` | Stops a node and everything it summoned | `views.node_view`, `views.tree_view`, the engine's sentence |
+| `POST /api/tree/background` | Sends a running node to the background | the same three |
+| `GET /api/tree/node/{node_id}` | One execution's messages, by id or unique prefix | `views.node_view(…, include_messages=True)` |
+| `POST /api/mcp` | Enables or disables one server for the session | `views.session_view` plus the shell's MCP state |
+| `POST /api/external-files` | Allows or denies reads outside the workspace | `views.session_view` |
+| `GET /api/context` | Window usage and the session's bill | `views.context_view` |
+
+The tree actions answer with the whole tree, not only the node: stopping a node
+stops its descendants, and a client that repainted one row would leave the branch
+saying it is still working.
+
+The two toggles are also readable from `/api/state`: `views.session_view` carries
+`external_files` and `mcp_overrides`, because the row is where they live and a
+command that changed one has to be visible in the projection the screen paints
+from, not only in its own reply.
+
+### What is refused, and with which status
+
+- **`400`** when the request names something that does not exist: a node
+  reference that matches nothing, or an MCP server the config does not declare.
+  `ServerRuntime.node` translates the summoner's `SummonError` into a
+  `LookupError` for exactly this distinction. A body of the wrong type is `422`
+  from the schema; `allow` is a `StrictBool`, because a lax bool would read
+  `"yes"` as consent to a permission change.
+- **`409`** when the node exists and cannot take the action now: the session's own
+  agent, or a node that already finished (`SummonError`). The two toggles are
+  `409` too while a turn runs, and `/api/mcp` is also `409` while a subagent is
+  still working — the terminal's two criteria, not a new rule. A live node runs on
+  an agent whose tools were computed when it started, so disabling a server would
+  close the transport under a call already in flight and enabling one would swap
+  the tool set mid-run. Both live where the decision is: the turn check is
+  `ServerRuntime._refuse_while_busy`, the subagent check is
+  `Composition.apply_mcp_override` reading `summoner.running()`, because the
+  terminal's copy of that rule lives in `commands_mixin.is_refused_while_busy` and
+  the engine is where both clients can share it.
+
+Every route that refuses through `_refuse_while_busy` says the same thing, in one
+place: `A turn is running: finish or stop it before you <action>.` Starting a
+session, opening one, switching workspace, switching agent, rollback and fork all
+go through it, so a client never has to parse a second wording for those.
+
+Two routes are the exception, and it is part D's: `POST /api/model` and
+`POST /api/effort` are refused by the engine itself — `BusyError` from
+`ModelService.select` and `set_effort` — with `A turn is in progress. Wait for it
+to finish (or stop it) before changing the model.` The status is the same `409`;
+the caller tells them apart by the route it called, not by the sentence, and
+unifying the wording was not part of that cut.
+
+One asymmetry is the engine's and is carried over, not invented: `kill` on a
+finished node *reports* that it had already finished and changes nothing, so that
+request is a `200` carrying the sentence; `detach` refuses it, so backgrounding a
+finished node is a `409`.
+
+A refusal changes nothing. The tests assert it by comparing `views.tree_view` or
+the session row before and after, not by trusting the status code.
+
+### The context meter: what exists, and what does not
+
+`ContextMeter.snapshot` and `session_cost` are enough for what the sidebar paints:
+the **projected** usage, its percentage of the window, the budget split and the
+bill. The projection keeps the terminal's rule that a cold session with a known
+window is at `0%` rather than `?`.
+
+Two honest limits travel with it:
+
+- **The fixed blocks are a measurement, not a constant.** `tools` and
+  `instructions` come from `ModelRequestParameters`, which exists only while a
+  request is being made. Their last value is stamped on the session and
+  `Composition` now restores it on construction and on `bind_session`, so the
+  budget of a loaded session is not optimistic. The terminal's own `bind_session`
+  still carries the same call; that copy goes in `tui-attach-v1`, when the
+  terminal stops binding state locally.
+- **The history is the checkpointed one.** The turn loop checkpoints about once a
+  second, so during a turn the newest steps can be a moment behind the transcript
+  the stream is painting. The route says `measured` and `projected` as they are
+  rather than projecting a history the server does not have yet.
+
+The `/debug` report is not here and does not need to be: it describes the request
+the client is inspecting, with its cache and compaction decisions, and those are
+per-request objects rather than session facts. Themes are presentation. `goto` is
+navigation inside a tree the client already has; none of the three changes what
+the next turn runs on.
+
+### What is still duplicated
+
+`views._turn_preview` and the terminal's `rollback_mixin._first_line_of_turn`
+build the same line from the same engine call, `prompt_of_turn`: the prompt that
+opened a turn, collapsed to one line and cut, with the image count appended. They
+stay two copies for this cut for the same reason part D's selection copies do —
+the terminal still owns its rendering and is not migrated yet, and a shared helper
+would need `rollback_mixin` to consume it in the same change or it would only add
+a third copy. The unification belongs to `tui-attach-v1`, when the terminal stops
+building its own previews.
+## The terminal's transport (part F)
+
+The terminal still executes in process. This part adds only the client it will use
+once it stops: `src/ui/service_client.py`, one `ServiceClient` per attached
+service. The widgets, the five mixins and the removal of the in-process fallback
+are `tui-attach-v1`; nothing here imports Textual or touches a screen.
+
+`ServiceClient.connect` asks `ensure_service` in
+[part C](#the-launcher-part-c) for a live service — attaching when one answers,
+launching when none does — and wraps the endpoint it gets. Every other method is
+one route, one typed value and one typed failure:
+
+| Method | Route | Replies |
+| --- | --- | --- |
+| `state()` | `GET /api/state` | the projection the screen paints from |
+| `durable()` | `GET /api/session/durable` | transcript, queue, deliveries, recoveries |
+| `send_turn(TurnRequest)` | `POST /api/turn` | `accepted`, `request_id`, stored image ids |
+| `abort()` | `POST /api/abort` | whether a turn was stopped |
+| `answer(id, answers)` | `POST /api/answer` | whether the question was still pending |
+| `events(after=…)` | `GET /events` | an async iterator of `ServiceEvent` |
+
+### Why `httpx` and not `urllib` in a thread
+
+The terminal is one asyncio loop: an event stream, a render loop and a turn share
+it. `urllib` and `http.client` are blocking, so every call would need
+`asyncio.to_thread`, and the stream — the one request that stays open for minutes
+— cannot go to a thread without a queue in front of it and a way to stop reading.
+`httpx.AsyncClient` provides an awaitable request, a cancellable read and a
+streaming body natively, and the parity tests already drive the real app through
+its ASGI transport. It is therefore declared in `pyproject.toml`: production code
+now imports it, even though it arrived transitively before.
+
+`ensure_service` is the one call that stays blocking, because it may spawn a
+process and watch for twenty seconds. `connect` runs it with `asyncio.to_thread`,
+so a service that takes its time to start does not freeze the screen.
+
+### The transport is a constructor argument
+
+`ServiceClient(endpoint, transport=…)` takes the HTTP transport, and that is what
+makes this module testable without a socket or a child process. Two double exist
+for two different jobs:
+
+- **`httpx.ASGITransport` against `create_app`** proves the wiring: the bearer
+  token is accepted, the state and the durable read come back as the projections
+  `views` defines, a turn carries its images in order, and each refusal arrives as
+  its named failure.
+- **A scripted transport** covers what the ASGI transport cannot. It buffers a
+  response and asserts it completed, so a stream that never ends cannot pass
+  through it. The scripted one hands over bytes a real server would produce only
+  by failing: an event cut before its blank line, a body that quotes the token.
+
+### The token is a header, and it is scrubbed
+
+The token is read from the endpoint file, put once into the client's default
+headers, and never written anywhere else. It is not in the base URL, so it cannot
+reach a proxy log through a request line. It is not in a message and not in
+`repr`: a client is printed in a debug report, and a report must not carry a
+credential. As a second barrier, every message the service sends is passed through
+the token before it becomes an exception — a service that echoes the credential in
+an error body becomes a redacted line in the terminal, not a leak.
+
+### The SSE parser is a state machine
+
+`SseDecoder` reads bytes and returns frames; it knows nothing about HTTP. A read
+can end in the middle of a field, of a line, of an event, or of a multi-byte
+character, so it accumulates, consumes whole lines and dispatches only on the
+blank line. It joins several `data:` lines with `\n`, ignores comment lines —
+including the service's `: keep-alive` heartbeat — and reads `\n`, `\r\n` and
+`\r`. An event cut before its blank line is held and never emitted: an incomplete
+frame is a broken event, not a short one.
+
+### One connection per stream, and the cursor belongs to the caller
+
+`events(after=…)` opens one connection and sends the cursor as both
+`Last-Event-ID` and `?after=`, because a browser resends the header by itself
+while a hand-rolled client passes the query, and the route reads either. Closing
+the iterator is a clean cut: the connection is released and nothing is raised.
+
+A stream the service ends on its own is `StreamInterrupted`, carrying
+`last_event_id`. Reconnecting is `events(after=that id)`, and the service replays
+what was missed — the reason every event carries a sequence number. The client
+does not reconnect by itself: that needs a delay between attempts, and a retry
+policy belongs to the screen that can also tell the person what is happening.
+
+### The typed failures
+
+| Failure | `code` | When | What the screen does |
+| --- | --- | --- | --- |
+| `ServiceUnavailable` | `service_unavailable` | nothing answered, or the launcher gave up | retry; `launch_code` says `service_starting` or `service_died` |
+| `Unauthorized` | `unauthorized` | `401`: the token is not this run's | attach again; this run is gone |
+| `ServiceBusy` | `busy` | `409`: the session is in the way | wait for the turn, then repeat |
+| `RequestRejected` | `rejected` | `400`: the request names something unusable | fix the message |
+| `PayloadTooLarge` | `too_large` | `413`: the body passed the command ceiling | fewer or smaller images |
+| `UnexpectedResponse` | `unexpected_response` | a status or body this client cannot name | report it; the service and the client disagree |
+| `StreamInterrupted` | `stream_interrupted` | the stream ended without being closed | `events(after=last_event_id)` |
+
+No `httpx` exception reaches the caller, and no failure is swallowed: a status the
+client does not know is `UnexpectedResponse` with the status in the message, not a
+silent `None`.
+
+### What is not decided here
+
+- **The widgets.** Streaming deltas into the transcript, questions, images and
+  rollback stay where they are; `tui-attach-v1` replaces their source, not their
+  behaviour.
+- **Retrying.** `TurnRequest` generates the `request_id` on the client and keeps
+  it, so retrying the same instance is the correct retry and a new instance is a
+  new message. How many times to retry, and when, is the caller's.
+- **The question deadline.** A client that disappears still holds a question open,
+  as it does today; the timeout in the risks list is not solved by adding a
+  transport.
+
+The tests live in `tests/test_ui_service_client.py`: unit tests for the protocol,
+ASGI contract tests for the routes, and scripted-transport tests for the stream.
+None of them sleeps, and none needs a port.
+
+## The terminal attached to the service (part G)
+
+The terminal no longer executes anything. `src/sigil.py` — the only production
+entry point — asks [part C](#the-launcher-part-c) for a live service, reads the
+state it projects, and builds the window over a `ServiceClient`. There is one
+executor per session: the service.
+
+This part is deliberately narrow. It moves **the conversation** onto the client and
+leaves every other panel where it is, so each remaining command can move with its
+own cut instead of half-moving all of them at once.
+
+### What moved, and what did not
+
+| Area | Now | Consequence |
+| --- | --- | --- |
+| Sending a message | `POST /api/turn` through `TurnMixin.submit_to_service` | the composer stays usable; the service decides turn or steer |
+| Streaming | `GET /events`, applied by `SigilApp.apply_service_event` | deltas, tool calls and results, turn boundaries, notices |
+| Steering | the same send, with the queued line marked until `steer_delivered` | the run reads it at its next seam, as before |
+| Stopping | `POST /api/abort`, after the same double `Esc` | the service kills the shells and cancels the run |
+| Questions | the same `QuestionPanel`, answered with `POST /api/answer` | the panel's keys and layout are unchanged |
+| Images | ordered `OutgoingImage`s with the `[Image #n]` marker | the picture that was attached is the one stored |
+| Reconnection | `events(after=last_event_id)`, then a state read | a gap is announced, never silently painted over |
+| Restart recovery | `ServiceClient.refresh_endpoint()` before the retry, then a fresh `/api/state` | the client re-discovers through the injected launcher, rebuilds its pool over the transport it was given, and restarts the cursor with the new run (see [When the service restarts](#when-the-service-restarts)) |
+| Commands | refused by `_refuse_command` | the handler would reach for a store and an engine this process does not own; the conversation works, the commands move over in a later cut (see below) |
+| Provider, agent, rollback, tree | unchanged, still local | those panels read files and rows this process can see |
+
+A slash command in an attached terminal does not run. `_refuse_command` answers it
+in the transcript and says why: the handler would reach for a store and an engine
+this process does not own, and failing inside a worker is a failure the user cannot
+read.
+
+### The first connection starts after the state, not at zero
+
+`/events` keeps a buffer for reconnections. A terminal that opened the stream at
+sequence zero would be handed everything still in it — a transcript the state it
+just read already describes — and paint it twice. So the first connection starts at
+`state['seq']`, and only a reconnection uses the last event applied. The two cursors
+answer different questions: *what have I already got* versus *what did I miss*.
+
+### When the service restarts
+
+The address is fixed when the client is built — every other request depends on that
+being a fact rather than a guess — so a restart cannot be absorbed silently. The
+follow loop is where it is handled: when nothing answers (`ServiceUnavailable`), it
+asks `ServiceClient.refresh_endpoint()` before dialling the same dead address again.
+
+That call re-discovers the service through the launcher the client was constructed
+with, compares the result with the endpoint it holds, and rebuilds only when host,
+port or token differ. Rebuilding is two steps: `_aim` takes the new address and
+credential, and `_build` makes a new pool over **the transport the client was
+given** — a rebuild that dropped it would dial the network from a test that handed
+the client a double — after which the old pool is closed.
+
+The cursor is the part that is easy to get wrong. Sequence numbers are **per run**:
+a restarted service numbers from one again. Reusing the cursor this screen had
+against the old run would open the new stream *after* a number the new service has
+not reached, and the terminal would follow a live conversation while silently
+skipping everything published before it caught up. So the recovery resets the cursor
+to zero, reads `/api/state` from the new service and takes the cursor from that
+answer — the same rule the first connection follows — then repaints the transcript
+from the new run's durable rows.
+
+In practice the screen ends up following whatever the new run has, which is not
+necessarily the conversation it was showing: the old conversation is durable, but a
+restarted service opens its own session and reattaching the terminal to the previous
+one is not part of this cut.
+
+### What is painted when the terminal attaches
+
+The stream continues a conversation; it is not one. So attaching paints the
+conversation the service already has, from `/api/session/durable` — one coherent read
+that carries the projected transcript and the queue together:
+
+| Painted | From | Detail |
+| --- | --- | --- |
+| A user line | `transcript` items of kind `user` | the text as it was typed, `[Image #n]` markers included, plus the description of each image (`1 image (640×480 PNG)`) |
+| An assistant block | `assistant` and `thinking` items | the answer and its reasoning, grouped per response |
+| A tool call | `tool_call`, then `tool_result` | name, arguments and the result the service presented, paired by `call_id`; a call with no result stays marked interrupted |
+| A waiting message | `pending` | painted with the queued mark, and retired when the service confirms delivery |
+
+What is **not** painted, and why:
+
+- **Timing on stored calls.** The projection carries no duration for a call that
+  already finished, so a stored tool row shows its outcome and not `120 ms` — and a
+  repainted conversation loses it for the same reason. Inventing one would be a number
+  nobody measured.
+- **A subagent's transcript.** The tree is a later cut; the durable read of the root
+  execution does not carry another execution's messages.
+- **Messages that exist only in a recovery copy.** They are listed as recoveries and
+  never merged into the transcript: merging two conversations would misrepresent both.
+
+The queue is painted as *waiting* rather than as history for the same reason the state
+exists at all: a message the run has not read is not part of the conversation yet. The
+confirmation event carries the service's own enqueue id, not the request id the
+terminal generated, so waiting lines are retired in queue order — the oldest one is the
+one the run read. A line painted from the durable read is removed on confirmation
+(it now belongs to the transcript); a line typed in this window only loses its mark,
+which is what a live turn has always done.
+
+A gap during a live turn **discards the block in progress**. The transcript is rebuilt
+from the rows and the deltas that follow open a new block, because an unknown number of
+deltas never arrived: a conversation with a hole in it reads better for a second and
+lies for as long as it is on screen.
+
+### What the terminal still holds locally
+
+Three things, and none of them can execute a turn:
+
+- **Preferences and themes** are this client's own: they describe the window, not
+  the conversation.
+- **The agent profiles and the roadmap** are files and rows it reads exactly as the
+  service does, for the panels that have not moved. The roadmap is where that goes
+  past reading: the terminal opens its own `RoadmapStore` through `RoadmapStores`
+  and writes to it, so the plan on screen is the file this process owns, not a
+  projection of the service's.
+- **A `_store` stand-in** (`_ServiceOwnedSession`) answers the one question the
+  composer asks before sending — *is anything newer than my copy?* — with the truth
+  for an attached terminal: there is no local copy, and the service is the only
+  writer of the **session and its queue**. It offers nothing else on purpose; a
+  local write to the conversation is the second executor this cut removes.
+
+The model service is **not** among them. Building it is building an engine, so the
+sidebar's model and context sections stay empty in an attached terminal until their
+own cut paints them from the state.
+
+### The test seam, and why it is allowed to exist
+
+`SigilApp` still accepts in-process collaborators — `agent=`, `store=`, `session=`.
+That is a seam, not a fallback, and it is fenced three ways:
+
+1. `client=` and `agent=`/`store=` are mutually exclusive; passing both raises.
+2. `src/sigil.py` passes a client and nothing else, and imports no `Composition`.
+   The production path has no agent to hand over even by mistake.
+3. The seam is named as such in the constructor's docstring, so the next reader
+   meets the decision instead of rediscovering it.
+
+`TurnMixin.run_turn` — the in-process turn loop, with its checkpoints, steering and
+abort — still exists behind that seam, because the ~40 widget tests that mount
+`SigilApp` assert on it directly. It is a real duplication of the turn loop that
+`src/server/runtime.py` already owns, and it is scheduled for deletion: when those
+tests mount a client (a fixture that starts a runtime, like
+`tests/test_ui_client.py`), `run_turn` goes with them. Until then, nothing may grow
+in it that both paths need — the moment a decision is written twice is the moment
+the two disagree.
+
+### What this cut does not cover
+
+Four gaps, each stated as it is:
+
+- **A rebuilt gap is a repaint, not a splice.** `report_stream_gap` announces the gap,
+  re-reads the state and repaints the transcript from the durable rows. The events
+  that never arrived are not recovered one by one, and the block being written is
+  discarded on purpose: an unknown number of deltas are missing, so continuing that
+  block would draw a sentence nobody said.
+- **Rollback from an attached terminal is not wired.** `GET /api/rollback` and
+  `POST /api/rollback` exist with the same behaviour as the in-process command, and
+  the parity tests cover them. The terminal never calls them: `SigilApp` is built
+  without a `Rollback`, so `snapshot_workspace` returns early and the file half of a
+  future rollback is never taken from an attached session. Rollback stays available
+  from a terminal that owns the engine.
+- **A stored tool call keeps exactly what the projection carries.** That is its name,
+  its `call_id`, its `args` and the result the service presented, so a stored call and
+  a live one paint the same. The exception is a *builtin* call: `views._part_view`
+  projects its name and its result text but no arguments, so a stored web search is
+  painted without them.
+- **No `duration_ms` for a stored call.** The absence is described under *Timing on
+  stored calls* above, and it is the same one a restarted or reconnected screen
+  inherits: `tool_finished` carries the measurement, nothing else does.
+
+### The tests
+
+`tests/test_ui_client.py` proves the wiring against the real application: real
+`create_app`, real `ServerRuntime`, real routes, real hub. The one substitution is
+`/events`, and it is explained where it happens: `httpx.ASGITransport` collects a
+response body and returns when the application finishes, so a stream that stays
+open for the life of a terminal cannot go through it. `_ServiceTransport` therefore
+splits by route — every request through ASGI, `/events` served from the runtime's
+own `EventHub` with `Event.to_sse()` and `replay(after)` — so the bytes, the cursor
+and the sequence numbers are the service's while the read side stays cuttable.
+
+Covered: sending to the durable queue, streaming into the transcript, steering,
+stopping with the two-press rule, a question answered over HTTP, an image with its
+marker, the first cursor, and a cut stream that announces the gap, resumes and
+re-reads the state. Nothing waits on a fixed sleep; every wait is for a row, a
+rendered line or a request count.

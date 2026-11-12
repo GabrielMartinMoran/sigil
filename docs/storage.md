@@ -1280,6 +1280,10 @@ CREATE TABLE accepted_inputs (
     UNIQUE (session_id, sequence)
 ) STRICT, WITHOUT ROWID;
 
+CREATE INDEX accepted_inputs_open
+    ON accepted_inputs(state)
+    WHERE state IN ('accepted', 'claimed', 'delivered');
+
 CREATE TABLE app_state (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -1311,7 +1315,7 @@ CREATE TABLE recovery_links (
     CHECK (destination_session_id IS NULL OR destination_session_id = destination_id)
 ) STRICT, WITHOUT ROWID;
 
-PRAGMA user_version = 7;
+PRAGMA user_version = 8;
 ```
 
 One consequence worth stating: `roadmap_items.execution_id` uses `''` for the
@@ -1334,6 +1338,44 @@ end in the same shape.
 | 5 | `sessions.mcp_overrides` |
 | 6 | `accepted_inputs` durable queue |
 | 7 | Roadmap revisions, delivery facts, and recovery links |
+| 8 | `accepted_inputs_open`, the partial index behind the idle check |
+
+Step 8 is one partial index, and it exists for one query. `AcceptedInputs.has_open`
+asks whether any row is still `accepted`, `claimed` or `delivered`, and the service
+asks it every half second for as long as it runs — see
+[idle shutdown](architecture.md#idle-shutdown). `accepted_inputs` only ever grows:
+terminal rows are never deleted, so an unindexed question gets slower every day.
+Without the index the query was a scan of the table: about **1 ms median** over
+20 000 terminal rows on the machine QA measured, and that cost grows with the
+table. With the index it is a lookup in the low microseconds — the difference is
+roughly 300×, which is the part worth trusting; the digits are one machine's and
+move by a hundred microseconds between runs. The predicate repeats the query's own
+— that is what lets SQLite use the index — and it covers only the three open
+states, so the index stays small however long the history gets.
+
+To reproduce the part that does not depend on the machine, ask SQLite for the plan
+of the query the runtime actually runs:
+
+```sh
+uv run pytest -q -p no:sugar \
+  tests/test_accepted_inputs.py::test_the_open_row_question_is_answered_from_a_partial_index
+```
+
+It asserts the plan for `OPEN_INPUTS_SQL` — the constant the runtime uses, not a
+copy of it — so it fails the moment the plan stops naming `accepted_inputs_open` or
+starts scanning, which is the regression that matters. Timings are not asserted
+anywhere: a slow shared runner would make them a flaky test, and the plan is what
+proves the shape. `tests/test_storage_migration_safety.py` upgrades a populated
+version 7 file and checks the rows and the plan after the step.
+
+Step 8 is also the only step added after the rest, and it changes nothing about the
+steps before it. A version 5 or 6 file upgraded by `HEAD` reached version 7 with
+its rows and its plan intact, and still does: steps 6 and 7 are untouched. What was
+wrong before this step existed was the documentation, not the migration — the table
+above listed step 8 ahead of step 7, and the DDL appendix did not show the index at
+all. A file written before step 8 simply has no index until the step adds it, which
+is what a new numbered step means; it is not a `HEAD` regression, and no version 5
+or 6 file is worse off for it.
 
 Version 7 adds the storage structures; delivery and recovery runtime behavior
 belongs to later slices. `roadmap_revisions` keeps a revision per execution even

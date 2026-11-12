@@ -22,8 +22,8 @@ import asyncio
 import json
 import mimetypes
 import os
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -31,9 +31,14 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from src.engine.agents.profile.models.agent_not_found import AgentNotFound
+from src.engine.agents.rollback import RollbackError
+from src.engine.agents.tree.models.summon_error import SummonError
+from src.engine.context.meter.cost import session_cost
+from src.engine.providers.domain.provider_error import BusyError, ProviderError
 from src.engine.sessions.catalog import catalog
 from src.engine.sessions.catalog import workspaces as discover_workspaces
 from src.engine.workspace.models.workspace_error import WorkspaceError
@@ -43,7 +48,7 @@ from src.server.auth import Auth, AuthMiddleware, LoginThrottle, cleared_cookie,
 from src.server.config import ServerConfig
 from src.server.endpoint import EndpointPublisher
 from src.server.events import EventHub
-from src.server.runtime import IncomingImage, ServerRuntime
+from src.server.runtime import DEFAULT_IDLE_GRACE, IDLE_POLL_INTERVAL, IncomingImage, ServerRuntime
 from src.server.webbuild import dist_root, staleness
 
 HEARTBEAT_SECONDS = 20.0
@@ -153,7 +158,23 @@ def _size(limit: int) -> str:
     return f'{limit} bytes'
 
 
-# --- payloads ---------------------------------------------------------------
+def _conflict(exc: Exception) -> JSONResponse:
+    """A command refused because the session is in the way, not the request.
+
+    A running turn, a turn that is not a point of this session: the request was
+    well formed and cannot be applied *now*, which is what ``409`` says. Repeating
+    it after the turn ends is the expected next step.
+    """
+    return JSONResponse({'error': str(exc)}, status_code=409)
+
+
+def _refused(exc: Exception) -> JSONResponse:
+    """A command refused because the request itself names something unusable.
+
+    An unknown account or profile, a level the model does not accept: a different
+    request would work, so the answer is ``400`` and not ``409``.
+    """
+    return JSONResponse({'error': str(exc)}, status_code=400)
 
 
 class LoginBody(BaseModel):
@@ -209,7 +230,108 @@ class SessionBody(BaseModel):
     id: str = Field(min_length=1)
 
 
+class ModelBody(BaseModel):
+    """A model to switch the session to.
+
+    ``thinking`` is optional: omitting it keeps the level the model would pick by
+    default, which is what the terminal's picker does when it only chooses a model.
+    """
+
+    account: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    thinking: str | None = None
+
+
+class EffortBody(BaseModel):
+    """The reasoning level to apply to the model in effect."""
+
+    effort: str = Field(min_length=1)
+
+
+class AgentBody(BaseModel):
+    """A profile to activate for the next turn."""
+
+    name: str = Field(min_length=1)
+
+
+class RollbackBody(BaseModel):
+    """A rollback point to return to.
+
+    ``files`` restores the workspace snapshot too; ``False`` puts the conversation
+    back and leaves the tree as it is, which is the other choice the picker offers.
+    """
+
+    turn_id: str = Field(min_length=1)
+    files: bool = True
+
+
+class ForkBody(BaseModel):
+    """A fork point: the instant before this turn becomes a new session."""
+
+    turn_id: str = Field(min_length=1)
+
+
+class NodeBody(BaseModel):
+    """A node of the session tree, by id or a unique prefix of it."""
+
+    node_id: str = Field(min_length=1)
+
+
+class McpBody(BaseModel):
+    """One MCP server to enable or disable for this session."""
+
+    name: str = Field(min_length=1)
+    enabled: bool
+
+
+class ExternalFilesBody(BaseModel):
+    """Whether the session may read files outside its workspace.
+
+    ``StrictBool`` on purpose: the terminal's `/external-files` refuses anything
+    that is not `allow` or `deny`, and a lax bool would read `"yes"` as consent to
+    a permission change nobody spelled out.
+    """
+
+    allow: StrictBool
+
+
 # --- the app ----------------------------------------------------------------
+
+
+class GracefulStop:
+    """A one-way request to leave the serving loop, bound once the loop exists.
+
+    The application is built before the server that runs it, and the server is
+    what can stop, so neither can be handed to the other directly. This is the
+    indirection: the app calls `request`, whoever runs the loop calls `bind`, and
+    the request is a flag rather than an exit so the loop still unwinds in order —
+    lifespan shutdown, endpoint removed, runtime closed, lock released.
+
+    A request made before a binding is kept and applied at `bind`: a grace window
+    shorter than the startup is legitimate configuration, and losing the request
+    would leave the process serving forever.
+    """
+
+    def __init__(self) -> None:
+        self._requested = False
+        self._stop: Callable[[], None] | None = None
+
+    @property
+    def requested(self) -> bool:
+        """Whether a stop has been asked for, bound or not."""
+        return self._requested
+
+    def bind(self, stop: Callable[[], None]) -> None:
+        """Attaches the loop's own switch, applying a request already made."""
+        self._stop = stop
+        if self._requested:
+            stop()
+
+    def request(self) -> None:
+        """Asks the serving loop to stop. Idempotent."""
+        self._requested = True
+        if self._stop is not None:
+            self._stop()
 
 
 def create_app(
@@ -218,6 +340,9 @@ def create_app(
     *,
     dist: Path | None = None,
     publisher: EndpointPublisher | None = None,
+    request_shutdown: Callable[[], None] | None = None,
+    idle_grace: float = DEFAULT_IDLE_GRACE,
+    idle_poll: float = IDLE_POLL_INTERVAL,
 ) -> FastAPI:
     """Builds the application around a runtime that is already wired.
 
@@ -229,6 +354,13 @@ def create_app(
     the lifespan is the only hook that runs *after* the listening socket exists and
     *before* the process is gone. ``None`` means "this app is not a discoverable
     service": a test that mounts the app in-process publishes nothing.
+
+    ``request_shutdown`` is how the service stops itself when there is no work left:
+    it is called once, ``idle_grace`` seconds after the last turn ended and the last
+    non-terminal queue row in the database was resolved, and it must end the serving
+    loop gracefully rather than exit the process. ``None`` means nobody can stop this
+    app — an in-process mount, or a runner that owns its own lifetime — and no watch
+    is started at all, so a test never loses its server to a timer.
     """
     auth = Auth(config.password, service_token=publisher.token if publisher is not None else None)
     throttle = LoginThrottle()
@@ -244,9 +376,23 @@ def create_app(
         # never told about a port that is not there yet.
         if publisher is not None:
             publisher.publish(host=config.host, port=config.port)
+        watch = (
+            None
+            if request_shutdown is None
+            else asyncio.get_running_loop().create_task(
+                runtime.stop_when_idle(request_shutdown, grace=idle_grace, poll=idle_poll)
+            )
+        )
         try:
             yield
         finally:
+            # The watch stops first: a request to leave *while* the loop is already
+            # leaving is at best noise, and at worst a second attempt on a runtime
+            # that is unwinding.
+            if watch is not None:
+                watch.cancel()
+                with suppress(asyncio.CancelledError):
+                    await watch
             # Unpublish first: a client that finds the file while the server is closing
             # should fail to connect rather than attach to a runtime that is unwinding.
             if publisher is not None:
@@ -357,8 +503,17 @@ def create_app(
 
     @app.get('/api/session/durable')
     async def durable() -> dict[str, Any]:
-        """The durable transcript, queue overlay and recovery facts in one read."""
-        return views.durable_session(runtime.composition.store.database, runtime.session.id)
+        """The durable transcript, queue overlay and recovery facts in one read.
+
+        A session that exists only in memory has no row to project. That is a typed
+        404 — "nothing yet" — and not a failure: a terminal attached to a conversation
+        that has not started is in a normal state, and answering 500 painted an error
+        banner about mismatched versions on a service that was answering correctly.
+        """
+        try:
+            return views.durable_session(runtime.composition.store.database, runtime.session.id)
+        except views.SessionNotStored as exc:
+            return JSONResponse({'error': str(exc)}, status_code=404)  # type: ignore[return-value]
 
     @app.get('/api/sessions')
     async def sessions() -> dict[str, Any]:
@@ -471,6 +626,163 @@ def create_app(
             ],
         }
 
+    @app.post('/api/model')
+    async def change_model(body: ModelBody) -> dict[str, Any]:
+        """Switches the model of the session, refused while a turn runs.
+
+        The refusal is the engine's (`BusyError` from `ModelService.select`), which
+        is the one the terminal gets from the same call. Any other provider failure
+        — an unknown account, a model the catalogue does not know, a level the
+        model does not accept — is a request that cannot be satisfied.
+        """
+        try:
+            snapshot = runtime.set_model(body.account, body.model, body.thinking or 'default')
+        except BusyError as exc:
+            return _conflict(exc)  # type: ignore[return-value]
+        except ProviderError as exc:
+            return _refused(exc)  # type: ignore[return-value]
+        return {'model': views.model_view(snapshot)}
+
+    @app.post('/api/effort')
+    async def change_effort(body: EffortBody) -> dict[str, Any]:
+        """Sets the reasoning level, effective on the next step and not this one."""
+        try:
+            snapshot = runtime.set_effort(body.effort)
+        except BusyError as exc:
+            return _conflict(exc)  # type: ignore[return-value]
+        except ProviderError as exc:
+            return _refused(exc)  # type: ignore[return-value]
+        return {'model': views.model_view(snapshot)}
+
+    @app.post('/api/agent')
+    async def change_agent(body: AgentBody) -> dict[str, Any]:
+        """Activates an agent profile for the next turn, refused while one runs."""
+        try:
+            profile = runtime.select_agent(body.name)
+        except RuntimeError as exc:
+            return _conflict(exc)  # type: ignore[return-value]
+        except (AgentNotFound, ProviderError) as exc:
+            return _refused(exc)  # type: ignore[return-value]
+        registry = runtime.composition.agent_registry
+        return {
+            'agent': views.agent_view(profile, active=True),
+            'agents': [views.agent_view(item, active=item.name == registry.active_name) for item in registry.list()],
+        }
+
+    @app.get('/api/rollback')
+    async def rollback_points() -> dict[str, Any]:
+        """The turns the open session can return to, newest first."""
+        composition = runtime.composition
+        return {
+            'points': views.rollback_points(composition.store.database, runtime.rollback_points()),
+        }
+
+    @app.post('/api/rollback')
+    async def rollback(body: RollbackBody) -> dict[str, Any]:
+        """Returns the session to before a turn, rows and optionally files.
+
+        Off the event loop: the filesystem half diffs and restores the workspace,
+        and a stream must keep flowing while it does. The reply carries the session
+        projection because the transcript is shorter now and the client has to
+        repaint from the new truth.
+        """
+        try:
+            outcome = await asyncio.to_thread(runtime.rollback, body.turn_id, files=body.files)
+        except (RuntimeError, LookupError, RollbackError) as exc:
+            return _conflict(exc)  # type: ignore[return-value]
+        return {'rollback': views.rollback_view(outcome), 'session': views.session_view(runtime.session)}
+
+    @app.post('/api/fork')
+    async def fork(body: ForkBody) -> dict[str, Any]:
+        """Branches a new session at the instant before a turn. Nothing is destroyed."""
+        try:
+            outcome = await asyncio.to_thread(runtime.fork, body.turn_id)
+        except (RuntimeError, LookupError, RollbackError) as exc:
+            return _conflict(exc)  # type: ignore[return-value]
+        return {'fork': views.fork_view(outcome)}
+
+    # --- the tree ------------------------------------------------------
+
+    @app.post('/api/tree/stop')
+    async def stop_node(body: NodeBody) -> dict[str, Any]:
+        """Stops a subagent and everything it summoned.
+
+        The refusals are the terminal's: an id that names no node is a request
+        that cannot be satisfied, and the session's own agent is not a subagent.
+        """
+        try:
+            node, message = runtime.stop_node(body.node_id)
+        except LookupError as exc:
+            return _refused(exc)  # type: ignore[return-value]
+        except SummonError as exc:
+            return _conflict(exc)  # type: ignore[return-value]
+        return _tree_reply(runtime, node, message)
+
+    @app.post('/api/tree/background')
+    async def background_node(body: NodeBody) -> dict[str, Any]:
+        """Sends a running subagent to the background: it answers as a message later."""
+        try:
+            node, message = runtime.background_node(body.node_id)
+        except LookupError as exc:
+            return _refused(exc)  # type: ignore[return-value]
+        except SummonError as exc:
+            return _conflict(exc)  # type: ignore[return-value]
+        return _tree_reply(runtime, node, message)
+
+    @app.get('/api/tree/node/{node_id}')
+    async def node_transcript(node_id: str) -> dict[str, Any]:
+        """The messages of one execution, as the terminal's subagent view paints them.
+
+        The root keeps no messages of its own: its conversation is the session's,
+        and `/api/session/transcript` is where it is read.
+        """
+        try:
+            node = runtime.node(node_id)
+        except LookupError as exc:
+            return _refused(exc)  # type: ignore[return-value]
+        return {'node': views.node_view(node, include_messages=True)}
+
+    # --- session settings ----------------------------------------------
+
+    @app.post('/api/mcp')
+    async def toggle_mcp(body: McpBody) -> dict[str, Any]:
+        """Enables or disables one MCP server for this session, and remembers it.
+
+        Refused mid-turn and while a subagent runs, the two criteria the terminal
+        applies to `/mcp`.
+        """
+        try:
+            session = await runtime.toggle_mcp(body.name, body.enabled)
+        except RuntimeError as exc:
+            return _conflict(exc)  # type: ignore[return-value]
+        except LookupError as exc:
+            return _refused(exc)  # type: ignore[return-value]
+        return {'session': views.session_view(session), 'mcp': await _mcp_state(runtime.composition)}
+
+    @app.post('/api/external-files')
+    async def external_files(body: ExternalFilesBody) -> dict[str, Any]:
+        """Allows or denies file access outside the workspace for this session.
+
+        Refused mid-turn, like the terminal's `/external-files`.
+        """
+        try:
+            session = runtime.set_external_files(body.allow)
+        except RuntimeError as exc:
+            return _conflict(exc)  # type: ignore[return-value]
+        return {'session': views.session_view(session)}
+
+    @app.get('/api/context')
+    async def context() -> dict[str, Any]:
+        """How full the window is and what the session has cost, from the meter.
+
+        The measurement is of the session's own history, which the turn loop
+        checkpoints as it advances; a running turn's newest steps can therefore be
+        a moment behind the transcript the stream is painting.
+        """
+        meter = runtime.composition.meter
+        messages = runtime.session.messages
+        return {'context': views.context_view(meter.snapshot(messages), session_cost(messages))}
+
     # --- events --------------------------------------------------------
 
     @app.get('/events')
@@ -528,6 +840,20 @@ def create_app(
             )
 
     return app
+
+
+def _tree_reply(runtime: ServerRuntime, node: Any, message: str) -> dict[str, Any]:
+    """A tree action's reply: the node, the tree it lives in, and the engine's sentence.
+
+    The tree travels with the node because stopping a node stops everything under
+    it: a client that painted only the row would leave its children saying they
+    are still working.
+    """
+    return {
+        'node': views.node_view(node),
+        'tree': views.tree_view(runtime.composition.agent_trees.active),
+        'message': message,
+    }
 
 
 async def _state(runtime: ServerRuntime) -> dict[str, Any]:
@@ -631,4 +957,4 @@ def encode(event: Any) -> str:
     return json.dumps(event, ensure_ascii=False)
 
 
-__all__ = ['create_app', 'encode']
+__all__ = ['GracefulStop', 'create_app', 'encode']

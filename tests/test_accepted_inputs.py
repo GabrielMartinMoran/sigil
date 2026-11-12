@@ -531,3 +531,21 @@ def test_distinct_requests_with_identical_text_are_distinct_messages(tmp_path: P
     assert (second.request_id, second.sequence) == (second_id, 2)
     assert store.accept_input(session, first_id, 'identical', [], 'turn') == first
     assert len(AcceptedInputs(store.database).list(session.id)) == 2
+
+
+def test_the_open_row_question_is_answered_from_a_partial_index(tmp_path: Path) -> None:
+    """The runtime asks this on a timer, so the table must not be scanned.
+
+    `accepted_inputs` only grows, and the service asks "is any row still open" every
+    half second for as long as it runs. `accepted_inputs_open` is a partial index over
+    exactly the three open states, so the question is a lookup. This asserts the plan
+    SQLite reports for the query the runtime actually runs — `OPEN_INPUTS_SQL`, not a
+    copy of it — rather than the intention behind the index.
+    """
+    from src.engine.storage.accepted_inputs import OPEN_INPUTS_SQL
+
+    store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'db')
+    plan = ' '.join(str(row['detail']) for row in store.database.query(f'EXPLAIN QUERY PLAN {OPEN_INPUTS_SQL}'))
+
+    assert 'accepted_inputs_open' in plan, plan
+    assert 'SCAN' not in plan, plan

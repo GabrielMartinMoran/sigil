@@ -22,12 +22,16 @@ from typing import Any
 
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelMessagesTypeAdapter
 
+from src.engine.agents.rollback import Checkpoint, ForkOutcome, RollbackOutcome, prompt_of_turn
 from src.engine.agents.tree.models.agent_node import AgentNode
 from src.engine.agents.tree.tree import AgentTree
 from src.engine.context.images import image_size
+from src.engine.context.meter.cost import SessionCost
+from src.engine.context.meter.snapshot import ContextSnapshot
 from src.engine.mcp.tool_models.server_status import ServerStatus
 from src.engine.roadmap.models.todo_item import TodoItem
 from src.engine.sessions.session_store import Session, SessionSummary
+from src.engine.sessions.titling import shorten
 from src.engine.skills.loaded import loaded_skills
 from src.engine.storage.accepted_inputs import _record
 from src.engine.storage.database import Database
@@ -42,6 +46,18 @@ MAX_ITEM_CHARS = 200_000
 A single tool result is already capped by the engine; this is the backstop for a
 transcript read that would otherwise put a hundred megabytes in one JSON body.
 """
+
+
+class SessionNotStored(LookupError):
+    """The session exists only in memory, so there is no durable row to project.
+
+    ``Composition`` opens a *draft* session — an id and a workspace with nothing
+    saved under it yet — until the first message gives it a title and a row. Asking
+    for its transcript is a legitimate question with a legitimate answer, "nothing
+    yet", and it is not a server failure: the route answers a typed 404 that a client
+    reads as an empty conversation. It stays a `LookupError` so every caller that
+    already treats a missing row that way keeps working.
+    """
 
 
 def _text(value: Any) -> str:
@@ -139,7 +155,13 @@ def repositories_view(
 
 
 def session_view(session: Session) -> dict[str, Any]:
-    """The open conversation: what it is called and what it runs on."""
+    """The open conversation: what it is called and what it runs on.
+
+    ``external_files`` and ``mcp_overrides`` are the two settings of the session
+    that a client can toggle. They travel here because the row is where they
+    live: a command that changed one has to be readable from the same projection
+    the screen is painted from, not only from its own reply.
+    """
     return {
         'id': session.id,
         'short_id': session.short_id,
@@ -150,6 +172,8 @@ def session_view(session: Session) -> dict[str, Any]:
         'created_at': session.created_at,
         'updated_at': session.updated_at,
         'messages': len(session.messages),
+        'external_files': session.allow_external_files,
+        'mcp_overrides': dict(session.mcp_overrides),
     }
 
 
@@ -268,7 +292,7 @@ def durable_session(database: Database, session_id: str) -> dict[str, Any]:
     with database.transaction() as conn:
         row = conn.execute('SELECT id, title, updated_at, preview FROM sessions WHERE id = ?', (session_id,)).fetchone()
         if row is None:
-            raise LookupError(f'No session {session_id}.')
+            raise SessionNotStored(f'No session {session_id}.')
         messages = [
             ModelMessagesTypeAdapter.validate_python([json.loads(str(message['payload']))])[0]
             for message in conn.execute(
@@ -550,13 +574,131 @@ def agent_view(profile: Any, *, active: bool) -> dict[str, Any]:
     }
 
 
+def rollback_points(database: Database, checkpoints: list[Checkpoint]) -> list[dict[str, Any]]:
+    """The turns a session can return to, newest first, with what opened each one.
+
+    ``preview`` is the first line of the prompt that started the turn, not the
+    turn's first message: a point is identified by what the user typed, and the
+    first message of a turn can be a thought or a tool result. It is the same
+    rule the terminal's picker applies, projected here so both clients list the
+    same points in the same order.
+    """
+    return [
+        rollback_point_view(checkpoint, preview=_turn_preview(database, checkpoint.turn_id))
+        for checkpoint in checkpoints
+    ]
+
+
+def rollback_point_view(checkpoint: Checkpoint, *, preview: str) -> dict[str, Any]:
+    """One point of the rollback list.
+
+    The file cost of a restore is deliberately absent: it is a diff of the
+    workspace, and a projection that cannot compute it leaves the field out
+    instead of estimating one.
+    """
+    return {
+        'turn_id': checkpoint.turn_id,
+        'at': checkpoint.at,
+        'reason': checkpoint.reason,
+        'label': checkpoint.label,
+        'preview': preview,
+        'tree_commit': checkpoint.tree_commit,
+    }
+
+
+def rollback_view(outcome: RollbackOutcome) -> dict[str, Any]:
+    """What a rollback did, as data: the counts are the engine's, not an estimate."""
+    return {
+        'target_turn_id': outcome.target_turn_id,
+        'turns_dropped': outcome.turns_dropped,
+        'executions_dropped': outcome.executions_dropped,
+        'messages_dropped': outcome.messages_dropped,
+        'files_restored': outcome.files_restored,
+        'files_deleted': outcome.files_deleted,
+        'files_unavailable': outcome.files_unavailable,
+        'undo_checkpoint': outcome.undo_checkpoint,
+    }
+
+
+def fork_view(outcome: ForkOutcome) -> dict[str, Any]:
+    """The session a fork created and how much of the conversation it kept."""
+    return {
+        'session_id': outcome.session_id,
+        'turns_copied': outcome.turns_copied,
+        'messages_copied': outcome.messages_copied,
+        'executions_copied': outcome.executions_copied,
+    }
+
+
+def context_view(snapshot: ContextSnapshot, cost: SessionCost) -> dict[str, Any]:
+    """How full the window is and what the session has cost, from the meter.
+
+    ``used`` and ``percent`` are the **projected** numbers, the same pair the
+    terminal's sidebar paints: the question is whether the next request fits, and
+    the measured value describes the request that already happened. With a window
+    and nothing measured the real usage is zero — a cold session paints 0%, not
+    `?`, which is the rule the terminal applies.
+
+    ``budget`` travels with the usage because the window is not all available:
+    the tool schemas and the instruction blocks are sent on every request. They
+    are the meter's measurements, and a session that has not made a request in
+    this process has none yet; the numbers say that rather than guessing.
+    """
+    used = snapshot.projected
+    percent = snapshot.projected_percent
+    if used is None and snapshot.window:
+        used = 0
+        percent = 0.0
+    budget = snapshot.budget
+    return {
+        'window': snapshot.window,
+        'used': used,
+        'percent': percent,
+        'measured': snapshot.measured,
+        'projected': snapshot.projected,
+        'budget': {
+            'tools': budget.tools,
+            'instructions': budget.instructions,
+            'output_reserve': budget.output_reserve,
+            'safety_reserve': budget.safety_reserve,
+            'available_for_history': budget.available_for_history,
+        },
+        'cost': {
+            'total': None if cost.total is None else str(cost.total),
+            'approximate': cost.approximate,
+            'requests': cost.requests,
+        },
+    }
+
+
+def _turn_preview(database: Database, turn_id: str | None) -> str:
+    """The prompt that opened a turn, on one line, or ``''`` when it is gone."""
+    if turn_id is None:
+        return ''
+    prompt = prompt_of_turn(database, turn_id)
+    if prompt is None:
+        return ''
+    text, images = prompt
+    line = shorten(' '.join(text.split()))
+    if not images:
+        return line
+    plural = 'image' if len(images) == 1 else 'images'
+    return f'{line} +{len(images)} {plural}'.strip()
+
+
 __all__ = [
     'MAX_ITEM_CHARS',
+    'SessionNotStored',
     'agent_view',
+    'context_view',
+    'fork_view',
     'mcp_view',
     'model_view',
     'node_view',
     'roadmap_view',
+    'rollback_point_view',
+    'rollback_points',
+    'rollback_view',
     'session_view',
     'skills_view',
     'summary_view',

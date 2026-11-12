@@ -17,6 +17,8 @@ import base64
 import io
 import json
 import struct
+import subprocess
+import sys
 import zlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -28,11 +30,16 @@ from PIL import Image
 from pydantic_ai.models.test import TestModel
 from starlette.types import Message, Receive, Scope, Send
 
+from src.engine.agents.profile.models.agent_role import AgentRole
+from src.engine.agents.tree.models.agent_node import AgentNode
+from src.engine.agents.tree.models.node_status import NodeStatus
+from src.engine.agents.tree.models.summon_error import SummonError
 from src.engine.bootstrap import Composition
 from src.engine.settings import load_settings
 from src.server.app import BodyLimitMiddleware, create_app
 from src.server.config import ServerConfig
 from src.server.events import EventHub
+from src.server.ownership import OwnershipError, ServerOwnership
 from src.server.runtime import ServerRuntime
 
 
@@ -904,3 +911,266 @@ def test_an_unauthenticated_body_is_refused_before_the_ceiling(
 
     response = asyncio.run(go())
     assert response.status_code == 401
+
+
+# --- the ownership lock the runtime holds, own or adopted -------------------
+
+ROOT = Path(__file__).resolve().parents[1]
+"""The checkout, so a child process can import `src.*` without `PYTHONPATH`."""
+
+OTHER_PROCESS = """
+import sys
+
+from src.server.ownership import OwnershipError, ServerOwnership
+
+try:
+    ServerOwnership({database!r}).acquire()
+except OwnershipError:
+    print('REFUSED')
+else:
+    print('ACQUIRED')
+"""
+
+
+def _other_process(database: str | Path) -> str:
+    """Asks a real child process whether it may serve this store, and reports its answer."""
+
+    result = subprocess.run(
+        [sys.executable, '-c', OTHER_PROCESS.format(database=str(database))],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    return result.stdout.strip()
+
+
+def test_an_adopted_ownership_is_not_acquired_a_second_time(composition: Composition) -> None:
+    """The runtime takes the lock it was handed instead of opening the same file again.
+
+    `flock` treats two descriptors of one process as two holders, so acquiring a
+    second time would refuse this very process — after the engine was already
+    built, which is the one place it must not fail.
+    """
+
+    ownership = ServerOwnership(composition.store.database.path)
+    ownership.acquire()
+    runtime = ServerRuntime(composition, EventHub(), ownership=ownership)
+    try:
+        runtime.start()
+
+        assert ownership.held is True
+        with pytest.raises(OwnershipError):
+            ServerOwnership(composition.store.database.path).acquire()
+    finally:
+        runtime.close()
+
+    assert ownership.held is False
+
+
+def test_the_adopted_lock_is_what_refuses_another_process(composition: Composition) -> None:
+    """The lock covers composing the engine, not only the serving loop after it."""
+
+    ownership = ServerOwnership(composition.store.database.path)
+    ownership.acquire()
+    runtime = ServerRuntime(composition, EventHub(), ownership=ownership)
+    try:
+        runtime.start()
+        # The engine already exists when this line runs, and this process excludes.
+        assert _other_process(composition.store.database.path) == 'REFUSED'
+    finally:
+        runtime.close()
+
+    assert _other_process(composition.store.database.path) == 'ACQUIRED'
+
+
+def test_close_releases_an_ownership_the_runtime_took_itself(composition: Composition) -> None:
+    runtime = ServerRuntime(composition, EventHub())
+    runtime.start()
+
+    runtime.close()
+
+    assert _other_process(composition.store.database.path) == 'ACQUIRED'
+
+
+def test_close_releases_an_adopted_ownership_that_never_started(composition: Composition) -> None:
+    """A runtime that exists but never served must not keep the store locked."""
+
+    ownership = ServerOwnership(composition.store.database.path)
+    ownership.acquire()
+    runtime = ServerRuntime(composition, EventHub(), ownership=ownership)
+
+    runtime.close()
+
+    assert ownership.held is False
+    assert _other_process(composition.store.database.path) == 'ACQUIRED'
+
+
+def test_close_twice_is_safe_for_an_adopted_ownership(composition: Composition) -> None:
+    """Closing again releases nothing twice and raises nothing."""
+
+    ownership = ServerOwnership(composition.store.database.path)
+    ownership.acquire()
+    runtime = ServerRuntime(composition, EventHub(), ownership=ownership)
+    runtime.start()
+
+    runtime.close()
+    runtime.close()
+
+    assert ownership.held is False
+    assert _other_process(composition.store.database.path) == 'ACQUIRED'
+
+
+# --- the engine decisions a client command calls ----------------------------
+#
+# `test_server_parity.py` proves the transport: status codes, projections and the
+# state read back over HTTP. These prove the decision itself, at the level where
+# the refusal is made, which is cheaper than a second HTTP pass and is where a
+# regression in the rule would show up first.
+
+
+def _node(composition: Composition, *, mode: str = 'sync') -> AgentNode:
+    """A running node of the real tree, hanging from its root."""
+    return composition.agent_trees.active.add(
+        parent_id=None,
+        name='reviewer',
+        role=AgentRole.SUBAGENT,
+        task='Review the diff.',
+        mode=mode,
+        model='test',
+    )
+
+
+def _composition_with_mcp(tmp_path: Path) -> Composition:
+    """A composition whose config declares one MCP server, which is never loaded.
+
+    The durable half of the toggle is the session override, and it has to be
+    provable without starting `npx`: the layer is built on a worker by a serving
+    app, and none of these decisions depends on it being there.
+    """
+    home = tmp_path / '.sigil'
+    home.mkdir(exist_ok=True)
+    (home / 'config.json').write_text(json.dumps({'mcp_servers': {'probe': {'command': 'npx'}}}), encoding='utf-8')
+    composition = Composition(
+        tmp_path,
+        settings=load_settings(),
+        model=TestModel(custom_output_text='done', call_tools=[]),
+        provider_paths=_paths(tmp_path),
+    )
+    composition.meter.set_window(100_000)
+    return composition
+
+
+def test_a_subagent_is_stopped_along_with_everything_it_summoned(composition: Composition) -> None:
+    parent = _node(composition)
+    child = composition.agent_trees.active.add(
+        parent_id=parent.id,
+        name='reviewer',
+        role=AgentRole.SUBAGENT,
+        task='Child.',
+        model='test',
+    )
+
+    message = composition.stop_subagent(parent.id)
+
+    assert 'stopped' in message
+    assert parent.status is NodeStatus.CANCELLED
+    assert child.status is NodeStatus.CANCELLED
+
+
+def test_the_engine_refuses_to_stop_the_session_agent(composition: Composition) -> None:
+    """The rule lives in the summoner, so the root is refused below the route too."""
+
+    root = composition.agent_trees.active.root
+    assert root is not None
+
+    with pytest.raises(SummonError, match='not a subagent'):
+        composition.stop_subagent(root.id)
+
+    assert root.status is NodeStatus.RUNNING
+
+
+def test_the_engine_refuses_an_unknown_node_for_both_actions(composition: Composition) -> None:
+    with pytest.raises(SummonError, match='No agent with id'):
+        composition.stop_subagent('nope')
+
+    with pytest.raises(SummonError, match='No agent with id'):
+        composition.background_subagent('nope')
+
+
+def test_backgrounding_flips_the_mode_and_keeps_the_node_working(composition: Composition) -> None:
+    node = _node(composition)
+
+    message = composition.background_subagent(node.id)
+
+    assert 'background' in message
+    assert node.mode == 'async'
+    assert node.status is NodeStatus.RUNNING
+
+
+def test_the_engine_refuses_to_background_the_session_agent(composition: Composition) -> None:
+    """`detach` cannot know this one: the root has no parent waiting for an answer."""
+
+    root = composition.agent_trees.active.root
+    assert root is not None
+
+    with pytest.raises(SummonError, match='not a subagent'):
+        composition.background_subagent(root.id)
+
+    assert root.mode == 'sync'
+
+
+def test_a_finished_node_cannot_be_backgrounded(composition: Composition) -> None:
+    node = _node(composition)
+    composition.stop_subagent(node.id)
+
+    with pytest.raises(SummonError, match='already finished'):
+        composition.background_subagent(node.id)
+
+    assert node.status is NodeStatus.CANCELLED
+
+
+def test_external_files_is_written_on_the_row(composition: Composition) -> None:
+    session = composition.store.create_session()
+    composition.bind_session(session)
+
+    composition.apply_external_files(True)
+
+    assert composition.session.allow_external_files is True
+    stored = composition.store.load(session.id)
+    assert stored is not None
+    assert stored.allow_external_files is True
+
+    composition.apply_external_files(False)
+
+    again = composition.store.load(session.id)
+    assert again is not None
+    assert again.allow_external_files is False
+
+
+def test_the_mcp_override_is_written_on_the_row(tmp_path: Path) -> None:
+    composition = _composition_with_mcp(tmp_path)
+    session = composition.store.create_session()
+    composition.bind_session(session)
+
+    asyncio.run(composition.apply_mcp_override('probe', False))
+
+    assert composition.session.mcp_overrides == {'probe': False}
+    stored = composition.store.load(session.id)
+    assert stored is not None
+    assert stored.mcp_overrides == {'probe': False}
+
+
+def test_an_unknown_mcp_server_changes_nothing(tmp_path: Path) -> None:
+    composition = _composition_with_mcp(tmp_path)
+    session = composition.store.create_session()
+    composition.bind_session(session)
+
+    with pytest.raises(LookupError, match='No MCP server named'):
+        asyncio.run(composition.apply_mcp_override('ghost', False))
+
+    assert composition.session.mcp_overrides == {}
+    stored = composition.store.load(session.id)
+    assert stored is not None
+    assert stored.mcp_overrides == {}

@@ -15,6 +15,15 @@ from typing import Literal
 from src.engine.attachments.image_attachment import new_image_id
 from src.engine.storage.database import Database
 
+OPEN_INPUTS_SQL = "SELECT 1 FROM accepted_inputs WHERE state IN ('accepted', 'claimed', 'delivered') LIMIT 1"
+"""The runtime's ``is anything still open`` question, named so its plan can be tested.
+
+The predicate is the whole of it, and it matches ``accepted_inputs_open`` exactly — the
+partial index over the three open states, added in schema step 8. That table only
+grows and this runs on a timer, so the match is what keeps the poll a lookup instead
+of a scan.
+"""
+
 InputKind = Literal['turn', 'steer']
 InputState = Literal['accepted', 'claimed', 'delivered', 'finished', 'stopped', 'interrupted']
 _TRANSITIONS = {
@@ -188,6 +197,15 @@ class AcceptedInputs:
             if row is None:
                 return None
             return self.transition(session_id, str(row[0]), 'claimed', attempt_id=attempt_id, conn=conn)
+
+    def has_open(self) -> bool:
+        """Database-wide: whether any input anywhere is still non-terminal.
+
+        The service serves one database, not one session, so a row another client
+        accepted is work this process must not stop in the middle of. Read-only and
+        cheap enough to ask on a timer: it stops at the first open row.
+        """
+        return self.database.one(OPEN_INPUTS_SQL) is not None
 
     def interrupt_open(self) -> int:
         """Database-wide: marks every non-terminal input interrupted, without executing."""
