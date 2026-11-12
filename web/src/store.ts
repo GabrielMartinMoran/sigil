@@ -12,7 +12,15 @@ import { create } from 'zustand';
 import { ApiError, api, Unauthorized } from './api';
 import { finishTool } from './toolPresentation';
 import type { ToolView } from './toolPresentation';
-import type { LoginState, RepositoryGroup, SessionSummary, State, TranscriptItem } from './types';
+import type {
+  DurableEntry,
+  DurableSession,
+  LoginState,
+  RepositoryGroup,
+  SessionSummary,
+  State,
+  TranscriptItem,
+} from './types';
 
 export type Phase = 'loading' | 'login' | 'ready' | 'error';
 
@@ -34,6 +42,8 @@ type Store = {
 
   state: State | null;
   items: TranscriptItem[];
+  durable: DurableSession | null;
+  pendingSend: { requestId: string; text: string } | null;
   stream: Stream;
   busy: boolean;
 
@@ -46,10 +56,12 @@ type Store = {
 
   refresh: () => Promise<void>;
   refetchTranscript: () => Promise<void>;
+  refreshDurable: () => Promise<void>;
+  openRecovery: (id: string) => Promise<void>;
   loadSessions: () => Promise<void>;
   loadWorkspaces: () => Promise<void>;
 
-  send: (text: string) => Promise<void>;
+  send: (text: string) => Promise<boolean>;
   abort: () => Promise<void>;
   answer: (id: string, answers: { question: string; answer: string; custom?: boolean }[] | null) => Promise<void>;
   newSession: () => Promise<void>;
@@ -81,6 +93,28 @@ function report(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+export type DurableSections = {
+  pending: DurableEntry[];
+  undelivered: DurableEntry[];
+  conflicted: DurableEntry[];
+  recoveries: { recovery_session_id: string; available: boolean; canOpen: boolean }[];
+};
+
+export function durableSections(durable: DurableSession | null, busy: boolean): DurableSections {
+  if (durable === null) return { pending: [], undelivered: [], conflicted: [], recoveries: [] };
+  return {
+    pending: durable.pending,
+    undelivered: durable.queue.filter(
+      (entry) => (entry.state === 'stopped' || entry.state === 'interrupted') && !entry.delivered,
+    ),
+    conflicted: durable.conflicted_entries,
+    recoveries: durable.recoveries.map((recovery) => ({
+      ...recovery,
+      canOpen: recovery.available && !busy,
+    })),
+  };
+}
+
 export const useStore = create<Store>((set, get) => ({
   phase: 'loading',
   status: null,
@@ -88,6 +122,8 @@ export const useStore = create<Store>((set, get) => ({
   notice: '',
   state: null,
   items: [],
+  durable: null,
+  pendingSend: null,
   stream: emptyStream(),
   busy: false,
   sessions: [],
@@ -138,6 +174,15 @@ export const useStore = create<Store>((set, get) => ({
   async refetchTranscript() {
     const body = await api.transcript();
     set({ items: body.items, stream: emptyStream() });
+    void get().refreshDurable();
+  },
+
+  async refreshDurable() {
+    try {
+      set({ durable: await api.durable() });
+    } catch (error) {
+      set({ notice: report(error) });
+    }
   },
 
   async loadSessions() {
@@ -160,23 +205,29 @@ export const useStore = create<Store>((set, get) => ({
 
   async send(text) {
     const trimmed = text.trim();
-    if (!trimmed) return;
-    set({ error: '', notice: '' });
+    if (!trimmed) return false;
+    const previous = get().pendingSend;
+    const requestId = previous !== null && previous.text === trimmed ? previous.requestId : crypto.randomUUID();
+    set({ error: '', notice: '', pendingSend: { requestId, text: trimmed } });
     try {
-      const result = await api.send(trimmed);
+      const result = await api.send(trimmed, requestId);
+      set({ pendingSend: null });
+      if (result.duplicate === true) {
+        set({ notice: 'This message was already accepted.' });
+        void get().refetchTranscript();
+        void get().refreshDurable();
+        return true;
+      }
       if (result.accepted === 'steer') {
         set({ notice: result.delivered ? 'Queued into the running turn.' : 'Could not queue it.' });
-        return;
+      } else {
+        set({ busy: true, stream: emptyStream() });
       }
-      // The turn's user message travels as an event, but painting it now is what
-      // makes the composer feel immediate. `refetchTranscript` replaces it.
-      set({
-        busy: true,
-        items: [...get().items, { kind: 'user', index: -1, text: trimmed }],
-        stream: emptyStream(),
-      });
+      void get().refreshDurable();
+      return true;
     } catch (error) {
       set({ error: report(error) });
+      return false;
     }
   },
 
@@ -209,6 +260,14 @@ export const useStore = create<Store>((set, get) => ({
     } catch (error) {
       set({ error: report(error) });
     }
+  },
+
+  async openRecovery(id) {
+    if (get().busy) {
+      set({ notice: 'The server is busy; open the recovery when the turn ends.' });
+      return;
+    }
+    await get().openSession(id);
   },
 
   async switchWorkspace(root) {
@@ -276,6 +335,10 @@ export const useStore = create<Store>((set, get) => ({
           .then(() => get().refresh())
           .then(() => get().loadSessions())
           .catch(() => undefined);
+        void get().refreshDurable();
+        return;
+      case 'steer_delivered':
+        void get().refreshDurable();
         return;
       case 'notice':
         set({ notice: text(data.text) });
@@ -285,12 +348,14 @@ export const useStore = create<Store>((set, get) => ({
       case 'state_changed':
         void get()
           .refresh()
+          .then(() => get().refreshDurable())
           .catch(() => undefined);
         return;
       case 'lagged':
-        // The client fell behind: the transcript is the only safe thing to trust.
+        // The client fell behind: the transcript and overlay are the safe records.
         void get()
           .refetchTranscript()
+          .then(() => get().refreshDurable())
           .then(() => get().refresh())
           .catch(() => undefined);
         return;

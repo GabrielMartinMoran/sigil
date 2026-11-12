@@ -32,8 +32,9 @@ export function Composer() {
     const value = text.trim();
     if (!value) return;
     lastSubmission.current = value;
-    setText('');
-    void send(value);
+    void send(value).then((accepted) => {
+      if (accepted) setText((current) => (current.trim() === value ? '' : current));
+    });
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {

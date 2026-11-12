@@ -147,3 +147,32 @@ export type LoginState = {
   version: string;
   bundle: { stale: boolean; reason: string };
 };
+
+export type DurableEntry = {
+  request_id: string;
+  sequence: number;
+  kind: 'turn' | 'steer';
+  state: 'accepted' | 'claimed' | 'delivered' | 'finished' | 'stopped' | 'interrupted';
+  text: string;
+  image_count: number;
+  delivered: boolean;
+  checkpointed: boolean | null;
+  destination_id: string | null;
+  destination_available: boolean;
+};
+
+export type DurableSession = {
+  session: { id: string; title: string | null; updated_at: string; preview: string };
+  transcript: TranscriptItem[];
+  skills: string[];
+  queue: DurableEntry[];
+  pending: DurableEntry[];
+  deliveries: {
+    request_id: string;
+    checkpointed: boolean;
+    destination_id: string | null;
+    destination_available: boolean;
+  }[];
+  recoveries: { recovery_session_id: string; available: boolean }[];
+  conflicted_entries: DurableEntry[];
+};

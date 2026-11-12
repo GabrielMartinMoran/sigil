@@ -8,7 +8,15 @@
  * expected shape.
  */
 
-import type { LoginState, RepositoryGroup, SessionSummary, SessionView, State, TranscriptItem } from './types';
+import type {
+  DurableSession,
+  LoginState,
+  RepositoryGroup,
+  SessionSummary,
+  SessionView,
+  State,
+  TranscriptItem,
+} from './types';
 
 export class Unauthorized extends Error {
   constructor() {
@@ -74,7 +82,18 @@ export const api = {
   sessions: () => request<{ current: string; sessions: SessionSummary[] }>('/api/sessions'),
   workspaces: () => request<{ repositories: RepositoryGroup[] }>('/api/workspaces'),
 
-  send: (text: string) => post<{ accepted: 'turn' | 'steer'; delivered?: boolean }>('/api/turn', { text }),
+  send: (text: string, requestId: string) =>
+    post<{
+      accepted: 'turn' | 'steer';
+      delivered?: boolean;
+      request_id: string;
+      duplicate?: boolean;
+      state?: string;
+    }>('/api/turn', {
+      text,
+      request_id: requestId,
+    }),
+  durable: () => request<DurableSession>('/api/session/durable'),
   abort: () => post<{ stopped: boolean }>('/api/abort'),
   answer: (id: string, answers: { question: string; answer: string; custom?: boolean }[] | null) =>
     post<{ resolved: boolean }>('/api/answer', { id, answers }),

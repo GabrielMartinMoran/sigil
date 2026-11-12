@@ -3,7 +3,8 @@ import { useEffect, useRef } from 'react';
 import { MarkdownText } from './Markdown';
 import { Tools } from './Tools';
 import { transcriptBlocks } from './toolPresentation';
-import type { Attachment, TranscriptItem } from './types';
+import { durableSections, useStore } from './store';
+import type { Attachment, DurableEntry, DurableSession, TranscriptItem } from './types';
 
 /**
  * The conversation, as a list of items.
@@ -28,6 +29,9 @@ import type { Attachment, TranscriptItem } from './types';
 export function Transcript({ items }: { items: TranscriptItem[] }) {
   const container = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  const durable = useStore((store) => store.durable);
+  const busy = useStore((store) => store.busy);
+  const openRecovery = useStore((store) => store.openRecovery);
 
   useEffect(() => {
     const node = container.current;
@@ -51,6 +55,7 @@ export function Transcript({ items }: { items: TranscriptItem[] }) {
         {items.length === 0 ? (
           <p className="text-ink-faint py-16 text-center text-sm">Nothing here yet. Ask something and it starts.</p>
         ) : null}
+        <DurableSections durable={durable} busy={busy} onOpenRecovery={openRecovery} />
         {transcriptBlocks(items).map((block, position) =>
           block.kind === 'tools' ? (
             <Tools key={block.id} tools={block.tools} />
@@ -60,6 +65,85 @@ export function Transcript({ items }: { items: TranscriptItem[] }) {
         )}
       </div>
     </div>
+  );
+}
+
+function entryLine(entry: DurableEntry) {
+  return `#${entry.sequence} · ${entry.kind} · ${entry.state} · ${entry.text}`;
+}
+
+function DurableSections({
+  durable,
+  busy,
+  onOpenRecovery,
+}: {
+  durable: DurableSession | null;
+  busy: boolean;
+  onOpenRecovery: (id: string) => Promise<void>;
+}) {
+  if (durable === null) return null;
+  const sections = durableSections(durable, busy);
+  const terminal = sections.undelivered;
+  return (
+    <>
+      {sections.pending.length > 0 ? (
+        <section className="border-border-subtle bg-surface-sunken rounded-lg border p-3 text-sm">
+          <h2 className="text-ink-muted font-mono text-[11px] tracking-wide uppercase">
+            Pending · not in the conversation yet
+          </h2>
+          <ul className="text-ink-muted mt-2 space-y-1">
+            {sections.pending.map((entry) => (
+              <li key={entry.request_id}>{entryLine(entry)}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {terminal.length > 0 ? (
+        <section className="border-border-subtle bg-surface-sunken rounded-lg border p-3 text-sm">
+          <h2 className="text-ink-muted font-mono text-[11px] tracking-wide uppercase">Not delivered</h2>
+          <ul className="text-ink-muted mt-2 space-y-1">
+            {terminal.map((entry) => (
+              <li key={entry.request_id}>{entryLine(entry)}</li>
+            ))}
+          </ul>
+          <p className="text-ink-faint mt-2 text-xs">The server did not confirm these messages in the transcript.</p>
+        </section>
+      ) : null}
+      {sections.conflicted.length > 0 ? (
+        <section className="border-border-subtle bg-surface-sunken rounded-lg border p-3 text-sm">
+          <h2 className="text-ink-muted font-mono text-[11px] tracking-wide uppercase">Delivered in a recovery copy</h2>
+          <ul className="text-ink-muted mt-2 space-y-1">
+            {sections.conflicted.map((entry) => (
+              <li key={entry.request_id}>{entryLine(entry)}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {sections.recoveries.length > 0 ? (
+        <section className="border-border-subtle bg-surface-sunken rounded-lg border p-3 text-sm">
+          <h2 className="text-ink-muted font-mono text-[11px] tracking-wide uppercase">Recovery</h2>
+          {sections.recoveries.map((recovery) => (
+            <p key={recovery.recovery_session_id} className="text-ink-muted mt-2">
+              {recovery.available ? (
+                <>
+                  A recovery copy is available.{' '}
+                  <button
+                    type="button"
+                    disabled={!recovery.canOpen}
+                    onClick={() => void onOpenRecovery(recovery.recovery_session_id)}
+                    className="border-accent text-accent rounded border px-2 py-0.5 text-xs disabled:opacity-40"
+                  >
+                    Abrir recuperación
+                  </button>
+                </>
+              ) : (
+                <>A recovery copy existed but is no longer available.</>
+              )}
+            </p>
+          ))}
+        </section>
+      ) : null}
+    </>
   );
 }
 
