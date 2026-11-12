@@ -49,6 +49,7 @@ def run() -> None:
         agent_tree=composition.agent_trees,
         summoner=composition.summoner,
         extensions=composition.extensions,
+        cancel_shell=composition.shell_commands.kill_all,
     )
     composition.extension_notice = lambda text: app.notify(text, severity='warning', timeout=15)
     app.run()

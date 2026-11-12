@@ -14,7 +14,7 @@ conversation partner.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 
 from src.engine.agents.profile.discovery import default_roots, is_profile_file
@@ -35,9 +35,12 @@ class AgentRegistry:
         roots: Sequence[tuple[str, Path]] | None = None,
         *,
         active: str | None = None,
+        cwd: str | Path | None = None,
     ) -> None:
+        self._default_roots = roots is None
+        self.on_rebind: Callable[[], None] | None = None
         self._roots: list[tuple[str, Path]] = [
-            (source, Path(path).expanduser()) for source, path in (roots if roots is not None else default_roots())
+            (source, Path(path).expanduser()) for source, path in (roots if roots is not None else default_roots(cwd))
         ]
         self._profiles: dict[str, AgentProfile] = {}
         self.errors: list[str] = []
@@ -93,6 +96,15 @@ class AgentRegistry:
             selectable = self.agents()
             self._active = selectable[0].name if selectable else ''
         return self
+
+    def rebind(self, root: str | Path) -> None:
+        """Reload project profiles without replacing this registry."""
+        if not self._default_roots:
+            return
+        self._roots = default_roots(root)
+        self.refresh()
+        if self.on_rebind is not None:
+            self.on_rebind()
 
     # --- queries -----------------------------------------------------------
 

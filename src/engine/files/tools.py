@@ -8,6 +8,7 @@ lives in ``text``; the path logic, in ``paths``.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 from src.engine.files.conflicts import same_file_conflict
@@ -131,9 +132,9 @@ def _read_whole(target: Any, size: int, max_bytes: int) -> FileContent:
     )
 
 
-def _require_file(path: str, *, allow_external: bool = False) -> Any:
+def _require_file(path: str, *, allow_external: bool = False, root: Path | None = None) -> Any:
     """Resolves ``path`` and validates that it is an existing file."""
-    target = resolve(path, allow_external=allow_external)
+    target = resolve(path, allow_external=allow_external, root=root)
     if not target.exists():
         raise FileToolError(f'File not found: {path!r}.')
     if not target.is_file():
@@ -190,6 +191,7 @@ def register_file_tools(
     catalog: ToolCatalog | None = None,
     *,
     allow_external: Callable[[], bool] = lambda: False,
+    root: Callable[[], Path] | None = None,
 ) -> None:
     """Registers the file tools on a pydantic-ai agent."""
     tools = ToolRegistrar(agent, logger, catalog)
@@ -214,14 +216,17 @@ def register_file_tools(
             max_bytes: Maximum bytes to read when no line range is given
                 (default 256 KiB).
         """
-        target = _require_file(path, allow_external=allow_external())
+        target = _require_file(path, allow_external=allow_external(), root=None if root is None else root())
         size = target.stat().st_size
         if start_line is not None or end_line is not None:
             return _read_line_range(target, path, size, start_line, end_line)
         return _read_whole(target, size, max_bytes)
 
     @tools.tool(
-        concurrency=same_file_conflict, permission=_WRITE, describe=describe_write, compaction=WRITE_FILE_COMPACTOR
+        concurrency=lambda ctx: same_file_conflict(ctx, None if root is None else root()),
+        permission=_WRITE,
+        describe=describe_write,
+        compaction=WRITE_FILE_COMPACTOR,
     )
     def write_file(path: str, content: str, append: bool = False) -> WriteResult:
         """Write or append to a text file in an authorized location.
@@ -238,7 +243,7 @@ def register_file_tools(
             content: Text to write.
             append: When true, append instead of overwriting.
         """
-        target = resolve(path, allow_external=allow_external())
+        target = resolve(path, allow_external=allow_external(), root=None if root is None else root())
         created = not target.exists()
         target.parent.mkdir(parents=True, exist_ok=True)
         data = content.encode('utf-8')
@@ -247,7 +252,10 @@ def register_file_tools(
         return WriteResult(path=str(target), bytes_written=len(data), created=created, appended=append)
 
     @tools.tool(
-        concurrency=same_file_conflict, permission=_WRITE, describe=describe_patch, compaction=PATCH_FILE_COMPACTOR
+        concurrency=lambda ctx: same_file_conflict(ctx, None if root is None else root()),
+        permission=_WRITE,
+        describe=describe_patch,
+        compaction=PATCH_FILE_COMPACTOR,
     )
     def patch_file(
         path: str,
@@ -287,7 +295,7 @@ def register_file_tools(
                 validation in line mode.
             replace_all: Replace every occurrence in string mode.
         """
-        target = _require_file(path, allow_external=allow_external())
+        target = _require_file(path, allow_external=allow_external(), root=None if root is None else root())
         text = _read_text_for_patch(target, path)
         before = len(text.encode('utf-8'))
 

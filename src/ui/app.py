@@ -49,6 +49,7 @@ from src.engine.providers.service import ModelService
 from src.engine.roadmap.stores import RoadmapStores
 from src.engine.sessions.session_store import Session, SessionStore
 from src.engine.settings import SigilSettings, load_settings
+from src.engine.shell import running as running_commands
 from src.engine.themes import ThemeRegistry
 from src.engine.tooling.logging import ToolLoggerHub
 from src.engine.workspace.manager import WorkspaceManager
@@ -150,8 +151,10 @@ class SigilApp(
         on_bind_session: Callable[[Session], object] | None = None,
         on_agent_selected: Callable[[str], Any] | None = None,
         extensions: Any = None,
+        cancel_shell: Callable[[], int] | None = None,
     ) -> None:
         super().__init__()
+        self._cancel_shell = cancel_shell if cancel_shell is not None else running_commands.kill_all
         self._extensions = extensions
         self._settings = settings or load_settings({})
         self._agent = agent

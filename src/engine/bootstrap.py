@@ -76,6 +76,7 @@ from src.engine.roadmap.stores import RoadmapStores
 from src.engine.roadmap.tools import register_roadmap_tools
 from src.engine.sessions.session_store import Session, SessionStore
 from src.engine.settings import SigilSettings
+from src.engine.shell.running import RunningCommands
 from src.engine.shell.tools import register_shell_tools
 from src.engine.skills.registry import SkillRegistry
 from src.engine.skills.tools import register_skill_tools
@@ -156,6 +157,7 @@ class Composition:
         self.root = Path(os.path.realpath(str(root if root is not None else Path.cwd())))
         self.settings = settings
         self._model_override = model
+        self.shell_commands = RunningCommands()
         self.mcp_config = load_config(cwd=self.root)
         self._agent_config_root = self.root
 
@@ -182,7 +184,8 @@ class Composition:
         # The agent profiles installed for this directory: the built-in set plus
         # whatever the project and the user added. The session remembers which one
         # it was using, so a resumed conversation comes back with its own agent.
-        self.agent_registry = AgentRegistry(active=self.session.agent)
+        self.agent_registry = AgentRegistry(active=self.session.agent, cwd=self.root)
+        self.agent_registry.on_rebind = lambda: self.factory.clear_profiles()
 
         # The tree of the session: the agent the user talks to at the root, and
         # every subagent summoned under it.
@@ -255,7 +258,7 @@ class Composition:
         self.workspace_manager = WorkspaceManager(
             self.root,
             session_store=self.store,
-            rebindables=[self.scope, self.workspace, self.skill_registry],
+            rebindables=[self.scope, self.workspace, self.skill_registry, self.agent_registry],
         )
 
         # MCP servers declared in .sigil/config.json (and in ~/.sigil/config.json).
@@ -433,6 +436,7 @@ class Composition:
                 node_blocks=self.node_blocks,
                 available_features=self.available_features,
                 allow_external_files=lambda: self.session.allow_external_files,
+                root=lambda: self.workspace_manager.root,
             )
         )
 
@@ -508,14 +512,20 @@ class Composition:
         """Every tool every agent of the session gets. The root included."""
         logger = self.tool_logger
         catalog = self.tool_catalog
-        register_shell_tools(target, logger=logger, catalog=catalog)
+        register_shell_tools(
+            target, logger=logger, catalog=catalog, root=lambda: self.workspace_manager.root, owner=self.shell_commands
+        )
         register_skill_tools(target, self.skill_registry, logger=logger, catalog=catalog)
         register_mcp_tools(target, self.mcp, logger=logger, catalog=catalog)
         register_web_tools(target, logger=logger, catalog=catalog)
         register_file_tools(
-            target, logger=logger, catalog=catalog, allow_external=lambda: self.session.allow_external_files
+            target,
+            logger=logger,
+            catalog=catalog,
+            allow_external=lambda: self.session.allow_external_files,
+            root=lambda: self.workspace_manager.root,
         )
-        register_image_tools(target, logger=logger, catalog=catalog)
+        register_image_tools(target, logger=logger, catalog=catalog, root=lambda: self.workspace_manager.root)
         register_interaction_tools(target, self.question_hub, logger=logger, catalog=catalog)
         register_roadmap_tools(target, self.roadmap_store, logger=logger, catalog=catalog)
         register_tree_tools(target, self.summoner, logger=logger, catalog=catalog)

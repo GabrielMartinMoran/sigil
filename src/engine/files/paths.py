@@ -53,26 +53,26 @@ def temp_dirs() -> tuple[Path, ...]:
     return tuple(resolved)
 
 
-def allowed_roots() -> tuple[Path, ...]:
+def allowed_roots(root: Path | None = None) -> tuple[Path, ...]:
     """The trees the file tools may work in: the workspace and the temp directories."""
-    return (workspace_root(), *temp_dirs())
+    return (workspace_root() if root is None else root, *temp_dirs())
 
 
-def is_allowed(path: Path) -> bool:
+def is_allowed(path: Path, root: Path | None = None) -> bool:
     """Whether ``path`` (already resolved) sits inside one of the allowed trees."""
-    return any(path.is_relative_to(root) for root in allowed_roots())
+    return any(path.is_relative_to(base) for base in allowed_roots(root))
 
 
-def resolve(path: str, *, allow_external: bool = False) -> Path:
+def resolve(path: str, *, allow_external: bool = False, root: Path | None = None) -> Path:
     """Resolves ``path`` and validates that it stays inside an allowed tree.
 
     A relative path is resolved against the workspace; an absolute one is used
     as given. Symlinks are followed *before* the check, so a link inside an
     allowed tree cannot be used to reach a file outside it.
     """
-    root = workspace_root()
+    root = workspace_root() if root is None else root.resolve()
     candidate = Path(path).resolve() if os.path.isabs(path) else (root / path).resolve()
-    if not allow_external and not is_allowed(candidate):
+    if not allow_external and not is_allowed(candidate, root):
         raise FileToolError(
             f'Path {path!r} is outside the workspace ({root}) and outside the temporary directory. '
             'Files outside them need explicit authorization from the user.'

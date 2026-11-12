@@ -237,3 +237,17 @@ def test_execute_commands_timeout_is_per_command(monkeypatch: pytest.MonkeyPatch
     assert results[0].timed_out and results[0].returncode == 124
     assert results[1].returncode == 0 and results[1].stdout.strip() == 'ok'
     assert elapsed < 8
+
+
+def test_cancelled_admission_does_not_start_a_late_process() -> None:
+    from src.engine.shell.running import RunningCommands
+
+    owner = RunningCommands()
+    generation = owner.generation()
+    assert owner.kill_all() == 0
+    result = execute_command('echo must-not-start', owner=owner, generation=generation)
+    assert result.returncode != 0
+    assert not result.stdout
+    assert result.stderr is not None
+    assert 'cancelled' in result.stderr.lower()
+    assert execute_command('echo next', owner=owner).stdout.strip() == 'next'

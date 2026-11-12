@@ -8,7 +8,6 @@ from src.engine.context.meter.render import render_report
 from src.engine.mcp.tool_models.server_status import ServerStatus
 from src.engine.providers.domain.provider_error import ProviderError
 from src.engine.sessions.catalog import catalog
-from src.engine.shell import running as running_commands
 from src.engine.workspace.arguments import UsageError, parse_new_args
 from src.engine.workspace.models.workspace_error import WorkspaceError
 from src.ui.help_text import HELP_TEXT, KEYS_TEXT
@@ -224,7 +223,7 @@ class CommandsMixin:
         a mistake, and making the exit conditional would leave a user who lost
         the key stuck in a turn.
         """
-        running_commands.kill_all()
+        self._cancel_shell()
         # `abort_turn` also stops the asynchronous subagents, before the save below:
         # they outlive a turn on purpose, but not the process, and a tree on disk
         # with a node saying it is still working would be a lie.

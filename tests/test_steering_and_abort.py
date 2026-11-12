@@ -832,3 +832,24 @@ def test_the_model_shortcut_is_refused_mid_turn_as_well():
                 await wait_for_turn(app)
 
     asyncio.run(inner())
+
+
+def test_abort_uses_injected_shell_owner(tmp_path: Path) -> None:
+    from src.engine.shell.running import RunningCommands
+
+    first, second = RunningCommands(), RunningCommands()
+    store = SessionStore(cwd=str(tmp_path), base_dir=tmp_path / 'sessions')
+    app = SigilApp(
+        agent=Agent(TestModel(call_tools=[]), instructions='x'),
+        store=store,
+        session=store.create_session(),
+        cancel_shell=first.kill_all,
+    )
+
+    async def check() -> None:
+        async with app.run_test():
+            app.abort_turn()
+            assert first.generation() == 1
+            assert second.generation() == 0
+
+    asyncio.run(check())

@@ -51,7 +51,6 @@ from src.engine.attachments.content import user_content
 from src.engine.attachments.image_attachment import ImageAttachment
 from src.engine.providers.domain.thinking import settings_value as thinking_settings
 from src.engine.sessions.recovery import recover_history
-from src.engine.shell import running as running_commands
 from src.ui.desktop_notifications import Attention
 from src.ui.messages import ChatNotice
 from src.ui.session_refresh import render_refreshed_session, session_view
@@ -383,7 +382,7 @@ class TurnMixin:
         self._abort_deadline = None
         self._stop_abort_timer()
         self._paint_status(STOPPING_HINT, style='yellow')
-        running_commands.kill_all()
+        self._cancel_shell()
         # A subagent started by this turn has no reason to outlive it: `Esc` twice
         # means stop, and a background node still spending tokens is not stopped.
         self.stop_subagents()
