@@ -10,6 +10,7 @@ dependencies = [
     "pydantic-ai>=2.65.0",
     "pyyaml>=6.0",
     "python-dotenv>=1.2.4",
+    "httpx>=0.28",
     "rich>=15.0.0",
     "textual>=8.2.8",
     "ddgs>=9.16.1",

@@ -43,6 +43,7 @@ from src.engine.context.scope import ScopeTracker
 from src.engine.interaction.hub import QuestionHub
 from src.engine.interaction.models.question_answer import QuestionAnswer
 from src.engine.interaction.models.question_item import QuestionItem
+from src.engine.interaction.models.question_option import QuestionOption
 from src.engine.mcp.manager.manager import MCPManager
 from src.engine.preferences import Preferences, PreferencesStore
 from src.engine.providers.service import ModelService
@@ -50,8 +51,10 @@ from src.engine.roadmap.stores import RoadmapStores
 from src.engine.sessions.session_store import Session, SessionStore
 from src.engine.settings import SigilSettings, load_settings
 from src.engine.shell import running as running_commands
+from src.engine.storage.database import database_path
 from src.engine.themes import ThemeRegistry
 from src.engine.tooling.logging import ToolLoggerHub
+from src.engine.tooling.presentation import ToolSummary
 from src.engine.workspace.manager import WorkspaceManager
 from src.ui.activity_mixin import ActivityMixin
 from src.ui.agent_mixin import AgentMixin
@@ -64,11 +67,19 @@ from src.ui.model_view_mixin import ModelViewMixin
 from src.ui.preferences_mixin import PreferencesMixin
 from src.ui.provider_mixin import ProviderMixin
 from src.ui.rollback_mixin import RollbackMixin
+from src.ui.service_client import (
+    NoHistoryYet,
+    ServiceClient,
+    ServiceClientError,
+    ServiceEvent,
+    ServiceUnavailable,
+    StreamInterrupted,
+)
 from src.ui.sidebar_mixin import SidebarMixin
 from src.ui.title_mixin import TitleMixin
 from src.ui.tool_logging import ChatToolLogSink, ToolLogMessage
 from src.ui.tree_mixin import TreeMixin
-from src.ui.turn_mixin import TurnMixin
+from src.ui.turn_mixin import TurnMixin, failure_notice
 from src.ui.widgets.agent_view import AgentView
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.command_menu import CommandMenu
@@ -78,6 +89,56 @@ from src.ui.widgets.question_panel import QuestionPanel
 from src.ui.widgets.sidebar_panel import SidebarPanel
 from src.ui.widgets.status_bar import StatusBar
 from src.ui.workspace_mixin import WorkspaceMixin
+
+SERVICE_EVENTS = 'service-events'
+"""Worker group of the loop that follows the service's event stream."""
+
+SERVICE_HISTORY = 'service-history'
+"""Worker group of the read that paints the conversation the service already has."""
+
+SERVICE_RECONNECT_DELAY = 0.5
+"""Seconds before re-following a stream that ended. Doubles, up to a ceiling."""
+
+SERVICE_RECONNECT_CEILING = 5.0
+"""The longest pause between two attempts to follow the service again."""
+
+TONE_STYLES = {'danger': 'bold red', 'warn': 'yellow', 'muted': 'dim'}
+"""How the service's notice tones are painted. An unknown tone is a warning."""
+
+
+def _question_item(raw: dict[str, Any]) -> QuestionItem:
+    """One question of the service's payload, as the panel's own model."""
+    return QuestionItem(
+        question=str(raw.get('question') or ''),
+        allow_custom=bool(raw.get('allow_custom', True)),
+        options=[
+            QuestionOption(
+                label=str(option.get('label') or ''),
+                description=option.get('description'),
+                recommended=bool(option.get('recommended')),
+            )
+            for option in raw.get('options') or []
+        ],
+    )
+
+
+class _ServiceOwnedSession:
+    """What ``_store`` is on an attached terminal: the row belongs to the service.
+
+    The composer refreshes the session before sending, so a change made by another
+    process is not overwritten. A terminal attached to the service has no local copy to
+    refresh — the service is the only writer — and that is exactly what this answers.
+    Nothing else is offered on purpose: a local write is the second executor this cut
+    removes, so it must fail loudly rather than pretend to work.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self.cwd = session.cwd
+        self.base_dir = database_path().parent
+
+    def refresh(self, session: Session) -> None:
+        """Nothing local can be newer than the service's own row."""
+        return
 
 
 class SigilApp(
@@ -123,9 +184,9 @@ class SigilApp(
 
     def __init__(
         self,
-        agent: Agent,
-        store: SessionStore,
-        session: Session,
+        agent: Agent | None = None,
+        store: SessionStore | None = None,
+        session: Session | None = None,
         settings: SigilSettings | None = None,
         model_service: ModelService | None = None,
         login_flow: Any = None,
@@ -152,8 +213,52 @@ class SigilApp(
         on_agent_selected: Callable[[str], Any] | None = None,
         extensions: Any = None,
         cancel_shell: Callable[[], int] | None = None,
+        client: ServiceClient | None = None,
     ) -> None:
+        """Builds the terminal over a service, or — in tests only — over the engine.
+
+        Exactly one of ``client`` and the in-process ``agent``/``store`` pair is
+        allowed, and both are enforced here rather than documented and hoped for.
+
+        ``client`` is the production shape: the service owns the session, the queue
+        and the turn, and this app paints what the service says and sends it what the
+        user types. `src/sigil.py` builds nothing else, and it composes no engine, so
+        the in-process path is not merely unused in production — it has nothing to
+        pass.
+
+        The in-process collaborators are the seam the existing app tests mount. They
+        are marked, mutually exclusive and unreachable from the entry point on
+        purpose: while the remaining mixins still own their own collaborators, this is
+        the only way to keep ~40 widget tests honest without rewriting them. It is a
+        real seam and not a hidden fallback — a second way to execute a turn is
+        exactly what this cut exists to remove.
+        """
+        if client is not None and (agent is not None or store is not None):
+            raise ValueError(
+                'A terminal attached to the service executes nothing: pass a client, or in-process '
+                'collaborators for a widget test, never both.'
+            )
+        if client is None and (agent is None or store is None):
+            raise ValueError('A terminal needs a service client, or in-process collaborators for a widget test.')
+        if session is None:
+            raise ValueError('The terminal needs the conversation it is painting.')
         super().__init__()
+        self._client = client
+        # What the service last said the screen should show, and where following it
+        # got to. The state is the projection a delta can never replace.
+        self._service_state: dict[str, Any] | None = None
+        self._service_cursor = 0
+        self._service_following = False
+        self._service_question: str | None = None
+        self._service_answered: set[str] = set()
+        self._service_steers: list[Any] = []
+        self._service_pending: list[Any] = []
+        # Set when another client accepted a message while this screen was mid-turn:
+        # rebuilding the transcript then would drop the deltas streaming into the
+        # block being written, so the rebuild waits for the end of the turn.
+        self._service_rebuild_due = False
+        self._service_reconnect_delay = SERVICE_RECONNECT_DELAY
+        self._service_request = None
         self._cancel_shell = cancel_shell if cancel_shell is not None else running_commands.kill_all
         self._extensions = extensions
         self._settings = settings or load_settings({})
@@ -230,6 +335,12 @@ class SigilApp(
         self._painted_title = ''
         self._naming_attempts: dict[str, int] = {}
         self._naming_workers: dict[str, Any] = {}
+        if client is not None:
+            # What the unmigrated mixins expect of a local store, answered by the
+            # service instead of a second copy of its row, and the commands that would
+            # write locally refused where the user can read the refusal.
+            self._store = _ServiceOwnedSession(session)
+            self.handle_command = self._refuse_command  # type: ignore[method-assign]
         self._wire_busy_flag()
 
     def _wire_busy_flag(self) -> None:
@@ -294,8 +405,11 @@ class SigilApp(
                 on_idle=self.subagents_idle,
             )
         # The session carries the agent it runs with from the first paint, so a
-        # conversation saved before any switch still remembers it.
-        self.remember_agent(self.active_agent())
+        # conversation saved before any switch still remembers it. An attached
+        # terminal does not own that row: the service does, and it stamps the agent
+        # there. Writing it from here would overwrite what the service said.
+        if self._client is None:
+            self.remember_agent(self.active_agent())
         self.refresh_sidebar()
         self.boot_mcp()
         self.refresh_workspace_badge()
@@ -317,9 +431,26 @@ class SigilApp(
         # The window says where and what from the first paint, before any message
         # has given the session a name: the repository half is already known.
         self.paint_window_title()
+        # Everything above painted from what this process knows. An attached
+        # terminal knows nothing yet, so it asks once, paints what the service
+        # already has, starts the stream after exactly what that answer contained,
+        # and then follows it.
+        if self._client is not None:
+            await self.refresh_service_state()
+            self._service_cursor = self._state_cursor()
+            self.follow_service_events()
+            # On a worker and not here: mounting widgets while `on_mount` is still
+            # awaiting needs the message pump, and the pump is the thing waiting for
+            # `on_mount` to return.
+            self.run_worker(self.load_service_history(), group=SERVICE_HISTORY)
 
     async def on_unmount(self) -> None:
         self._stop_diff_polling()
+        # The stream is the service's; leaving is the client's. The flag stops the
+        # loop at its next iteration, and cancelling the worker closes the
+        # connection now instead of after the next event.
+        self._service_following = False
+        self.workers.cancel_group(self, SERVICE_EVENTS)
         if self._wake_timer is not None:
             self._wake_timer.stop()
             self._wake_timer = None
@@ -463,6 +594,415 @@ class SigilApp(
             self.refresh_diff()
         # The debug view follows the turn, just like the chat.
         self.refresh_debug()
+
+    # --- the service ------------------------------------------------------
+
+    async def _refuse_command(self, name: str, args: str = '') -> None:
+        """A slash command in an attached terminal, answered instead of attempted.
+
+        The command handlers reach for the store and the engine this terminal does not
+        own, so one of them would fail somewhere the user cannot see — in a worker,
+        after the composer has already cleared itself. Saying it plainly is both more
+        honest and more useful: the conversation works, the commands move over with
+        their own cut.
+
+        Async, matching `handle_command`: the notice is appended by awaiting the chat
+        log, so a refusal that was never awaited would paint nothing at all — which is
+        the one outcome a user cannot tell apart from a command that worked.
+        """
+        await self.query_one(ChatLog).add_notice(
+            f"{name} still runs in the terminal's own process, and this terminal is attached to the "
+            'service. The conversation works; the commands move over in a later cut.',
+            style='yellow',
+        )
+
+    @work(exclusive=True, group=SERVICE_EVENTS)
+    async def follow_service_events(self) -> None:
+        """Follows the service from the last event applied, reconnecting by cursor.
+
+        The cursor is the service's sequence number, so a reconnection asks for what
+        it missed instead of starting over. A break is reported rather than swallowed:
+        a screen that stopped following looks exactly like a turn with nothing more to
+        say, and that is the one failure a user cannot see.
+
+        The loop yields the event loop on every read, so the terminal keeps painting
+        while a turn streams for minutes.
+        """
+        client = self._client
+        if client is None:
+            return
+        self._service_following = True
+        delay = self._service_reconnect_delay
+        try:
+            while self._service_following:
+                try:
+                    async for event in client.events(after=self._service_cursor):
+                        if event.id is not None:
+                            self._service_cursor = event.id
+                        delay = self._service_reconnect_delay
+                        await self.apply_service_event(event)
+                    # The stream ended because this client closed it: nothing to do.
+                    return
+                except StreamInterrupted as exc:
+                    if exc.last_event_id is not None:
+                        self._service_cursor = exc.last_event_id
+                    await self.report_stream_gap()
+                except ServiceClientError as exc:
+                    await self.report_service_trouble(exc)
+                    if isinstance(exc, ServiceUnavailable) and self._service_following:
+                        # Nothing answered. The likeliest cause is a service that
+                        # restarted on another port, so look for it before dialling
+                        # the same dead address again.
+                        await self.resume_after_restart()
+                if not self._service_following:
+                    return
+                await asyncio.sleep(delay)
+                delay = min(max(delay * 2, SERVICE_RECONNECT_DELAY), SERVICE_RECONNECT_CEILING)
+        finally:
+            self._service_following = False
+
+    async def resume_after_restart(self) -> None:
+        """Finds the service again, and restarts the cursor from its state.
+
+        A restarted service is a different run: another port, another token, and — the
+        part that is easy to miss — a sequence space that starts again at one. Reusing
+        the cursor this screen had against the old run would ask the new service for
+        events *after* a number it has not reached yet, and the terminal would follow a
+        live conversation while silently skipping everything published before it caught
+        up. So the cursor comes from a fresh state, exactly as it does on the first
+        connection, and the transcript is repainted from the rows of the service that is
+        actually running.
+
+        Quiet on failure on purpose: `report_service_trouble` has already said the
+        service is not answering, and repeating it once per retry would fill the
+        transcript with the same sentence.
+        """
+        client = self._client
+        if client is None:
+            return
+        try:
+            if not await client.refresh_endpoint():
+                return
+        except ServiceClientError:
+            return
+        self._service_cursor = 0
+        await self.refresh_service_state()
+        self._service_cursor = self._state_cursor()
+        await self.repaint_from_rows()
+
+    async def report_stream_gap(self) -> None:
+        """One sentence about a stream that broke, then the state, which cannot be wrong.
+
+        A gap means an unknown number of deltas never arrived, so the transcript is
+        rebuilt from the durable rows instead of kept with a hole in it: a conversation
+        that is missing one tool result and does not say so is worse than one that was
+        painted again from the truth.
+        """
+        await self.query_one(ChatLog).add_notice(
+            'The event stream from the service broke, so events may be missing. '
+            'Reconnecting from the last one and re-reading the state.',
+            style='yellow',
+        )
+        await self.refresh_service_state()
+        await self.load_service_history(rebuild=True)
+
+    async def report_service_trouble(self, exc: ServiceClientError) -> None:
+        """The service is not answering: say what to do, and keep trying quietly."""
+        await self.query_one(ChatLog).add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+        if not isinstance(exc, ServiceUnavailable):
+            # An unauthorized or unreadable reply will not improve by waiting.
+            self._service_following = False
+
+    async def apply_service_event(self, event: ServiceEvent) -> None:
+        """Applies one event to the screen.
+
+        An event type this build does not know is ignored on purpose: the service adds
+        types by adding them, and a terminal that failed on a newer one would break a
+        working conversation for no reason.
+        """
+        chat = self.query_one(ChatLog)
+        data = event.data
+        if event.type == 'text_delta':
+            await chat.add_text(str(data.get('text') or ''))
+            self.set_activity_label('Writing')
+        elif event.type == 'thinking_delta':
+            await chat.add_thinking(str(data.get('text') or ''))
+            self.set_activity_label('Thinking')
+        elif event.type == 'tool_call':
+            await chat.add_tool_call(str(data.get('tool_name') or ''), data.get('args'))
+            self.set_activity_label(f'Running {data.get("tool_name") or "tool"}')
+        elif event.type == 'tool_result':
+            await chat.add_tool_result(
+                str(data.get('tool_name') or ''), data.get('preview') or '', ok=bool(data.get('ok', True))
+            )
+        elif event.type == 'tool_finished':
+            await self._paint_tool_end(data, chat)
+        elif event.type == 'turn_started':
+            self._turn_active = True
+            await chat.begin_response()
+            self.set_activity(running=True, label='Thinking')
+        elif event.type == 'turn_finished':
+            await self._finish_turn(data, chat)
+        elif event.type == 'notice':
+            await chat.add_notice(
+                str(data.get('text') or ''), style=TONE_STYLES.get(str(data.get('tone') or ''), 'yellow')
+            )
+        elif event.type == 'question':
+            identifier = str(data.get('id') or '')
+            if identifier and self._service_question is None:
+                # Set here and not inside the worker: the panel must be claimed before
+                # the next glance at the state can offer the same question twice.
+                self._service_question = identifier
+                self.run_worker(self.answer_service_question(identifier, data.get('questions') or []))
+        elif event.type == 'question_closed':
+            self._close_service_question(str(data.get('id') or ''))
+        elif event.type == 'steer_delivered':
+            await self._service_steer_delivered()
+        elif event.type == 'tree_changed':
+            # The tree panel is a later cut; the state is where it will read from.
+            await self.refresh_service_state()
+        elif event.type == 'state_changed':
+            await self.refresh_service_state()
+            if str(data.get('reason') or '') == 'queue':
+                # Another client accepted a message. The event carries no text: the
+                # rows do, so this screen re-reads them instead of being told twice.
+                await self.refresh_service_queue()
+        elif event.type == 'lagged':
+            await chat.add_notice(
+                'The service says this terminal fell behind, so events may be missing. Re-reading the state.',
+                style='yellow',
+            )
+            await self.refresh_service_state()
+
+    async def _paint_tool_end(self, data: dict[str, Any], chat: ChatLog) -> None:
+        """A finished call: the tool's own summary, or the reason it raised."""
+        name = str(data.get('tool_name') or '')
+        if data.get('phase') == 'error':
+            await chat.add_tool_error(name, str(data.get('error') or 'failed'))
+            return
+        summary = data.get('summary')
+        chat.set_tool_summary(
+            name,
+            None
+            if summary is None
+            else ToolSummary(text=str(summary.get('text') or ''), status=str(summary.get('status') or 'ok')),
+            data.get('duration_ms'),
+        )
+        self.refresh_skills()
+        self.refresh_diff()
+
+    async def _finish_turn(self, data: dict[str, Any], chat: ChatLog) -> None:
+        """The end of a turn: refetch, then repaint what the refetch cannot carry."""
+        await self.refresh_service_state()
+        self._turn_active = False
+        self.set_activity(running=False)
+        chat.finalize()
+        if self._service_rebuild_due:
+            # A message another client sent during this turn was deferred, not lost:
+            # the stream has stopped, so the rows can be painted without dropping text.
+            await self.refresh_service_queue()
+        status = str(data.get('status') or 'ok')
+        if status == 'cancelled':
+            await chat.add_notice('Turn cancelled.', style='yellow')
+        elif status == 'error':
+            await chat.add_notice(f'Error: {data.get("error") or "the turn failed"}', style='bold red')
+        self._restore_prompt_focus()
+
+    async def answer_service_question(self, question_id: str, raw: list[dict[str, Any]]) -> None:
+        """Shows the questions the service is holding and answers them over HTTP.
+
+        The panel is the one the in-process path uses, down to its keys: what changed
+        is where the answer goes. ``None`` — cancelled — resolves the question with
+        nothing, which is how the service stops the turn where it stands.
+
+        The question stays claimed until the answer has been sent. Releasing it before
+        that would let a state read taken in between offer the same question again, and
+        two panels for one question is a screen asking the user to answer twice.
+        """
+        try:
+            answers = await self.ask_question([_question_item(item) for item in raw])
+            payload = (
+                None
+                if answers is None
+                else [
+                    {'question': answer.question, 'answer': answer.answer, 'custom': answer.custom}
+                    for answer in answers
+                ]
+            )
+            try:
+                resolved = await self._client.answer(question_id, payload)
+            except ServiceClientError as exc:
+                await self.query_one(ChatLog).add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+                return
+            if not resolved:
+                # Answered elsewhere, or withdrawn when the turn ended: the state says
+                # which, and it is the only thing that knows.
+                await self.refresh_service_state()
+        finally:
+            self._service_answered.add(question_id)
+            self._service_question = None
+
+    def _close_service_question(self, question_id: str) -> None:
+        """The service withdrew its question: the panel stops asking."""
+        if not question_id or self._service_question != question_id:
+            return
+        self._service_question = None
+        panel = self._pending_question()
+        if panel is not None:
+            panel.action_cancel()
+
+    async def _service_steer_delivered(self) -> None:
+        """The run read one of the waiting messages: its line stops waiting.
+
+        Two kinds of line can be waiting, and they are retired differently on purpose.
+        One painted from the durable read is *removed*: the run has now read it, so it
+        belongs to the transcript, and the rebuild that follows the confirmation paints
+        it there — keeping both would show the same message twice. One typed in this
+        window keeps its place and only loses the queued mark, which is what the live
+        turn has always done.
+
+        Confirmations arrive in queue order, so the oldest waiting line is the one that
+        was read; the event carries the service's own enqueue id, not the request id this
+        terminal generated, and inventing a mapping would be worse than the ordering.
+        """
+        if self._service_pending:
+            widget = self._service_pending.pop(0)
+            with suppress(NoMatches):
+                await widget.remove()
+            return
+        if not self._service_steers:
+            return
+        widget = self._service_steers.pop(0)
+        with suppress(NoMatches):
+            self.query_one(ChatLog).mark_delivered(widget)
+
+    async def refresh_service_queue(self) -> None:
+        """Re-reads the durable transcript when another client accepted a message.
+
+        The service publishes the acceptance and not the text — the rows are the text
+        — so the screen that did not type the message learns it by reading them. An
+        append is not an option: the message is already part of the history this
+        screen was given, and adding it again is exactly the duplication the queue's
+        identity rules exist to prevent. The transcript is rebuilt instead.
+
+        Mid-turn the repair waits. ``chat.clear()`` would drop the deltas streaming
+        into the block being written, so the flag is left set and `_finish_turn` does
+        it once the stream has stopped.
+        """
+        await self.repaint_from_rows()
+
+    async def repaint_from_rows(self) -> None:
+        """Repaints the transcript from the durable rows, or waits for the turn to stop.
+
+        Clearing the chat would drop the deltas streaming into the block being written,
+        so mid-turn the repair is deferred: the flag stays set and `_finish_turn` does
+        it once the stream has stopped.
+        """
+        if self._client is None:
+            return
+        if self._turn_active:
+            self._service_rebuild_due = True
+            return
+        self._service_rebuild_due = False
+        await self.load_service_history(rebuild=True)
+
+    async def refresh_service_state(self) -> None:
+        """Re-reads everything the screen paints from the service's rows.
+
+        A delta is never the only copy of a fact: a lagged client, a reconnection and
+        the end of a turn all come back here. That is what keeps the screen honest
+        after events it may have missed, and it is why the state carries a sequence
+        number instead of relying on the deltas adding up.
+        """
+        client = self._client
+        if client is None:
+            return
+        try:
+            state = await client.state()
+        except ServiceClientError as exc:
+            await self.query_one(ChatLog).add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        self._apply_service_state(state)
+
+    async def load_service_history(self, *, rebuild: bool = False) -> None:
+        """Paints the conversation the service already has, from its durable read.
+
+        Attaching to a session with history used to leave the transcript empty until the
+        next event arrived: the stream starts after the state on purpose, and the state
+        carries counts rather than messages. `/api/session/durable` is the one read that
+        answers both halves at once — what was said, and what is still waiting in the
+        queue — so the screen starts complete instead of growing one message at a time.
+
+        ``rebuild`` is the reconnection case: the stream broke, so the transcript may be
+        missing deltas and repainting it from the rows is the honest repair.
+
+        A session with no row yet answers 404 and becomes `NoHistoryYet`: the screen
+        stays empty and keeps following, because a conversation whose first message has
+        not been written has no history to show and nothing to apologise for.
+
+        The queue entries the service reports as pending are painted *queued* and kept,
+        never merged into the transcript: a message the run has not read is not part of
+        the conversation yet, and painting it twice is what would happen if the stream
+        later delivered it as history.
+        """
+        client = self._client
+        if client is None:
+            return
+        try:
+            durable = await client.durable()
+        except NoHistoryYet:
+            return
+        except ServiceClientError as exc:
+            await self.query_one(ChatLog).add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        chat = self.query_one(ChatLog)
+        if rebuild:
+            await chat.clear()
+        self._service_pending = await chat.render_items(
+            durable.get('transcript') or [], pending=durable.get('pending') or ()
+        )
+
+    def _state_cursor(self) -> int:
+        """Where the stream starts the first time: the sequence number of the state.
+
+        A terminal that opened `/events` at zero would be painted every event the
+        service still remembers, most of them things the state it just read already
+        describes — a transcript painted twice. The reconnection path is the other way
+        round on purpose: there the cursor is the last event applied, because what was
+        missed is exactly what matters.
+        """
+        state = self._service_state or {}
+        try:
+            return max(0, int(state.get('seq') or 0))
+        except TypeError, ValueError:
+            return self._service_cursor
+
+    def _apply_service_state(self, state: dict[str, Any]) -> None:
+        """Paints the projection: what is running, what it is called, what is being asked."""
+        self._service_state = state
+        busy = bool(state.get('busy'))
+        self._turn_active = busy
+        # The spinner follows the service, not this process: a terminal that attached
+        # mid-turn has to look like one that started it. Only on a change, or every
+        # refresh would reset the elapsed clock the bar is showing.
+        if busy != self._activity_running:
+            self.set_activity(running=busy, label='Thinking' if busy else '')
+        window = (state.get('model') or {}).get('window')
+        if isinstance(window, int) and window > 0:
+            self._meter.set_window(window)
+        session = state.get('session') or {}
+        title = session.get('title')
+        if self._session is not None and isinstance(title, str):
+            self._session.title = title
+        self.refresh_sidebar()
+        self.refresh_agent()
+        self.paint_window_title()
+        question = state.get('question')
+        if isinstance(question, dict):
+            identifier = str(question.get('id') or '')
+            if identifier and identifier not in self._service_answered and self._service_question is None:
+                self._service_question = identifier
+                self.run_worker(self.answer_service_question(identifier, question.get('questions') or []))
 
     # --- debug view -------------------------------------------------------
 
@@ -665,8 +1205,14 @@ class SigilApp(
         The window comes from the catalogue entry that built the model, so there
         is one source of truth: the profile the provider was built with. It only
         sets state; the caller repaints the panel.
+
+        An attached terminal has no agent to ask, and it must not reach for one: the
+        window it shows is the one the service projects in its state, applied by
+        `_apply_service_state`. Here it stays with whatever the meter already has.
         """
-        window = getattr(self._agent.model, 'context_window', None)
+        if self._agent is None:
+            return
+        window = getattr(getattr(self._agent, 'model', None), 'context_window', None)
         snapshot = self._model_snapshot()
         self._meter.set_window(window if window else snapshot.window)
 

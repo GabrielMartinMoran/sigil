@@ -1436,3 +1436,128 @@ class ChatLog(ReadOnlyScroll):
         self._group = None
         self._group_rows = []
         self._last_block = batches[-1]
+
+    async def render_items(
+        self, items: Sequence[dict[str, Any]], *, pending: Sequence[dict[str, Any]] = ()
+    ) -> list[Static]:
+        """Paints a conversation the service already has, from its own projection.
+
+        The items are the shape `src.server.views.transcript` defines — the same the
+        web client paints — and not `ModelMessage`s: an attached terminal never holds
+        the engine's objects, so it has to be able to draw a conversation from what the
+        service sends. Nothing is inferred. A user line carries the text the user typed
+        and the description of each image the projection provides; an assistant block
+        carries the text and the reasoning it was given; a tool call is drawn from its
+        name, its arguments and the result the service presented, so a stored call and
+        a live one look the same.
+
+        ``pending`` are the inputs the queue has accepted and the run has not read. They
+        are painted *queued* and handed back, because a message that is waiting is not
+        part of the conversation yet: the caller owns those widgets and takes each one
+        down when the service confirms it. Reading them again later must not paint them
+        twice, which is why they are returned rather than re-derived.
+
+        Returns:
+            The pending lines, in queue order, for the caller to retire.
+        """
+        batches: list[Static] = []
+        open_tools: dict[str, ToolCallBlock] = {}
+        current: AssistantBlock | None = None
+        current_index: int | None = None
+
+        for item in items:
+            kind = str(item.get('kind') or '')
+            index = item.get('index')
+            if kind in {'assistant', 'thinking'}:
+                text = str(item.get('text') or '')
+                if not text:
+                    continue
+                if current is None or current_index != index:
+                    current = AssistantBlock(reasoning_visible=self._reasoning_visible, classes='assistant-msg')
+                    current_index = index
+                    batches.append(current)
+                if kind == 'thinking':
+                    current.add_thinking(text)
+                else:
+                    current.add_text(text)
+                continue
+            # Anything that is not a continuation of the same response closes it.
+            current = None
+            current_index = None
+            if kind == 'user':
+                batches.append(
+                    UserMessage(
+                        _item_user_renderable(str(item.get('text') or ''), item.get('attachments') or ()),
+                        seq=index if isinstance(index, int) else None,
+                        classes='user-msg',
+                    )
+                )
+            elif kind == 'tool_call':
+                block = block_for(
+                    str(item.get('tool_name') or ''),
+                    item.get('args'),
+                    classes='tool-call',
+                    expanded=self._tools_expanded,
+                )
+                open_tools[str(item.get('call_id') or '')] = block
+                batches.append(block)
+            elif kind == 'tool_result':
+                block = open_tools.pop(str(item.get('call_id') or ''), None)
+                if block is None:
+                    # A result whose call is not in this transcript (a compaction cut
+                    # one off): the result is still true, so it is painted alone.
+                    block = block_for(
+                        str(item.get('tool_name') or ''),
+                        {},
+                        classes='tool-call',
+                        expanded=self._tools_expanded,
+                    )
+                    batches.append(block)
+                summary = item.get('summary')
+                if isinstance(summary, dict):
+                    block.set_summary(
+                        ToolSummary(text=str(summary.get('text') or ''), status=str(summary.get('status') or 'ok'))
+                    )
+                block.set_result(str(item.get('text') or ''), ok=bool(item.get('ok', True)))
+
+        queued = [
+            UserMessage(
+                _item_user_renderable(str(entry.get('text') or ''), (), queued=True),
+                classes='user-msg',
+            )
+            for entry in pending
+        ]
+        batches.extend(queued)
+        if batches:
+            if self.is_mounted and self.app is not None:
+                # One layout for the whole transcript, exactly as `render_history`
+                # does: mounting one at a time makes restoring quadratic.
+                with self.app.batch_update():
+                    await self.mount_all(batches)
+            else:
+                for widget in batches:
+                    await self.mount(widget)
+        # A call the transcript never answered stays visibly interrupted, the same way
+        # it looks live; a healthy transcript is untouched by this.
+        self.finalize()
+        self.anchor()
+        return queued
+
+
+def _item_user_renderable(text: str, attachments: Sequence[Any], *, queued: bool = False) -> Text:
+    """One user line of a stored conversation, from the service's projection.
+
+    The projection describes an image instead of sending it — ``1 image (640×480 PNG)``
+    — because the bytes stay on the server. So this is the sentence
+    `describe_attachments` builds, made from the same fields it uses, and the
+    ``[Image #n]`` marker stays in the text where the user wrote it: it is what the
+    model read and therefore what a later question refers to.
+    """
+    line = Text(f'› {text}', style='bold')
+    if queued:
+        line.append('  · queued for the running turn', style='dim italic')
+    labels = [str(view.get('label') or '') for view in attachments if isinstance(view, dict)]
+    if labels:
+        noun = 'image' if len(labels) == 1 else 'images'
+        line.append(f'\n  {IMAGE_MARK} {len(labels)} {noun} ({", ".join(labels)})', style='dim')
+    return line
