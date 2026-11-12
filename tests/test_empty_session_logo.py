@@ -1,76 +1,109 @@
+"""The Sigil mark of an empty session, and when it must disappear.
+
+The mark is not a widget: the transcript paints it behind its children until the
+first block arrives. These tests cover the two halves that can break independently
+— the drawing at a size that does not fit it, and the transcript deciding whether
+there is anything to draw.
+"""
+
 import asyncio
 
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from textual.app import App, ComposeResult
+from textual.theme import Theme
 
 from src.engine.themes import ThemeRegistry
 from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.empty_logo import LOGO, SMALL_LOGO, logo_text
+from src.ui.widgets.empty_logo import LOGO, SMALL_LOGO, logo_lines
+
+INK = next(glyph for glyph in LOGO[0] if glyph != ' ')
+"""The cell the drawings are made of, so a redrawn mark does not break these tests."""
 
 
 class Harness(App):
     def compose(self) -> ComposeResult:
-        yield ChatLog(id='chat')
+        yield ChatLog(id='chat', welcome=True)
 
 
-def test_logo_fits_and_has_a_gradient():
-    logo = logo_text(30, 16, '#ff9d00', '#dc3c00')
-    lines = logo.plain.splitlines()
-    assert len(lines) <= 16
-    assert max(map(len, lines)) <= 30
-    assert '▓' in logo.plain
-    assert len({span.style for span in logo.spans}) > 1
+class SubagentHarness(App):
+    def compose(self) -> ComposeResult:
+        yield ChatLog(id='agent-chat')
 
 
-def test_logo_chooses_the_largest_variant_that_fits():
-    large = logo_text(100, 60, '#ff9d00', '#dc3c00')
-    small = logo_text(40, 30, '#ff9d00', '#dc3c00')
-    assert large.plain.splitlines()[0].rstrip() == LOGO[0]
-    assert len(large.plain.splitlines()) == len(LOGO)
-    assert small.plain.splitlines()[0].rstrip() == SMALL_LOGO[0]
-    assert len(small.plain.splitlines()) == len(SMALL_LOGO)
+def with_themes(app: App, theme: str = 'sigil') -> App:
+    for definition in ThemeRegistry.load().themes.values():
+        app.register_theme(definition.to_textual())
+    app.theme = theme
+    return app
 
 
-def test_logo_keeps_a_gradient_for_a_monochrome_theme():
+def test_the_drawing_is_scaled_to_the_space_it_is_given():
+    rows = logo_lines(30, 16, '#ff9d00', '#dc3c00')
+    assert len(rows) <= 16
+    assert max(len(row.plain) for row in rows) <= 30
+    assert INK in ''.join(row.plain for row in rows)
+    assert len({row.style for row in rows}) > 1
+
+
+def test_the_largest_variant_that_fits_whole_is_used():
+    large = logo_lines(100, 60, '#ff9d00', '#dc3c00')
+    small = logo_lines(45, 40, '#ff9d00', '#dc3c00')
+    assert [row.plain for row in large] == [row.rstrip() for row in LOGO]
+    assert [row.plain for row in small] == [row.rstrip() for row in SMALL_LOGO]
+
+
+def test_a_theme_with_one_color_still_gets_a_gradient():
+    """A flat silhouette would lose the depth the mark is drawn for."""
+
     async def run() -> None:
-        from textual.theme import Theme
-
         app = Harness()
         app.register_theme(Theme(name='monochrome', primary='#ffffff', secondary='#ffffff', foreground='#ffffff'))
         app.theme = 'monochrome'
         async with app.run_test(size=(80, 30)) as pilot:
             await pilot.pause()
-            logo = app.query_one(ChatLog).render()
-            assert len({span.style for span in logo.spans}) > 1
+            assert len({span.style for span in app.query_one(ChatLog).render().spans}) > 1
 
     asyncio.run(run())
 
 
-def test_empty_session_logo_tracks_messages_history_and_theme():
+def test_an_empty_transcript_shows_the_mark_and_a_started_one_does_not():
     async def run() -> None:
-        app = Harness()
-        for theme in ThemeRegistry.load().themes.values():
-            app.register_theme(theme.to_textual())
-        app.theme = 'sigil'
+        app = with_themes(Harness())
         async with app.run_test(size=(80, 30)) as pilot:
             chat = app.query_one(ChatLog)
-            await chat.add_notice('New session')
+            await chat.add_notice('New session 1a2b3c.')
             await pilot.pause()
-            assert '▓' in app.export_screenshot()
-            before = app.export_screenshot()
+            # A notice is chrome, not conversation: a new session is still empty.
+            assert INK in app.export_screenshot()
+            sigil = app.export_screenshot()
             app.theme = 'dark'
             chat.repaint()
             await pilot.pause()
-            assert app.export_screenshot() != before
+            assert app.export_screenshot() != sigil
+
             await chat.add_user('hello')
             await pilot.pause()
-            assert '▓' not in app.export_screenshot()
+            assert INK not in app.export_screenshot()
+
             await chat.clear()
             await chat.render_history([ModelRequest(parts=[UserPromptPart(content='restored')])])
             await pilot.pause()
-            assert '▓' not in app.export_screenshot()
+            assert INK not in app.export_screenshot()
+
             await chat.clear()
             await pilot.pause()
-            assert '▓' in app.export_screenshot()
+            assert INK in app.export_screenshot()
+
+    asyncio.run(run())
+
+
+def test_a_subagent_transcript_never_shows_the_mark():
+    """The mark belongs to the app's own conversation, not to every ChatLog."""
+
+    async def run() -> None:
+        app = with_themes(SubagentHarness())
+        async with app.run_test(size=(80, 30)) as pilot:
+            await pilot.pause()
+            assert INK not in app.export_screenshot()
 
     asyncio.run(run())
