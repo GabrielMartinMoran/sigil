@@ -1,0 +1,59 @@
+version: 1
+status: approved
+objective: >-
+  Restore the client/server split for slash commands: client commands run locally,
+  server commands delegate to the service, and anything not yet wired says so precisely
+  instead of being refused with one blanket message.
+approval_basis: >-
+  The user asked to continue migrating the remaining panels and pointed out that client and
+  server commands should already be separated. Research confirms the catalogue declares an owner
+  per command but the attached dispatcher replaces every handler, so eight pure client commands
+  are unreachable today.
+agent_decisions:
+  - The transport table lives in the client (src/ui/command_transport.py), because whether a
+    transport exists is a client fact; the engine catalogue keeps owning the client/core decision.
+  - Each command declares exactly one state: client, delegated, not_wired or blocked, with the route
+    it would use. A test asserts the table covers the catalogue so it cannot rot into a third list.
+  - The dispatcher consults the table once, in the choke point, and the three side doors
+    (alt+m, ctrl+l, ctrl+a) go through the same decision instead of their own path.
+  - A not-wired or blocked command produces one notice naming the command and who serves it; it
+    opens no panel and writes nothing.
+  - Migration order is by risk: context, external files, MCP, effort, agent, session new/load,
+    model (needs a per-account catalogue), rollback (destructive, and the restored prompt does not
+    travel in the response).
+  - Provider stays blocked because no endpoint exists; its notice must say so rather than pretend
+    the provider is unconfigured.
+slices:
+  - id: commands-split-v1
+    objective: Transport table, owner-aware dispatcher, side doors, and per-owner tests.
+    paths: [src/ui/command_transport.py, src/ui/app.py, src/ui/commands_mixin.py, src/ui/widgets/prompt_input.py, tests/test_commands_ownership.py, tests/test_ui_client.py, docs/architecture.md]
+    acceptance: every client command works in an attached terminal and writes nothing; every core command either delegates or says precisely who serves it and why it is not wired; no command opens a panel when it cannot act; the side doors answer the same as typed commands.
+  - id: commands-context-v1
+    objective: /context reads the service projection and composes workspace and scope without inventing numbers.
+    paths: [src/ui/commands_mixin.py, src/server/views.py, src/server/app.py, tests/test_ui_client.py, docs/architecture.md]
+    acceptance: displayed usage equals the service projection; a cold session shows zero rather than a placeholder; workspace and scope come from service state.
+  - id: commands-settings-v1
+    objective: /external-files, /mcp and /effort delegate, keeping their panels client-side.
+    paths: [src/ui/commands_mixin.py, src/ui/provider_mixin.py, src/ui/service_client.py, tests/test_ui_client.py, docs/architecture.md]
+    acceptance: each command changes service state, refuses mid-turn with the service's reason, and the panel reflects the change or closes on refusal.
+  - id: commands-agent-session-v1
+    objective: /agent, /new and /load delegate; the terminal stops writing session identity locally.
+    paths: [src/ui/agent_mixin.py, src/ui/commands_mixin.py, src/ui/service_client.py, src/sigil.py, tests/test_ui_client.py, docs/architecture.md]
+    acceptance: a second client sees the agent and session change; no local write of session.agent; history and cursor are repainted from the service after a switch.
+  - id: commands-model-rollback-v1
+    objective: /model and /rollback delegate, with the per-account catalogue and the restored prompt resolved.
+    paths: [src/ui/provider_mixin.py, src/ui/rollback_mixin.py, src/ui/service_client.py, src/server/app.py, src/server/views.py, src/server/runtime.py, tests/test_ui_client.py, tests/test_server_parity.py, docs/architecture.md]
+    acceptance: the model picker shows real choices from the service; rollback and fork keep the destructive semantics and restore the prompt; provider remains blocked with an honest notice.
+verification:
+  focused: focused tests per slice before the wider suite
+  full: uv run pytest -q -p no:sugar -n 8, twice, checking for leftover double.py serve processes
+  lint: uv run ruff check src tests and ruff format --check (test_pre_commit enforces format)
+  diff: git diff --check and untracked inspection
+  validator: report the experimental validator result honestly
+risks:
+  - Side doors that bypass the dispatcher would answer differently from the typed command.
+  - A delegated command that still writes session state locally creates two truths.
+  - Panels opened before a refusal must not leave the UI showing a state the service did not accept.
+limitations:
+  - Provider stays blocked until an accounts endpoint exists.
+  - Theme, debug, sidebar, alerts, tools, reasoning visibility, help and quit stay client-side by design.
