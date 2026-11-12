@@ -34,6 +34,7 @@ from pydantic_ai import Agent
 from sigil_tools import ToolContext
 from src.engine.agents.factory import AgentFactory, AgentSpec
 from src.engine.agents.model_features import IMAGE_INPUT, ModelFeatureGate
+from src.engine.agents.profile.models.agent_not_found import AgentNotFound
 from src.engine.agents.profile.registry import AgentRegistry
 from src.engine.agents.retry import RetryTransientModelErrors
 from src.engine.agents.rollback import Rollback
@@ -221,6 +222,10 @@ class Composition:
         # a cold start shows `ctx: ?` and cannot budget. The selection carries the
         # last known value, so this needs no network.
         self.meter.set_window(self.model_service.stored_window())
+        # The fixed blocks were measured by the request that produced them and are
+        # written on the row; without them the budget would claim room that the
+        # tool schemas and the instructions are already using.
+        self.meter.restore(self.session)
 
         # Every tool declares itself here as it is registered: the name, the
         # permission it serves, the model feature it needs and what it keeps of its
@@ -451,6 +456,146 @@ class Composition:
         self.agent = self.factory.root()
         return self.agent
 
+    # --- what a client records after a selection changed --------------------
+
+    def apply_model_change(self, snapshot: Any) -> Any:
+        """Records a new model selection on the session, the meter and the store.
+
+        This is the one place that decides what "the model changed" means, so the
+        two clients cannot disagree about it: the session carries the selection
+        (a restart resumes it), the meter budgets against the window the new model
+        reports, and a conversation that already has messages is written so the
+        row matches the screen. A session with no messages is left alone on
+        purpose — saving it would create an empty conversation nobody asked for.
+
+        The caller that *serves turns* must call `rebuild_agent` afterwards: the
+        agent closes over the model it was built with (see `_build_factory`), so a
+        server whose next turn reads `Composition.agent` would otherwise keep
+        sending to the previous model. Whether the terminal also needs it is a
+        property of the terminal (it holds its own agent), not of this method, so
+        the rebuild is the caller's decision and is not done here.
+
+        The terminal's `ProviderMixin._after_model_change` still has its own copy
+        of these lines. That copy stays for this cut because the terminal is not
+        migrated yet: it is the only client actually in use, and moving a path
+        nothing here exercises would be an unverified change to it. The copy
+        disappears in `tui-attach-v1`, when the terminal stops mutating state
+        locally and calls this instead.
+        """
+        self.session.selection = snapshot.selection
+        if self.session.messages:
+            self.store.save_progress(self.session)
+        window = getattr(self.agent.model, 'context_window', None)
+        self.meter.set_window(window if window else snapshot.window)
+        return snapshot
+
+    def apply_agent(self, name: str) -> tuple[Any, Any]:
+        """Activates a profile and stamps it on the session and the root of the tree.
+
+        Returns the profile and the model snapshot the profile's own default
+        produced (``None`` when the profile declares no model in the config), which
+        is the pair a client reports. A profile whose model cannot be resolved puts
+        the previous agent back before the error leaves: a refused switch must not
+        leave the session on an agent that never ran.
+
+        Like `apply_model_change`, the terminal's `AgentMixin.apply_agent` keeps its
+        own copy for this cut — same reason: it is not migrated yet, and
+        `tui-attach-v1` is where that copy goes.
+        """
+        previous = self.agent_registry.active_name
+        try:
+            profile = self.agent_registry.activate(name)
+            snapshot = self.select_agent_model(profile.name)
+        except AgentNotFound, ProviderError:
+            if previous and self.agent_registry.active_name != previous:
+                self.agent_registry.activate(previous)
+            raise
+        self.session.agent = profile.name
+        self.agent_trees.rename_root(profile.name)
+        if snapshot is not None:
+            self.apply_model_change(snapshot)
+        return profile, snapshot
+
+    # --- tree actions -------------------------------------------------------
+
+    def stop_subagent(self, node_id: str) -> str:
+        """Stops a subagent and everything it summoned.
+
+        The decision is the summoner's — the same object the terminal's tree
+        calls — so an unknown id, the session's own agent and a node that cannot
+        be stopped are refused with the engine's own reasons, not a second rule.
+
+        Raises:
+            SummonError: when the node cannot be stopped.
+        """
+        return self.summoner.kill(None, node_id)
+
+    def background_subagent(self, node_id: str) -> str:
+        """Moves a running subagent to the background.
+
+        A plain delegation: the refusals — an unknown id, the session's own agent,
+        a node that already finished — are the summoner's, so the terminal's tree
+        action and this one cannot disagree about them.
+
+        Raises:
+            SummonError: when the node cannot be sent to the background.
+        """
+        return self.summoner.detach(node_id)
+
+    # --- session settings ---------------------------------------------------
+
+    def apply_external_files(self, allow: bool) -> Session:
+        """Allows or denies file access outside the workspace for this session.
+
+        The flag is read per tool call, so the change is effective immediately and
+        needs no rebuild; it is written down so the next launch keeps it.
+        """
+        self.session.allow_external_files = bool(allow)
+        self._persist_idle()
+        return self.session
+
+    async def apply_mcp_override(self, name: str, enabled: bool) -> Session:
+        """Enables or disables one MCP server for this session.
+
+        The choice is remembered on the session's overrides and handed to the
+        gateway, which is what changes the tool set of the next turn; disabling
+        also disconnects the server instead of leaving it running. This is the
+        decision the terminal's `/mcp` screen makes, moved here so both clients
+        cannot disagree about it.
+
+        Refused while a subagent is still working, which is the terminal's second
+        criterion for this command: a live node runs on an agent whose tools were
+        computed when it started, so disabling a server would close the transport
+        under a call already in flight, and enabling one would swap the tool set
+        mid-run. The terminal keeps its own copy of this check until it stops
+        binding state locally (`tui-attach-v1`).
+
+        Raises:
+            RuntimeError: while a subagent of this session is running.
+            LookupError: when the config declares no server with that name.
+        """
+        if self.summoner.running():
+            raise RuntimeError('Subagents are still working: stop them before you change MCP servers.')
+        if name not in self.mcp_config.servers:
+            raise LookupError(f'No MCP server named {name!r} is configured.')
+        self.session.mcp_overrides[name] = enabled
+        self.mcp.set_overrides(self.session.mcp_overrides)
+        self._persist_idle()
+        if not enabled:
+            await self.mcp.stop_disabled(name)
+        return self.session
+
+    def _persist_idle(self) -> None:
+        """Writes the session, adopting a concurrent winner instead of raising.
+
+        A toggle over HTTP must not become a server error because another client
+        wrote the same conversation first, and an empty draft has nothing to
+        write: `save` refuses it and `save_current` keeps the object.
+        """
+        current = self.store.save_current(self.session)
+        if current is not self.session:
+            self.bind_session(current)
+
     # --- derived state the prompt is rendered from --------------------------
 
     @property
@@ -557,6 +702,9 @@ class Composition:
         """Points the composition at another session of the same workspace."""
         self.session = session
         self.mcp.set_overrides(session.mcp_overrides)
+        # The measured half of the context travels on the session, because the
+        # request parameters it came from do not survive the process.
+        self.meter.restore(session)
         workspace = Path(os.path.realpath(session.cwd))
         if workspace != self._agent_config_root:
             config = load_config(cwd=workspace)

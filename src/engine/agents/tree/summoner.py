@@ -486,8 +486,20 @@ class SubagentSummoner:
         The run is untouched — it was never in the caller's stack, only awaited by
         it. Flipping the mode is what changes where the answer goes; waking the
         waiter is what frees the caller.
+
+        The root is refused here, not by a caller: the terminal's tree lists every
+        node and binds `b` on the highlighted row, so a guard in one client would
+        leave the action reachable from another. The session's own agent has no
+        parent waiting for an answer, and flipping its mode would describe the
+        conversation as something it is not.
+
+        Raises:
+            SummonError: Nothing matches the reference, it is the session's agent,
+                or it already finished.
         """
         node = self.resolve(node_id)
+        if node.is_root:
+            raise SummonError('That is the agent of the session, not a subagent: stop the turn instead.')
         if node.status.finished:
             raise SummonError(f'#{node.short_id} already finished: there is nothing to move to the background.')
         if node.mode == 'async':

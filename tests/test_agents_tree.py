@@ -927,3 +927,46 @@ def test_unconfigured_subagent_captures_parent_model_and_effort(tmp_path):
     env.summoner._base_model = lambda: parent
     asyncio.run(env.summoner.summon(parent_id=None, name='worker', task='go'))
     assert seen == [('parent:custom', {'thinking': 'medium'})]
+
+
+# --- detaching ---------------------------------------------------------------
+#
+# `detach` is the tree action the terminal binds to `b`. The screen lists every
+# node, the root included, so the refusal for the session's own agent belongs
+# here: a guard in one caller would leave the other one free to do it.
+
+
+def test_detach_refuses_the_session_agent(tmp_path: Path) -> None:
+    """`b` on the root is not "background it": the session agent has no waiter."""
+    env = make_env(tmp_path)
+    root = env.tree().root
+    assert root is not None
+
+    with pytest.raises(SummonError, match='not a subagent'):
+        env.summoner.detach(root.id)
+
+    assert root.mode == 'sync'
+    assert root.status is NodeStatus.RUNNING
+
+
+def test_detach_moves_a_running_subagent_to_the_background(tmp_path: Path) -> None:
+    """The legitimate use the root guard must not break."""
+    env = make_env(tmp_path)
+    node = env.tree().add(parent_id=None, name='worker', role=AgentRole.SUBAGENT, task='go', mode='sync')
+
+    message = env.summoner.detach(node.id)
+
+    assert 'background' in message
+    assert node.mode == 'async'
+    assert node.status is NodeStatus.RUNNING
+
+
+def test_detach_leaves_an_already_async_subagent_alone(tmp_path: Path) -> None:
+    """Detaching twice is idempotent, not a refusal."""
+    env = make_env(tmp_path)
+    node = env.tree().add(parent_id=None, name='worker', role=AgentRole.SUBAGENT, task='go', mode='async')
+
+    message = env.summoner.detach(node.id)
+
+    assert 'already in the background' in message
+    assert node.mode == 'async'
