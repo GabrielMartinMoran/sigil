@@ -41,6 +41,7 @@ from rich.panel import Panel
 from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
+from textual.color import Color
 from textual.events import Click
 from textual.selection import Selection
 from textual.timer import Timer
@@ -56,6 +57,7 @@ from src.ui.markdown_theme import markdown_themes
 from src.ui.messages import NodeOpened, RollbackRequested
 from src.ui.palette import color
 from src.ui.subagent_reports import split_reports
+from src.ui.widgets.empty_logo import logo_text
 from src.ui.widgets.reading import ReadOnlyScroll
 from src.ui.widgets.rows import fit
 from src.ui.widgets.status_bar import SPINNER_FRAMES, SPINNER_INTERVAL
@@ -1066,6 +1068,30 @@ class ChatLog(ReadOnlyScroll):
         self._group_rows: list[ToolCallBlock] = []
         self._last_block: Static | None = None
         self._reasoning_visible = reasoning_visible
+        self._has_transcript = False
+
+    def render(self) -> Text:
+        if self.id != 'chat' or self._has_transcript:
+            return Text('')
+        variables = self.app.theme_variables
+        start = variables.get('logo-start', color(self, 'primary'))
+        end = variables.get('logo-end', color(self, 'secondary'))
+        if Color.parse(start) == Color.parse(end):
+            base = Color.parse(end)
+            target = Color.parse(color(self, 'foreground'))
+            if base == target:
+                target = Color.parse('#000000' if base.brightness > 0.5 else '#ffffff')
+            end = base.blend(target, 0.4).hex
+        width, height = self.content_size
+        logo = logo_text(width, max(0, height - 2), start, end)
+        lines = logo.split('\n')
+        result = Text('\n' * max(0, (height - len(lines)) // 2), no_wrap=True)
+        for index, line in enumerate(lines):
+            result.append(' ' * max(0, (width - len(line.plain)) // 2))
+            result.append_text(line)
+            if index < len(lines) - 1:
+                result.append('\n')
+        return result
 
     def on_mount(self) -> None:
         # Anchors the view to the bottom from the start.
@@ -1147,6 +1173,9 @@ class ChatLog(ReadOnlyScroll):
     async def _append(self, widget: Static) -> None:
         # Anchoring takes care of the scroll; there is no need to force scroll_end.
         self._last_block = widget
+        if not isinstance(widget, LinkNotice):
+            self._has_transcript = True
+            self.refresh()
         await self.mount(widget)
 
     async def add_user(
@@ -1277,6 +1306,8 @@ class ChatLog(ReadOnlyScroll):
                 reasoning_visible=self._reasoning_visible,
                 classes='assistant-msg',
             )
+            self._has_transcript = True
+            self.refresh()
             await self.mount(self._current)
             self._last_block = self._current
 
@@ -1307,6 +1338,7 @@ class ChatLog(ReadOnlyScroll):
         Asking each block to rebuild from its own state is what makes the live
         preview in the theme picker real.
         """
+        self.refresh()
         for child in self.children:
             if isinstance(child, AssistantBlock):
                 child.finalize()
@@ -1317,6 +1349,8 @@ class ChatLog(ReadOnlyScroll):
         self._current = None
         self._open_tools.clear()
         await self.remove_children()
+        self._has_transcript = False
+        self.refresh()
         # After clearing, the new history follows the bottom again.
         self.anchor()
 
@@ -1425,6 +1459,8 @@ class ChatLog(ReadOnlyScroll):
 
         if not batches:
             return
+        self._has_transcript = True
+        self.refresh()
         for block in batches:
             if isinstance(block, SummonBlock):
                 for node in subagents:

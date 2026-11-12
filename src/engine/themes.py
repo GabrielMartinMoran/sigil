@@ -150,6 +150,8 @@ def _sigil() -> ThemeDefinition:
         name='sigil',
         dark=True,
         colors={
+            'logo-start': '#ff9d00',
+            'logo-end': '#d93d00',
             'primary': '#f59e0b',
             'secondary': '#d55a1f',
             'accent': '#f59e0b',

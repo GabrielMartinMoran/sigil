@@ -1736,8 +1736,11 @@ Two kinds of key live under `colors`:
   theme's palette. `primary` is required; the rest are inherited when omitted.
 - Anything else becomes a CSS variable of that name. That is how a theme reaches
   the parts of Sigil the palette does not cover: `tool-border`, `tool-title`,
-  `tool-output`, `reasoning`, `diff-added`, `diff-removed`, `sidebar-section` and
-  `muted`.
+  `tool-output`, `reasoning`, `diff-added`, `diff-removed`, `sidebar-section`,
+  `muted`, `logo-start` and `logo-end`.
+
+The mark that fills an empty session takes its gradient from `logo-start` to
+`logo-end`, and falls back to `primary` and `secondary` when a theme sets neither.
 
 A color that does not parse rejects the whole file instead of half-applying it: a
 theme with two valid colors and one typo would paint an interface nobody designed.
