@@ -287,7 +287,7 @@ def test_commands_that_would_swap_the_session_are_refused_mid_turn():
                 await pilot.pause()
 
                 assert app._session.id == session_before
-                assert any('/new is not available' in text for text in _chat_texts(app))
+                assert any('/new' in text and 'A turn is running' in text for text in _chat_texts(app))
                 # The command is handed back, not swallowed.
                 assert app.query_one(PromptInput).value == '/new'
 
@@ -337,7 +337,7 @@ def test_the_menu_enter_is_refused_too_not_only_the_typed_path():
                 assert app._session.id == session_before, 'the session was swapped mid-turn'
                 # The chat keeps the turn in progress and gains only the notice.
                 assert len(app.query_one(ChatLog).children) == children_before + 1
-                assert any('/new is not available' in text for text in _chat_texts(app))
+                assert any('/new' in text and 'A turn is running' in text for text in _chat_texts(app))
                 assert app.query_one(PromptInput).value == '/new'
 
                 release.set()
@@ -383,7 +383,7 @@ def test_load_is_refused_mid_turn_and_never_opens_the_picker():
 
                 assert type(app.screen).__name__ != 'SessionPicker'
                 assert app._session.id == session_before
-                assert any('/load is not available' in text for text in _chat_texts(app))
+                assert any('/load' in text and 'A turn is running' in text for text in _chat_texts(app))
 
                 release.set()
                 await wait_for_turn(app)
@@ -826,7 +826,7 @@ def test_the_model_shortcut_is_refused_mid_turn_as_well():
                 await pilot.pause()
 
                 assert type(app.screen).__name__ == 'Screen'
-                assert any('/model is not available' in text for text in _chat_texts(app))
+                assert any('/model' in text and 'A turn is running' in text for text in _chat_texts(app))
 
                 release.set()
                 await wait_for_turn(app)

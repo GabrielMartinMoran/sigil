@@ -14,6 +14,13 @@ from pathlib import Path
 import pytest
 
 from src.engine.commands import COMMANDS, CommandOwner, match_commands, owned_by
+from src.ui.command_transport import (
+    TRANSPORT,
+    Transport,
+    TransportState,
+    transport_for,
+    unavailable_notice,
+)
 
 HANDLERS = Path(__file__).resolve().parent.parent / 'src' / 'ui' / 'commands_mixin.py'
 
@@ -98,3 +105,132 @@ def test_the_help_lists_both_groups_and_loses_nothing():
     assert 'This client' in HELP_TEXT
     for command in COMMANDS:
         assert command.name in HELP_TEXT
+
+
+# --- the transport table -----------------------------------------------------
+#
+# The catalogue says who *may* serve a command. Whether this terminal has a way to
+# reach that server is a separate, client-side fact, and it lives in one table so
+# the dispatcher never grows a second list of names. These tests are the seam
+# between the two: a command added to the catalogue without a transport row, or a
+# row without a command, fails here instead of silently doing nothing.
+
+
+def test_every_command_has_a_transport_row_and_every_row_a_command():
+    assert {row.name for row in TRANSPORT} == {command.name for command in COMMANDS}
+
+
+def test_the_transport_table_names_each_command_once():
+    names = [row.name for row in TRANSPORT]
+    assert len(names) == len(set(names))
+
+
+def test_a_transport_row_keeps_the_owner_the_catalogue_declared():
+    owners = {command.name: command.owner for command in COMMANDS}
+    assert all(row.owner is owners[row.name] for row in TRANSPORT)
+
+
+def test_the_commands_that_run_here_are_exactly_the_client_ones():
+    local = {row.name for row in TRANSPORT if row.state is TransportState.CLIENT}
+    assert local == CLIENT_COMMANDS
+
+
+def test_provider_is_the_only_blocked_command():
+    blocked = [row.name for row in TRANSPORT if row.state is TransportState.BLOCKED]
+    assert blocked == ['/provider']
+
+
+def test_a_row_that_does_not_run_here_says_why_and_where():
+    for row in TRANSPORT:
+        if row.state is TransportState.CLIENT:
+            assert row.reason == '', f'{row.name} runs here, so it has nothing to explain'
+        else:
+            assert row.reason, f'{row.name} must say why it is {row.state}'
+    for row in TRANSPORT:
+        if row.state in {TransportState.NOT_WIRED, TransportState.DELEGATED}:
+            assert row.route is not None, f'{row.name} names the route it would use'
+        if row.state is TransportState.BLOCKED:
+            assert row.route is None, 'a blocked command has no route to name'
+
+
+def test_an_unknown_command_has_no_row_at_all():
+    """The dispatcher still owns "Unknown command": a name nobody planned is not a row."""
+
+    assert transport_for('/nope') is None
+
+
+def test_the_not_wired_notice_still_names_the_command_the_route_and_the_gap():
+    """No row is `not_wired` now, so the sentence is proven on a row built for it.
+
+    The state stays in the table because the decision has to be total: a command the
+    service serves and this terminal has not wired yet must still say so precisely,
+    instead of borrowing the answer meant for a command with no endpoint at all.
+    """
+    row = Transport(
+        name='/model',
+        owner=CommandOwner.CORE,
+        state=TransportState.NOT_WIRED,
+        route='/api/model',
+        reason='the picker reads a catalogue this terminal cannot fetch.',
+    )
+    notice = unavailable_notice(row)
+
+    assert '/model' in notice
+    assert '/api/model' in notice
+    assert 'not wired' in notice
+    assert row.reason in notice
+
+
+def test_provider_says_no_endpoint_exists_rather_than_a_missing_setting():
+    """The blocked notice must not send the user to configure a provider they have."""
+
+    notice = unavailable_notice(transport_for('/provider'))
+
+    assert '/provider' in notice
+    assert 'no endpoint' in notice
+    assert 'Configure a provider' not in notice
+
+
+def test_a_delegated_row_has_a_route_and_is_dispatched_to_its_handler():
+    """Delegated means wired: a route to send to, and a handler that runs.
+
+    The refusal sentence is not for these rows any more. Asking one for it is a bug
+    in the dispatcher, and the table says so instead of answering with a sentence
+    about a sender that exists.
+    """
+
+    delegated = {row.name for row in TRANSPORT if row.state is TransportState.DELEGATED}
+    assert delegated == {
+        '/agent',
+        '/context',
+        '/effort',
+        '/external-files',
+        '/load',
+        '/mcp',
+        '/model',
+        '/new',
+        '/rollback',
+    }
+    for row in TRANSPORT:
+        if row.state is TransportState.DELEGATED:
+            assert row.route is not None, f'{row.name} travels on a route'
+            assert row.reason
+            with pytest.raises(ValueError, match='has a sender'):
+                unavailable_notice(row)
+
+    # The choke point refuses only the two states with no way out, so a delegated
+    # row falls through to the handler map below it.
+    source = HANDLERS.read_text(encoding='utf-8')
+    assert '{TransportState.NOT_WIRED, TransportState.BLOCKED}' in source
+
+
+def test_the_transport_table_refuses_two_rows_for_one_command():
+    """The import-time guard, proven: two rows for one command would be a silent winner.
+
+    It fails where the table is built, not at the moment a user types the command.
+    """
+    from src.ui.command_transport import _covering
+
+    duplicate = Transport('/theme', CommandOwner.CLIENT, TransportState.CLIENT)
+    with pytest.raises(ValueError, match='more than once'):
+        _covering((*TRANSPORT, duplicate))

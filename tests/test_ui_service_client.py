@@ -40,6 +40,7 @@ from fastapi import FastAPI
 from PIL import Image
 
 from src.engine.bootstrap import Composition
+from src.engine.mcp.deferred import build_manager
 from src.server.app import create_app
 from src.server.config import ServerConfig
 from src.server.endpoint import Endpoint, EndpointPublisher
@@ -59,7 +60,7 @@ from src.ui.service_client import (
     TurnRequest,
     Unauthorized,
 )
-from tests.test_server_parity import _composition
+from tests.test_server_parity import _busy, _composition
 
 PASSWORD = 'secret-pass'
 """What the browser logs in with; the client never uses it."""
@@ -607,5 +608,424 @@ def test_the_token_never_appears_in_a_repr_or_in_an_error() -> None:
                 assert TOKEN not in repr(caught.value)
         finally:
             await client.aclose()
+
+    asyncio.run(go())
+
+
+# --- the four commands that travel -------------------------------------------
+#
+# One test per route, against the real application, because the contract is the
+# status code: `409` means the session is in the way and `400` means the request
+# named something unusable. A screen branches on those two, so they are what the
+# client has to get right.
+
+
+def test_context_returns_the_service_projection_with_a_real_zero(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """A cold session is zero, and zero is a measurement, not a placeholder."""
+
+    async def go() -> dict[str, Any]:
+        async with _served(runtime, tmp_path) as client:
+            return await client.context()
+
+    context = asyncio.run(go())
+
+    assert context['window'] == 100_000
+    assert context['used'] == 0
+    assert context['percent'] == 0.0
+    assert context['measured'] is None
+    assert set(context['budget']) >= {'tools', 'instructions', 'available_for_history'}
+
+
+def test_external_files_changes_the_services_session(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> tuple[dict[str, Any], bool]:
+        async with _served(runtime, tmp_path) as client:
+            session = await client.external_files(True)
+            return session, runtime.session.allow_external_files
+
+    session, stored = asyncio.run(go())
+
+    assert session['external_files'] is True
+    assert stored is True
+
+
+def test_external_files_is_refused_while_a_turn_runs(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """`409`, and the reason is the service's own sentence."""
+
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            async with _busy(runtime):
+                with pytest.raises(ServiceBusy) as caught:
+                    await client.external_files(True)
+
+            assert 'A turn is running' in str(caught.value)
+            assert runtime.session.allow_external_files is False
+
+    asyncio.run(go())
+
+
+def test_effort_changes_the_services_model_and_reads_back(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> dict[str, Any]:
+        async with _served(runtime, tmp_path) as client:
+            model = await client.effort('high')
+            assert runtime.composition.model_service.snapshot().thinking == 'high'
+            return model
+
+    model = asyncio.run(go())
+
+    assert model['thinking'] == 'high'
+
+
+def test_effort_refuses_a_level_the_model_does_not_accept(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """`400`: a different request would work, which is not what `409` says."""
+
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            with pytest.raises(RequestRejected):
+                await client.effort('max')
+            assert runtime.composition.model_service.snapshot().thinking != 'max'
+
+    asyncio.run(go())
+
+
+def test_effort_is_refused_while_a_turn_runs(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            async with _busy(runtime):
+                with pytest.raises(ServiceBusy) as caught:
+                    await client.effort('high')
+            # The wording is the model service's, not the route's: the refusal is
+            # the engine's own `BusyError`, which is the point of not restating it.
+            assert 'A turn is in progress' in str(caught.value)
+
+    asyncio.run(go())
+
+
+# --- MCP: the layer is fenced off from the developer's home config ------------
+
+
+def _mcp_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ServerRuntime:
+    """One configured server and an installed layer, with `~/.sigil` fenced out.
+
+    `config_paths` falls back to the home directory, so without `SIGIL_CONFIG` the
+    list this asserts would depend on the machine the suite ran on.
+    """
+    config = tmp_path / '.sigil' / 'config.json'
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(json.dumps({'mcp_servers': {'probe': {'command': 'npx', 'prefix': ''}}}), encoding='utf-8')
+    monkeypatch.setenv('SIGIL_CONFIG', str(config))
+    composition = _composition(tmp_path, monkeypatch)
+    composition.mcp.install(build_manager(composition.mcp_config.servers, None))
+    return ServerRuntime(composition, EventHub(), require_ownership=False)
+
+
+def test_mcp_servers_lists_and_toggles_through_the_service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime = _mcp_runtime(tmp_path, monkeypatch)
+
+    async def go() -> tuple[list[str], bool]:
+        async with _served(runtime, tmp_path) as client:
+            assert [row['name'] for row in await client.mcp_servers()] == ['probe']
+            rows = await client.toggle_mcp('probe', False)
+            return [row['name'] for row in rows], rows[0]['enabled']
+
+    try:
+        names, enabled = asyncio.run(go())
+    finally:
+        runtime.abort()
+
+    assert names == ['probe']
+    assert enabled is False
+    assert runtime.session.mcp_overrides == {'probe': False}
+
+
+def test_an_unknown_mcp_server_is_a_rejection_and_changes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = _mcp_runtime(tmp_path, monkeypatch)
+
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            with pytest.raises(RequestRejected) as caught:
+                await client.toggle_mcp('ghost', False)
+            assert 'No MCP server named' in str(caught.value)
+
+    try:
+        asyncio.run(go())
+    finally:
+        runtime.abort()
+    assert runtime.session.mcp_overrides == {}
+
+
+# --- the agent and session senders -------------------------------------------
+
+
+def test_select_agent_switches_the_services_session(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> dict[str, Any]:
+        async with _served(runtime, tmp_path) as client:
+            payload = await client.select_agent('reviewer')
+            assert runtime.session.agent == 'reviewer'
+            state = await client.state()
+            assert state['session']['agent'] == 'reviewer'
+            return payload
+
+    payload = asyncio.run(go())
+
+    assert (payload.get('agent') or {}).get('name') == 'reviewer'
+
+
+def test_an_unknown_agent_is_a_rejection_and_changes_nothing(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            with pytest.raises(RequestRejected) as caught:
+                await client.select_agent('ghost')
+            # The listing is the service's: the sentence names what it could offer.
+            assert 'Unknown agent' in str(caught.value)
+            assert runtime.session.agent != 'ghost'
+
+    asyncio.run(go())
+
+
+def test_select_agent_is_refused_while_a_turn_runs(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            async with _busy(runtime):
+                with pytest.raises(ServiceBusy) as caught:
+                    await client.select_agent('reviewer')
+            assert 'turn' in str(caught.value).lower()
+            assert runtime.session.agent != 'reviewer'
+
+    asyncio.run(go())
+
+
+def test_new_session_creates_the_services_session(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> dict[str, Any]:
+        async with _served(runtime, tmp_path) as client:
+            before = runtime.session.id
+            created = await client.new_session()
+            assert created['id'] != before
+            assert runtime.session.id == created['id']
+            listing = await client.sessions()
+            # The service is the one that knows which session is open.
+            assert listing['current'] == created['id']
+            return created
+
+    created = asyncio.run(go())
+
+    assert created['short_id'].startswith(created['id'][:8])
+
+
+def test_open_session_opens_a_stored_conversation(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> dict[str, Any]:
+        async with _served(runtime, tmp_path) as client:
+            first = runtime.session.id
+            await client.send_turn(TurnRequest('first'))
+            await runtime.wait()
+            created = await client.new_session()
+            assert runtime.session.id == created['id']
+            opened = await client.open_session(first)
+            assert runtime.session.id == first
+            return opened
+
+    opened = asyncio.run(go())
+
+    assert opened['id'].startswith(opened['short_id'])
+
+
+def test_opening_an_unknown_session_is_a_typed_refusal(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """The route answers `409` for both, so the client reports the service's reason.
+
+    ``/api/session/open`` maps a busy runtime and an unknown id to the same
+    ``409``. That is the route's existing contract, not something this client can
+    improve; what matters is that the sentence the user reads is the service's.
+    """
+
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            with pytest.raises(ServiceBusy) as caught:
+                await client.open_session('nope')
+            assert 'No session' in str(caught.value)
+
+    asyncio.run(go())
+
+
+def test_new_session_is_refused_while_a_turn_runs(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            before = runtime.session.id
+            async with _busy(runtime):
+                with pytest.raises(ServiceBusy) as caught:
+                    await client.new_session()
+            assert 'turn' in str(caught.value).lower()
+            assert runtime.session.id == before
+
+    asyncio.run(go())
+
+
+# --- the model catalogue, the rollback and the fork ---------------------------
+#
+# The catalogue is a network call on the provider's side, so the tests inject a
+# deterministic double: no credential and no socket are available here, and a real
+# fetch would make the assertion depend on someone's plan. Everything else is the
+# real application.
+
+
+class _Catalog:
+    """Stands in for `ModelCatalogService`: answers, or never does."""
+
+    def __init__(self, models: tuple[Any, ...] = (), *, hangs: bool = False) -> None:
+        self._models = models
+        self._hangs = hangs
+
+    async def models(self, account: Any, *, secret: str | None = None) -> Any:
+        if self._hangs:
+            await asyncio.Event().wait()
+        return self._catalog()
+
+    def cached(self, account: Any) -> Any:
+        """`ModelService.select` consults the cache for the model's capability."""
+        return self._catalog()
+
+    def _catalog(self) -> Any:
+        from src.engine.providers.domain.model_capability import ModelCatalog
+
+        return ModelCatalog(models=self._models, source='remote')
+
+
+def _with_catalog(runtime: ServerRuntime, catalog: Any) -> None:
+    """Installs a catalogue double on the runtime's provider service."""
+    runtime.composition.model_service.catalog = catalog
+
+
+def _an_account(runtime: ServerRuntime) -> str:
+    accounts = runtime.composition.model_service.accounts.load()
+    assert accounts, 'the fixture configures one account'
+    return accounts[0].alias
+
+
+def test_the_catalog_route_returns_one_accounts_models(runtime: ServerRuntime, tmp_path: Path) -> None:
+    from src.engine.providers.domain.model_capability import ModelCapability
+
+    _with_catalog(
+        runtime,
+        _Catalog((ModelCapability(name='first/model', context_window=100_000, efforts=('low', 'high')),)),
+    )
+
+    async def go() -> dict[str, Any]:
+        async with _served(runtime, tmp_path) as client:
+            payload = await client.catalog_for(_an_account(runtime))
+            assert payload['catalog']['source'] == 'remote'
+            assert [model['name'] for model in payload['catalog']['models']] == ['first/model']
+            assert payload['catalog']['models'][0]['efforts'] == ['low', 'high']
+            return payload
+
+    asyncio.run(go())
+
+
+def test_a_catalog_that_never_answers_is_a_bounded_refusal(
+    runtime: ServerRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The route gives up instead of holding the request open.
+
+    The bound is shortened here; the assertion is that the route stops waiting and
+    says so, which is the behaviour a client depends on.
+    """
+    monkeypatch.setattr('src.server.app.CATALOG_TIMEOUT_SECONDS', 0.05)
+    _with_catalog(runtime, _Catalog(hangs=True))
+
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            with pytest.raises(RequestRejected) as caught:
+                await client.catalog_for(_an_account(runtime))
+            assert 'did not answer' in str(caught.value)
+
+    asyncio.run(go())
+
+
+def test_an_unknown_account_is_a_rejection(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            with pytest.raises(RequestRejected):
+                await client.catalog_for('no-such-account')
+
+    asyncio.run(go())
+
+
+def test_set_model_changes_the_services_model(runtime: ServerRuntime, tmp_path: Path) -> None:
+    from src.engine.providers.domain.model_capability import ModelCapability
+
+    _with_catalog(
+        runtime, _Catalog((ModelCapability(name='second/model', context_window=200_000, efforts=('low', 'high')),))
+    )
+
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            alias = _an_account(runtime)
+            await client.set_model(alias, 'second/model', 'high')
+            assert runtime.composition.model_service.snapshot().model == 'second/model'
+            assert (await client.state())['model']['model'] == 'second/model'
+
+    asyncio.run(go())
+
+
+def test_set_model_is_refused_while_a_turn_runs(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            before = runtime.composition.model_service.snapshot().model
+            async with _busy(runtime):
+                with pytest.raises(ServiceBusy):
+                    await client.set_model(_an_account(runtime), 'second/model')
+            assert runtime.composition.model_service.snapshot().model == before
+
+    asyncio.run(go())
+
+
+def test_rollback_points_and_the_restored_prompt(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """The dropped turn's prompt comes back in the reply, read before truncation."""
+
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            await client.send_turn(TurnRequest('please explain the queue'))
+            await runtime.wait()
+
+            listing = await client.rollback_points()
+            points = listing['points']
+            assert points, 'a turn with a prompt is a rollback point'
+            target = points[-1]['turn_id']
+
+            payload = await client.rollback(target, files=False)
+            assert 'please explain the queue' in (payload['rollback']['prompt'] or '')
+            assert payload['rollback']['turns_dropped'] >= 1
+            assert (await client.rollback_points())['points'] == []
+
+    asyncio.run(go())
+
+
+def test_a_rollback_of_an_unknown_turn_is_a_typed_refusal(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            with pytest.raises(ServiceBusy):
+                await client.rollback('not-a-turn', files=False)
+
+    asyncio.run(go())
+
+
+def test_fork_creates_a_session_and_destroys_nothing(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            await client.send_turn(TurnRequest('first turn'))
+            await runtime.wait()
+            await client.send_turn(TurnRequest('branch from here'))
+            await runtime.wait()
+            before_session = runtime.session.id
+            before_points = (await client.rollback_points())['points']
+
+            # `points` is newest first: forking at the newest point keeps the turn below it.
+            payload = await client.fork(before_points[0]['turn_id'])
+
+            forked = payload['fork']
+            assert forked['session_id'] != before_session
+            assert forked['turns_copied'] >= 1
+            # Nothing was destroyed: the open session and its points are untouched.
+            assert runtime.session.id == before_session
+            assert (await client.rollback_points())['points'] == before_points
 
     asyncio.run(go())

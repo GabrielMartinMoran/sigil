@@ -31,6 +31,7 @@ import json
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -40,8 +41,10 @@ from pydantic_ai.models.test import TestModel
 
 from src.engine.attachments.images import prepare_image
 from src.engine.bootstrap import Composition
+from src.engine.commands import CommandOwner, owned_by
 from src.engine.interaction.models.question_item import QuestionItem
 from src.engine.interaction.models.question_option import QuestionOption
+from src.engine.mcp.deferred import build_manager
 from src.engine.providers.bootstrap import ProviderPaths
 from src.engine.sessions.session_store import Session
 from src.engine.settings import load_settings
@@ -52,6 +55,8 @@ from src.server.events import Event, EventHub
 from src.server.launch import Launch
 from src.server.runtime import ServerRuntime
 from src.ui.app import SigilApp
+from src.ui.command_transport import TRANSPORT, TransportState
+from src.ui.commands_mixin import render_service_context
 from src.ui.service_client import (
     OutgoingImage,
     PayloadTooLarge,
@@ -64,11 +69,14 @@ from src.ui.service_client import (
 )
 from src.ui.turn_mixin import failure_notice, pending_request
 from src.ui.widgets.chat_log import ChatLog
+from src.ui.widgets.mcp_screen import MCPScreen
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.question_panel import QuestionPanel
+from src.ui.widgets.sidebar_panel import SidebarPanel
 from src.ui.widgets.status_bar import StatusBar
 from tests.test_agents import write_profile
 from tests.test_provider_service import _add, _service
+from tests.test_server_parity import _busy
 
 PASSWORD = 'secret-pass'
 """What the browser logs in with; the terminal uses the run token instead."""
@@ -91,13 +99,23 @@ def _composition(
     monkeypatch: pytest.MonkeyPatch,
     *,
     call_tools: tuple[str, ...] = (),
+    mcp_servers: dict[str, Any] | None = None,
 ) -> Composition:
     """A real composition with one configured account and a scripted model.
 
     The account is injected by the provider test's own helper, so nothing probes a
     network, and the model is `TestModel`: the behaviour under test is the wiring
     between terminal, route, runtime and engine, not a provider.
+
+    The MCP config is pinned to this test's directory, `mcp_servers` or empty.
+    `config_paths()` otherwise falls back to `~/.sigil/config.json`, and the
+    serving runtime now installs the layer on the first turn: unpinned, a test
+    would start whatever servers the machine happens to have configured.
     """
+    config = tmp_path / '.sigil' / 'config.json'
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(json.dumps({'mcp_servers': mcp_servers or {}}), encoding='utf-8')
+    monkeypatch.setenv('SIGIL_CONFIG', str(config))
     service = _service(tmp_path)
     _add(service)
     monkeypatch.setattr('src.engine.bootstrap.build_service', lambda *args, **kwargs: service)
@@ -324,9 +342,18 @@ def test_a_retry_of_the_same_send_reuses_its_request_id_and_a_new_message_does_n
 
 def test_every_refusal_is_a_sentence_that_names_the_way_out() -> None:
     """No traceback, and no dead end: each failure says what to do about it."""
-    busy = failure_notice(ServiceBusy('the session is busy'))
+    # The service's own busy sentence: a running turn is the reason, and the way out
+    # is stopping it.
+    busy = failure_notice(ServiceBusy('A turn is running: finish or stop it before you change the model.'))
     assert 'Esc twice' in busy
     assert 'prompt' in busy
+
+    # A `409` that is not about a running turn keeps the service's words instead of
+    # borrowing the busy sentence: claiming the agent is working would be a guess.
+    unreachable = failure_notice(ServiceBusy('No session abc123.'))
+    assert 'No session abc123.' in unreachable
+    assert 'Esc twice' not in unreachable
+    assert 'still working' not in unreachable
 
     refused = failure_notice(RequestRejected('The message is empty.'))
     assert 'The message is empty.' in refused
@@ -813,24 +840,45 @@ def test_two_terminals_on_one_session_see_one_turn_and_never_a_duplicate(
 
 # --- a slash command in an attached terminal --------------------------------
 #
-# The commands still reach for the store and the engine that this terminal does
-# not own: `show_models` pushes a picker over a model service that is not here,
-# and `/new` would write a row into a database owned by another process. The
-# refusal is therefore part of the cut, not a leftover: it has to be visible, and
-# it has to change nothing. Both halves are asserted against the real service,
-# because "nothing changed" is only meaningful against the rows it could touch.
+# The catalogue declares who serves each command; the transport table in
+# `src/ui/command_transport.py` says which of those this terminal has been wired
+# to. These tests are the two halves of that answer, each read from where it would
+# show: a client command from its effect on this window, a core command from the
+# one notice it prints. Neither may open a panel or write a queue row, because
+# "nothing else happened" is only meaningful against the rows it could touch.
 
 
-def test_a_slash_command_in_an_attached_terminal_says_so_and_changes_nothing(
-    composition: Composition, tmp_path: Path
-) -> None:
-    """A refused command is a sentence on screen, not a panel and not a queue row.
+def _client_command_effect(name: str) -> tuple[str, Callable[[SigilApp, str], bool]]:
+    """The argument and the visible effect of one client command.
 
-    Three failures in one behaviour, and each is read from where it would show:
-    the notice from the transcript, the panel from the screen stack the picker
-    would push onto, and the absence of a side effect from the durable rows the
-    service wrote. A command that opened a picker would fail an assertion here
-    even if it also printed the sentence.
+    Every client command has an entry. A new one without an entry raises here
+    instead of passing untested: the transport table calls it "client", so
+    something has to prove it runs in this process.
+    """
+    effects: dict[str, tuple[str, Callable[[SigilApp, str], bool]]] = {
+        '/theme': ('synthwave', lambda app, _before: app.theme == 'synthwave'),
+        '/sidebar': ('on', lambda app, _before: app.query_one(SidebarPanel).shown is True),
+        '/help': (
+            '',
+            lambda app, before: 'This client' in _transcript(app) and len(_transcript(app)) > len(before),
+        ),
+        '/debug': ('on', lambda app, _before: app.debug_visible is True),
+        '/tools': ('expanded', lambda app, _before: app._preferences.tools_expanded is True),
+        '/reasoning-visibility': ('off', lambda app, _before: app._preferences.reasoning_visible is False),
+        '/alerts': ('on', lambda app, _before: app._preferences.desktop_notifications is True),
+        '/quit': ('', lambda app, _before: app._exit is True),
+    }
+    return effects[name]
+
+
+@pytest.mark.parametrize('name', [command.name for command in owned_by(CommandOwner.CLIENT)])
+def test_a_client_command_runs_here_and_writes_nothing(name: str, composition: Composition, tmp_path: Path) -> None:
+    """A client command is this window's own work: it acts, and it travels nowhere.
+
+    The three assertions answer three different questions. The effect says the
+    command actually ran instead of being refused. The screen stack says it opened
+    no panel it did not need. The durable rows say the service was not asked to
+    write anything, which is what a command leaking into the queue would look like.
     """
 
     async def inner() -> None:
@@ -838,15 +886,138 @@ def test_a_slash_command_in_an_attached_terminal_says_so_and_changes_nothing(
             app = _terminal(client, _session(runtime))
             async with app.run_test(size=(100, 40)) as pilot:
                 await pilot.pause()
+                before_transcript = _transcript(app)
                 before = _inputs(runtime)
+                args, effect = _client_command_effect(name)
 
-                await app.handle_command('/model', 'x')
+                await app.handle_command(name, args)
                 await pilot.pause()
 
-                assert len(app.screen_stack) == 1, 'a command in an attached terminal opens no panel'
-                assert '/model' in _transcript(app), 'the refusal names the command it refused'
-                assert 'attached to the service' in _transcript(app), 'and where that command does run'
-                assert _inputs(runtime) == before, 'a refused command writes nothing to the queue'
+                assert effect(app, before_transcript), f'{name} ran here but left no visible effect'
+                assert len(app.screen_stack) == 1, 'a client command opens no panel it does not need'
+                assert _inputs(runtime) == before, 'a client command writes nothing to the queue'
+
+    asyncio.run(inner())
+
+
+REFUSED = [row.name for row in TRANSPORT if row.state in {TransportState.NOT_WIRED, TransportState.BLOCKED}]
+"""The rows with no way out: these are the ones that answer with one notice.
+
+A `delegated` row is not in this list any more, and it should not be: it has a
+sender, so refusing it would be the dispatcher ignoring its own table. The four
+of them are exercised by the tests at the end of this file, which read the
+service afterwards.
+"""
+
+
+@pytest.mark.parametrize('name', REFUSED)
+def test_a_core_command_says_who_serves_it_and_leaves_the_screen_alone(
+    name: str, composition: Composition, tmp_path: Path
+) -> None:
+    """A core command this terminal cannot reach is one sentence, not a failure.
+
+    "Exactly one notice" is counted on the blocks the command added, not on the
+    transcript as a whole: a picker, a second notice or a repaint all add a block,
+    and the command is supposed to add exactly one. `screen_stack` catches the
+    panel a handler would have pushed; the durable rows catch the write a handler
+    would have made.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await pilot.pause()
+                chat = app.query_one(ChatLog)
+                blocks_before = len(chat.children)
+                before = _inputs(runtime)
+
+                await app.handle_command(name)
+                await pilot.pause()
+
+                added = list(chat.children)[blocks_before:]
+                assert len(added) == 1, f'{name} answers in exactly one notice'
+                assert name in _block_text(added[0]), 'the notice names the command it could not run'
+                assert len(app.screen_stack) == 1, 'a command that cannot act opens no panel'
+                assert _inputs(runtime) == before, 'a command that cannot act writes nothing'
+
+    asyncio.run(inner())
+
+
+def test_a_client_command_is_not_refused_whole_sale_in_an_attached_terminal(
+    composition: Composition, tmp_path: Path
+) -> None:
+    """The regression for the defect: the dispatcher used to be replaced entirely.
+
+    `SigilApp` swapped `handle_command` for a refusal, so every command answered the
+    same sentence — including the eight that only repaint this window. `/theme` is
+    the one with the most visible effect, so a dispatcher that refuses everything
+    fails here even when the table itself is right.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await pilot.pause()
+
+                await app.handle_command('/theme', 'synthwave')
+                await pilot.pause()
+
+                assert app.theme == 'synthwave', 'the theme command repainted this terminal'
+                assert 'not wired' not in _transcript(app), 'and nothing refused it'
+
+    asyncio.run(inner())
+
+
+SIDE_DOORS = (('ctrl+a', '/agent'),)
+"""The keys that used to open a picker without passing the dispatcher.
+
+`ctrl+l` and `ctrl+m` left this list when their commands were delegated: `/effort`
+and `/model` open a picker that is the client's, fed by the service, so a panel is
+the correct answer and not a bypass. What this test still proves is the part that
+was the bug — a key and its typed command reaching the same decision.
+
+The prompt handled them itself and called `open_models`, `open_effort` and
+`open_agent` directly, so an attached terminal bypassed whichever decision the
+typed command made. Now they go through the same choke point, and this is the
+proof: the key and the command produce the same sentence, character for
+character.
+
+The model picker is `ctrl+m`, not `alt+m`: `tests/test_shortcuts_and_efforts.py`
+locks that, because a global `alt+m` binding is what the pickers moved away from.
+
+`ctrl+l` is deliberately absent: `/effort` is delegated now, so its door opens the
+picker fed by the service instead of answering a refusal. Its own test is below.
+"""
+
+
+@pytest.mark.parametrize(('key', 'name'), SIDE_DOORS)
+def test_a_side_door_answers_exactly_like_the_typed_command(
+    key: str, name: str, composition: Composition, tmp_path: Path
+) -> None:
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await pilot.pause()
+                chat = app.query_one(ChatLog)
+                before = _inputs(runtime)
+
+                blocks_before = len(chat.children)
+                await pilot.press(key)
+                await _until(pilot, lambda: len(chat.children) > blocks_before, what=f'the {key} notice')
+                from_key = '\n'.join(_block_text(widget) for widget in list(chat.children)[blocks_before:])
+
+                blocks_before = len(chat.children)
+                await app.handle_command(name)
+                await pilot.pause()
+                from_command = '\n'.join(_block_text(widget) for widget in list(chat.children)[blocks_before:])
+
+                assert name in from_key, f'{key} answers for {name}'
+                assert from_key == from_command, 'the key and the typed command answer the same'
+                assert len(app.screen_stack) == 1, 'a side door opens no panel in an attached terminal'
+                assert _inputs(runtime) == before, 'a side door writes nothing'
 
     asyncio.run(inner())
 
@@ -1105,5 +1276,466 @@ def test_attaching_to_a_session_with_no_history_shows_nothing_and_keeps_listenin
                     lambda: 'the first message' in _transcript(app) and 'done' in _transcript(app),
                     what='the first turn painted from the rows',
                 )
+
+    asyncio.run(inner())
+
+
+# --- the four commands that travel -------------------------------------------
+#
+# Each of these reads the *service's* state afterwards, never the `200` the client
+# got: the claim is that the session changed, and only the owner of the session can
+# answer that.
+
+
+def test_the_service_context_report_never_invents_a_number() -> None:
+    """A cold session is a real zero, and an absent datum says so instead of `?`.
+
+    This is the half the old report got wrong: it painted this process's meter,
+    which for an attached terminal has measured nothing, so every number was a
+    confident zero about a conversation it had never seen.
+    """
+    text = render_service_context(
+        {
+            'window': 100_000,
+            'used': 0,
+            'percent': 0.0,
+            'measured': None,
+            'projected': None,
+            'budget': {
+                'tools': 10,
+                'instructions': 20,
+                'output_reserve': 30,
+                'safety_reserve': 40,
+                'available_for_history': 50,
+            },
+            'cost': {'total': None, 'approximate': False, 'requests': 0},
+        }
+    )
+
+    assert '0 (0%)' in text
+    assert '?' not in text
+    assert 'not reported by the service' in text
+    assert 'not priced yet' in text
+
+
+def test_the_service_context_report_names_the_workspace_it_was_given() -> None:
+    text = render_service_context(
+        {'window': None, 'used': None, 'percent': None, 'measured': None, 'projected': None, 'budget': {}, 'cost': {}},
+        {'label': 'sigil', 'root': '/repo', 'branch': 'main', 'worktree': {'is_main': True}},
+    )
+
+    assert 'Workspace' in text
+    assert '/repo' in text
+    assert 'main' in text
+
+
+def test_context_paints_the_services_measurement(composition: Composition, tmp_path: Path) -> None:
+    """The number on screen is the service's, read from the service itself."""
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+                expected = await client.context()
+
+                chat = app.query_one(ChatLog)
+                before = len(chat.children)
+                await app.handle_command('/context')
+                await _until(pilot, lambda: len(chat.children) > before, what='the context report')
+                block = '\n'.join(_block_text(widget) for widget in list(chat.children)[before:])
+
+                assert f'{expected["used"]:,}' in block
+                assert expected['window'] and f'{expected["window"]:,}' in block
+                assert '?' not in block, 'no placeholder where the service sent a number'
+
+    asyncio.run(inner())
+
+
+def test_external_files_changes_the_service_and_never_the_local_session(
+    composition: Composition, tmp_path: Path
+) -> None:
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+
+                await app.handle_command('/external-files', 'allow')
+                await pilot.pause()
+
+                # The service's session is the one that moved.
+                assert runtime.session.allow_external_files is True
+                # And this terminal's copy did not: one setting, one writer.
+                assert app._session.allow_external_files is False
+
+    asyncio.run(inner())
+
+
+def test_a_refused_external_files_change_says_why_and_changes_nothing(composition: Composition, tmp_path: Path) -> None:
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+
+                async with _busy(runtime):
+                    await app.handle_command('/external-files', 'allow')
+                    await pilot.pause()
+
+                assert runtime.session.allow_external_files is False, 'the refusal changed nothing'
+                assert 'A turn is running' in _transcript(app), "the service's own reason"
+
+    asyncio.run(inner())
+
+
+def test_effort_changes_the_services_model(composition: Composition, tmp_path: Path) -> None:
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+
+                await app.handle_command('/effort', 'high')
+                await pilot.pause()
+
+                assert runtime.composition.model_service.snapshot().thinking == 'high'
+                assert 'Reasoning effort: high' in _transcript(app)
+
+    asyncio.run(inner())
+
+
+def test_a_refused_effort_change_says_why_and_changes_nothing(composition: Composition, tmp_path: Path) -> None:
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+                before = runtime.composition.model_service.snapshot().thinking
+
+                async with _busy(runtime):
+                    await app.handle_command('/effort', 'high')
+                    await pilot.pause()
+
+                assert runtime.composition.model_service.snapshot().thinking == before
+                assert 'A turn is in progress' in _transcript(app)
+
+    asyncio.run(inner())
+
+
+def test_mcp_lists_the_services_servers_and_toggles_them_there(tmp_path: Path, monkeypatch: Any) -> None:
+    """The modal is the client's; the servers and the toggle are the service's."""
+    composition = _composition(tmp_path, monkeypatch, mcp_servers={'probe': {'command': 'npx', 'prefix': ''}})
+    composition.mcp.install(build_manager(composition.mcp_config.servers, None))
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+                app.run_worker(app.handle_command('/mcp'))
+                await _until(pilot, lambda: isinstance(app.screen, MCPScreen), what='the MCP modal')
+
+                options = app.screen.query_one('OptionList')
+                assert [option.id for option in options.options] == ['probe']
+
+                app.screen.query_one('OptionList').highlighted = 0
+                await pilot.press('enter')
+                await _until(pilot, lambda: runtime.session.mcp_overrides == {'probe': False}, what='the toggle')
+
+    asyncio.run(inner())
+
+
+# --- /agent, /new and /load travel -------------------------------------------
+#
+# Each of these reads the SERVICE afterwards, never the local projection: the
+# claim is that the service's session changed, and only its owner can answer that.
+# The local `Session` an attached terminal holds is a reading, so it is asserted
+# *not* to move — that is what "the terminal stops writing session identity
+# locally" means in practice.
+
+
+def test_the_agent_command_switches_the_services_session(composition: Composition, tmp_path: Path) -> None:
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+
+                await app.handle_command('/agent', 'reviewer')
+                await pilot.pause()
+
+                assert runtime.composition.agent_registry.active_name == 'reviewer'
+                assert (await client.state())['session']['agent'] == 'reviewer'
+                assert app._session.agent == '', 'the terminal must not stamp the session itself'
+                assert 'Agent: Reviewer' in _transcript(app)
+
+    asyncio.run(inner())
+
+
+def test_a_second_terminal_sees_the_agents_change_after_refreshing(composition: Composition, tmp_path: Path) -> None:
+    """Two clients, one session: the second one catches up from the service."""
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            first = _terminal(client, _session(runtime))
+            async with first.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: first._service_state is not None, what='the state')
+                await first.handle_command('/agent', 'reviewer')
+                await pilot.pause()
+
+            second = _terminal(client, _session(runtime))
+            async with second.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: second._service_state is not None, what='the state')
+                await pilot.pause()
+
+                assert 'Reviewer' in str(second.query_one(StatusBar).render())
+
+    asyncio.run(inner())
+
+
+def test_new_creates_the_session_in_the_service(composition: Composition, tmp_path: Path) -> None:
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+                before = runtime.session.id
+
+                await app.handle_command('/new')
+                await pilot.pause()
+
+                assert runtime.session.id != before
+                # The reading this terminal holds is not the new session: the row,
+                # the id and the identity are the service's.
+                assert app._session.id == before
+                assert f'New session {runtime.session.short_id}' in _transcript(app)
+                # The cursor restarts from the state just read, not from the old run.
+                assert app._service_cursor == app._state_cursor()
+
+    asyncio.run(inner())
+
+
+def test_new_with_a_worktree_says_it_is_not_supported(composition: Composition, tmp_path: Path) -> None:
+    """The honest answer: no session, no worktree cut, no pretending."""
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+                before = runtime.session.id
+
+                await app.handle_command('/new', '--worktree fresh')
+                await pilot.pause()
+
+                assert runtime.session.id == before, 'nothing was created'
+                assert 'not supported from an attached terminal' in _transcript(app)
+                assert 'worktree first' in _transcript(app)
+
+    asyncio.run(inner())
+
+
+def test_load_opens_the_chosen_session_through_the_service(composition: Composition, tmp_path: Path) -> None:
+    """Listed from `/api/sessions`, opened by id, repainted from the state.
+
+    The picker widget is the client's and has its own test, so the screen is
+    stubbed here: what this proves is that the command asks the service for the
+    list and that opening the choice moves the *service's* session.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            first = runtime.session.id
+            await client.send_turn(TurnRequest('first'))
+            await runtime.wait()
+            created = await client.new_session()
+            assert runtime.session.id == created['id']
+
+            app = _terminal(client, _session(runtime))
+
+            async def choose(_screen: object) -> str:
+                return first
+
+            app.push_screen_wait = choose  # type: ignore[method-assign]
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+
+                await app.handle_command('/load')
+                await pilot.pause()
+
+                assert runtime.session.id == first
+                assert f'Loaded session {first[:8]}' in _transcript(app)
+
+    asyncio.run(inner())
+
+
+# --- /model, /rollback and /fork travel ---------------------------------------
+
+
+class _Chooser:
+    """Answers the client's screens from a list, so no widget has to be driven.
+
+    The screens themselves have their own tests; what these prove is that the list
+    the screen is fed came from the service and that the effect landed there.
+    """
+
+    def __init__(self, returns: list[Any]) -> None:
+        self._returns = list(returns)
+
+    async def __call__(self, _screen: object) -> Any:
+        return self._returns.pop(0)
+
+
+def test_model_switch_changes_the_services_model(composition: Composition, tmp_path: Path) -> None:
+    from src.engine.providers.domain.model_capability import ModelCapability
+    from tests.test_ui_service_client import _Catalog, _with_catalog
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            _with_catalog(
+                runtime,
+                _Catalog((ModelCapability(name='second/model', context_window=200_000, efforts=('low', 'high')),)),
+            )
+            alias = runtime.composition.model_service.accounts.load()[0].alias
+            app = _terminal(client, _session(runtime))
+            app.push_screen_wait = _Chooser(
+                [
+                    SimpleNamespace(alias=alias, model=SimpleNamespace(name='second/model', efforts=('low', 'high'))),
+                    SimpleNamespace(effort='high'),
+                ]
+            )
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+
+                await app.handle_command('/model')
+                await pilot.pause()
+
+                assert runtime.composition.model_service.snapshot().model == 'second/model'
+                assert 'Model: ' in _transcript(app)
+
+    asyncio.run(inner())
+
+
+def test_rollback_truncates_the_services_session_and_restores_the_prompt(
+    composition: Composition, tmp_path: Path
+) -> None:
+    from src.ui.widgets.rollback_screen import ROLLBACK_ONLY
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            await client.send_turn(TurnRequest('explain the queue'))
+            await runtime.wait()
+            points = (await client.rollback_points())['points']
+            assert points
+
+            app = _terminal(client, _session(runtime))
+            app.push_screen_wait = _Chooser([SimpleNamespace(turn_id=points[0]['turn_id'], action=ROLLBACK_ONLY)])
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+
+                await app.handle_command('/rollback')
+                await pilot.pause()
+
+                # The rows are the service's, and they are shorter now.
+                assert (await client.rollback_points())['points'] == []
+                assert 'Rolled back' in _transcript(app)
+                # The prompt came back in the reply, not from a local row.
+                assert 'explain the queue' in app.query_one(PromptInput).value
+
+    asyncio.run(inner())
+
+
+def test_fork_creates_a_session_in_the_service_and_keeps_this_one(composition: Composition, tmp_path: Path) -> None:
+    from src.ui.widgets.rollback_screen import FORK
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            await client.send_turn(TurnRequest('first'))
+            await runtime.wait()
+            open_session = runtime.session.id
+            before = len((await client.sessions())['sessions'])
+            points = (await client.rollback_points())['points']
+
+            app = _terminal(client, _session(runtime))
+            app.push_screen_wait = _Chooser([SimpleNamespace(turn_id=points[0]['turn_id'], action=FORK)])
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+
+                await app.handle_command('/rollback')
+                await pilot.pause()
+
+                assert len((await client.sessions())['sessions']) == before + 1
+                assert runtime.session.id == open_session, 'a fork destroys nothing'
+                assert 'Forked to' in _transcript(app)
+
+    asyncio.run(inner())
+
+
+# --- a delegated command is refused before it opens anything ------------------
+#
+# The service would refuse the change anyway. The point is that the terminal reads
+# `busy` from `/api/state` and answers with one line, instead of opening a picker,
+# fetching a catalogue and only then being told the session is in the way.
+
+DELEGATED_STATE_CHANGERS = ('/agent', '/model', '/effort')
+
+
+@pytest.mark.parametrize('name', DELEGATED_STATE_CHANGERS)
+def test_a_delegated_command_opens_no_panel_while_a_turn_runs(
+    name: str, composition: Composition, tmp_path: Path
+) -> None:
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+                async with _busy(runtime):
+                    await app.refresh_service_state()
+                    await pilot.pause()
+
+                    chat = app.query_one(ChatLog)
+                    before = len(chat.children)
+                    inputs_before = _inputs(runtime)
+                    agent_before = runtime.session.agent
+
+                    await app.handle_command(name)
+                    await pilot.pause()
+
+                    added = list(chat.children)[before:]
+                    assert len(added) == 1, f'{name} answers in exactly one notice'
+                    text = _block_text(added[0])
+                    assert name in text, 'the notice names the command'
+                    assert 'A turn is running' in text, 'and uses the sentence the service uses'
+                    assert len(app.screen_stack) == 1, f'{name} opened a panel it cannot complete'
+                    assert _inputs(runtime) == inputs_before, 'nothing was written to the service'
+                    assert runtime.session.agent == agent_before
+
+    asyncio.run(inner())
+
+
+@pytest.mark.parametrize('key', ('ctrl+a', 'ctrl+m', 'ctrl+l'))
+def test_a_side_door_opens_no_panel_while_a_turn_runs(key: str, composition: Composition, tmp_path: Path) -> None:
+    """The three keys reach the same gate as the typed commands."""
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+                async with _busy(runtime):
+                    await app.refresh_service_state()
+                    await pilot.pause()
+
+                    chat = app.query_one(ChatLog)
+                    before = len(chat.children)
+
+                    await pilot.press(key)
+                    await _until(pilot, lambda: len(chat.children) > before, what=f'the {key} refusal')
+
+                    assert len(app.screen_stack) == 1, f'{key} opened a panel it cannot complete'
+                    assert 'A turn is running' in '\n'.join(
+                        _block_text(widget) for widget in list(chat.children)[before:]
+                    )
 
     asyncio.run(inner())

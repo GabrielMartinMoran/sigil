@@ -307,12 +307,10 @@ def test_switching_agent_is_refused_while_a_turn_runs():
 
                 app.query_one(PromptInput).value = '/agent reviewer'
                 await pilot.press('enter')
-                await wait_until(
-                    pilot, lambda: any('not available while the agent works' in text for text in _chat(app))
-                )
+                await wait_until(pilot, lambda: any('A turn is running' in text for text in _chat(app)))
 
                 assert app.active_agent().name == 'wizard'
-                assert any('not available while the agent works' in text for text in _chat(app))
+                assert any('A turn is running' in text for text in _chat(app))
                 release.set()
                 for _ in range(40):
                     await pilot.pause()
