@@ -71,6 +71,14 @@ if TYPE_CHECKING:
 SummonMode = Literal['sync', 'async']
 """How the caller waits: blocked on the result, or free until it arrives."""
 
+REPORTED = (NodeStatus.DONE, NodeStatus.FAILED)
+"""The states whose text is a report a parent may be handed.
+
+A cancelled node is not one. It keeps whatever it had said and keeps
+``delivered`` false if the cancellation came before anyone read it, and handing
+that to a turn would re-run work somebody stopped on purpose.
+"""
+
 DEFAULT_MAX_DEPTH = 3
 """How deep summoning may nest.
 
@@ -692,11 +700,32 @@ class SubagentSummoner:
         session, so closing the app between an answer and the next turn loses
         nothing.
         """
-        waiting = self.waiting()
+        return self._drain(self.waiting())
+
+    def take_reports(self) -> list[str]:
+        """The waiting answers a wake may deliver, and marks them read.
+
+        Only ``done`` and ``failed`` are answers. A cancelled node keeps whatever
+        text it had produced and keeps ``delivered`` false when the cancellation
+        arrived before anyone read it, so taking it here would hand a turn the
+        report of work somebody stopped on purpose — the interruption would be
+        executed again, which is the one thing a stopped node must never get. A
+        failure is the opposite case and belongs: it is what the parent has to see.
+
+        The rule lives here and not in a client because ``_deliver`` decides in the
+        same place which nodes send anything at all; a second copy of it in the
+        service would drift from that one.
+        """
+        return self._drain([node for node in self.waiting() if node.status in REPORTED])
+
+    def _drain(self, waiting: list[AgentNode]) -> list[str]:
+        """Takes exactly ``waiting``: marks each read and returns its envelope."""
         messages: list[str] = []
         for node in waiting:
             node.delivered = True
-            messages.append(_envelope(node, node.result or ''))
+            # A failed node never sets ``result``: the reason it stopped is the
+            # body its parent has to read, so it is the fallback and not a gap.
+            messages.append(_envelope(node, node.result or node.error or ''))
         if waiting:
             self._notify(waiting[-1])
         return messages

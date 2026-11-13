@@ -52,6 +52,7 @@ from src.engine.agents.profile.models.agent_profile import AgentProfile
 from src.engine.agents.rollback import Checkpoint, ForkOutcome, RollbackOutcome
 from src.engine.agents.step_budget import StepBudget
 from src.engine.agents.tree.models.agent_node import AgentNode
+from src.engine.agents.tree.models.node_status import NodeStatus
 from src.engine.agents.tree.models.summon_error import SummonError
 from src.engine.agents.turn_map import library_run_id
 from src.engine.attachments.content import stored_content, stored_parts, user_content
@@ -77,6 +78,16 @@ IDLE_POLL_INTERVAL = 0.5
 
 A timer, not a busy loop: the question is one indexed row lookup, and the whole
 point of the shutdown is that answering it costs less than staying alive.
+"""
+
+WAKE_PROMPT = 'A subagent finished while the session was idle. Read its report and continue.'
+"""What the turn says when a finished subagent is why it exists.
+
+It is the terminal's sentence, word for word (`ui.subagent_reports.WAKE_PROMPT`):
+the chat separates a real report from a typed message by matching this text, so a
+second wording here would paint a woken turn as something the user wrote. A test
+pins the two together rather than importing across the boundary — the service does
+not depend on the client, and that direction is what keeps it a service.
 """
 
 DEFAULT_IDLE_GRACE = 900.0
@@ -511,12 +522,52 @@ class ServerRuntime:
             response['delivered'] = True
         return response
 
+    def _subagent_working(self) -> bool:
+        """Whether any subagent of the session is still in a run.
+
+        The root is not one: it is the agent of the conversation, and its turn is
+        bookkeeping this loop already owns.
+        """
+        tree = self.composition.summoner.tree()
+        return any(node.status is NodeStatus.RUNNING for node in tree.nodes() if not node.is_root)
+
+    async def _wake_from_subagents(self) -> bool:
+        """Starts the turn the finished subagents are owed, once, and reports it.
+
+        The terminal debounces `subagents_idle` with a timer; here the fact that
+        decides is coarser and needs no clock: **a report is read when the squad is
+        quiet**. Three researchers that finish within a second are three answers and
+        one turn, because the question is whether any subagent is still working, not
+        how long ago the last one stopped.
+
+        The reports become a durable input like any other, so the woken turn is
+        claimed, checkpointed and confirmed by the same code a typed message is —
+        and a service that dies before running it leaves an `interrupted` row rather
+        than a lost message that something would re-execute later.
+
+        Returns:
+            Whether a turn was started, so the consumer loops instead of parking.
+        """
+        if self._closing or self.busy:
+            return False
+        if self._subagent_working():
+            return False
+        reports = self.composition.summoner.take_reports()
+        if not reports:
+            return False
+        await self.send('\n\n'.join([*reports, WAKE_PROMPT]))
+        return True
+
     async def _consume(self) -> None:
         """Claims and runs accepted inputs, oldest first, until closed."""
         while not self._closing:
             try:
                 item = self._claim_next()
                 if item is None:
+                    # Nothing was typed, but a subagent may have answered: the
+                    # wake is a turn, and this is the one place that starts them.
+                    if await self._wake_from_subagents():
+                        continue
                     self._settled.set()
                     try:
                         await asyncio.wait_for(self._wake.wait(), timeout=QUEUE_POLL_INTERVAL)
@@ -1027,7 +1078,21 @@ class ServerRuntime:
         self.hub.publish('tree_changed', node_id=getattr(node, 'id', ''))
 
     def _on_tree_idle(self) -> None:
+        """A subagent answered with nobody in a turn: that is work, and it is owed.
+
+        The engine calls this once per answer that found no live run. Publishing the
+        state is the old half; the new one is telling the consumer, because the wake
+        is a turn and the consumer is the only thing that starts turns. It also
+        clears `_settled`: `wait()` means "nothing left to do", and a report nobody
+        has read is something left to do.
+        """
         self.hub.publish_state('tree_idle')
+        if self._closing or self._consumer is None:
+            return
+        if not self.composition.summoner.waiting():
+            return
+        self._settled.clear()
+        self._wake.set()
 
     # --- tree and session settings -------------------------------------------
 

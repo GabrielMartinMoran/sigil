@@ -23,6 +23,7 @@ import zlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -45,6 +46,7 @@ from src.server.ownership import OwnershipError, ServerOwnership
 from src.server.runtime import (
     QUESTION_TIMEOUT_ENV,
     QUESTION_TIMEOUT_SECONDS,
+    WAKE_PROMPT,
     PendingQuestion,
     ServerRuntime,
     resolve_question_timeout,
@@ -1246,6 +1248,165 @@ def test_a_finished_node_cannot_be_backgrounded(composition: Composition) -> Non
         composition.background_subagent(node.id)
 
     assert node.status is NodeStatus.CANCELLED
+
+
+# --- the wake a finished subagent is owed ------------------------------------
+#
+# A background subagent outlives the turn that started it. The terminal answers
+# that with a turn of its own (`TreeMixin._wake_from_subagents`); the service has
+# to answer it too, or a report that lands after its turn stays unread for ever.
+# `_deliver` is the engine's own call for it — the last thing `_execute` does for
+# an async node — so these tests drive the real bell, not a second one.
+
+WAKE_DEADLINE = 5
+
+
+def _finished(composition: Composition, result: str, *, mode: str = 'async') -> AgentNode:
+    """A subagent that ran, answered and finished with nobody in a turn."""
+    node = _node(composition, mode=mode)
+    node.finish(result)
+    composition.summoner._deliver(node, result)
+    return node
+
+
+def _prompts(session: Any) -> list[str]:
+    """Every user line of a stored conversation, in order."""
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+    texts: list[str] = []
+    for message in session.messages:
+        if not isinstance(message, ModelRequest):
+            continue
+        for part in message.parts:
+            if isinstance(part, UserPromptPart):
+                content = part.content
+                texts.append(content if isinstance(content, str) else str(content))
+    return texts
+
+
+def _turn_starts(runtime: ServerRuntime, after: int) -> list[Any]:
+    return [event for event in runtime.hub.replay(after) if event.type == 'turn_started']
+
+
+def test_a_report_that_lands_after_the_turn_wakes_a_turn_that_reads_it(runtime: ServerRuntime) -> None:
+    """The gap this cut closes: the squad answers and nobody is in a turn to read it."""
+
+    async def go() -> tuple[AgentNode, int]:
+        await runtime.send('dispatch the researcher')
+        await asyncio.wait_for(runtime.wait(), WAKE_DEADLINE)
+        after = runtime.hub.last_seq
+        node = _finished(runtime.composition, 'The tree reads bottom-up.')
+        await asyncio.wait_for(runtime.wait(), WAKE_DEADLINE)
+        return node, after
+
+    node, after = asyncio.run(go())
+
+    assert node.delivered is True, 'the woken turn consumed the report'
+    assert len(_turn_starts(runtime, after)) == 1, 'exactly one turn reads the report'
+
+    stored = runtime.composition.store.load(runtime.session.id)
+    assert stored is not None
+    prompts = _prompts(stored)
+    assert any('The tree reads bottom-up.' in text for text in prompts), prompts
+    assert any(WAKE_PROMPT in text for text in prompts), prompts
+    # The synthesis is part of the conversation, not only of the run.
+    assert stored.messages[-1].parts, 'the woken turn saved nothing'
+
+
+def test_two_reports_of_one_squad_wake_one_turn(runtime: ServerRuntime) -> None:
+    """The turn starts when the squad is quiet, not once per subagent that ends."""
+
+    async def go() -> tuple[list[AgentNode], int]:
+        await runtime.send('dispatch the squad')
+        await asyncio.wait_for(runtime.wait(), WAKE_DEADLINE)
+        after = runtime.hub.last_seq
+        first = _node(runtime.composition, mode='async')
+        second = _node(runtime.composition, mode='async')
+        first.finish('The first report.')
+        runtime.composition.summoner._deliver(first, 'The first report.')
+        # The second is still working: waking now would be one turn per subagent.
+        assert _turn_starts(runtime, after) == []
+        second.finish('The second report.')
+        runtime.composition.summoner._deliver(second, 'The second report.')
+        await asyncio.wait_for(runtime.wait(), WAKE_DEADLINE)
+        return [first, second], after
+
+    nodes, after = asyncio.run(go())
+
+    assert all(node.delivered for node in nodes)
+    assert len(_turn_starts(runtime, after)) == 1, 'the whole set goes with one turn'
+
+    stored = runtime.composition.store.load(runtime.session.id)
+    assert stored is not None
+    together = [text for text in _prompts(stored) if 'The first report.' in text]
+    assert together and 'The second report.' in together[0], 'both reports reached the same prompt'
+
+
+def test_a_closing_service_does_not_wake_a_turn(runtime: ServerRuntime) -> None:
+    """Leaving is not a moment to start work: the flag waits, and nothing is spent."""
+
+    async def go() -> tuple[AgentNode, int]:
+        await runtime.send('dispatch the researcher')
+        await asyncio.wait_for(runtime.wait(), WAKE_DEADLINE)
+        after = runtime.hub.last_seq
+        runtime._closing = True
+        closed = _finished(runtime.composition, 'Too late.')
+        assert await runtime._wake_from_subagents() is False
+        return closed, after
+
+    node, after = asyncio.run(go())
+
+    assert node.delivered is False, 'the report is still waiting; nobody consumed it'
+    assert [event.type for event in runtime.hub.replay(after)] == ['tree_changed', 'state_changed'], (
+        'the closing service published the answer and started nothing'
+    )
+    assert _turn_starts(runtime, after) == [], 'no turn was started'
+
+
+def test_a_cancelled_subagent_does_not_wake_a_turn(runtime: ServerRuntime) -> None:
+    """A refused answer is not an answer: waking on it would re-run stopped work."""
+
+    async def go() -> AgentNode:
+        await runtime.send('dispatch the researcher')
+        await asyncio.wait_for(runtime.wait(), WAKE_DEADLINE)
+        node = _node(runtime.composition, mode='async')
+        node.finish('Work somebody stopped on purpose.')
+        # The cancellation arrived before anybody read the text: the node keeps it
+        # and keeps `delivered` false, which is the state a wake must refuse.
+        node.delivered = False
+        node.cancel()
+        assert await runtime._wake_from_subagents() is False
+        return node
+
+    node = asyncio.run(go())
+
+    assert node.status is NodeStatus.CANCELLED
+    assert node.delivered is False, 'nobody consumed it, because nobody may'
+    stored = runtime.composition.store.load(runtime.session.id)
+    assert stored is not None
+    assert not any('Work somebody stopped on purpose.' in text for text in _prompts(stored))
+
+
+def test_a_failed_subagent_wakes_a_turn(runtime: ServerRuntime) -> None:
+    """The other half of the same rule: a failure is exactly what the parent needs."""
+
+    async def go() -> AgentNode:
+        await runtime.send('dispatch the researcher')
+        await asyncio.wait_for(runtime.wait(), WAKE_DEADLINE)
+        node = _node(runtime.composition, mode='async')
+        node.fail('SummonError: the tool refused')
+        node.delivered = False
+        assert await runtime._wake_from_subagents() is True
+        await asyncio.wait_for(runtime.wait(), WAKE_DEADLINE)
+        return node
+
+    node = asyncio.run(go())
+
+    assert node.status is NodeStatus.FAILED
+    assert node.delivered is True, 'the woken turn read the failure'
+    stored = runtime.composition.store.load(runtime.session.id)
+    assert stored is not None
+    assert any('the tool refused' in text for text in _prompts(stored))
 
 
 def test_external_files_is_written_on_the_row(composition: Composition) -> None:

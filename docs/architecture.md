@@ -1514,3 +1514,55 @@ and says so, a service subagent appears in the list, `k` and `b` change the node
 the service and the list shows it, `enter` paints the transcript the service
 keeps, and a published `tree_changed` repaints an open list. Every wait is for a
 rendered row or a service fact, never a sleep.
+
+### The wake, in attached mode
+
+A background subagent outlives the turn that started it. The turn ends, the user
+reads its answer, and the subagent's report arrives afterwards. The terminal
+answers that with a turn of its own; the service has no timer to do it with, so
+the wake is a durable input the service gives itself.
+
+The seam is `ServerRuntime._consume`, the one place that starts turns. When the
+queue has nothing to claim, the consumer asks whether a report is owed and, if one
+is, accepts it as an ordinary `turn` row before claiming it. Nothing outside
+`_consume` starts a turn, so a wake cannot compete with a user's message.
+
+The decision has two facts and no clock:
+
+| Gate | Why |
+| --- | --- |
+| No subagent is `running` | Three researchers that finish together are three reports and **one** turn; the question is whether the squad is quiet, not how long ago it was not |
+| At least one report is pending | Nothing to read, nothing to start |
+
+`_on_tree_idle` keeps publishing `tree_idle` and now also nudges the consumer,
+clearing `_settled` so `wait()` keeps meaning "nothing left to do" while a report
+is unread.
+
+### What wakes a turn, and what never does
+
+Only `done` and `failed` reports wake. A cancelled node is refused: it keeps
+whatever it had said and keeps `delivered` false when the cancellation arrived
+before anyone read it, so handing that to a turn would execute again the work
+somebody stopped on purpose. A failure is the opposite case and does wake — the
+parent has to see it. The rule lives in `SubagentSummoner.take_reports`, beside
+`_deliver`, which decides in the same place which nodes send anything at all;
+a second copy in the service would drift from it.
+
+Three more refusals: a closing service starts nothing; a turn already running
+leaves the reports for the wake that follows it; and a report an interrupted run
+left behind is never re-executed — the row is durable, so `start` marks it
+`interrupted` and `claim_next` does not claim it.
+
+The prompt is the reports' envelopes followed by `WAKE_PROMPT`, word for word the
+terminal's sentence, so both clients paint a woken turn as reports and not as
+something the user typed.
+
+### The tests
+
+`tests/test_server_runtime.py` proves the wake against the real composition and
+the real engine bell (`SubagentSummoner._deliver`, the last thing `_execute` does
+for an async node): a report that lands after the turn starts exactly one turn and
+reaches the durable transcript; two reports of one squad produce one turn with
+both; a cancelled node wakes nothing and never appears in the transcript; a failed
+node does wake; and a closing service stays silent. Every wait is a bounded
+deadline on a service fact, never a sleep.
