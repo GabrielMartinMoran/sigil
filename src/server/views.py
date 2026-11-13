@@ -18,10 +18,13 @@ Two rules from the architecture page apply here:
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from typing import Any
 
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelMessagesTypeAdapter
 
+from src.engine.agents.model_config import AgentModelConfig
+from src.engine.agents.model_defaults import ConfigFileState, ModelDefaultsState
 from src.engine.agents.rollback import PROMPT_KIND, Checkpoint, ForkOutcome, RollbackOutcome, prompt_of_turn
 from src.engine.agents.tree.models.agent_node import AgentNode
 from src.engine.agents.tree.tree import AgentTree
@@ -570,6 +573,71 @@ def model_view(snapshot: Any) -> dict[str, Any]:
     }
 
 
+def model_defaults_view(state: ModelDefaultsState, *, accounts: Sequence[Any]) -> dict[str, Any]:
+    """Both config files that decide what a profile starts on, per file.
+
+    Per file and never merged: which file an entry belongs to is a decision the user
+    takes when they write it, and the screen says so. The precedence between the two
+    is not decided here either — ``targets`` carries `ModelDefaultsState`'s own
+    answers, so no client has to hold a second copy of that rule.
+
+    ``accounts`` is what the service has configured. An entry that names an account
+    that is gone then reads as that, instead of as an alias nobody can place.
+
+    ``exists`` is the one fact read from the filesystem rather than from the state: a
+    file that is not there yet is a real state for the screen (the first write creates
+    it), and the reader treats it exactly like an empty one.
+    """
+    known = {str(getattr(account, 'alias', '')) for account in accounts}
+    return {
+        'fixed': None if state.fixed is None else str(state.fixed),
+        'destinations': [str(scope) for scope in state.destinations],
+        'files': [_defaults_file_view(scope, state.files[scope]) for scope in state.destinations],
+        'targets': [
+            {
+                'target': target,
+                'effective': _defaults_entry_view(state.effective(target)),
+                'invalid': state.invalid(target),
+                'sources': [str(scope) for scope in state.destinations if scope in state.sources(target)],
+            }
+            for target in (None, *state.agent_names())
+        ],
+        'accounts': [{'alias': alias, 'configured': alias in known} for alias in _named_accounts(state)],
+        'errors': list(state.errors),
+    }
+
+
+def _defaults_file_view(scope: Any, file: ConfigFileState) -> dict[str, Any]:
+    """One config file: where it is, what it says, and what it could not parse."""
+    return {
+        'scope': str(scope),
+        'path': str(file.path),
+        'exists': file.path.is_file(),
+        'default': _defaults_entry_view(file.default),
+        'default_invalid': file.default_invalid,
+        'agents': {name: _defaults_entry_view(config) for name, config in file.agents.items()},
+        'invalid_agents': sorted(file.invalid_agents),
+        'errors': list(file.errors),
+    }
+
+
+def _defaults_entry_view(config: AgentModelConfig | None) -> dict[str, Any] | None:
+    """One entry, with the three keys the file itself holds."""
+    if config is None:
+        return None
+    return {'account': config.account, 'model': config.model, 'effort': config.effort}
+
+
+def _named_accounts(state: ModelDefaultsState) -> list[str]:
+    """Every account the entries name, so a client can say which one is not configured."""
+    aliases: set[str] = set()
+    for scope in state.destinations:
+        file = state.files[scope]
+        entries = (file.default, *file.agents.values())
+        aliases.update(config.account for config in entries if config is not None)
+    return sorted(aliases)
+
+
 def account_view(account: Any, *, active: bool, has_credential: bool) -> dict[str, Any]:
     """One provider account, as data.
 
@@ -775,6 +843,7 @@ __all__ = [
     'context_view',
     'fork_view',
     'mcp_view',
+    'model_defaults_view',
     'model_view',
     'node_view',
     'roadmap_view',

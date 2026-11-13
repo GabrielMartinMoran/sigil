@@ -1118,19 +1118,63 @@ the running service's sequence, and an old number would silently skip everything
 new session publishes. Opening a session can also move the service to another
 workspace; the header follows the projection, not a local guess.
 
-One core command is `blocked`: `/default-models`. The screen edits the two config files
+One core command is still `blocked`: `/default-models`. The screen edits the two config files
 that decide what a profile starts on, and those files belong to the service — a terminal
 that wrote them would be a second writer on one configuration, which is the failure the
-attached terminal exists to remove. No route projects them yet, so the row names no
-endpoint and the dispatcher answers it at the door with `unavailable_notice`: *"a service
-command, and the service has no endpoint for it yet"*. `show_default_models` is never
-reached attached — its screen and its collaborators belong to a terminal that owns the
-engine — so that handler has nothing to say about a mode it cannot run in.
+attached terminal exists to remove. The service serves both routes now (see
+[the defaults the terminal could not edit](#the-defaults-the-terminal-could-not-edit)), so
+what the row is missing is a sender and not an endpoint: it stays `blocked` until
+`model-defaults-client-v1` points one at `GET`/`POST /api/model-defaults`, and until then
+the dispatcher answers it at the door with `unavailable_notice`. That sentence — *"a
+service command, and the service has no endpoint for it yet"* — is one cut behind the
+service, and `show_default_models` is still never reached attached: its screen and its
+collaborators belong to a terminal that owns the engine, so that handler has nothing to
+say about a mode it cannot run in.
 
 That row is the single exception, and `test_only_the_documented_gap_is_blocked` pins the
 blocked state to exactly it. `not_wired` stays empty: it would promise a sender that is not
-coming in this cut. The decision has to be total — a command the service has no endpoint
-for must say so precisely rather than borrow another answer.
+coming in this cut. The decision has to be total — a command whose row says it cannot run
+here must say so precisely rather than borrow another answer. Unblocking the row is the
+whole of `model-defaults-client-v1`, and it is the only change it makes to this table.
+
+### The defaults the terminal could not edit
+
+`/default-models` was the one command with nothing to call: the two files that decide what
+a profile starts on belonged to the service, and no route projected them. The service owns
+them again, so it serves them; pointing the terminal's sender at these two routes is the
+next cut.
+
+| Route | Does | Reply |
+| --- | --- | --- |
+| `GET /api/model-defaults` | Both config files, per file, and the accounts their entries name | `views.model_defaults_view` |
+| `POST /api/model-defaults` | Sets or clears one entry in the file the destination names | the same projection, after the write |
+
+The read is per file and never merged. `files` carries each destination's path, whether
+it exists, the `default_model` block, the `agents` map, the entries the reader rejected,
+and the sentence that says why; a file that is not there yet projects as an empty one,
+which is exactly what the reader answers for it. `targets` carries the merge instead: one
+row per target — `null` for the block a conversation starts on, then every agent either
+file mentions — with the entry that wins, the files that mention it, and whether that
+entry is the one the reader could not parse. The precedence stays in
+`ModelDefaultsState`, so no client holds a second copy of it. `accounts` names the aliases
+the entries use and whether the router has each one, which is what lets a screen say
+*"account `work` is not configured"* instead of printing an alias nobody can place.
+
+`POST` is the engine's (`Composition.save_model_default`), and so are its refusals. A
+config file that cannot be read is not rewritten, and the answer carries the engine's own
+sentence. A turn in the way answers `409`, which is the rule the terminal's
+`/default-models` already applies (`BUSY_COMMANDS`): a subagent reads `agents.<name>` the
+moment it is summoned, and the subagent criterion belongs to `/mcp`, so it is not added
+here. `400` is for a request that names something unusable — a destination that is not
+`project` or `global`, an agent name the config cannot hold, a level `parse_choice` does
+not know — because a different request would work. Clearing an entry is `{"config": null}`
+and has to be spelled out, so a field a client forgot cannot delete one. The reply is the
+state the write left, re-read from disk, so a client repaints what is there rather than
+what it asked for.
+
+The files stay the service's. Both directions go through the composition that owns them —
+the same reader and the same writer the in-process terminal uses — which is what keeps one
+configuration from having two authors.
 
 ### The help is derived, never repeated
 

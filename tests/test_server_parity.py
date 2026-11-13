@@ -929,3 +929,111 @@ def test_a_cold_session_reports_zero_usage_and_not_unknown() -> None:
     assert context['percent'] == 0.0
     assert context['measured'] is None
     assert context['projected'] is None
+
+
+# --- the model defaults ------------------------------------------------------
+#
+# `/default-models` was the one command the terminal could not serve attached, because
+# no route projected the two config files it edits. These are those routes: the read is
+# `views.model_defaults_view`, and the write is the engine's, refused with its sentence.
+
+
+def _defaults_composition(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Composition:
+    """The parity composition, with both defaults files inside the test's own home.
+
+    `defaults_paths` resolves the user file from `~`, so `HOME` is redirected before
+    the engine is built: the developer's own `~/.sigil/config.json` must not reach a
+    projection a test asserts.
+    """
+    monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+    monkeypatch.delenv('SIGIL_CONFIG', raising=False)
+    return _composition(tmp_path, monkeypatch)
+
+
+def _config(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding='utf-8')
+
+
+def test_the_defaults_routes_project_both_files_and_keep_a_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The read is the view; the write lands in the file the destination names."""
+    composition = _defaults_composition(tmp_path, monkeypatch)
+    runtime = _runtime(composition)
+    project, user = composition.root / '.sigil' / 'config.json', tmp_path / 'home' / '.sigil' / 'config.json'
+    first = {'account': 'work', 'model': 'first/model', 'effort': 'high'}
+    second = {'account': 'work', 'model': 'second/model', 'effort': 'medium'}
+    _config(project, {'agents': {'reviewer': first}})
+    accounts = list(composition.model_service.list_accounts())
+
+    async def go() -> None:
+        async with _signed_in(runtime, tmp_path) as client:
+            read = await client.get('/api/model-defaults')
+            assert read.status_code == 200, read.text
+            assert read.json()['defaults'] == views.model_defaults_view(runtime.model_defaults(), accounts=accounts)
+
+            written = await client.post(
+                '/api/model-defaults',
+                json={'target': 'reviewer', 'scope': 'global', 'config': second},
+            )
+            assert written.status_code == 200, written.text
+            assert written.json()['defaults'] == views.model_defaults_view(runtime.model_defaults(), accounts=accounts)
+
+            assert json.loads(user.read_text(encoding='utf-8'))['agents']['reviewer'] == second
+            # The file the request did not name is the file the request does not touch.
+            assert json.loads(project.read_text(encoding='utf-8')) == {'agents': {'reviewer': first}}
+
+            again = await client.get('/api/model-defaults')
+            assert again.json() == written.json()
+
+    asyncio.run(go())
+
+
+def test_a_defaults_write_is_refused_while_a_turn_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The rule the terminal applies is carried over HTTP, not decided again."""
+    composition = _defaults_composition(tmp_path, monkeypatch)
+    runtime = _runtime(composition)
+    project = composition.root / '.sigil' / 'config.json'
+
+    async def go() -> None:
+        async with _signed_in(runtime, tmp_path) as client:
+            async with _busy(runtime):
+                response = await client.post(
+                    '/api/model-defaults',
+                    json={
+                        'target': 'reviewer',
+                        'scope': 'project',
+                        'config': {'account': 'work', 'model': 'first/model'},
+                    },
+                )
+
+            assert response.status_code == 409, response.text
+            assert 'turn is running' in response.json()['error'].lower()
+
+    asyncio.run(go())
+
+    assert not project.exists(), 'a refused write must not create the file'
+
+
+def test_a_defaults_body_names_a_destination_and_a_level_sigil_has(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """A request that cannot be satisfied is answered `400`, before any file is read."""
+
+    async def go() -> None:
+        async with _signed_in(runtime, tmp_path) as client:
+            unknown = await client.post('/api/model-defaults', json={'target': None, 'scope': 'user', 'config': None})
+            assert unknown.status_code == 400, unknown.text
+            assert 'destination' in unknown.json()['error'].lower()
+
+            level = await client.post(
+                '/api/model-defaults',
+                json={
+                    'target': None,
+                    'scope': 'project',
+                    'config': {'account': 'work', 'model': 'm', 'effort': 'turbo'},
+                },
+            )
+            assert level.status_code == 400, level.text
+            assert 'turbo' in level.json()['error']
+
+    asyncio.run(go())

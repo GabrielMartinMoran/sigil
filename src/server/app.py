@@ -35,6 +35,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StrictBool
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from src.engine.agents.model_config import AgentModelConfig
+from src.engine.agents.model_defaults import ConfigScope
+from src.engine.agents.profile.models.agent_name import is_valid_agent_name
 from src.engine.agents.profile.models.agent_not_found import AgentNotFound
 from src.engine.agents.rollback import RollbackError, prompt_of_turn
 from src.engine.agents.tree.models.summon_error import SummonError
@@ -42,6 +45,7 @@ from src.engine.context.meter.cost import session_cost
 from src.engine.providers.domain.auth_method import AuthMethod, auth_methods_for
 from src.engine.providers.domain.provider_error import BusyError, ProviderError
 from src.engine.providers.domain.provider_kind import ProviderKind
+from src.engine.providers.domain.thinking import EFFORT_LEVELS, parse_choice
 from src.engine.sessions.catalog import catalog
 from src.engine.sessions.catalog import workspaces as discover_workspaces
 from src.engine.workspace.models.workspace_error import WorkspaceError
@@ -349,6 +353,34 @@ class ExternalFilesBody(BaseModel):
     """
 
     allow: StrictBool
+
+
+class DefaultEntryBody(BaseModel):
+    """One defaults entry: the account, the model and the level it starts on.
+
+    The three keys are the file's own — `agents.<name>` and `default_model` hold
+    exactly these — so a client writes the shape the reader accepts instead of a
+    translation of it.
+    """
+
+    account: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    effort: str = 'default'
+
+
+class ModelDefaultBody(BaseModel):
+    """One default to write, and the file it belongs to.
+
+    ``config`` is required and nullable on purpose: ``null`` clears the entry, which
+    is the screen's `d`. Clearing therefore has to be spelled out, and cannot be what
+    happens because a client forgot a field.
+    """
+
+    target: str | None = None
+    """An agent name, or ``null`` for the block a conversation starts on."""
+    scope: str = Field(min_length=1)
+    """Which of the two files: ``project`` or ``global``."""
+    config: DefaultEntryBody | None
 
 
 # --- the app ----------------------------------------------------------------
@@ -1030,6 +1062,49 @@ def create_app(
         messages = runtime.session.messages
         return {'context': views.context_view(meter.snapshot(messages), session_cost(messages))}
 
+    # --- the model defaults --------------------------------------------
+
+    @app.get('/api/model-defaults')
+    async def model_defaults() -> dict[str, Any]:
+        """Both config files that decide what a profile starts on, per file.
+
+        Reading is never refused, mid-turn included: the screen shows the state
+        before the user edits it, and looking at the files changes nothing.
+        """
+        service = runtime.composition.model_service
+        return {'defaults': _defaults_payload(service, runtime.model_defaults())}
+
+    @app.post('/api/model-defaults')
+    async def write_model_default(body: ModelDefaultBody) -> dict[str, Any]:
+        """Sets or clears one default and answers with the state the write left.
+
+        The write is the engine's (`Composition.save_model_default`), and so are the
+        refusals: a turn in the way — the rule the terminal's `/default-models`
+        already applies — or a config file that cannot be read and is therefore not
+        rewritten, is a ``409`` carrying the engine's own sentence. A request naming
+        a destination, an agent or a level Sigil does not have is a ``400``, because
+        a different request would work.
+        """
+        try:
+            scope = ConfigScope(body.scope)
+        except ValueError:
+            known = ', '.join(item.value for item in ConfigScope)
+            return _refused(RuntimeError(f'Unknown defaults destination {body.scope!r}. Known destinations: {known}.'))  # type: ignore[return-value]
+        if body.target is not None and not is_valid_agent_name(body.target):
+            return _refused(RuntimeError(f'{body.target!r} is not an agent name.'))  # type: ignore[return-value]
+        config: AgentModelConfig | None = None
+        if body.config is not None:
+            effort = parse_choice(body.config.effort)
+            if effort is None:
+                known = ', '.join(EFFORT_LEVELS)
+                return _refused(RuntimeError(f'Unknown effort {body.config.effort!r}. Known levels: {known}.'))  # type: ignore[return-value]
+            config = AgentModelConfig(body.config.account, body.config.model, effort)
+        try:
+            state = runtime.save_model_default(body.target, config, scope)
+        except RuntimeError as exc:
+            return _conflict(exc)  # type: ignore[return-value]
+        return {'defaults': _defaults_payload(runtime.composition.model_service, state)}
+
     # --- events --------------------------------------------------------
 
     @app.get('/events')
@@ -1158,6 +1233,16 @@ def _image_payload(image: Any) -> dict[str, Any]:
         'media_type': image.media_type or 'application/octet-stream',
         'identifier': image.identifier,
     }
+
+
+def _defaults_payload(service: Any, state: Any) -> dict[str, Any]:
+    """The defaults projection, with the accounts its entries name.
+
+    The accounts come from the service that has them, not from the state: the state
+    knows the aliases the files hold, and only the router knows which of those still
+    exist.
+    """
+    return views.model_defaults_view(state, accounts=service.list_accounts())
 
 
 def _account_rows(service: Any) -> list[dict[str, Any]]:

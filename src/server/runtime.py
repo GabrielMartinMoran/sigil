@@ -48,6 +48,8 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import UsageLimits
 
+from src.engine.agents.model_config import AgentModelConfig
+from src.engine.agents.model_defaults import ConfigScope, ModelDefaultsState
 from src.engine.agents.profile.models.agent_profile import AgentProfile
 from src.engine.agents.retry import RetryNotice
 from src.engine.agents.rollback import Checkpoint, ForkOutcome, RollbackOutcome
@@ -1410,6 +1412,45 @@ class ServerRuntime:
             # The rows moved; the model did not. Resolving it here would let a
             # rollback change which model the conversation runs on.
             self.composition.bind_session(reloaded, model=False)
+
+    # --- the model defaults --------------------------------------------------
+
+    def model_defaults(self) -> ModelDefaultsState:
+        """What the two config files say about default models, per file.
+
+        Read through the composition, which re-reads the files on every call: the
+        screen writes one of them and then shows the result, and a copy kept here
+        would answer with its own memory instead of what is on disk — including a
+        hand edit made while the service runs.
+
+        Never refused, even mid-turn: this is a projection, and nothing it reads
+        changes under a running turn.
+        """
+        return self.composition.model_defaults_state()
+
+    def save_model_default(
+        self, target: str | None, config: AgentModelConfig | None, scope: ConfigScope
+    ) -> ModelDefaultsState:
+        """Writes one default and answers with the state the write left behind.
+
+        ``target`` is an agent name, or ``None`` for the block a conversation starts
+        on; ``config`` is ``None`` to clear the entry.
+
+        Refused mid-turn, the rule the terminal's `/default-models` already applies
+        (`BUSY_COMMANDS`): a subagent reads `agents.<name>` the moment it is
+        summoned, so rewriting that entry under a running turn would change the model
+        of a branch that has not started yet. The subagent criterion belongs to
+        `/mcp`, and this command does not apply it, so it is not added here.
+
+        Raises:
+            RuntimeError: while a turn is running, or when the engine refused the
+                write; in that case the message is the engine's own sentence.
+        """
+        self._refuse_while_busy('change the model defaults')
+        errors = self.composition.save_model_default(target, config, scope)
+        if errors:
+            raise RuntimeError(' '.join(errors))
+        return self.composition.model_defaults_state()
 
     # --- workspace -----------------------------------------------------------
 

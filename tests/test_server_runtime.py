@@ -32,6 +32,8 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from starlette.types import Message, Receive, Scope, Send
 
+from src.engine.agents.model_config import AgentModelConfig
+from src.engine.agents.model_defaults import ConfigScope
 from src.engine.agents.profile.models.agent_role import AgentRole
 from src.engine.agents.tree.models.agent_node import AgentNode
 from src.engine.agents.tree.models.node_status import NodeStatus
@@ -1832,3 +1834,219 @@ def test_an_unconfigured_model_projects_an_unknown_image_capability() -> None:
     assert views.model_view(SimpleNamespace(is_configured=False, images=True))['images'] is None
     assert views.model_view(SimpleNamespace(is_configured=True, images=False))['images'] is False
     assert views.model_view(SimpleNamespace(is_configured=True, images=True))['images'] is True
+
+
+# --- the model defaults the terminal could not edit --------------------------
+#
+# `/default-models` is the one command an attached terminal refuses to serve, because
+# the two config files that decide what a profile starts on belong to the service.
+# These prove the two decisions the routes expose — what each file says, and a write
+# that lands in the file the destination names — at the level where they are made;
+# `test_server_parity.py` proves the routes carry them.
+
+
+def _defaults_composition(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Composition:
+    """A composition whose two config files are inside the test's own home.
+
+    `defaults_paths` resolves the user file from `~`, so `HOME` is pointed inside
+    `tmp_path` before the engine is built: a developer's own `~/.sigil/config.json`
+    must not decide what a test asserts.
+    """
+    monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+    monkeypatch.delenv('SIGIL_CONFIG', raising=False)
+    composition = Composition(
+        tmp_path,
+        settings=load_settings(),
+        model=TestModel(custom_output_text='done', call_tools=[]),
+        provider_paths=_paths(tmp_path),
+    )
+    composition.meter.set_window(100_000)
+    return composition
+
+
+def _defaults_files(composition: Composition, tmp_path: Path) -> tuple[Path, Path]:
+    """The two files the service reads, named the way it resolves them."""
+    return composition.root / '.sigil' / 'config.json', tmp_path / 'home' / '.sigil' / 'config.json'
+
+
+def _config(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding='utf-8')
+
+
+def _entry(account: str = 'work', model: str = 'openai/gpt-5', effort: str = 'high') -> dict[str, str]:
+    return {'account': account, 'model': model, 'effort': effort}
+
+
+def test_the_defaults_projection_names_both_files_and_what_each_one_holds(tmp_path: Path) -> None:
+    """Two files, not one merged answer: which file says it is what the screen shows."""
+    from types import SimpleNamespace
+
+    from src.engine.agents.model_defaults import read_defaults
+    from src.server import views
+
+    project, user = tmp_path / 'project' / 'config.json', tmp_path / 'home' / 'config.json'
+    _config(project, {'agents': {'wizard': _entry('work', 'project/model')}})
+    _config(
+        user, {'default_model': _entry('studio', 'gpt-5', 'low'), 'agents': {'scout': _entry('work', 'fast', 'low')}}
+    )
+
+    projected = views.model_defaults_view(
+        read_defaults(paths=(project, user)),
+        accounts=[SimpleNamespace(alias='work')],
+    )
+
+    assert projected['destinations'] == ['project', 'global']
+    files = {item['scope']: item for item in projected['files']}
+    assert files['project']['path'] == str(project)
+    assert files['project']['exists'] is True
+    assert files['project']['agents'] == {'wizard': _entry('work', 'project/model')}
+    assert files['global']['default'] == _entry('studio', 'gpt-5', 'low')
+    assert files['global']['agents'] == {'scout': _entry('work', 'fast', 'low')}
+    assert projected['targets'] == [
+        {'target': None, 'effective': _entry('studio', 'gpt-5', 'low'), 'invalid': False, 'sources': ['global']},
+        {'target': 'scout', 'effective': _entry('work', 'fast', 'low'), 'invalid': False, 'sources': ['global']},
+        {'target': 'wizard', 'effective': _entry('work', 'project/model'), 'invalid': False, 'sources': ['project']},
+    ]
+    # The accounts the entries name, and whether the service has them: the screen
+    # shows the provider next to an alias, and `studio` is one it cannot show.
+    assert projected['accounts'] == [
+        {'alias': 'studio', 'configured': False},
+        {'alias': 'work', 'configured': True},
+    ]
+    assert projected['errors'] == []
+
+
+def test_a_defaults_file_that_is_not_there_is_an_empty_file_and_not_an_error(tmp_path: Path) -> None:
+    """A missing file is a state to show, with nothing in it: the first write creates it."""
+    from src.engine.agents.model_defaults import read_defaults
+    from src.server import views
+
+    project, user = tmp_path / 'project' / 'config.json', tmp_path / 'home' / 'config.json'
+
+    projected = views.model_defaults_view(read_defaults(paths=(project, user)), accounts=[])
+
+    assert [item['scope'] for item in projected['files']] == ['project', 'global']
+    assert [item['exists'] for item in projected['files']] == [False, False]
+    assert [item['default'] for item in projected['files']] == [None, None]
+    assert [item['agents'] for item in projected['files']] == [{}, {}]
+    assert [item['target'] for item in projected['targets']] == [None]
+    assert projected['accounts'] == []
+    assert projected['errors'] == []
+    assert not project.exists() and not user.exists(), 'projecting a file never creates it'
+
+
+def test_a_defaults_file_the_reader_cannot_use_is_reported_instead_of_guessed(tmp_path: Path) -> None:
+    """A file that does not parse is named, and an entry it rejects is not silently dropped."""
+    from src.engine.agents.model_defaults import read_defaults
+    from src.server import views
+
+    project, user = tmp_path / 'project' / 'config.json', tmp_path / 'home' / 'config.json'
+    project.parent.mkdir(parents=True, exist_ok=True)
+    project.write_text('{"agents": ', encoding='utf-8')
+    _config(
+        user,
+        {
+            'default_model': _entry('work', 'gpt-5', 'turbo'),
+            'agents': {'wizard': _entry('work', 'gpt-5', 'turbo')},
+        },
+    )
+
+    projected = views.model_defaults_view(read_defaults(paths=(project, user)), accounts=[])
+
+    files = {item['scope']: item for item in projected['files']}
+    assert files['project']['exists'] is True
+    assert any('cannot read config' in error for error in files['project']['errors'])
+    assert files['project']['agents'] == {}, 'a file that does not parse holds no values'
+    assert files['global']['default_invalid'] is True
+    assert files['global']['invalid_agents'] == ['wizard']
+    assert any('effort' in error for error in files['global']['errors'])
+    assert [item['target'] for item in projected['targets']] == [None, 'wizard'], (
+        'an entry the reader rejected is still a target'
+    )
+
+
+def test_the_service_reads_the_defaults_of_the_workspace_it_serves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The read follows the workspace and the home, which is the pair a person edits."""
+    composition = _defaults_composition(tmp_path, monkeypatch)
+    runtime = ServerRuntime(composition, EventHub(), require_ownership=False)
+    project, user = _defaults_files(composition, tmp_path)
+    _config(project, {'agents': {'wizard': _entry('work', 'project/model')}})
+    _config(user, {'default_model': _entry('studio', 'gpt-5', 'low')})
+
+    state = runtime.model_defaults()
+
+    assert state.path_for(ConfigScope.PROJECT) == project
+    assert state.path_for(ConfigScope.GLOBAL) == user
+    assert state.effective('wizard') == AgentModelConfig('work', 'project/model', 'high')
+    assert state.effective(None) == AgentModelConfig('studio', 'gpt-5', 'low')
+    assert state.sources('wizard') == frozenset({ConfigScope.PROJECT})
+
+
+def test_writing_a_default_persists_it_and_the_next_read_shows_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The write lands in the file the destination names, and the engine reads it after."""
+    composition = _defaults_composition(tmp_path, monkeypatch)
+    runtime = ServerRuntime(composition, EventHub(), require_ownership=False)
+    project, user = _defaults_files(composition, tmp_path)
+    _config(user, {'default_model': _entry('studio', 'gpt-5', 'low')})
+    written = _entry('work', 'second/model', 'medium')
+
+    state = runtime.save_model_default('scout', AgentModelConfig('work', 'second/model', 'medium'), ConfigScope.PROJECT)
+
+    assert state.effective('scout') == AgentModelConfig('work', 'second/model', 'medium')
+    assert state.sources('scout') == frozenset({ConfigScope.PROJECT})
+    assert json.loads(project.read_text(encoding='utf-8'))['agents']['scout'] == written
+    assert json.loads(user.read_text(encoding='utf-8')) == {'default_model': _entry('studio', 'gpt-5', 'low')}
+    # The re-read is what makes it take effect without a restart: the next subagent
+    # summoned reads `agents.<name>` from the config the composition holds.
+    assert composition.mcp_config.agents['scout'] == AgentModelConfig('work', 'second/model', 'medium')
+
+    cleared = runtime.save_model_default('scout', None, ConfigScope.PROJECT)
+
+    assert cleared.effective('scout') is None
+    assert 'scout' not in json.loads(project.read_text(encoding='utf-8')).get('agents', {})
+
+
+def test_writing_a_default_is_refused_while_a_turn_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The rule the terminal's `/default-models` already applies: a turn refuses it.
+
+    A subagent reads `agents.<name>` when it is summoned, so rewriting that entry
+    under a running turn would change the model of a branch that has not started.
+    The subagent criterion is `/mcp`'s and not this command's, so it is not added.
+    """
+    composition = _defaults_composition(tmp_path, monkeypatch)
+    runtime = ServerRuntime(composition, EventHub(), require_ownership=False)
+    project, _user = _defaults_files(composition, tmp_path)
+
+    async def go() -> None:
+        pending = asyncio.Event()
+        runtime._task = asyncio.create_task(pending.wait())
+        try:
+            with pytest.raises(RuntimeError, match='turn is running'):
+                runtime.save_model_default('scout', AgentModelConfig('work', 'm', 'high'), ConfigScope.PROJECT)
+        finally:
+            task = runtime._task
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            runtime._task = None
+
+    asyncio.run(go())
+
+    assert not project.exists(), 'a refused write must not create the file'
+
+
+def test_a_write_the_engine_refuses_keeps_its_own_sentence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A config the engine cannot write to says why, in its own words, and stays as it was."""
+    composition = _defaults_composition(tmp_path, monkeypatch)
+    runtime = ServerRuntime(composition, EventHub(), require_ownership=False)
+    project, _user = _defaults_files(composition, tmp_path)
+    _config(project, {'agents': ['wizard']})
+
+    with pytest.raises(RuntimeError, match='not an object'):
+        runtime.save_model_default('scout', AgentModelConfig('work', 'm', 'high'), ConfigScope.PROJECT)
+
+    assert json.loads(project.read_text(encoding='utf-8')) == {'agents': ['wizard']}
