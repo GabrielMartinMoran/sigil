@@ -226,10 +226,20 @@ class _ServiceTransport(httpx.AsyncBaseTransport):
         mechanism a test watches: if the watcher painted the message without asking
         the service, the read would not happen and the number would not move.
         """
+        self.defaults_writes: list[dict[str, Any]] = []
+        """The bodies of the defaults writes, in the order they were sent.
+
+        A write is the one thing an attached `/default-models` may do to the
+        service's files, and the only way to do it is this POST: a terminal that
+        edited the file itself — the failure this cut removes — would leave this
+        list empty and the file changed beside it.
+        """
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         if request.url.path == '/api/session/durable':
             self.durable_reads += 1
+        if request.url.path == '/api/model-defaults' and request.method == 'POST':
+            self.defaults_writes.append(json.loads(request.content or b'{}'))
         if request.url.path == '/api/answer' and self.answer_failure is not None:
             raise self.answer_failure
         if request.url.path != '/events':
@@ -329,6 +339,18 @@ def _block_text(widget: Any) -> str:
 
 def _transcript(app: SigilApp) -> str:
     return '\n'.join(_block_text(widget) for widget in app.query_one(ChatLog).children)
+
+
+def _submit(app: SigilApp, text: str) -> None:
+    """Submits a command through the composer, which is where a worker is started.
+
+    `push_screen_wait` needs a worker: a screen command awaited straight from the test's
+    coroutine raises `NoActiveWorker` instead of opening the panel a user gets. The
+    composer is the way a user takes, so it is also what proves the wiring.
+    """
+    field = app.query_one(PromptInput)
+    field.value = text
+    field.post_message(PromptInput.Submitted(text))
 
 
 def _status(app: SigilApp) -> str:
@@ -3235,37 +3257,135 @@ def test_the_mark_belongs_to_a_session_the_service_has_not_written_a_word_in(
     asyncio.run(inner())
 
 
-def test_default_models_answers_with_the_transports_reason_and_opens_nothing(
-    composition: Composition, tmp_path: Path
-) -> None:
-    """The real answer, in the real words, with nothing opened and nothing written.
+def test_the_attached_defaults_screen_paints_what_the_service_reads(composition: Composition, tmp_path: Path) -> None:
+    """`/default-models` attached opens over the projection, never over empty rows.
 
-    This is the row the whole cut is about: the sentence is `unavailable_notice`'s,
-    derived from the table, and not a line a handler made up about a mode it cannot
-    run in. `ModelDefaultsScreen` is the panel that must not appear, and the queue and
-    the session are read afterwards because "nothing happened" is only worth asserting
-    against the things that could have.
+    The file is written before the terminal attaches and nothing in this process has
+    read it: the entry on the list, the destination line and the installed profiles can
+    only have come from `GET /api/model-defaults` and `/api/state`. A row reading `not
+    set` here would be the client answering from a state it does not hold, and a
+    profile missing from the list is exactly the default the user came to set.
     """
-    from src.ui.command_transport import transport_for, unavailable_notice
+    from src.engine.agents.model_defaults import ConfigScope
     from src.ui.widgets.model_defaults_screen import ModelDefaultsScreen
 
+    config = Path(os.environ['SIGIL_CONFIG'])
+    config.write_text(
+        json.dumps({'default_model': {'account': 'work', 'model': 'first/model', 'effort': 'high'}}),
+        encoding='utf-8',
+    )
+
     async def inner() -> None:
-        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+        async with _service_under_test(composition, tmp_path) as (runtime, transport, client):
             app = _terminal(client, _session(runtime))
             async with app.run_test(size=(100, 40)) as pilot:
                 await _until(pilot, lambda: app._service_state is not None, what='the state')
-                before = _inputs(runtime)
-                session_before = runtime.session.id
 
-                await app.handle_command('/default-models')
-                await pilot.pause()
+                _submit(app, '/default-models')
+                await _until(pilot, lambda: isinstance(app.screen, ModelDefaultsScreen), what='the defaults screen')
+                screen = app.screen
+                assert isinstance(screen, ModelDefaultsScreen)
+                rows = {row.target: row for row in screen.rows}
 
-                row = transport_for('/default-models')
-                assert row is not None
-                assert unavailable_notice(row) in _transcript(app), 'the transport sentence is the answer'
-                assert not isinstance(app.screen, ModelDefaultsScreen), 'no panel it cannot complete'
-                assert runtime.session.id == session_before, 'the service kept its session'
-                assert _inputs(runtime) == before, 'and nothing reached its queue'
+                # The entry is the service's: this process never opened that file.
+                assert rows[None].summary == 'work · first/model · high'
+                assert rows[None].sources == frozenset({ConfigScope.GLOBAL})
+                assert rows[None].invalid is False
+                # The profile comes from `/api/state`: no file mentions it, and it is
+                # the row the user opens the screen to fill in.
+                assert rows['reviewer'].installed is True
+                assert rows['reviewer'].summary == 'not set'
+                # The destination line names the file the service resolved.
+                status = render_text(screen.query_one('#defaults-status').render())
+                assert 'SIGIL_CONFIG' in status and str(config) in status
+                assert transport.defaults_writes == [], 'reading the list writes nothing'
+
+    asyncio.run(inner())
+
+
+def test_a_default_written_from_an_attached_terminal_goes_through_the_service(
+    composition: Composition, tmp_path: Path
+) -> None:
+    """The write is the POST, and the file that changes is the service's own.
+
+    The terminal holds no writer in this shape — `save_model_default` is not passed to
+    an attached app at all — so the file changing is proof the route ran, and the
+    notice naming it is proof the screen reports the projection the route answered
+    with instead of a sentence it made up.
+    """
+    from src.ui.widgets.effort_screen import EffortScreen
+    from src.ui.widgets.grouped_model_screen import GroupedModelScreen
+    from src.ui.widgets.model_defaults_screen import ModelDefaultsScreen
+
+    config = Path(os.environ['SIGIL_CONFIG'])
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+
+                _submit(app, '/default-models')
+                await _until(pilot, lambda: isinstance(app.screen, ModelDefaultsScreen), what='the defaults screen')
+                await pilot.press('enter')
+                await _until(pilot, lambda: isinstance(app.screen, GroupedModelScreen), what='the model picker')
+                await pilot.press('enter')
+                await _until(pilot, lambda: isinstance(app.screen, EffortScreen), what='the effort picker')
+                await pilot.press('enter')
+                await _until(pilot, lambda: isinstance(app.screen, ModelDefaultsScreen), what='the list again')
+                await pilot.press('escape')
+                await _until(pilot, lambda: not isinstance(app.screen, ModelDefaultsScreen), what='the list closing')
+                notices = _transcript(app)
+
+        assert len(transport.defaults_writes) == 1, 'one press, one write, and it travelled'
+        sent = transport.defaults_writes[0]
+        assert sent['target'] is None and sent['scope'] == 'global'
+        assert sent['config'] == {'account': 'work', 'model': 'first/model', 'effort': 'default'}
+        # The file is the one the service wrote; the notice reports what it answered.
+        assert json.loads(config.read_text(encoding='utf-8'))['default_model'] == sent['config']
+        assert 'first/model' in notices
+        assert str(config) in notices, 'the notice names the file the projection named'
+
+    asyncio.run(inner())
+
+
+def test_a_default_the_service_refuses_says_so_and_changes_nothing(composition: Composition, tmp_path: Path) -> None:
+    """A turn that starts while the list is open: the write is refused, not applied.
+
+    The dispatcher lets the command through because the session was idle when it was
+    typed, which is the case only a real turn can produce. The service — the only
+    writer — answers `409` with the engine's sentence, and the file it would have
+    rewritten is unchanged: there is no second copy here that could disagree with it.
+    """
+    from src.ui.widgets.effort_screen import EffortScreen
+    from src.ui.widgets.grouped_model_screen import GroupedModelScreen
+    from src.ui.widgets.model_defaults_screen import ModelDefaultsScreen
+
+    config = Path(os.environ['SIGIL_CONFIG'])
+    before = config.read_text(encoding='utf-8')
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+
+                _submit(app, '/default-models')
+                await _until(pilot, lambda: isinstance(app.screen, ModelDefaultsScreen), what='the defaults screen')
+                await pilot.press('enter')
+                await _until(pilot, lambda: isinstance(app.screen, GroupedModelScreen), what='the model picker')
+                await pilot.press('enter')
+                await _until(pilot, lambda: isinstance(app.screen, EffortScreen), what='the effort picker')
+
+                # The turn starts between choosing the effort and writing it.
+                async with _busy(runtime):
+                    await pilot.press('enter')
+                    await _until(pilot, lambda: 'A turn is running' in _transcript(app), what='the refusal')
+
+                assert not isinstance(app.screen, ModelDefaultsScreen), 'a refusal opens no list to trap the user'
+                assert len(transport.defaults_writes) == 1, 'the write was attempted and refused'
+
+        assert json.loads(config.read_text(encoding='utf-8')) == json.loads(before), 'nothing was written'
 
     asyncio.run(inner())
 

@@ -111,10 +111,10 @@ def test_the_help_lists_both_groups_and_loses_nothing():
 def test_the_help_never_promises_an_edit_the_service_can_refuse():
     """The one sentence `/help` prints is true in both modes, so it cannot lie in either.
 
-    The old row said "Set the model each agent starts on, in the project or the user
-    config", which is an edit an attached terminal cannot perform: the dispatcher
-    refuses the command before any handler runs. What a default *is* and where it lives
-    is true whether or not this window can write it, so the row names that instead.
+    What a default *is* and where it lives is true whether the write happens here or
+    through the service, so the row names that instead of spelling out a gesture. The
+    service can still refuse the edit — a turn in the way is a `409` — which is why the
+    row does not promise that it always lands.
     """
 
     from src.ui.help_text import HELP_TEXT
@@ -125,19 +125,38 @@ def test_the_help_never_promises_an_edit_the_service_can_refuse():
     assert command.description in HELP_TEXT, 'the help prints the catalogue, not a second copy'
 
 
-def test_a_listing_mark_comes_from_the_transport_row():
+def test_a_listing_mark_comes_from_the_transport_row(monkeypatch: pytest.MonkeyPatch):
     """A listing marks what the table refuses, and invents no sentence of its own.
 
     One derivation, next to the refusal it shortens: the `/` menu and any future
     listing read it, so a row cannot be marked here and dispatched there.
+
+    No shipped row needs the mark any more — every command either runs here or
+    travels — so the mark is proven on a row put in the table for it, the way the
+    refusal sentence already is. `/default-models` is asserted first, because the
+    change this cut made is that a mark beside it would now be a lie about a command
+    that opens its screen and writes through the service.
     """
 
-    from src.ui.command_transport import listing_mark
+    from src.ui import command_transport
+    from src.ui.command_transport import MARK_SERVICE_OWNED, listing_mark
 
     row = transport_for('/default-models')
     assert row is not None
-    assert row.state is TransportState.BLOCKED
-    assert listing_mark('/default-models', attached=True), 'a blocked row says so where it is listed'
+    assert row.state is TransportState.DELEGATED
+    assert listing_mark('/default-models', attached=True) == '', 'a delegated row is listed unmarked'
+    assert listing_mark('/default-models', attached=False) == '', 'and so is one that runs here'
+
+    refused = Transport(
+        name='/default-models',
+        owner=CommandOwner.CORE,
+        state=TransportState.BLOCKED,
+        reason='the service has no endpoint for the defaults.',
+    )
+    monkeypatch.setitem(command_transport._BY_NAME, '/default-models', refused)
+    assert listing_mark('/default-models', attached=True) == MARK_SERVICE_OWNED, (
+        'a refused row says so where it is listed'
+    )
     assert listing_mark('/default-models', attached=False) == '', 'in process the command runs here'
 
     for name in ('/theme', '/model', '/context'):
@@ -174,21 +193,21 @@ def test_the_commands_that_run_here_are_exactly_the_client_ones():
 
 
 def test_only_the_documented_gap_is_blocked():
-    """Every command the service serves has a sender here, except one.
+    """No command the service serves is left without a way out of this terminal.
 
     The `blocked` state stays in the table because the decision has to be total: a
     command the service has no endpoint for must say that, not borrow the answer meant
     for a command that is merely not wired yet.
 
-    `/default-models` is that command, and the exception is the point. It edits files
-    the service owns, so a terminal that wrote them would be a second writer on one
-    configuration — the failure the attached terminal exists to remove. There is no
-    route to point a sender at, so the row is `blocked` and the command says so. The
-    alternative, hiding it behind `not_wired`, would promise a sender that is not
-    coming in this cut. When an endpoint lands, this list empties again.
+    `/default-models` used to be that command. It edits files the service owns, so a
+    terminal that wrote them would be a second writer on one configuration — which is
+    why it stayed blocked until the routes existed. `GET` and `POST
+    /api/model-defaults` are those routes, so the gap is closed and this list is empty.
+    An entry appearing here again means the service grew a command no route carries,
+    and that is the moment to say so instead of guessing.
     """
     blocked = {row.name for row in TRANSPORT if row.state is TransportState.BLOCKED}
-    assert blocked == {'/default-models'}
+    assert blocked == set(), f'{sorted(blocked)} has no endpoint to reach'
 
 
 def test_a_row_that_does_not_run_here_says_why_and_where():
@@ -260,6 +279,7 @@ def test_a_delegated_row_has_a_route_and_is_dispatched_to_its_handler():
     assert delegated == {
         '/agent',
         '/context',
+        '/default-models',
         '/effort',
         '/external-files',
         '/load',
@@ -294,17 +314,24 @@ def test_the_transport_table_refuses_two_rows_for_one_command():
         _covering((*TRANSPORT, duplicate))
 
 
-def test_the_menu_marks_the_row_a_service_owns_and_only_then():
-    """One listing, two windows: the mark is the table's, and it tracks the mode.
+def test_the_menu_marks_only_the_row_the_table_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """One listing, two windows: the mark is the table's, and it tracks the row.
 
     Mounted on its own, so the assertion is about the menu's rule rather than about an
-    app: the flag it is handed is the whole difference between a terminal that runs the
-    command and one that can only say who does. `attached=False` is the in-process
-    shape, where `/default-models` opens its screen, so a mark there would be a lie
-    about a command that works.
+    app: the row it is handed is the whole difference between a terminal that can act
+    and one that can only say who does.
+
+    `/default-models` used to be the marked row. It opens its screen and writes through
+    the service now, so the menu must list it unmarked in both modes — a mark there
+    would promise a user that a command is unavailable when it works. The mark itself
+    is proven on a row put in the table for it: what the menu may never do is decide
+    for itself.
     """
     from textual.app import App
 
+    from src.ui import command_transport
     from src.ui.widgets.command_menu import CommandMenu
     from tests.ui_helpers import render_text
 
@@ -322,11 +349,20 @@ def test_the_menu_marks_the_row_a_service_owns_and_only_then():
 
         return asyncio.run(inner())
 
-    attached_rows = rows(True)
-    assert len(attached_rows) == 1
-    assert '/default-models' in attached_rows[0]
-    assert 'the service owns it' in attached_rows[0]
+    for attached in (True, False):
+        listed = rows(attached)
+        assert len(listed) == 1
+        assert '/default-models' in listed[0]
+        assert 'the service owns it' not in listed[0], 'the command is wired, so nothing is refused'
 
-    local_rows = rows(False)
-    assert '/default-models' in local_rows[0]
-    assert 'the service owns it' not in local_rows[0], 'in process the command runs here'
+    refused = Transport(
+        name='/default-models',
+        owner=CommandOwner.CORE,
+        state=TransportState.BLOCKED,
+        reason='the service has no endpoint for the defaults.',
+    )
+    monkeypatch.setitem(command_transport._BY_NAME, '/default-models', refused)
+
+    attached_rows = rows(True)
+    assert 'the service owns it' in attached_rows[0], 'a refused row is marked where it is listed'
+    assert 'the service owns it' not in rows(False)[0], 'in process the command runs here'

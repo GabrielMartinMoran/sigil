@@ -112,14 +112,16 @@ _ROWS: tuple[Transport, ...] = (
         route='/api/effort',
         reason='the service owns the model and the levels it accepts.',
     ),
-    # The defaults are files the service reads and writes, and no route projects
-    # them yet. `blocked` and not `not_wired`: there is nothing to point a sender
-    # at, so the command says so instead of failing somewhere the user cannot read.
+    # The defaults are files the service reads and writes: `GET /api/model-defaults`
+    # projects them per file and `POST` writes one entry. Delegated and not `client`
+    # for the reason every core row is: this terminal would be a second writer on one
+    # configuration, and the precedence between the two files is the service's answer.
     Transport(
         name='/default-models',
         owner=CommandOwner.CORE,
-        state=TransportState.BLOCKED,
-        reason='the service owns the defaults files, and no endpoint exposes them yet.',
+        state=TransportState.DELEGATED,
+        route='/api/model-defaults',
+        reason='the service owns the defaults files and the writes to them.',
     ),
     Transport(
         name='/external-files',

@@ -14,7 +14,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import ClassVar
+from pathlib import Path
+from typing import ClassVar, Protocol
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -22,7 +23,7 @@ from textual.binding import Binding
 from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
-from src.engine.agents.model_defaults import ConfigScope, ModelDefaultsState
+from src.engine.agents.model_defaults import ConfigScope
 from src.engine.agents.profile.models.agent_role import AgentRole
 from src.ui.widgets.provider_modal import ProviderModal
 
@@ -40,6 +41,41 @@ The two roles are kept apart because they behave differently: an agent is the on
 session runs as, a subagent only ever answers a summons, and a person choosing a
 default for the second is choosing what its own runs use, not what to talk to.
 """
+
+
+class DefaultsDestinations(Protocol):
+    """Where a write can go, which is all the screen asks about a destination.
+
+    The screen paints one line about the target file and refuses to clear an entry a
+    file does not set, so it needs four facts: which files exist, where each one is,
+    whether ``SIGIL_CONFIG`` replaced the pair, and what could not be parsed.
+
+    It is a protocol and not `ModelDefaultsState` because the two modes answer it from
+    different places. In process the state is read from the files; attached it is the
+    service's projection, and the screen must not reach for the engine's reader to
+    paint what the service already resolved. What is deliberately *not* here is
+    ``effective``/``invalid``/``sources``: those are precedence, and each row arrives
+    already carrying the answer the engine gave.
+    """
+
+    @property
+    def destinations(self) -> tuple[ConfigScope, ...]:
+        """The files a write may go to, in precedence order."""
+        ...
+
+    @property
+    def fixed(self) -> Path | None:
+        """The single explicit path, when ``SIGIL_CONFIG`` replaced the pair."""
+        ...
+
+    @property
+    def errors(self) -> tuple[str, ...]:
+        """What the files could not parse, in the order the screen lists it."""
+        ...
+
+    def path_for(self, scope: ConfigScope) -> Path:
+        """The file ``scope`` names."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +126,7 @@ class ModelDefaultsScreen(ProviderModal):
         Binding('delete', 'clear', 'Clear', show=False, priority=True),
     ]
 
-    def __init__(self, rows: Sequence[DefaultsRow], state: ModelDefaultsState) -> None:
+    def __init__(self, rows: Sequence[DefaultsRow], state: DefaultsDestinations) -> None:
         super().__init__()
         self.rows = list(rows)
         self._state = state
@@ -207,7 +243,7 @@ class ModelDefaultsScreen(ProviderModal):
         self.dismiss(None)
 
 
-def _destination_title(state: ModelDefaultsState, scope: ConfigScope) -> str:
+def _destination_title(state: DefaultsDestinations, scope: ConfigScope) -> str:
     return 'SIGIL_CONFIG' if state.fixed is not None else SCOPE_TITLES[scope]
 
 

@@ -567,6 +567,40 @@ class ServiceClient:
             body['thinking'] = thinking
         return await self._post('/api/model', body)
 
+    async def model_defaults(self) -> dict[str, Any]:
+        """Both config files that decide what a profile starts on, per file.
+
+        Never refused, mid-turn included: the screen shows the state before the user
+        edits it, and reading the files changes nothing. The projection carries the
+        files, the targets with the entry each one resolves to, and the accounts those
+        entries name — so a client paints the defaults without holding a copy of the
+        precedence rule that decides them.
+        """
+        return (await self._get('/api/model-defaults')).get('defaults') or {}
+
+    async def write_model_default(
+        self, target: str | None, scope: str, config: Mapping[str, Any] | None
+    ) -> dict[str, Any]:
+        """Sets or clears one default, in the file ``scope`` names.
+
+        ``target`` is an agent name, or ``None`` for the block a conversation starts
+        on; ``config`` is ``None`` to clear the entry, and saying so is required
+        because clearing has to be spelled out. A turn in the way is a ``409``
+        carrying the engine's own sentence, and it arrives here as `ServiceBusy`: the
+        write is the service's decision, so this method reports it instead of
+        second-guessing it.
+
+        Returns:
+            The projection the write left behind, in the same shape
+            `model_defaults` answers with.
+        """
+        body: dict[str, Any] = {
+            'target': target,
+            'scope': scope,
+            'config': None if config is None else dict(config),
+        }
+        return (await self._post('/api/model-defaults', body)).get('defaults') or {}
+
     async def rollback_points(self) -> dict[str, Any]:
         """The turns the open session can return to, newest first."""
         return await self._get('/api/rollback')

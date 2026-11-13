@@ -573,18 +573,17 @@ the changes back: `/model` and `/effort` travel to the service, which owns the
 accounts, the catalogues and the switch. Nothing in the terminal decides which
 model a conversation runs on.
 
-`/default-models` is the one command that cannot follow that split yet. The
-screen edits the two config files above, and those files belong to the service —
-a terminal that wrote them would be a second writer on one configuration. There
-is no endpoint for them, so an attached terminal refuses the command with the
-transport's own sentence:
-
-> `/default-models` is a service command, and the service has no endpoint for it
-> yet: the service owns the defaults files, and no endpoint exposes them yet.
-
-Nothing is written and no screen opens. `/help` and the `/` menu mark that row
-`· the service owns it`, so the edit is not promised where it cannot happen.
-Edit `.sigil/config.json` by hand until that route exists.
+`/default-models` follows the same split. The screen edits the two config files
+above, and those files belong to the service, so an attached terminal reads and
+writes them through two routes. `GET /api/model-defaults` projects both files,
+the entry each target resolves to, and the accounts those entries name. `POST
+/api/model-defaults` sets one entry in the file you pick, or clears it. The
+terminal opens the same screen in either mode: attached, the rows come from the
+service, and the precedence between the two files stays the service's answer
+instead of becoming a second copy of the rule in the client. A write the service
+refuses — one issued while a turn runs, or one aimed at a destination, an agent
+or an effort it does not know — answers with the service's own sentence and
+changes nothing.
 
 Selecting a main agent applies its configured model and effort through the same
 path `/model` takes. You can still change either afterward with `/model` and
@@ -1314,10 +1313,10 @@ accounts with `/model`.
 /effort [level]           open the effort picker, or set a level directly
 ```
 
-In an attached terminal `/default-models` is marked `· the service owns it` in both
-`/help` and the `/` menu, and typing it prints the transport's sentence: `/default-models
-is a service command, and the service has no endpoint for it yet: the service owns the
-defaults files, and no endpoint exposes them yet.`
+`/default-models` acts in both modes. Attached, the terminal opens the screen from
+the service's projection (`GET /api/model-defaults`) and writes through the
+service (`POST /api/model-defaults`), so the two config files have one writer.
+`/help` and the `/` menu list it unmarked, because the command works.
 
 | Shortcut | What it opens |
 | --- | --- |
