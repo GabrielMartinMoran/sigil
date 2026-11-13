@@ -29,6 +29,7 @@ import base64
 import io
 import json
 import os
+import re
 import subprocess
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -43,6 +44,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -3453,6 +3455,44 @@ def _grow_session(runtime: ServerRuntime, turns: int) -> None:
         messages.append(ModelResponse(parts=[TextPart(content=f'answer {index:03d}')], run_id=f'a{index}'))
 
 
+def _grow_uneven_session(runtime: ServerRuntime, turns: int) -> None:
+    """`turns` exchanges whose items outnumber the widgets they paint.
+
+    Every answer carries a thought, so the thought and the answer share one block; every
+    fifth turn also runs a tool, so the call and its result share one row. A page of this
+    conversation therefore stands for more items than the screen holds rows — the shape
+    plain question-and-answer pairs can never produce, and the shape a cursor counted in
+    widgets gets wrong.
+    """
+    messages = runtime.session.messages
+    for index in range(turns):
+        messages.append(ModelRequest(parts=[UserPromptPart(content=f'question {index:03d}')], run_id=f'q{index}'))
+        if index % 5 == 4:
+            messages.append(
+                ModelResponse(
+                    parts=[
+                        ThinkingPart(content=f'thought {index:03d}'),
+                        ToolCallPart(tool_name='read_file', args={'path': 'notes.md'}, tool_call_id=f'call-{index}'),
+                    ],
+                    run_id=f'a{index}',
+                )
+            )
+            messages.append(
+                ModelRequest(
+                    parts=[ToolReturnPart(tool_name='read_file', content='ok', tool_call_id=f'call-{index}')],
+                    run_id=f'r{index}',
+                )
+            )
+            messages.append(ModelResponse(parts=[TextPart(content=f'answer {index:03d}')], run_id=f'b{index}'))
+            continue
+        messages.append(
+            ModelResponse(
+                parts=[ThinkingPart(content=f'thought {index:03d}'), TextPart(content=f'answer {index:03d}')],
+                run_id=f'a{index}',
+            )
+        )
+
+
 def _windows(client: ServiceClient) -> list[dict[str, Any]]:
     """Records the pages the screen asks for, so a test can read the cursor it used.
 
@@ -3736,6 +3776,64 @@ def test_a_reader_near_the_bottom_gives_up_the_page_at_the_top(composition: Comp
                 assert chat.older_cursor == 200, 'the window starts where the page after it starts'
                 assert chat.has_older is True, 'and the page that left can be asked for again'
                 assert chat._reaches_end is True, 'nothing left from the bottom'
+
+    asyncio.run(inner())
+
+
+def test_a_page_dropped_from_the_top_leaves_no_hole_in_the_transcript(composition: Composition, tmp_path: Path) -> None:
+    """The cursor walks in items, so the page that left is asked for exactly.
+
+    The conversation is seeded with reasoning and with a tool call and its result, so a
+    page paints fewer rows than the items it stands for. Once the reader is at the
+    bottom, the page let go of is the one at the top; the cursor that replaces it must
+    be where that page ended, not where its widgets would put it. A short cursor asks
+    for a page that ends too early, and the items in between are never painted.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            _grow_uneven_session(runtime, 200)
+            reads = _windows(client)
+            app = _windowed(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                chat = app.query_one(ChatLog)
+                await _until(pilot, lambda: len(chat._pages) == 1, what='the newest window')
+
+                for pages in (2, 3):
+                    chat.scroll_to(y=0, animate=False, immediate=True)
+                    await _until(pilot, lambda pages=pages: len(chat._pages) == pages, what=f'{pages} pages')
+                    await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the restored reading position')
+                assert len(chat._pages) == 3, 'the window is at its bound'
+
+                # A page above arrives while the reader is at the bottom, so the page
+                # furthest from them — the one at the top — is the one let go of.
+                chat.scroll_end(animate=False)
+                await pilot.pause()
+                cursor = chat.older_cursor
+                page = await client.transcript(limit=DEFAULT_TRANSCRIPT_WINDOW, before=cursor)
+                await chat.prepend_items(page['items'], first_index=page['first_index'], has_more=page['has_more'])
+                await pilot.pause()
+
+                span = cursor - page['first_index']
+                assert span == len(page['items']), 'a page stands for exactly its span of the transcript'
+                assert len(chat._pages) == 3, 'the window is still bounded'
+                assert chat.older_cursor == page['first_index'] + span, (
+                    'the cursor moved by the items the page stood for, not by the widgets it mounted'
+                )
+
+                # Asking for the page above must hand back exactly the items that left.
+                asked = len(reads)
+                chat.scroll_to(y=0, animate=False, immediate=True)
+                await _until(pilot, lambda: len(reads) == asked + 1, what='the page above again')
+                await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the restored reading position')
+                await pilot.pause()
+
+                assert reads[-1] == {'limit': DEFAULT_TRANSCRIPT_WINDOW, 'before': cursor}
+                painted = sorted(int(found) for found in re.findall(r'question (\d{3})', _transcript(app)))
+                assert painted, 'the window paints the prompts'
+                assert painted == list(range(painted[0], painted[-1] + 1)), (
+                    f'the window has a hole between {painted[0]} and {painted[-1]}'
+                )
 
     asyncio.run(inner())
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -33,8 +34,16 @@ def history(turns: int) -> list:
 
 
 class Harness(App):
+    def __init__(self) -> None:
+        super().__init__()
+        # The positions the log asked the client for, in the order it asked.
+        self.pages_wanted: list[int] = []
+
     def compose(self) -> ComposeResult:
         yield ChatLog(id='chat')
+
+    def on_chat_log_older_page_wanted(self, message: ChatLog.OlderPageWanted) -> None:
+        self.pages_wanted.append(message.before)
 
 
 @pytest.mark.parametrize('turns', [150, 600])
@@ -386,5 +395,74 @@ def test_a_waiting_line_that_leaves_stops_counting_as_live():
             # it — is not an error and changes nothing.
             chat.retire_pending(waiting)
             assert chat._pending_rows == []
+
+    asyncio.run(inner())
+
+
+# --- the window's cursor is a position in items, not in mounted widgets ------
+
+
+def window_page(start: int) -> list[dict[str, Any]]:
+    """One page of a hundred items that paints sixty widgets, like a real page.
+
+    Twenty prompts are one item each. Forty answers arrive as a thought and an answer
+    under one message index, and the log paints the pair as one block. So the page
+    stands for a hundred positions of the transcript while the screen holds sixty —
+    the two counts a page has to keep apart, and the reason a cursor counted in
+    widgets walks back short of where the page really started.
+    """
+    items: list[dict[str, Any]] = []
+    index = start
+    for _ in range(20):
+        items.append({'kind': 'user', 'index': index, 'text': f'question {index:04d}'})
+        index += 1
+    for _ in range(40):
+        items.append({'kind': 'thinking', 'index': index, 'text': f'thought {index:04d}'})
+        items.append({'kind': 'assistant', 'index': index, 'text': f'answer {index:04d}'})
+        index += 1
+    return items
+
+
+def test_the_cursor_of_a_page_dropped_from_the_top_moves_in_items():
+    """A hundred items painted as sixty widgets still move the cursor a hundred.
+
+    The reader sits at the bottom, so the page furthest from them is the one at the
+    top. Letting it go must leave the window starting where that page ended, which the
+    page below it reports as its own start. Counting the widgets it mounted would move
+    the cursor sixty instead, and the forty items the page painted two per widget would
+    never be painted: the next ask would end before them.
+    """
+
+    async def inner() -> None:
+        app = Harness()
+        async with app.run_test(size=(100, 40)) as pilot:
+            chat = app.query_one(ChatLog)
+            await chat.render_items(window_page(400), first_index=400, has_more=True)
+            for start in (300, 200):
+                await chat.prepend_items(window_page(start), first_index=start, has_more=True)
+                await pilot.pause()
+
+            assert [len(page.widgets) for page in chat._pages] == [60, 60, 60]
+            assert [page.items for page in chat._pages] == [100, 100, 100]
+            assert len(chat.children) == 180, 'three pages of sixty widgets'
+
+            # At the bottom, the top page is the one the reader is furthest from.
+            chat.scroll_end(animate=False)
+            await pilot.pause()
+            await chat.prepend_items(window_page(100), first_index=100, has_more=True)
+            await pilot.pause()
+
+            assert len(chat._pages) == 3, 'the window is bounded by pages'
+            assert chat.older_cursor == 200, 'the page that left ended where the page below starts'
+            assert chat.has_older is True, 'and it can be asked for again'
+
+            # The next trip to the top asks for exactly that page: position 200, which is
+            # the hundred items the page stood for, not the sixty widgets it mounted. 160
+            # is the ask that would leave items 160 to 200 unpainted forever.
+            chat.scroll_to(y=0, animate=False, immediate=True)
+            await pilot.pause()
+            await pilot.pause()
+
+            assert app.pages_wanted == [200]
 
     asyncio.run(inner())

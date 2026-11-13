@@ -471,12 +471,29 @@ added: the widget is mounted with `mount(before=0)`, and `call_after_refresh` th
 puts the row the reader was looking at back on its screen row with
 `scroll_to(immediate=True)`. What they were reading does not move.
 
+The window counts every page twice and keeps both counts. A page records the widgets
+it mounted, the items it stands for, and the `first_index` the service reported —
+`ChatLog`'s `_Page`. The **cursor moves in items**: the window starts where its
+oldest page starts, so letting that page go leaves the next page's recorded start as
+the cursor, never the number of widgets the page happened to mount. The **distance to
+the screen is measured in widgets, on purpose**: eviction asks how much of the screen
+lies between the reader and a page, and a page that merges a thought and its answer
+into one block, or a call and its result into one row, holds fewer widgets than the
+items it stands for — the viewport, not the transcript, is what must not move.
+Conflating the two was a real defect: a page of 100 items that mounted 60 widgets
+moved the cursor 60 positions instead of 100, so the next ask ended 40 items short
+and those messages were never painted. `tests/test_chat_history_render.py` proves the
+two counts apart on a page of 100 items painted as 60 widgets;
+`tests/test_ui_client.py` proves a session whose projection is not one item per
+widget loses no item when the page at the top is let go.
+
 Past the bound the page furthest from the reading position is let go, not the page
 held longest: what has to stay is what the screen is showing. The position is taken
 before the page above is inserted — the insertion moves the scroll offset, not the
-row the reader is on — and turned into a position among the mounted items, because
-items are what a page is counted in and a tool block is not as tall as a line of
-text. It gives two outcomes, one for each way a reader arrives at the bound. A
+row the reader is on — and turned into a position among the mounted widgets, which is
+the unit of that measurement: a tool block is not as tall as a line of text, and a
+page's widget count is not its item count. It gives two outcomes, one for each way a
+reader arrives at the bound. A
 reader at the top is furthest from the newest page, so that one leaves and the
 window stops ending where the conversation ends. A reader who came back down is
 furthest from the page at the top, which is the page the cursor can ask for again.
