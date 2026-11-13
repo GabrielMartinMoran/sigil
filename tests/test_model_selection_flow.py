@@ -17,6 +17,11 @@ from src.ui.widgets.effort_screen import EffortChoice, EffortScreen
 from src.ui.widgets.grouped_model_screen import GroupedModelChoice, GroupedModelScreen
 
 
+def _account(account_id: str, alias: str, provider: str = 'OpenRouter') -> SimpleNamespace:
+    """The account the picker reads: id and alias to choose, provider to show."""
+    return SimpleNamespace(id=account_id, alias=alias, provider_label=provider)
+
+
 def test_should_choose_other_account_and_effort_atomically(tmp_path: Path) -> None:
     async def scenario() -> None:
         store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'sessions')
@@ -25,11 +30,11 @@ def test_should_choose_other_account_and_effort_atomically(tmp_path: Path) -> No
         service = Mock()
         service.is_configured.return_value = True
         service.list_accounts.return_value = [
-            SimpleNamespace(id='a', alias='first'),
-            SimpleNamespace(id='b', alias='second'),
+            _account('a', 'first'),
+            _account('b', 'second'),
         ]
         service.catalog_for = AsyncMock(return_value=ModelCatalog((model,)))
-        service.select.return_value = SimpleNamespace(label='second / m')
+        service.select.return_value = SimpleNamespace(display_name='m · second · OpenRouter')
         app._model_service = service
         app._after_model_change = Mock()
         app.push_screen_wait = AsyncMock(side_effect=[GroupedModelChoice('b', 'second', model), EffortChoice('high')])
@@ -49,7 +54,7 @@ def test_should_leave_current_selection_unchanged_when_effort_cancelled(tmp_path
         model = ModelCapability('m')
         service = Mock()
         service.is_configured.return_value = True
-        service.list_accounts.return_value = [SimpleNamespace(id='a', alias='first')]
+        service.list_accounts.return_value = [_account('a', 'first')]
         service.catalog_for = AsyncMock(return_value=ModelCatalog((model,)))
         app._model_service = service
         app.push_screen_wait = AsyncMock(side_effect=[GroupedModelChoice('a', 'first', model), None])
@@ -64,7 +69,7 @@ def test_should_keep_failed_provider_available_for_manual_model_entry(tmp_path: 
         store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'sessions')
         app = SigilApp(agent=Agent(TestModel(), instructions='x'), store=store, session=store.create_session())
         service = Mock()
-        service.list_accounts.return_value = [SimpleNamespace(id='a', alias='offline')]
+        service.list_accounts.return_value = [_account('a', 'offline')]
         service.catalog_for = AsyncMock(side_effect=RuntimeError('network unavailable'))
         app._model_service = service
         app.push_screen_wait = AsyncMock(return_value=None)

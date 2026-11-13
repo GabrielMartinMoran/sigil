@@ -25,6 +25,8 @@ def run() -> None:
         session=composition.session,
         on_bind_session=composition.bind_session,
         on_agent_selected=composition.select_agent_model,
+        model_defaults_state=composition.model_defaults_state,
+        save_model_default=composition.save_model_default,
         settings=settings,
         model_service=composition.model_service,
         login_flow=composition.login_flow,

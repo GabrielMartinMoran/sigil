@@ -19,7 +19,18 @@ from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.session_picker import SessionPicker
 
 BUSY_COMMANDS = frozenset(
-    {'/new', '/load', '/agent', '/provider', '/model', '/effort', '/external-files', '/mcp', '/quit'}
+    {
+        '/new',
+        '/load',
+        '/agent',
+        '/provider',
+        '/model',
+        '/default-models',
+        '/effort',
+        '/external-files',
+        '/mcp',
+        '/quit',
+    }
 )
 """Commands a running turn refuses.
 
@@ -28,6 +39,11 @@ process: `/new` and `/load` swap the session out from under it, `/agent` swaps
 the instructions and the tool set of a run whose definitions were already
 computed, `/provider` adds and deletes accounts, `/model` and `/effort` would
 swap the model mid-run, and `/quit` closes the app.
+
+`/default-models` is here because a subagent reads `agents.<name>` the moment it is
+summoned: rewriting that entry under a running tree changes the model of a branch
+that has not started yet, and a turn would end with two halves written by two
+different models.
 
 `/model` and `/effort` are here even though the service also refuses them: the
 service refuses the *change*, and only after the picker fetched the catalogue and
@@ -151,6 +167,7 @@ class CommandsMixin:
             '/agent': lambda: self.show_agent(chat, args),
             '/provider': lambda: self.show_providers(chat),
             '/model': lambda: self.show_models(chat, args),
+            '/default-models': lambda: self.show_default_models(chat),
             '/effort': lambda: self.show_effort(chat, args),
             '/external-files': lambda: self.handle_external_files(args, chat),
             '/reasoning-visibility': lambda: self.handle_reasoning_visibility(args, chat),

@@ -55,6 +55,45 @@ def test_should_filter_models_by_provider_and_toggle_favourite(tmp_path: Path) -
     asyncio.run(scenario())
 
 
+def test_should_show_the_provider_beside_the_alias_in_the_list() -> None:
+    """An alias is a name the user chose; the provider is what it talks to."""
+
+    async def scenario() -> None:
+        from textual.widgets import OptionList
+
+        from tests.ui_helpers import render_text
+
+        groups = [
+            AccountCatalog('one', 'work', ModelCatalog((ModelCapability('alpha'),)), 'OpenRouter'),
+            AccountCatalog('two', 'personal', ModelCatalog((ModelCapability('beta'),)), 'OpenCode Go'),
+        ]
+        screen = GroupedModelScreen(groups, (), on_favorites=lambda _: None)
+
+        class Harness(App[None]):
+            def compose(self) -> ComposeResult:
+                yield Input()
+
+            def on_mount(self) -> None:
+                self.push_screen(screen)
+
+        async with Harness().run_test() as pilot:
+            await pilot.pause()
+            rows = [render_text(option.prompt) for option in screen.query_one(OptionList).options]
+            listed = '\n'.join(rows)
+            assert 'work · OpenRouter' in listed
+            assert 'personal · OpenCode Go' in listed
+
+            # A favourite moves under a heading that no longer names the account,
+            # so the row has to carry both halves itself.
+            await pilot.press('ctrl+f')
+            await pilot.pause()
+            rows = [render_text(option.prompt) for option in screen.query_one(OptionList).options]
+            favorite = next(row for row in rows if 'Favorites' in row)
+            assert 'work · OpenRouter' in favorite or 'personal · OpenCode Go' in favorite
+
+    asyncio.run(scenario())
+
+
 def test_should_allow_custom_model_for_a_provider_with_no_catalogue() -> None:
     async def scenario() -> None:
         groups = [AccountCatalog('one', 'offline', ModelCatalog())]

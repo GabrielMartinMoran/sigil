@@ -555,6 +555,16 @@ account alias, a model ID, and a reasoning effort:
 }
 ```
 
+`/default-models` writes these entries from the TUI, so the file does not have to
+be edited by hand. The list holds the default for new conversations, then the
+installed agents, then the installed subagents — `agents.<name>` decides what a
+profile runs on whether a person picks it or a `summon` starts it, so both roles
+have a default here. `Enter` picks the model and the effort with the same screens
+`/model` uses, `d` clears an entry, and `Tab` chooses the file the write goes to —
+the project's or yours. The destination starts on the file that already sets the
+row you are on, and the list says which one that is. With `SIGIL_CONFIG` there is
+one file and nothing to switch.
+
 The project entry replaces the global entry for the same agent. `SIGIL_CONFIG`
 selects a single config file instead of both. Accepted efforts are `default`,
 `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. The model ID can
@@ -572,7 +582,7 @@ model and effort of the agent that summoned it, including when nested.
 
 Not every profile needs to name a model. `default_model` sets the one a
 conversation starts on when the agent has no preference of its own, in the same
-shape as an `agents` entry:
+shape as an `agents` entry — the first row of `/default-models` writes it:
 
 ```json
 {
@@ -1171,7 +1181,7 @@ silently.
 | Command | Mid-turn |
 | --- | --- |
 | `/context`, `/debug`, `/sidebar`, `/help` | Available: they only read state |
-| `/new`, `/load`, `/provider`, `/model`, `/effort`, `/mcp`, `/quit` | Refused: they would change the session, tools, model, or process under the running turn |
+| `/new`, `/load`, `/provider`, `/model`, `/default-models`, `/effort`, `/mcp`, `/quit` | Refused: they would change the session, tools, model, or process under the running turn |
 
 A refused command does nothing beyond saying so: the chat gets one yellow line
 naming it, and the command goes back into the prompt — the turn, the session,
@@ -1287,6 +1297,7 @@ accounts with `/model`.
 ```
 /provider                 manage accounts: add, rename, remove
 /model                    choose a model across accounts, then its reasoning effort
+/default-models           set the model each agent starts on, project or global
 /effort [level]           open the effort picker, or set a level directly
 ```
 

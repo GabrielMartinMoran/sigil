@@ -56,6 +56,21 @@ def test_account_display_name_shows_kind_and_variant():
     assert account.display_name == 'work · OpenCode Go'
 
 
+def test_snapshot_display_name_names_the_model_and_where_it_comes_from():
+    """A notice that says which model is active has to say which account too."""
+    from src.engine.providers.snapshot import ModelSnapshot
+
+    account = ProviderAccount.create('work', ProviderKind.OPENROUTER)
+    snapshot = ModelSnapshot(
+        account=account,
+        selection=Selection(account_id=account.id, model='openai/gpt-5'),
+    )
+
+    assert snapshot.alias == 'work'
+    assert snapshot.display_name == 'openai/gpt-5 · work · OpenRouter'
+    assert ModelSnapshot().display_name == 'no model'
+
+
 def test_account_round_trips_through_dict_without_losing_fields():
     account = ProviderAccount.create('work', ProviderKind.OPENAI, auth=AuthMethod.OAUTH).with_model('gpt-5')
     restored = ProviderAccount.from_dict(account.to_dict())

@@ -59,6 +59,18 @@ class ModelSnapshot:
         return f'{self.alias}:{self.model}'
 
     @property
+    def display_name(self) -> str:
+        """``"openai/gpt-5 · work · OpenRouter"``: the model, and what serves it.
+
+        The alias alone says nothing about who answers the request: two accounts of
+        the same provider are told apart only by the alias, and an alias gives no clue
+        about the vendor. A notice that announces the change carries both.
+        """
+        if not self.is_configured or self.account is None:
+            return 'no model'
+        return f'{self.model} · {self.account.display_name}'
+
+    @property
     def short_label(self) -> str:
         """Alias only, for a narrow side panel."""
         return self.alias or 'no provider'

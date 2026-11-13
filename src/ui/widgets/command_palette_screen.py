@@ -20,6 +20,7 @@ COMMAND_LABELS = {
     '/agent': 'Choose agent',
     '/provider': 'Manage providers',
     '/model': 'Choose model',
+    '/default-models': 'Set default models',
     '/effort': 'Choose reasoning effort',
     '/mcp': 'Show MCP servers',
     '/context': 'Show context usage',

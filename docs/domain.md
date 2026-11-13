@@ -559,7 +559,7 @@ declares who serves it:
 
 | Owner | What it means | Examples |
 | --- | --- | --- |
-| `core` | the domain owns the state and the answer; a client formats it | `/new`, `/load`, `/agent`, `/provider`, `/model`, `/effort`, `/mcp`, `/context`, `/rollback` |
+| `core` | the domain owns the state and the answer; a client formats it | `/new`, `/load`, `/agent`, `/provider`, `/model`, `/default-models`, `/effort`, `/mcp`, `/context`, `/rollback` |
 | `client` | only the client in front of the user can: it configures or paints itself | `/theme`, `/sidebar`, `/reasoning-visibility`, `/debug`, `/help`, `/quit` |
 
 The test is the same one that draws the layer boundary: **if it decides, it is
