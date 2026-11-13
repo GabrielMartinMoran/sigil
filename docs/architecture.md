@@ -407,6 +407,49 @@ state is `stopped`, not a new one: `_TRANSITIONS` in
 failure state, while `interrupted` stays reserved for reconciling a process that
 died, as [idle shutdown](#idle-shutdown) states.
 
+### The transcript, one window at a time
+
+`GET /api/session/transcript` answers a conversation that grows, so it takes a
+window instead of always sending the whole thing:
+
+| Parameter | Meaning |
+| --- | --- |
+| `limit` | how many items to return; absent means the whole transcript |
+| `before` | the position the page ends just before; absent means the newest page |
+
+The reply carries `items`, `first_index` — the absolute position of the first item
+of the page — `has_more`, whether anything older exists, and `total`, the number of
+items in the whole transcript. Those are the only fields paging adds; the items
+themselves are the projection `views.transcript` already defined.
+
+Three rules make the cursor usable:
+
+- **Positions, not message indexes.** The `index` of an item is the message it was
+  built from, and several items can share one — a message with a thought and a
+  tool call. A cursor expressed in message indexes could not be chained without
+  repeating a message or dropping part of it, so `before` and `first_index` are
+  positions in the flat list. Asking with `before=first_index` returns exactly the
+  chunk above the page: no hole, no repeat.
+- **An item keeps its index.** A page never renumbers an item, because a click on
+  a message maps its `index` to a rollback point. A tramo that renumbered would
+  send the reader to the wrong turn.
+- **A queued message is not history.** The rows waiting in the queue travel with
+  the newest page only, from the read that carries them —
+  [the durable read](#durable-server-consumer-part-a). They are not items, they do
+  not count in `total`, and they never move a cursor.
+
+Compatibility is deliberate: without `limit` the answer is the whole transcript
+with `first_index` 0 and `has_more` false, which is what the web client still asks
+for. The window size — 100 items — is the client's decision to send when it
+migrates, not a default the service imposes. An unusable `limit` or `before` is a
+`400` with a sentence: a limit that is not a positive whole number or is above
+`MAX_TRANSCRIPT_PAGE` (1000), a cursor that is not a non-negative whole number.
+
+Implementation: `views.transcript_page` is the only place the rule lives — it takes
+the items already built and returns a `TranscriptPage`; the route validates the two
+parameters and projects. See `tests/test_server_runtime.py` for the arithmetic and
+`tests/test_server_parity.py` for the query contract.
+
 ### The turn command
 
 `POST /api/turn` is the one way a message enters a session, and its shape is the

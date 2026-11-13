@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelMessagesTypeAdapter
@@ -405,6 +406,53 @@ def transcript(messages: list[ModelMessage]) -> list[dict[str, Any]]:
             if item is not None:
                 items.append(item)
     return items
+
+
+@dataclass(frozen=True)
+class TranscriptPage:
+    """One window of a projected transcript, and the cursor that precedes it.
+
+    ``items`` are projected items, unchanged: a page never rewrites one. The item's
+    ``index`` is the message it was built from — the absolute point a click maps to
+    its rollback — and it travels as it is, so a window cannot renumber a
+    conversation.
+
+    ``first_index`` is the absolute position of the first item in the whole
+    transcript, and it doubles as the ``before`` cursor for the chunk just above
+    this page. ``total`` counts transcript items only: a row waiting in the queue is
+    not one, so it neither enters the count nor moves a cursor.
+    """
+
+    items: list[dict[str, Any]]
+    first_index: int
+    has_more: bool
+    total: int
+
+
+def transcript_page(
+    items: list[dict[str, Any]],
+    *,
+    limit: int | None = None,
+    before: int | None = None,
+) -> TranscriptPage:
+    """The window of ``items`` that ends just before ``before``.
+
+    Paging is over *positions*, not over the ``index`` each item carries. Several
+    items can share one index — a message with a thought and a tool call — so a
+    cursor expressed in message indexes could not be chained without either
+    repeating a message or dropping part of it. ``first_index`` is the position the
+    next page ends just before, which is what makes walking the cursor back hand
+    every item over exactly once.
+
+    ``limit=None`` is not a default window: it is the whole transcript, which is what
+    a client that has not migrated still asks for. The window size is the client's
+    decision to make, and a service that imposed one would change an answer that
+    already has callers.
+    """
+    total = len(items)
+    end = total if before is None else max(0, min(before, total))
+    start = 0 if limit is None else max(0, end - limit)
+    return TranscriptPage(items=items[start:end], first_index=start, has_more=start > 0, total=total)
 
 
 def attachment_view(part: BinaryContent) -> dict[str, Any]:

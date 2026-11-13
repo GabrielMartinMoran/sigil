@@ -42,6 +42,7 @@ from src.engine.bootstrap import Composition
 from src.engine.interaction.models.question_item import QuestionItem
 from src.engine.interaction.models.question_option import QuestionOption
 from src.engine.settings import load_settings
+from src.server import views
 from src.server.app import BodyLimitMiddleware, create_app
 from src.server.config import ServerConfig
 from src.server.events import EventHub
@@ -2050,3 +2051,108 @@ def test_a_write_the_engine_refuses_keeps_its_own_sentence(tmp_path: Path, monke
         runtime.save_model_default('scout', AgentModelConfig('work', 'm', 'high'), ConfigScope.PROJECT)
 
     assert json.loads(project.read_text(encoding='utf-8')) == {'agents': ['wizard']}
+
+
+# --- one page of the transcript ---------------------------------------------
+#
+# `views.transcript_page` is the whole paging rule: everything else is a call and
+# a projection. So it is tested as what it is — a function over items that are
+# already built — and no app is mounted to prove arithmetic.
+
+
+def _transcript_items() -> list[dict[str, Any]]:
+    """A projection with the shape paging has to respect: indexes repeat.
+
+    A message can carry several parts, and every item built from it keeps the same
+    `index` — the message it came from, which is what a click maps to its rollback
+    point. Positions and indexes are therefore not the same number, and a rule that
+    confused them would either repeat an item or leave a hole.
+    """
+    return [
+        {'kind': 'user', 'index': 0, 'text': 'one'},
+        {'kind': 'assistant', 'index': 1, 'text': 'a'},
+        {'kind': 'thinking', 'index': 1, 'text': 'b'},
+        {'kind': 'assistant', 'index': 1, 'text': 'c'},
+        {'kind': 'user', 'index': 2, 'text': 'two'},
+        {'kind': 'assistant', 'index': 3, 'text': 'done'},
+    ]
+
+
+def test_a_page_ends_where_the_cursor_says() -> None:
+    page = views.transcript_page(_transcript_items(), limit=2, before=4)
+
+    assert page.items == _transcript_items()[2:4]
+    assert page.first_index == 2
+    assert page.has_more is True
+    assert page.total == 6
+
+
+def test_the_newest_page_is_the_end_of_the_transcript() -> None:
+    """No cursor means the newest window, which is what a client opens with."""
+
+    page = views.transcript_page(_transcript_items(), limit=2)
+
+    assert page.items == _transcript_items()[-2:]
+    assert page.first_index == 4
+    assert page.has_more is True
+
+
+def test_walking_the_cursor_back_rebuilds_the_transcript_without_holes() -> None:
+    """Every page is preceded by exactly the items the previous one did not have.
+
+    This is the property the whole contract exists for: a client that keeps asking
+    for the chunk above `first_index` sees the conversation once, in order, and
+    with the indexes it already knew.
+    """
+
+    pages: list[list[dict[str, Any]]] = []
+    before: int | None = None
+    while True:
+        page = views.transcript_page(_transcript_items(), limit=2, before=before)
+        pages.append(page.items)
+        if not page.has_more:
+            break
+        before = page.first_index
+
+    assert len(pages) == 3
+    assert [item for page in reversed(pages) for item in page] == _transcript_items()
+
+
+def test_a_page_wider_than_what_is_left_stops_at_the_bottom() -> None:
+    page = views.transcript_page(_transcript_items(), limit=99, before=3)
+
+    assert page.items == _transcript_items()[:3]
+    assert page.first_index == 0
+    assert page.has_more is False
+
+
+def test_without_a_limit_the_transcript_comes_back_whole() -> None:
+    """The web client has not migrated, so no window is the window it still gets."""
+
+    page = views.transcript_page(_transcript_items())
+
+    assert page.items == _transcript_items()
+    assert page.first_index == 0
+    assert page.has_more is False
+    assert page.total == 6
+
+
+def test_a_cursor_of_zero_is_an_empty_page() -> None:
+    """The bottom of the transcript is a real answer, not a missing one."""
+
+    page = views.transcript_page(_transcript_items(), limit=2, before=0)
+
+    assert page.items == []
+    assert page.first_index == 0
+    assert page.has_more is False
+    assert page.total == 6
+
+
+def test_a_cursor_past_the_end_answers_the_newest_page() -> None:
+    """A cursor the service has not reached yet is clamped, never a failure."""
+
+    page = views.transcript_page(_transcript_items(), limit=2, before=99)
+
+    assert page.items == _transcript_items()[-2:]
+    assert page.first_index == 4
+    assert page.has_more is True

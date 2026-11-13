@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -41,6 +42,7 @@ from src.engine.context.meter.cost import SessionCost, session_cost
 from src.engine.context.meter.snapshot import ContextSnapshot
 from src.engine.providers.bootstrap import ProviderPaths
 from src.engine.settings import load_settings
+from src.engine.storage.accepted_inputs import AcceptedInputs
 from src.server import views
 from src.server.app import create_app
 from src.server.config import ServerConfig
@@ -1035,5 +1037,156 @@ def test_a_defaults_body_names_a_destination_and_a_level_sigil_has(runtime: Serv
             )
             assert level.status_code == 400, level.text
             assert 'turbo' in level.json()['error']
+
+    asyncio.run(go())
+
+
+# --- the transcript, one window at a time -----------------------------------
+#
+# The route answers the whole conversation unless a window is asked for, which is
+# what the web client still needs. These tests drive the real app because the
+# contract is a query contract: a page has to end where the cursor says, and
+# walking the cursor back has to hand every item over exactly once, with the index
+# it already had.
+
+
+async def _transcript(client: httpx.AsyncClient, **params: Any) -> dict[str, Any]:
+    response = await client.get('/api/session/transcript', params=params)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_the_transcript_route_pages_and_says_where_the_page_starts(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _signed_in(runtime, tmp_path) as client:
+            for text in ('one', 'two', 'three'):
+                await _one_turn(runtime, client, text)
+
+            # No window: everything, and no cursor to continue from.
+            whole = await _transcript(client)
+            assert whole['total'] == len(whole['items'])
+            assert whole['first_index'] == 0
+            assert whole['has_more'] is False
+            assert len(whole['items']) > 3
+
+            newest = await _transcript(client, limit=2)
+            assert newest['items'] == whole['items'][-2:]
+            assert newest['items'][0]['index'] == whole['items'][-2]['index']
+            assert newest['first_index'] == len(whole['items']) - 2
+            assert newest['has_more'] is True
+            assert newest['total'] == len(whole['items'])
+
+    asyncio.run(go())
+
+
+def test_walking_the_cursor_back_hands_over_the_whole_transcript_once(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """The property a client relies on: no hole, no repeat, and the same indexes."""
+
+    async def go() -> None:
+        async with _signed_in(runtime, tmp_path) as client:
+            for text in ('one', 'two', 'three', 'four'):
+                await _one_turn(runtime, client, text)
+            whole = (await _transcript(client))['items']
+
+            pages: list[list[dict[str, Any]]] = []
+            before: int | None = None
+            while True:
+                page = await _transcript(client, limit=2, **({} if before is None else {'before': before}))
+                pages.append(page['items'])
+                if not page['has_more']:
+                    break
+                before = page['first_index']
+
+            assert len(pages) > 2, 'the walk has to span more than two pages to prove anything'
+            assert [item for page in reversed(pages) for item in page] == whole
+
+    asyncio.run(go())
+
+
+def test_a_cursor_of_zero_is_an_empty_oldest_page(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _signed_in(runtime, tmp_path) as client:
+            await _one_turn(runtime, client, 'first')
+            total = (await _transcript(client))['total']
+
+            page = await _transcript(client, limit=2, before=0)
+
+            assert page['items'] == []
+            assert page['has_more'] is False
+            # The transcript is still that long: an empty page is the bottom, not a loss.
+            assert page['total'] == total
+
+    asyncio.run(go())
+
+
+def test_a_cursor_past_the_end_answers_the_newest_page(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """A client that asks from a stale position still gets a usable page."""
+
+    async def go() -> None:
+        async with _signed_in(runtime, tmp_path) as client:
+            for text in ('one', 'two'):
+                await _one_turn(runtime, client, text)
+            whole = (await _transcript(client))['items']
+
+            page = await _transcript(client, limit=1, before=10_000)
+
+            assert page['items'] == whole[-1:]
+            assert page['first_index'] == len(whole) - 1
+            assert page['has_more'] is True
+
+    asyncio.run(go())
+
+
+def test_an_unusable_limit_or_cursor_is_a_400_with_the_reason(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """A bad window is the request's fault, so it is a 400 and not a broken read."""
+
+    async def go() -> None:
+        async with _signed_in(runtime, tmp_path) as client:
+            await _one_turn(runtime, client, 'first')
+            cases: list[tuple[dict[str, Any], str]] = [
+                ({'limit': 0}, 'limit'),
+                ({'limit': -2}, 'limit'),
+                ({'limit': 'many'}, 'limit'),
+                ({'limit': 10_000}, 'limit'),
+                ({'before': -1}, 'before'),
+                ({'before': 'half'}, 'before'),
+            ]
+            for params, word in cases:
+                response = await client.get('/api/session/transcript', params=params)
+                assert response.status_code == 400, (params, response.text)
+                assert word in response.json()['error'], (params, response.text)
+
+    asyncio.run(go())
+
+
+def test_the_waiting_rows_are_never_part_of_a_page(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """A queued message is not history: it cannot become an item or move an index.
+
+    The newest page is the only one a waiting row could ride with, so the older one
+    is read too: neither list carries it, and the two pages still reconstruct the
+    tail of the transcript exactly.
+    """
+
+    async def go() -> None:
+        async with _signed_in(runtime, tmp_path) as client:
+            await _one_turn(runtime, client, 'first')
+            store = runtime.composition.store
+            request = str(uuid.uuid4())
+            store.accept_input(runtime.session, request, 'waiting text', [], 'turn')
+            # Claimed and not delivered: it stays queued, and the consumer only takes
+            # `accepted` rows, so it cannot become a message behind the assertion.
+            AcceptedInputs(store.database).transition(runtime.session.id, request, 'claimed', attempt_id='attempt')
+
+            durable = (await client.get('/api/session/durable')).json()
+            assert [entry['text'] for entry in durable['pending']] == ['waiting text']
+
+            whole = (await _transcript(client))['items']
+            assert 'waiting text' not in str(whole)
+
+            newest = await _transcript(client, limit=1)
+            older = await _transcript(client, limit=1, before=newest['first_index'])
+            assert 'waiting text' not in str(newest['items'])
+            assert 'waiting text' not in str(older['items'])
+            assert older['items'] + newest['items'] == whole[-2:]
 
     asyncio.run(go())

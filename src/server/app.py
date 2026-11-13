@@ -91,6 +91,15 @@ rest is the text and the envelope. A request over this is refused before it is
 parsed, so an accidental upload cannot become a memory problem first.
 """
 
+MAX_TRANSCRIPT_PAGE = 1000
+"""Ceiling for one transcript window.
+
+A window exists so a long conversation does not arrive in one body. A ceiling far
+above any screen keeps that purpose: without one, ``limit`` would be a way to ask
+for everything again, and the route would be as expensive as it was before it
+paged.
+"""
+
 
 class _BodyTooLarge(BaseException):
     """The body of the request passed `MAX_COMMAND_BYTES` while it was being read.
@@ -204,6 +213,40 @@ def _refused(exc: Exception) -> JSONResponse:
     request would work, so the answer is ``400`` and not ``409``.
     """
     return JSONResponse({'error': str(exc)}, status_code=400)
+
+
+def _page_limit(raw: str | None) -> int | None:
+    """``limit`` as a positive count, or "no window" when it was not asked for.
+
+    Read as text and parsed here rather than declared as an ``int`` on the route:
+    FastAPI answers a type error with its own ``422`` body, and a client that reads
+    ``error`` would get nothing it can show. A sentence in the same vocabulary as
+    every other refusal is what a caller can act on.
+    """
+    if raw is None:
+        return None
+    try:
+        limit = int(raw)
+    except ValueError:
+        raise ValueError(f'limit must be a whole number of items, not {raw!r}.') from None
+    if limit < 1:
+        raise ValueError(f'limit must be at least 1, not {limit}.')
+    if limit > MAX_TRANSCRIPT_PAGE:
+        raise ValueError(f'limit must be at most {MAX_TRANSCRIPT_PAGE} items, not {limit}.')
+    return limit
+
+
+def _page_before(raw: str | None) -> int | None:
+    """``before`` as a non-negative position, or "the newest page" when absent."""
+    if raw is None:
+        return None
+    try:
+        before = int(raw)
+    except ValueError:
+        raise ValueError(f'before must be a whole number, not {raw!r}.') from None
+    if before < 0:
+        raise ValueError(f'before must not be negative, not {before}.')
+    return before
 
 
 class LoginBody(BaseModel):
@@ -580,13 +623,27 @@ def create_app(
         return await _state(runtime)
 
     @app.get('/api/session/transcript')
-    async def transcript() -> dict[str, Any]:
-        """The conversation of the open session, as items a client can paint."""
-        session = runtime.session
+    async def transcript(limit: str | None = None, before: str | None = None) -> dict[str, Any]:
+        """The conversation of the open session, as items a client can paint.
+
+        Without ``limit`` the whole conversation comes back, which is what the web
+        client still asks for. With it, the answer is one window: ``before`` is the
+        position the page ends just before, and absent means the newest one. The
+        items keep the ``index`` they already had, because a click maps that index to
+        a rollback point and a window must not renumber a conversation.
+        """
+        items = views.transcript(runtime.session.messages)
+        try:
+            page = views.transcript_page(items, limit=_page_limit(limit), before=_page_before(before))
+        except ValueError as exc:
+            return _refused(exc)  # type: ignore[return-value]
         return {
-            'session': views.session_view(session),
-            'items': views.transcript(session.messages),
-            'skills': views.skills_view(session.messages),
+            'session': views.session_view(runtime.session),
+            'items': page.items,
+            'first_index': page.first_index,
+            'has_more': page.has_more,
+            'total': page.total,
+            'skills': views.skills_view(runtime.session.messages),
         }
 
     @app.get('/api/session/durable')
