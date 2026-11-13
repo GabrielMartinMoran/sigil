@@ -1,0 +1,93 @@
+version: 1
+status: approved
+approved_at_note: >-
+  The user stated the design intent and chose the scope: "Todas ejecutan en background, pero la
+  TUI y la web solo ven updates de la que tengan cargada". Slices are authorized to start in the
+  order below.
+objective: >-
+  One service hosts many active sessions that all execute in the background, while each client
+  receives and paints only the session it has loaded.
+approval_basis: >-
+  The user reported that a second TUI shows the session already open in the first one. That is
+  correct for clients looking at the same session, but the service itself has no way to have two
+  sessions active at once: binding is process-global, the workspace is a process `chdir`, and the
+  event stream carries no session identity. The user confirmed the design intent is N sessions,
+  each isolated in its own model, MCPs and workspace context.
+context:
+  measured_shape: >-
+    `Composition.session` is a singleton and `bind_session` rewrites the agent, the MCP overrides,
+    the context meter, the agent tree and the roadmap store. `ServiceRuntime._consume` claims
+    `claim_next(self.session.id)` on one loop, with all turn state (`_run`, `_task`, `_pending`,
+    `_attempts`, `_enqueue`, `_wake`) owned by the runtime. `EventHub.publish` carries no session
+    and `subscribe()` takes everything. `WorkspaceManager.switch` calls `os.chdir` because the
+    file tools resolve relative paths against the process cwd (`files/paths.py:workspace_root`).
+  already_per_session: >-
+    The durable queue is keyed by session (`accept_input(session, ...)`, `claim_next(session.id)`),
+    and the session row already carries its model selection, MCP overrides, agent and cwd. The
+    storage layer is one WAL connection with `busy_timeout = 5000`, so several sessions in one
+    process serialize their writes instead of corrupting them.
+contract:
+  invariant_events: >-
+    Every event carries the session it belongs to, or none when it is service-wide. A subscriber
+    asks for one session and receives that session's events plus the service-wide ones; it never
+    receives another session's.
+  invariant_api: >-
+    A route that acts on "the session" resolves it from the request (a session id), not from a
+    process-global pointer. A request that names a session this service is not holding answers
+    with an explicit error instead of acting on a different conversation.
+  invariant_workspace: >-
+    The workspace root a tool resolves paths against is the session's own, carried by the
+    execution context, not the process working directory.
+  invariant_isolation: >-
+    Two active sessions never share a model selection, an MCP override, a context meter, a
+    roadmap store or a queue cursor.
+slices:
+  - id: session-events-v1
+    objective: An event says which session it belongs to, and a subscriber receives only that one.
+    acceptance:
+      - Every published event carries a session id, or nothing when it is service-wide.
+      - A subscription filtered by session receives that session and the service-wide events, never another session's.
+      - Replay after a cursor applies the same filter, so a reconnection cannot leak a foreign event.
+      - With one session the stream is byte-for-byte what it is today.
+  - id: session-scoped-workspace-v1
+    objective: A tool resolves paths against the session's workspace, not the process cwd.
+    acceptance:
+      - `workspace_root` answers the root of the session being executed, and the process cwd when nothing is executing.
+      - Two executions with different roots in the same process resolve their own files and cannot read each other's.
+      - Nothing calls `os.chdir` to make a session's paths work.
+  - id: session-runtime-extraction-v1
+    objective: Everything session-scoped moves out of `ServiceRuntime` into a `SessionRuntime`, with one session and identical behaviour.
+    acceptance:
+      - `ServiceRuntime` holds the process-scoped things only (store, lock, hub, config, catalog) and a registry of session runtimes.
+      - The existing suite passes unchanged: same events, same queue, same turn semantics.
+      - A session runtime owns its composition, consumer, turn state, questions, pending rows and wake.
+  - id: concurrent-sessions-v1
+    objective: Several sessions execute at once, each on its own consumer, and idle ones are released.
+    acceptance:
+      - Two sessions accept and run turns at the same time, and neither queue consumes the other's row.
+      - A session with no client, no running turn and no accepted row is released after the idle grace.
+      - Releasing a session does not touch the session that is still running, nor the database lock.
+      - A turn in one session does not block opening, switching or reading another.
+  - id: client-session-scope-v1
+    objective: Each client keeps its own loaded session and receives only its updates.
+    acceptance:
+      - The terminal sends its session on every call and subscribes with it, so a second terminal can load a different conversation.
+      - The web client does the same, including its transcript window and its event stream.
+      - Switching a session in one client leaves the other client where it was.
+      - A client asking for a session the service does not hold gets an explicit error, not another conversation.
+  - id: multi-session-docs-v1
+    objective: Document the registry, the event filter, the workspace context and the client contract.
+agent_decisions:
+  - Session identity travels in the request, not in a service-wide "current session" pointer. A pointer is what makes two clients unable to disagree, and disagreeing is the whole point.
+  - The workspace root becomes an execution context value rather than a process `chdir`, because two sessions in different repositories cannot both be the process cwd.
+  - Active sessions are bounded by use, not by count: an attached client, a running turn or a queued row keeps a session resident; the idle grace releases the rest.
+  - The extraction slice is a pure refactor with the suite as the oracle. Concurrency is added after it, so a failure has one candidate cause instead of two.
+risks:
+  - The extraction touches the whole runtime; a mechanical move that is not purely mechanical will change turn semantics without a failing test to say so.
+  - SQLite writes from several consumers serialize; a long queue claim in one session can delay another's write by up to the busy timeout, and that must be measured, not assumed harmless.
+  - Memory: each active session holds an agent, a model router and one MCP connection set. The idle release is what keeps that bounded, and it needs a real ceiling.
+  - The session id is not a capability. Once several sessions are reachable by id, a local client holding the endpoint token can read all of them, which is the same trust boundary the token already implies but must be stated.
+verification:
+  - The existing suite stays green through the extraction, unchanged, as the oracle for "purely mechanical".
+  - Two live sessions under `-n 8` in one process, each running a turn, with no cross-talk in the events either client receives.
+  - The web client's own tests, `tsc`, lint and a rebuilt bundle when its files change.

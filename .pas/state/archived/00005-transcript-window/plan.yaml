@@ -1,0 +1,68 @@
+version: 1
+status: approved
+approved_at_note: >-
+  The user answered "Dale" to the approval question, so the slices are authorized to start.
+objective: >-
+  Stop a long conversation from costing the whole transcript: both clients paint a window of
+  the newest items and ask the service for an older chunk only when the reader scrolls up.
+approval_basis: >-
+  The user reported that long sessions kill performance and asked for lazy loading with older
+  parts unloaded, a further chunk on scroll-up, and no full conversation held in the UI.
+  They chose both clients in one cut, and destroying an out-of-window part so it is rebuilt
+  on demand.
+context:
+  measured_shape: >-
+    The terminal mounts one widget per transcript item and rebuilds every one of them on each
+    repaint; the web client renders the whole transcript in the DOM. A session of 1640
+    messages is thousands of widgets and a full layout per repaint.
+contract:
+  route: GET /api/session/transcript
+  params:
+    limit: how many items to return, defaulting to the window size
+    before: an index cursor; the page ends just before it
+  response_additions:
+    - first_index, so a client knows where the page starts
+    - has_more, so a client knows whether to ask for another
+  invariants:
+    - An item keeps its absolute index across pages, so a click still maps to its rollback point.
+    - The pending queue rows travel with the newest page only.
+slices:
+  - id: transcript-paging-v1
+    objective: The service pages a transcript instead of always returning all of it.
+    acceptance:
+      - A page ends where the cursor says and reports whether more exist.
+      - Items keep their absolute index, and the newest page carries the pending rows.
+      - A transcript shorter than one page answers in one read with no cursor.
+  - id: tui-window-v1
+    objective: The terminal keeps a bounded window and loads an older chunk on scroll-up.
+    acceptance:
+      - Opening a long session mounts the newest window only.
+      - Scrolling to the top requests the previous chunk and keeps the reading position.
+      - The oldest chunk is destroyed once the window exceeds its bound, and never the streaming block.
+      - A click on a mounted message still opens its rollback point.
+  - id: web-window-v1
+    objective: The web client paints a window and appends an older chunk on scroll-up.
+    acceptance:
+      - The initial load renders the newest window, and the scroll position survives the insertion.
+      - Scrolling up loads one chunk at a time and stops when the service says there is no more.
+      - The committed bundle is rebuilt from the merged sources.
+  - id: window-docs-v1
+    objective: Document the window, the cursor contract and the chunk bound.
+agent_decisions:
+  - Chunk size 100 items, as a preference the operator can change, because it is the unit that
+    trades memory against the number of service reads.
+  - A destroyed chunk is rebuilt from the service on demand; expanded tool details come back
+    collapsed, which is the price of not holding them.
+  - Grouping and margins are re-derived per chunk from the same server projection, never stored,
+    so a chunk boundary cannot change how a tool batch reads.
+  - The streaming block and the pending rows are never unmounted, whatever the window does.
+risks:
+  - Scroll anchoring is the hard part: inserting above a reader who is scrolled up must not move
+    what they are reading.
+  - A chunk boundary can split a tool batch, so the first row of a page may need its margin
+    recomputed with no previous row to look at.
+  - Theme changes repaint only what is mounted; the rest is repainted as it arrives, which must
+    already be true because a page is rendered on demand.
+limitations:
+  - Searching the whole conversation from the UI is not part of this; the window is what the
+    screen holds, not what the session has.
