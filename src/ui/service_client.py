@@ -637,6 +637,27 @@ class ServiceClient:
         """Changes an account's label."""
         return await self._post(f'/api/accounts/{alias}/rename', {'new_alias': new_alias})
 
+    async def transcript(self, *, limit: int | None = None, before: int | None = None) -> dict[str, Any]:
+        """One window of the conversation, newest last.
+
+        ``limit`` is how many items to return and ``before`` is the position the page
+        ends just before; leaving it out asks for the newest page, which is the only
+        one that also carries ``pending`` — the rows waiting in the queue. A terminal
+        needs both halves to attach, and one windowed read is enough: asking for the
+        whole transcript to learn of a queued message is the cost this route removes.
+
+        The reply keeps every item's absolute ``index``, so a click still maps to its
+        rollback point, and carries ``first_index`` and ``has_more`` for walking the
+        cursor back.
+        """
+        query: list[str] = []
+        if limit is not None:
+            query.append(f'limit={int(limit)}')
+        if before is not None:
+            query.append(f'before={int(before)}')
+        path = '/api/session/transcript'
+        return await self._get(f'{path}?{"&".join(query)}' if query else path)
+
     async def durable(self) -> dict[str, Any]:
         """The durable session: transcript, queue, deliveries and recovery facts.
 

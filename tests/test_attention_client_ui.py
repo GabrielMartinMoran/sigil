@@ -40,6 +40,14 @@ class StubClient:
     async def state(self) -> dict[str, Any]:
         return self.state_payload
 
+    async def transcript(self, *, limit: int | None = None, before: int | None = None) -> dict[str, Any]:
+        """An empty newest page with nothing queued: the shape a fresh session has.
+
+        The app attaches by painting a window rather than the whole durable session, so
+        the stand-in answers the windowed read with the same empty truth.
+        """
+        return {'items': [], 'pending': [], 'first_index': 0, 'has_more': False}
+
     async def durable(self) -> dict[str, Any]:
         """An empty transcript with nothing queued: the shape a fresh session has."""
         return {'transcript': [], 'pending': []}

@@ -418,9 +418,10 @@ window instead of always sending the whole thing:
 | `before` | the position the page ends just before; absent means the newest page |
 
 The reply carries `items`, `first_index` — the absolute position of the first item
-of the page — `has_more`, whether anything older exists, and `total`, the number of
-items in the whole transcript. Those are the only fields paging adds; the items
-themselves are the projection `views.transcript` already defined.
+of the page — `has_more`, whether anything older exists, `total`, the number of
+items in the whole transcript, and `pending`, the rows waiting in the queue. Those
+are the only fields paging adds; the items themselves are the projection
+`views.transcript` already defined.
 
 Three rules make the cursor usable:
 
@@ -434,9 +435,16 @@ Three rules make the cursor usable:
   a message maps its `index` to a rollback point. A tramo that renumbered would
   send the reader to the wrong turn.
 - **A queued message is not history.** The rows waiting in the queue travel with
-  the newest page only, from the read that carries them —
-  [the durable read](#durable-server-consumer-part-a). They are not items, they do
-  not count in `total`, and they never move a cursor.
+  the newest page only — the read asked for without `before`. They are not items,
+  they do not count in `total`, and they never move a cursor. An older page answers
+  with an empty `pending`: a row that is not history has no place in a chunk, and
+  sending it with every page would paint it more than once.
+
+The wait is one rule and not two. `views.waiting` decides which rows still wait —
+accepted or claimed, and never delivered — and both reads that publish the queue
+call it: `views.pending_rows` for the newest page and `views.durable_session` for
+[the durable read](#durable-server-consumer-part-a). A screen and a recovering
+consumer therefore cannot be told different things about one waiting message.
 
 Compatibility is deliberate: without `limit` the answer is the whole transcript
 with `first_index` 0 and `has_more` false, which is what the web client still asks
@@ -449,6 +457,27 @@ Implementation: `views.transcript_page` is the only place the rule lives — it 
 the items already built and returns a `TranscriptPage`; the route validates the two
 parameters and projects. See `tests/test_server_runtime.py` for the arithmetic and
 `tests/test_server_parity.py` for the query contract.
+
+The terminal is the first client to use it. `ChatLog` keeps at most
+`MAX_MOUNTED_PAGES` (3) pages mounted. It asks for the newest page with
+`limit=transcript_window` — 100 items by default, the `transcript_window`
+preference in `ui.json` — and when the reader reaches the top it asks for the page
+above with `before=` the absolute position its oldest mounted page starts at. That
+insertion lands above the viewport, so the scroll is moved by exactly the height it
+added: the widget is mounted with `mount(before=0)`, and `call_after_refresh` then
+puts the row the reader was looking at back on its screen row with
+`scroll_to(immediate=True)`. What they were reading does not move.
+
+Past the bound the page held longest is let go. Pages only ever arrive above, so
+that is the request the reader has scrolled furthest from, and dropping it moves
+nothing on screen. The block being streamed into and the queue's waiting lines
+belong to no page and are never destroyed; a page that somehow held one is kept,
+and the window grows past its bound rather than losing what is live. A page that
+leaves is asked for again with the cursor it carried, so history is never lost —
+only unmounted. See `tests/test_ui_client.py` for the seven cases: the window a long
+session mounts, the cursor a scroll asks for, the row that does not move, the second
+page, the bound, the click that still names its turn, and the end of the
+conversation.
 
 ### The turn command
 

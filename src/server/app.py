@@ -631,10 +631,19 @@ def create_app(
         position the page ends just before, and absent means the newest one. The
         items keep the ``index`` they already had, because a click maps that index to
         a rollback point and a window must not renumber a conversation.
+
+        The newest page — the one asked for without ``before`` — also carries
+        ``pending``, the rows waiting in the queue. A screen needs the conversation
+        and the wait together, and asking for the whole transcript only to learn of a
+        queued message is the cost this window exists to remove. An older page
+        carries an empty list: a waiting row is not history, so it cannot ride a
+        chunk and must not be painted twice.
         """
         items = views.transcript(runtime.session.messages)
         try:
-            page = views.transcript_page(items, limit=_page_limit(limit), before=_page_before(before))
+            limit_items = _page_limit(limit)
+            before_position = _page_before(before)
+            page = views.transcript_page(items, limit=limit_items, before=before_position)
         except ValueError as exc:
             return _refused(exc)  # type: ignore[return-value]
         return {
@@ -644,6 +653,9 @@ def create_app(
             'has_more': page.has_more,
             'total': page.total,
             'skills': views.skills_view(runtime.session.messages),
+            'pending': []
+            if before_position is not None
+            else views.pending_rows(runtime.composition.store.database, runtime.session.id),
         }
 
     @app.get('/api/session/durable')

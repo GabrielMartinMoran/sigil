@@ -61,6 +61,12 @@ from src.engine.interaction.models.question_option import QuestionOption
 from src.engine.mcp.config.loader import load_config
 from src.engine.mcp.deferred import build_manager
 from src.engine.mcp.manager.manager import MCPManager
+from src.engine.preferences import (
+    DEFAULT_TRANSCRIPT_WINDOW,
+    MAX_TRANSCRIPT_WINDOW,
+    Preferences,
+    PreferencesStore,
+)
 from src.engine.providers.bootstrap import ProviderPaths
 from src.engine.roadmap.models.todo_item import TodoItem
 from src.engine.sessions.session_store import Session
@@ -298,13 +304,15 @@ def _session(runtime: ServerRuntime) -> Session:
     return Session(id=source.id, cwd=source.cwd, title=source.title)
 
 
-def _terminal(client: ServiceClient, session: Session) -> SigilApp:
+def _terminal(client: ServiceClient, session: Session, *, preferences: Preferences | None = None) -> SigilApp:
     """The production shape of the app: a service client and nothing to execute.
 
     The reconnect delay is zeroed so a cut stream is re-followed in the same pause
-    the test is already waiting on.
+    the test is already waiting on. ``preferences`` pins what the screen reads from
+    the user's own ``ui.json`` — the transcript window above all — so a test measures
+    its own choices instead of the machine's.
     """
-    app = SigilApp(client=client, session=session, settings=load_settings())
+    app = SigilApp(client=client, session=session, settings=load_settings(), preferences=preferences)
     app._service_reconnect_delay = 0.0
     return app
 
@@ -3422,3 +3430,247 @@ def test_a_turn_the_service_wakes_is_painted_once_in_the_terminal(composition: C
                 assert text.count('done') == 1, 'the answer was painted twice'
 
     asyncio.run(inner())
+
+
+# --- the window: a conversation is painted a page at a time -------------------
+#
+# The route pages the transcript and carries the queue on its newest page; these
+# tests drive the terminal through it. The conversation is seeded straight into the
+# session the service projects, because what is under test is how much of it is
+# mounted and where — running three hundred turns through the engine would measure
+# the model, not the window.
+
+
+def _grow_session(runtime: ServerRuntime, turns: int) -> None:
+    """`turns` exchanges, straight into the conversation the service projects.
+
+    Two items per turn — a prompt and its answer — so a turn count reads as twice as
+    many items in the transcript the route pages.
+    """
+    messages = runtime.session.messages
+    for index in range(turns):
+        messages.append(ModelRequest(parts=[UserPromptPart(content=f'question {index:03d}')], run_id=f'q{index}'))
+        messages.append(ModelResponse(parts=[TextPart(content=f'answer {index:03d}')], run_id=f'a{index}'))
+
+
+def _windows(client: ServiceClient) -> list[dict[str, Any]]:
+    """Records the pages the screen asks for, so a test can read the cursor it used.
+
+    The request is the contract: a window is proven by what was sent, not by what the
+    screen happens to show, and a page that was never asked for is the failure this
+    cut exists to prevent.
+    """
+    reads: list[dict[str, Any]] = []
+    original = client.transcript
+
+    async def record(**kwargs: Any) -> dict[str, Any]:
+        reads.append(kwargs)
+        return await original(**kwargs)
+
+    client.transcript = record  # type: ignore[method-assign]
+    return reads
+
+
+def _windowed(client: ServiceClient, session: Session, window: int = DEFAULT_TRANSCRIPT_WINDOW) -> SigilApp:
+    """A terminal whose window is the test's choice, not the machine's."""
+    return _terminal(client, session, preferences=Preferences(transcript_window=window))
+
+
+def test_attaching_to_a_long_session_mounts_only_the_newest_window(composition: Composition, tmp_path: Path) -> None:
+    """Five hundred items, one window on screen, and the request says so.
+
+    The count is the assertion: a widget per item of the conversation is what this cut
+    removes, and a page that was never asked for cannot be a page that was mounted.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            _grow_session(runtime, 250)
+            reads = _windows(client)
+            app = _windowed(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                chat = app.query_one(ChatLog)
+                await _until(pilot, lambda: 'question 249' in _transcript(app), what='the newest window')
+
+                assert len(chat.children) == DEFAULT_TRANSCRIPT_WINDOW, 'the window is what is mounted'
+                assert 'question 000' not in _transcript(app), 'the rest of the conversation is not'
+                assert reads == [{'limit': DEFAULT_TRANSCRIPT_WINDOW}], 'the attach asks for a page'
+                assert chat.has_older is True
+
+    asyncio.run(inner())
+
+
+def test_reaching_the_top_loads_the_page_above_without_moving_the_reader(
+    composition: Composition, tmp_path: Path
+) -> None:
+    """The cursor is the page's own start, and the row being read stays put.
+
+    Both halves matter: a page fetched from the wrong position leaves a hole or a
+    repeat, and a page inserted above a reader who is scrolled up drags the screen
+    with it.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            _grow_session(runtime, 250)
+            reads = _windows(client)
+            app = _windowed(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                chat = app.query_one(ChatLog)
+                await _until(pilot, lambda: len(chat.children) == DEFAULT_TRANSCRIPT_WINDOW, what='the window')
+
+                chat.scroll_to(y=0, animate=False, immediate=True)
+                await pilot.pause()
+                watched = chat.children[0]
+                row = watched.region.y
+
+                await _until(pilot, lambda: len(chat.children) == 2 * DEFAULT_TRANSCRIPT_WINDOW, what='the page above')
+                await _until(pilot, lambda: watched.region.y == row, what='the reading position')
+
+                assert reads[-1] == {'limit': DEFAULT_TRANSCRIPT_WINDOW, 'before': 400}, 'the cursor is where it starts'
+                assert 'question 150' in _transcript(app), 'the page above is painted'
+                assert chat.older_cursor == 300, 'and the window now starts where that page does'
+
+    asyncio.run(inner())
+
+
+def test_a_second_trip_to_the_top_loads_another_page(composition: Composition, tmp_path: Path) -> None:
+    """Walking the cursor back is a chain, not a single read."""
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            _grow_session(runtime, 250)
+            reads = _windows(client)
+            app = _windowed(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                chat = app.query_one(ChatLog)
+                await _until(pilot, lambda: len(chat.children) == DEFAULT_TRANSCRIPT_WINDOW, what='the window')
+
+                chat.scroll_to(y=0, animate=False, immediate=True)
+                await _until(pilot, lambda: len(chat.children) == 2 * DEFAULT_TRANSCRIPT_WINDOW, what='the first page')
+                # The reader's row is restored a refresh after the insertion; scrolling
+                # before that changes nothing and asks for nothing.
+                await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the restored reading position')
+                chat.scroll_to(y=0, animate=False, immediate=True)
+                await _until(pilot, lambda: len(chat.children) == 3 * DEFAULT_TRANSCRIPT_WINDOW, what='the second page')
+
+                assert [read.get('before') for read in reads] == [None, 400, 300]
+
+    asyncio.run(inner())
+
+
+def test_the_window_stays_bounded_and_never_drops_the_block_being_written(
+    composition: Composition, tmp_path: Path
+) -> None:
+    """Past the bound, the page it has held longest goes — never the live block.
+
+    The page let go of is the one the reader has scrolled furthest from, so nothing on
+    screen moves when it leaves; the block being streamed into is not part of any page
+    and is not a candidate at all.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            _grow_session(runtime, 250)
+            reads = _windows(client)
+            app = _windowed(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                chat = app.query_one(ChatLog)
+                await _until(pilot, lambda: len(chat.children) == DEFAULT_TRANSCRIPT_WINDOW, what='the window')
+                await chat.begin_response()
+                await chat.add_text('still being written')
+                await pilot.pause()
+
+                for before in (400, 300, 200):
+                    chat.scroll_to(y=0, animate=False, immediate=True)
+                    await _until(
+                        pilot, lambda before=before: reads[-1].get('before') == before, what=f'the page before {before}'
+                    )
+                    await pilot.pause()
+                    await pilot.pause()
+                    assert len(chat.children) <= 3 * DEFAULT_TRANSCRIPT_WINDOW + 1, 'the window is bounded'
+
+                assert chat._current is not None, 'the streaming block is still the one being written'
+                assert chat._current in chat.children, 'and it is still mounted'
+                assert 'still being written' in _transcript(app)
+                assert 'question 249' not in _transcript(app), 'the page it held longest is the one that left'
+
+    asyncio.run(inner())
+
+
+def test_a_click_on_a_message_in_the_window_opens_its_rollback_point(composition: Composition, tmp_path: Path) -> None:
+    """The line keeps the service's absolute position, not its place in the window.
+
+    With a window of two items the clicked prompt is the second item of the page and
+    the third message of the session: a window that renumbered its items would open
+    the wrong turn, or none.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            await _seed_turn(runtime, client, 'first question')
+            await _seed_turn(runtime, client, 'second question')
+            points = (await client.rollback_points())['points']
+            second = next(point for point in points if point['preview'] == 'second question')
+
+            seen: list[Any] = []
+
+            async def capture(screen: Any) -> None:
+                seen.append(screen)
+
+            app = _windowed(client, _session(runtime), window=2)
+            app.push_screen_wait = capture
+            async with app.run_test(size=(100, 40)) as pilot:
+                chat = app.query_one(ChatLog)
+                await _until(pilot, lambda: 'second question' in _transcript(app), what='the newest window')
+                assert 'first question' not in _transcript(app), 'a window of two items is the window'
+
+                painted = [widget for widget in chat.children if getattr(widget, 'seq', None) == second['seq']]
+                assert painted, 'the line carries the absolute position the service reported'
+
+                painted[0].on_click()
+                await _until(pilot, lambda: bool(seen), what='the rollback list')
+                assert seen[0]._preselected == second['turn_id'], 'the list starts on the clicked turn'
+
+    asyncio.run(inner())
+
+
+def test_a_transcript_with_nothing_above_asks_for_nothing(composition: Composition, tmp_path: Path) -> None:
+    """`has_more` false is the end of the conversation, not an empty page to ask for."""
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            _grow_session(runtime, 120)
+            reads = _windows(client)
+            app = _windowed(client, _session(runtime), window=500)
+            async with app.run_test(size=(100, 40)) as pilot:
+                chat = app.query_one(ChatLog)
+                await _until(pilot, lambda: len(chat.children) == 240, what='the whole conversation in one page')
+                asked = len(reads)
+
+                chat.scroll_to(y=0, animate=False, immediate=True)
+                await pilot.pause()
+                await pilot.pause()
+
+                assert chat.has_older is False
+                assert len(reads) == asked, 'nothing older exists, so nothing is asked for'
+                assert len(chat.children) == 240, 'and nothing is painted'
+
+    asyncio.run(inner())
+
+
+def test_the_transcript_window_preference_falls_back_and_clamps(tmp_path: Path) -> None:
+    """The window is a preference, so an edited file cannot break the attach."""
+
+    path = tmp_path / 'ui.json'
+    store = PreferencesStore(path)
+    assert store.load().transcript_window == DEFAULT_TRANSCRIPT_WINDOW, 'a missing file is the default'
+
+    store.save(Preferences().with_transcript_window(40))
+    assert store.load().transcript_window == 40, 'a usable window survives the round trip'
+
+    path.write_text(json.dumps({'transcript_window': 'lots'}), encoding='utf-8')
+    assert store.load().transcript_window == DEFAULT_TRANSCRIPT_WINDOW, 'a wrong type is not worth a failure'
+
+    path.write_text(json.dumps({'transcript_window': 10_000}), encoding='utf-8')
+    assert store.load().transcript_window == MAX_TRANSCRIPT_WINDOW, 'a window the service would refuse is pulled down'

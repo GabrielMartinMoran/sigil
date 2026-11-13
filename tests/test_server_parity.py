@@ -1190,3 +1190,38 @@ def test_the_waiting_rows_are_never_part_of_a_page(runtime: ServerRuntime, tmp_p
             assert older['items'] + newest['items'] == whole[-2:]
 
     asyncio.run(go())
+
+
+def test_the_newest_page_carries_the_rows_waiting_in_the_queue(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """A screen needs the conversation and the wait together, in one read.
+
+    The newest page is the only one that could carry them: a waiting row is not an
+    item, so an older chunk has no place for it, and sending the same rows with every
+    page would paint them twice. Reading the whole transcript to learn of one queued
+    message is the cost a window exists to remove.
+    """
+
+    async def go() -> None:
+        async with _signed_in(runtime, tmp_path) as client:
+            await _one_turn(runtime, client, 'first')
+            store = runtime.composition.store
+            request = str(uuid.uuid4())
+            store.accept_input(runtime.session, request, 'waiting text', [], 'turn')
+            # Claimed and not delivered: it waits, and the consumer only takes
+            # `accepted` rows, so it cannot become a message behind the assertion.
+            AcceptedInputs(store.database).transition(runtime.session.id, request, 'claimed', attempt_id='attempt')
+
+            newest = await _transcript(client, limit=2)
+            assert [entry['text'] for entry in newest['pending']] == ['waiting text']
+            assert newest['items'], 'the page still carries the conversation'
+
+            older = await _transcript(client, limit=2, before=newest['first_index'])
+            assert older['pending'] == [], 'the page above cannot carry a row that is not history'
+
+            whole = await _transcript(client)
+            assert [entry['text'] for entry in whole['pending']] == ['waiting text'], (
+                'a client that asks for everything is still told what waits'
+            )
+            assert 'waiting text' not in str(whole['items']), 'and it is never painted as history'
+
+    asyncio.run(go())

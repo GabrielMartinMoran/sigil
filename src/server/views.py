@@ -305,57 +305,20 @@ def durable_session(database: Database, session_id: str) -> dict[str, Any]:
                 (root_id_for(session_id),),
             )
         ]
-        queue_rows = conn.execute(
-            'SELECT * FROM accepted_inputs WHERE session_id = ? ORDER BY sequence', (session_id,)
-        ).fetchall()
-        facts = {
-            str(fact['request_id']): fact
-            for fact in conn.execute(
-                'SELECT request_id, checkpointed, destination_id, destination_session_id '
-                'FROM input_deliveries WHERE session_id = ?',
-                (session_id,),
-            )
-        }
         links = conn.execute(
             'SELECT destination_id, destination_session_id FROM recovery_links '
             'WHERE original_session_id = ? ORDER BY destination_id',
             (session_id,),
         ).fetchall()
-
-        def available(destination_id: Any, destination_session_id: Any) -> bool:
-            if destination_id is None or destination_session_id is None:
-                return False
-            return conn.execute('SELECT 1 FROM sessions WHERE id = ?', (destination_session_id,)).fetchone() is not None
-
-        entries: list[dict[str, Any]] = []
-        for queue_row in queue_rows:
-            record = _record(queue_row)
-            fact = facts.get(record.request_id)
-            destination = None if fact is None else str(fact['destination_id'])
-            destination_session = None if fact is None else fact['destination_session_id']
-            entries.append(
-                {
-                    'request_id': record.request_id,
-                    'sequence': record.sequence,
-                    'kind': record.kind,
-                    'state': record.state,
-                    'text': record.text,
-                    'image_count': len(record.images),
-                    'delivered': fact is not None,
-                    'checkpointed': None if fact is None else bool(fact['checkpointed']),
-                    'destination_id': destination,
-                    'destination_available': available(destination, destination_session),
-                }
-            )
-
+        entries = queue_entries(conn, session_id)
         recoveries = [
             {
                 'recovery_session_id': str(link['destination_id']),
-                'available': available(link['destination_id'], link['destination_session_id']),
+                'available': destination_available(conn, link['destination_id'], link['destination_session_id']),
             }
             for link in links
         ]
-        pending = [entry for entry in entries if entry['state'] in ('accepted', 'claimed') and not entry['delivered']]
+        pending = waiting(entries)
         conflicted = [
             entry for entry in entries if entry['delivered'] and entry['destination_id'] not in (None, session_id)
         ]
@@ -372,16 +335,91 @@ def durable_session(database: Database, session_id: str) -> dict[str, Any]:
             'pending': pending,
             'deliveries': [
                 {
-                    'request_id': request_id,
-                    'checkpointed': bool(fact['checkpointed']),
-                    'destination_id': fact['destination_id'],
-                    'destination_available': available(fact['destination_id'], fact['destination_session_id']),
+                    'request_id': entry['request_id'],
+                    'checkpointed': entry['checkpointed'],
+                    'destination_id': entry['destination_id'],
+                    'destination_available': entry['destination_available'],
                 }
-                for request_id, fact in facts.items()
+                for entry in entries
+                if entry['delivered']
             ],
             'recoveries': recoveries,
             'conflicted_entries': conflicted,
         }
+
+
+WAITING_STATES = ('accepted', 'claimed')
+"""The queue states that still mean "waiting". A delivered row is history already."""
+
+
+def destination_available(conn: Any, destination_id: Any, destination_session_id: Any) -> bool:
+    """Whether the session a delivery went to still exists, so a client can offer it."""
+    if destination_id is None or destination_session_id is None:
+        return False
+    return conn.execute('SELECT 1 FROM sessions WHERE id = ?', (destination_session_id,)).fetchone() is not None
+
+
+def queue_entries(conn: Any, session_id: str) -> list[dict[str, Any]]:
+    """Every row the queue holds for a session, in the order it was accepted.
+
+    One projection of ``accepted_inputs`` and its deliveries, shared by the durable
+    read and by the newest transcript page: two reads that disagreed about a waiting
+    message would be two answers about one wait. ``delivered`` is what retires a row
+    from the queue — a message the run has read is in the transcript already.
+    """
+    queue_rows = conn.execute(
+        'SELECT * FROM accepted_inputs WHERE session_id = ? ORDER BY sequence', (session_id,)
+    ).fetchall()
+    facts = {
+        str(fact['request_id']): fact
+        for fact in conn.execute(
+            'SELECT request_id, checkpointed, destination_id, destination_session_id '
+            'FROM input_deliveries WHERE session_id = ?',
+            (session_id,),
+        )
+    }
+    entries: list[dict[str, Any]] = []
+    for queue_row in queue_rows:
+        record = _record(queue_row)
+        fact = facts.get(record.request_id)
+        destination = None if fact is None else str(fact['destination_id'])
+        destination_session = None if fact is None else fact['destination_session_id']
+        entries.append(
+            {
+                'request_id': record.request_id,
+                'sequence': record.sequence,
+                'kind': record.kind,
+                'state': record.state,
+                'text': record.text,
+                'image_count': len(record.images),
+                'delivered': fact is not None,
+                'checkpointed': None if fact is None else bool(fact['checkpointed']),
+                'destination_id': destination,
+                'destination_available': destination_available(conn, destination, destination_session),
+            }
+        )
+    return entries
+
+
+def waiting(entries: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The rows still waiting: accepted or claimed, and never delivered.
+
+    The rule lives here and nowhere else. Both reads that publish the queue call it,
+    so the terminal and the durable consumer cannot be told different things about
+    one waiting message.
+    """
+    return [entry for entry in entries if entry['state'] in WAITING_STATES and not entry['delivered']]
+
+
+def pending_rows(database: Database, session_id: str) -> list[dict[str, Any]]:
+    """The queue's waiting rows, for a read that is not the durable one.
+
+    The newest transcript page carries them so a terminal can paint the conversation
+    and the wait in one read; a session with no row yet has no queue to report, which
+    is an empty list and not a failure.
+    """
+    with database.transaction() as conn:
+        return waiting(queue_entries(conn, session_id))
 
 
 def transcript(messages: list[ModelMessage]) -> list[dict[str, Any]]:

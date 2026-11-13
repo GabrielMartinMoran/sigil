@@ -43,6 +43,7 @@ from rich.style import Style
 from rich.text import Text
 from textual.color import Color
 from textual.events import Click
+from textual.message import Message
 from textual.selection import Selection
 from textual.timer import Timer
 from textual.widgets import Static
@@ -99,6 +100,16 @@ REASONING_MARKER = '✳'
 
 IMAGE_MARK = '▣'
 """Marker of the attachment summary line: a picture, in one column."""
+
+MAX_MOUNTED_PAGES = 3
+"""How many pages of the conversation the log keeps mounted at once.
+
+The bound is on pages, not on items, because a page is the unit the service hands
+over and the unit the cursor walks back in: 100 items by default, so this is a few
+hundred widgets of history behind and ahead of the reader instead of thousands. A
+page that leaves the window is asked for again with the cursor it carried, which is
+why the one let go of is the one the reader has scrolled furthest from.
+"""
 
 
 def preview(value: Any, limit: int = TOOL_OUTPUT_WIDTH) -> str:
@@ -1094,7 +1105,25 @@ class ChatLog(ReadOnlyScroll):
 
     When scrolling up the anchor is released and it is restored only when the
     user goes back to the bottom, so whoever is reading history is respected.
+
+    The conversation itself is painted a page at a time. A long session is thousands
+    of items, and mounting a widget for every one of them made attaching quadratic:
+    the log holds a bounded window of pages, asks the service for the page above it
+    when the reader reaches the top, and lets go of the page it has been holding
+    longest once the window is full. What the window holds is what the screen shows,
+    not what the session has.
     """
+
+    class OlderPageWanted(Message):
+        """The reader reached the top of the mounted window and older items exist.
+
+        The page above is the service's to send, so the ask is a message instead of a
+        call: the widget knows where its window starts and nothing about the client.
+        """
+
+        def __init__(self, before: int) -> None:
+            super().__init__()
+            self.before = before
 
     def __init__(
         self,
@@ -1115,6 +1144,16 @@ class ChatLog(ReadOnlyScroll):
         self._reasoning_visible = reasoning_visible
         self._welcome = welcome
         self._empty = True
+        # The mounted window: the pages in reading order, the absolute position the
+        # oldest one starts at — which is the cursor for the page above it — and
+        # whether the service says one exists.
+        self._pages: list[list[Static]] = []
+        self._page_first = 0
+        self._has_more = False
+        self._wanting_page = False
+        # The lines the queue overlay owns. They are never history and never leave
+        # with a page, whatever the window does.
+        self._pending_rows: list[Static] = []
 
     # --- the empty transcript ------------------------------------------------
 
@@ -1168,6 +1207,47 @@ class ChatLog(ReadOnlyScroll):
     def on_mount(self) -> None:
         # Anchors the view to the bottom from the start.
         self.anchor()
+
+    # --- the mounted window -------------------------------------------------
+
+    @property
+    def has_older(self) -> bool:
+        """Whether the service says there is a page above the mounted window."""
+        return self._has_more
+
+    @property
+    def older_cursor(self) -> int:
+        """The ``before`` position that asks for the page above this one."""
+        return self._page_first
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """Asks for the page above when the reader reaches the top of the window.
+
+        The scroll position is the only signal there is: every way of moving — the
+        wheel, `ctrl+↑`, a drag — ends here. One ask at a time, because a reader who
+        keeps scrolling would otherwise send a request per row.
+        """
+        super().watch_scroll_y(old_value, new_value)
+        if new_value <= 0:
+            self.ask_for_older_page()
+
+    def ask_for_older_page(self) -> None:
+        """Posts for the page above, unless one is already on its way or there is none."""
+        if self._wanting_page or not self._has_more or self._page_first <= 0:
+            return
+        if self.scroll_offset.y > 0:
+            return
+        self._wanting_page = True
+        self.post_message(self.OlderPageWanted(self._page_first))
+
+    def older_page_finished(self) -> None:
+        """The ask ended without a page, so the reader may ask again.
+
+        A page that failed is retried the next time the reader reaches the top, and
+        nothing is printed for it: a notice would land at the bottom of the log and
+        would close the block being streamed into.
+        """
+        self._wanting_page = False
 
     # --- open calls -----------------------------------------------------------
 
@@ -1272,6 +1352,7 @@ class ChatLog(ReadOnlyScroll):
         if queued:
             # Kept so the line can be repainted when the agent picks it up.
             widget._queued_text = text  # type: ignore[attr-defined]
+            self._pending_rows.append(widget)
         # Taken as a tuple and kept private: the block repaints itself when the
         # queue mark goes away, and it has to remember what it was painting.
         widget._attachments = tuple(attachments)  # type: ignore[attr-defined]
@@ -1420,6 +1501,12 @@ class ChatLog(ReadOnlyScroll):
         self._open_tools.clear()
         await self.remove_children()
         self._empty = True
+        # Nothing is mounted, so there is no window and no page above it.
+        self._pages = []
+        self._page_first = 0
+        self._has_more = False
+        self._wanting_page = False
+        self._pending_rows = []
         self.refresh()
         # After clearing, the new history follows the bottom again.
         self.anchor()
@@ -1549,7 +1636,12 @@ class ChatLog(ReadOnlyScroll):
         self._last_block = batches[-1]
 
     async def render_items(
-        self, items: Sequence[dict[str, Any]], *, pending: Sequence[dict[str, Any]] = ()
+        self,
+        items: Sequence[dict[str, Any]],
+        *,
+        pending: Sequence[dict[str, Any]] = (),
+        first_index: int = 0,
+        has_more: bool = False,
     ) -> list[Static]:
         """Paints a conversation the service already has, from its own projection.
 
@@ -1571,66 +1663,7 @@ class ChatLog(ReadOnlyScroll):
         Returns:
             The pending lines, in queue order, for the caller to retire.
         """
-        batches: list[Static] = []
-        open_tools: dict[str, ToolCallBlock] = {}
-        current: AssistantBlock | None = None
-        current_index: int | None = None
-
-        for item in items:
-            kind = str(item.get('kind') or '')
-            index = item.get('index')
-            if kind in {'assistant', 'thinking'}:
-                text = str(item.get('text') or '')
-                if not text:
-                    continue
-                if current is None or current_index != index:
-                    current = AssistantBlock(reasoning_visible=self._reasoning_visible, classes='assistant-msg')
-                    current_index = index
-                    batches.append(current)
-                if kind == 'thinking':
-                    current.add_thinking(text)
-                else:
-                    current.add_text(text)
-                continue
-            # Anything that is not a continuation of the same response closes it.
-            current = None
-            current_index = None
-            if kind == 'user':
-                batches.append(
-                    UserMessage(
-                        _item_user_renderable(str(item.get('text') or ''), item.get('attachments') or ()),
-                        seq=index if isinstance(index, int) else None,
-                        classes='user-msg',
-                    )
-                )
-            elif kind == 'tool_call':
-                block = block_for(
-                    str(item.get('tool_name') or ''),
-                    item.get('args'),
-                    classes='tool-call',
-                    expanded=self._tools_expanded,
-                )
-                open_tools[str(item.get('call_id') or '')] = block
-                batches.append(block)
-            elif kind == 'tool_result':
-                block = open_tools.pop(str(item.get('call_id') or ''), None)
-                if block is None:
-                    # A result whose call is not in this transcript (a compaction cut
-                    # one off): the result is still true, so it is painted alone.
-                    block = block_for(
-                        str(item.get('tool_name') or ''),
-                        {},
-                        classes='tool-call',
-                        expanded=self._tools_expanded,
-                    )
-                    batches.append(block)
-                summary = item.get('summary')
-                if isinstance(summary, dict):
-                    block.set_summary(
-                        ToolSummary(text=str(summary.get('text') or ''), status=str(summary.get('status') or 'ok'))
-                    )
-                block.set_result(str(item.get('text') or ''), ok=bool(item.get('ok', True)))
-
+        page = self._page_widgets(items)
         queued = [
             UserMessage(
                 _item_user_renderable(str(entry.get('text') or ''), (), queued=True),
@@ -1638,11 +1671,16 @@ class ChatLog(ReadOnlyScroll):
             )
             for entry in pending
         ]
-        batches.extend(queued)
+        self._pages = [page] if page else []
+        self._page_first = first_index
+        self._has_more = has_more
+        self._wanting_page = False
+        self._pending_rows = list(queued)
+        batches = page + queued
         if batches:
             if self.is_mounted and self.app is not None:
-                # One layout for the whole transcript, exactly as `render_history`
-                # does: mounting one at a time makes restoring quadratic.
+                # One layout for the whole page, exactly as `render_history` does:
+                # mounting one at a time makes restoring quadratic.
                 with self.app.batch_update():
                     await self.mount_all(batches)
             else:
@@ -1658,6 +1696,155 @@ class ChatLog(ReadOnlyScroll):
         self.finalize()
         self.anchor()
         return queued
+
+    def _page_widgets(self, items: Sequence[dict[str, Any]]) -> list[Static]:
+        """The blocks one page of the service's projection paints, in order.
+
+        The shapes are the ones `render_history` reads, taken from the flat
+        projection instead of the engine's messages. The margin rule is the same one
+        a live turn and a restored history apply: a tool row that follows a tool row
+        gets no gap of its own. It is decided here from the rows of this page and
+        never remembered between pages, so a page boundary cannot change how a batch
+        reads.
+        """
+        blocks: list[Static] = []
+        open_tools: dict[str, ToolCallBlock] = {}
+        current: AssistantBlock | None = None
+        current_index: int | None = None
+        follows_tool_block = False
+
+        def open_block(name: str, args: Any) -> ToolCallBlock:
+            nonlocal follows_tool_block
+            block = block_for(
+                name,
+                args,
+                classes='tool-call tight' if follows_tool_block else 'tool-call',
+                expanded=self._tools_expanded,
+            )
+            blocks.append(block)
+            follows_tool_block = True
+            return block
+
+        for item in items:
+            kind = str(item.get('kind') or '')
+            index = item.get('index')
+            if kind in {'assistant', 'thinking'}:
+                text = str(item.get('text') or '')
+                if not text:
+                    continue
+                if current is None or current_index != index:
+                    current = AssistantBlock(reasoning_visible=self._reasoning_visible, classes='assistant-msg')
+                    current_index = index
+                    blocks.append(current)
+                    follows_tool_block = False
+                if kind == 'thinking':
+                    current.add_thinking(text)
+                else:
+                    current.add_text(text)
+                continue
+            # Anything that is not a continuation of the same response closes it.
+            current = None
+            current_index = None
+            if kind == 'user':
+                blocks.append(
+                    UserMessage(
+                        _item_user_renderable(str(item.get('text') or ''), item.get('attachments') or ()),
+                        seq=index if isinstance(index, int) else None,
+                        classes='user-msg',
+                    )
+                )
+                follows_tool_block = False
+            elif kind == 'tool_call':
+                call_id = str(item.get('call_id') or '')
+                open_tools[call_id] = open_block(str(item.get('tool_name') or ''), item.get('args'))
+            elif kind == 'tool_result':
+                block = open_tools.pop(str(item.get('call_id') or ''), None)
+                if block is None:
+                    # A result whose call is not in this page — a compaction cut one
+                    # off, or a page boundary split the pair — is still true, so it is
+                    # painted alone.
+                    block = open_block(str(item.get('tool_name') or ''), {})
+                summary = item.get('summary')
+                if isinstance(summary, dict):
+                    block.set_summary(
+                        ToolSummary(text=str(summary.get('text') or ''), status=str(summary.get('status') or 'ok'))
+                    )
+                block.set_result(str(item.get('text') or ''), ok=bool(item.get('ok', True)))
+        return blocks
+
+    async def prepend_items(self, items: Sequence[dict[str, Any]], *, first_index: int, has_more: bool) -> None:
+        """Paints one page above the mounted window, keeping the reader in place.
+
+        The page is mounted at the top and the scroll is moved by exactly the height
+        it added, so the row the reader was looking at stays on the same screen row.
+        Both numbers are taken around the layout that paints the page: the height
+        cannot be guessed from the items, and the position, once measured, is not
+        derived again from a total that has changed.
+        """
+        self._page_first = first_index
+        self._has_more = has_more
+        self._wanting_page = False
+        page = self._page_widgets(items)
+        if not page:
+            return
+        below = self.children[0] if self.children else None
+        reading = None if below is None else below.virtual_region.y - self.scroll_offset.y
+        self._close_page(page)
+        if below is None:
+            await self.mount_all(page)
+        else:
+            with self.app.batch_update():
+                await self.mount_all(page, before=below)
+            self._settle_seam(page, below)
+        self._pages.insert(0, page)
+        self._mark_filled()
+        if below is not None and reading is not None:
+            self.call_after_refresh(self._keep_reading, below, reading)
+        await self._drop_far_pages()
+
+    def _close_page(self, page: Sequence[Static]) -> None:
+        """Flushes one page's blocks without touching the ones being written.
+
+        `finalize()` walks the whole log, which mid-turn would also close the call the
+        run is streaming into. A page is closed on its own, and a call whose result
+        arrived in the page below reads as interrupted — which is how a split pair has
+        looked since the transcript was first rebuilt from rows.
+        """
+        for widget in page:
+            if isinstance(widget, AssistantBlock):
+                widget.finalize()
+            elif isinstance(widget, ToolCallBlock) and widget.pending:
+                widget.set_error('Interrupted before a result was received.')
+
+    def _settle_seam(self, page: Sequence[Static], below: Static) -> None:
+        """Gives the row under a page boundary the margin its new neighbour asks for."""
+        if not isinstance(below, ToolCallBlock):
+            return
+        below.set_class(isinstance(page[-1], (ToolCallBlock, ToolGroupHeader)), 'tight')
+
+    def _keep_reading(self, anchor: Static, row: float) -> None:
+        """Puts ``anchor`` back on the screen row it had before the insertion."""
+        self.scroll_to(y=anchor.virtual_region.y - row, animate=False, immediate=True, release_anchor=False)
+
+    async def _drop_far_pages(self) -> None:
+        """Lets go of the page it has held longest while the window is over its bound.
+
+        Pages arrive above, so the one held longest is the page the reader has
+        scrolled furthest away from, and letting it go moves nothing on screen. The
+        streaming block and the queue's lines belong to no page and are never
+        destroyed; a page that somehow held one is kept, and the window grows past its
+        bound rather than losing what is live.
+        """
+        while len(self._pages) > MAX_MOUNTED_PAGES:
+            oldest = self._pages[-1]
+            if any(self._is_live(widget) for widget in oldest):
+                return
+            self._pages.pop()
+            await self.remove_children(list(oldest))
+
+    def _is_live(self, widget: Static) -> bool:
+        """Whether the transcript must keep the widget whatever the window does."""
+        return widget is self._current or widget in self._pending_rows
 
 
 def _item_user_renderable(text: str, attachments: Sequence[Any], *, queued: bool = False) -> Text:

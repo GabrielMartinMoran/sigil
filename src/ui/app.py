@@ -1040,44 +1040,78 @@ class SigilApp(
         self._apply_service_state(state)
 
     async def load_service_history(self, *, rebuild: bool = False) -> None:
-        """Paints the conversation the service already has, from its durable read.
+        """Paints the newest page of the conversation, and nothing older.
 
         Attaching to a session with history used to leave the transcript empty until the
         next event arrived: the stream starts after the state on purpose, and the state
-        carries counts rather than messages. `/api/session/durable` is the one read that
-        answers both halves at once — what was said, and what is still waiting in the
-        queue — so the screen starts complete instead of growing one message at a time.
+        carries counts rather than messages. The transcript route answers one window —
+        the newest one — and carries the queue with it, so the screen starts complete
+        without asking for a conversation of thousands of messages first.
 
         ``rebuild`` is the reconnection case: the stream broke, so the transcript may be
         missing deltas and repainting it from the rows is the honest repair.
 
-        A session with no row yet answers 404 and becomes `NoHistoryYet`: the screen
-        stays empty and keeps following, because a conversation whose first message has
-        not been written has no history to show and nothing to apologise for.
+        A conversation whose first message has not been written answers with no items
+        and no waiting rows: the screen stays empty, keeps following, and has nothing to
+        apologise for.
 
-        The queue entries the service reports as pending are painted *queued* and kept,
-        never merged into the transcript: a message the run has not read is not part of
-        the conversation yet, and painting it twice is what would happen if the stream
-        later delivered it as history.
+        The queued rows are painted *queued* and kept, never merged into the transcript:
+        a message the run has not read is not part of the conversation yet, and painting
+        it twice is what would happen if the stream later delivered it as history.
         """
         client = self._client
         if client is None:
             return
-        try:
-            durable = await client.durable()
-        except NoHistoryYet:
-            return
-        except ServiceClientError as exc:
-            await self.query_one(ChatLog).add_notice(f'✖ {failure_notice(exc)}', style='bold red')
-            return
         chat = self.query_one(ChatLog)
-        if rebuild:
+        try:
+            page = await client.transcript(limit=self._preferences.transcript_window)
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        pending = page.get('pending') or ()
+        items = page.get('items') or ()
+        # A service with nothing to paint leaves the log alone: clearing it would erase
+        # the notice that explains the reconnection and put nothing in its place, which
+        # is what a draft session used to get for free from the 404 on the durable read.
+        if rebuild and (items or pending):
             await chat.clear()
-        pending = durable.get('pending') or ()
-        self._service_pending = await chat.render_items(durable.get('transcript') or [], pending=pending)
+        self._service_pending = await chat.render_items(
+            items,
+            pending=pending,
+            first_index=int(page.get('first_index') or 0),
+            has_more=bool(page.get('has_more')),
+        )
         # The ids are what `_paint_pending` compares, so the overlay painted here is
         # the same overlay an acceptance from another terminal will update.
         self._service_pending_ids = [str(entry.get('request_id') or '') for entry in pending]
+
+    def on_chat_log_older_page_wanted(self, message: ChatLog.OlderPageWanted) -> None:
+        """The reader reached the top of the window: ask for the page above it."""
+        message.stop()
+        self.run_worker(self.load_older_page(message.before), group=SERVICE_HISTORY)
+
+    async def load_older_page(self, before: int) -> None:
+        """Paints the page above the mounted window, keeping the reader in place.
+
+        A page that fails is not printed: a notice lands at the bottom of the log and
+        would close the block being streamed into, so the ask is released and retried
+        the next time the reader reaches the top.
+        """
+        client = self._client
+        chat = self.query_one(ChatLog)
+        if client is None or not chat.has_older:
+            chat.older_page_finished()
+            return
+        try:
+            page = await client.transcript(limit=self._preferences.transcript_window, before=before)
+        except ServiceClientError:
+            chat.older_page_finished()
+            return
+        await chat.prepend_items(
+            page.get('items') or (),
+            first_index=int(page.get('first_index') or 0),
+            has_more=bool(page.get('has_more')),
+        )
 
     def _state_cursor(self) -> int:
         """Where the stream starts the first time: the sequence number of the state.
