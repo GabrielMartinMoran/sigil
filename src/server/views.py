@@ -493,6 +493,96 @@ def transcript_page(
     return TranscriptPage(items=items[start:end], first_index=start, has_more=start > 0, total=total)
 
 
+RENDERED_KINDS = frozenset(
+    {
+        'user-prompt',
+        'text',
+        'thinking',
+        'tool-call',
+        'tool-return',
+        'retry-prompt',
+        'builtin-tool-call',
+        'builtin-tool-return',
+    }
+)
+"""The part kinds ``_part_view`` builds an item from.
+
+A page has to know how many items a message projects before it projects any of
+them, and building the dict is the cost a window exists to avoid. The set mirrors
+``_part_view``'s dispatch: a kind added there and not here would make a page
+disagree with the whole read, which the parity test compares item by item.
+"""
+
+
+def _projects(part: Any) -> bool:
+    """Whether this part becomes an item, without building one.
+
+    Mirrors ``_part_view``: a system prompt is not painted, and anything unknown
+    that is not binary content has no shape to paint. ``BinaryContent`` is the last
+    case ``_part_view`` accepts, so it is accepted here too.
+    """
+    return getattr(part, 'part_kind', '') in RENDERED_KINDS or isinstance(part, BinaryContent)
+
+
+def _item_count(message: ModelMessage) -> int:
+    """How many items one message projects, counted without building any."""
+    return sum(1 for part in getattr(message, 'parts', ()) if _projects(part))
+
+
+def transcript_window(
+    messages: list[ModelMessage],
+    *,
+    limit: int | None = None,
+    before: int | None = None,
+) -> TranscriptPage:
+    """The window of a transcript, projected without projecting the whole of it.
+
+    The answer is exactly the one ``transcript_page(transcript(messages), ...)``
+    gives: the same items, the same ``first_index``, ``has_more`` and ``total``. It
+    is computed differently because that path costs O(messages) per page. Here the
+    messages are counted first — one cheap pass that builds no dicts — and only the
+    parts the window returns are projected.
+
+    The cut is at part level, not message level: a message with a thought, an answer
+    and a tool call spans three positions, and a page may start or end inside it.
+    ``index`` still travels as the message the item came from, so a click maps to the
+    same rollback point a whole read would.
+
+    ``limit=None`` is the whole conversation, as it is for ``transcript_page``. That
+    read has to build every item either way; this function does not impose a window
+    the caller did not ask for.
+    """
+    counts = [_item_count(message) for message in messages]
+    total = sum(counts)
+    end = total if before is None else max(0, min(before, total))
+    start = 0 if limit is None else max(0, end - limit)
+
+    items: list[dict[str, Any]] = []
+    position = 0
+    for index, count in enumerate(counts):
+        if count == 0:
+            continue
+        # A whole message above the window is one addition and no projection.
+        if position + count <= start:
+            position += count
+            continue
+        if position >= end:
+            break
+        message = messages[index]
+        for part in getattr(message, 'parts', ()):
+            if position >= end:
+                break
+            if not _projects(part):
+                continue
+            if position >= start:
+                item = _part_view(part, index)
+                if item is not None:
+                    items.append(item)
+            position += 1
+
+    return TranscriptPage(items=items, first_index=start, has_more=start > 0, total=total)
+
+
 def attachment_view(part: BinaryContent) -> dict[str, Any]:
     """One binary attachment, as data.
 

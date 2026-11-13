@@ -2239,3 +2239,98 @@ def test_a_cursor_past_the_end_answers_the_newest_page() -> None:
     assert page.items == _transcript_items()[-2:]
     assert page.first_index == 4
     assert page.has_more is True
+
+
+# --- a window projected without projecting the whole conversation -----------
+#
+# The rule above is arithmetic over items that already exist. The route, though,
+# used to build every item before cutting the window, which is O(transcript) per
+# page. `transcript_window` applies the same rule to the messages: it counts what
+# each message projects and builds only the parts the window returns. The old
+# path stays here as the oracle.
+
+
+def _window_messages() -> list[Any]:
+    """Messages whose parts project to a known item list, empty parts included.
+
+    A message with three parts spans three positions, so a page boundary can land
+    inside it. A system prompt projects to nothing and must not move a position.
+    """
+    from pydantic_ai.messages import (
+        ModelRequest,
+        ModelResponse,
+        SystemPromptPart,
+        TextPart,
+        ThinkingPart,
+        ToolCallPart,
+        ToolReturnPart,
+        UserPromptPart,
+    )
+
+    return [
+        ModelRequest(parts=[UserPromptPart('one')]),  # positon 0
+        ModelResponse(
+            parts=[
+                ThinkingPart('t1'),
+                TextPart('a1'),
+                ToolCallPart(tool_name='read_file', args={'path': 'a.py'}, tool_call_id='c1'),
+            ]
+        ),  # positions 1, 2, 3
+        ModelRequest(parts=[ToolReturnPart(tool_name='read_file', content='r1', tool_call_id='c1')]),  # position 4
+        ModelRequest(parts=[SystemPromptPart('system')]),  # no item
+        ModelResponse(parts=[ThinkingPart('t2'), TextPart('a2')]),  # positions 5, 6
+        ModelRequest(parts=[UserPromptPart('two')]),  # position 7
+    ]
+
+
+def test_without_a_limit_a_window_is_the_whole_transcript() -> None:
+    """The unmigrated client still gets everything, in the same order and shape."""
+
+    messages = _window_messages()
+
+    window = views.transcript_window(messages)
+
+    assert window.items == views.transcript(messages)
+    assert window.first_index == 0
+    assert window.has_more is False
+    assert window.total == 8
+
+
+@pytest.mark.parametrize(
+    ('limit', 'before'),
+    [
+        (None, None),
+        (100, None),
+        (2, None),
+        (1, 3),
+        (3, 5),
+        (2, 6),
+        (5, 99),
+        (7, 8),
+        (2, 0),
+        (99, 0),
+    ],
+)
+def test_a_window_is_identical_to_projecting_then_paging(limit: int | None, before: int | None) -> None:
+    """Same items, same cursor, same total: the oracle is the old path itself."""
+
+    messages = _window_messages()
+    oracle = views.transcript_page(views.transcript(messages), limit=limit, before=before)
+
+    window = views.transcript_window(messages, limit=limit, before=before)
+
+    assert window.items == oracle.items
+    assert window.first_index == oracle.first_index
+    assert window.has_more == oracle.has_more
+    assert window.total == oracle.total
+
+
+def test_a_window_can_start_and_end_inside_one_message() -> None:
+    """The cut is at part level, not message level: a message spans positions."""
+
+    window = views.transcript_window(_window_messages(), limit=2, before=3)
+
+    assert [item['text'] for item in window.items] == ['t1', 'a1']
+    assert [item['index'] for item in window.items] == [1, 1]
+    assert window.first_index == 1
+    assert window.has_more is True

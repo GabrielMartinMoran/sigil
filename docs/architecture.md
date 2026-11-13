@@ -508,6 +508,11 @@ the items already built and returns a `TranscriptPage`; the route validates the 
 parameters and projects. See `tests/test_server_runtime.py` for the arithmetic and
 `tests/test_server_parity.py` for the query contract.
 
+`views.transcript_window` projects the window from the messages — it counts each
+message's parts and builds only the ones the page returns — so a page costs what it
+holds, not what the session has; `views.transcript_page` stays as the oracle in
+tests.
+
 The terminal is the first client to use it. `ChatLog` keeps at most
 `MAX_MOUNTED_PAGES` (3) pages mounted. It asks for the newest page with
 `limit=transcript_window` — 100 items by default, the `transcript_window`

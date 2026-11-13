@@ -1225,3 +1225,83 @@ def test_the_newest_page_carries_the_rows_waiting_in_the_queue(runtime: ServerRu
             assert 'waiting text' not in str(whole['items']), 'and it is never painted as history'
 
     asyncio.run(go())
+
+
+# --- the route pages the messages, not the items ----------------------------
+#
+# The route now counts what each message projects and builds only the window it
+# returns, instead of projecting the whole conversation and cutting afterwards.
+# Projecting and then paging is the definition of a correct page, so it stays
+# here as the oracle: every window has to come back identical, not equivalent.
+
+
+def _window_messages() -> list[Any]:
+    """A transcript with multi-part messages, so a page can end inside one."""
+    from pydantic_ai.messages import (
+        ModelRequest,
+        ModelResponse,
+        SystemPromptPart,
+        TextPart,
+        ThinkingPart,
+        ToolCallPart,
+        ToolReturnPart,
+        UserPromptPart,
+    )
+
+    return [
+        ModelRequest(parts=[UserPromptPart('one')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart('t1'),
+                TextPart('a1'),
+                ToolCallPart(tool_name='read_file', args={'path': 'a.py'}, tool_call_id='c1'),
+            ]
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='read_file', content='r1', tool_call_id='c1')]),
+        ModelRequest(parts=[SystemPromptPart('system')]),
+        ModelResponse(parts=[ThinkingPart('t2'), TextPart('a2')]),
+        ModelRequest(parts=[UserPromptPart('two')]),
+    ]
+
+
+def test_every_page_the_route_answers_is_projecting_then_paging(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """The old path is the oracle: same items, same cursor, same total, exactly."""
+
+    async def go() -> None:
+        async with _signed_in(runtime, tmp_path) as client:
+            # A stored turn first: the newest page also reads the queue for it.
+            await _one_turn(runtime, client, 'first')
+            runtime.session.messages = _window_messages()
+
+            whole = await _transcript(client)
+            items = whole['items']
+            assert items == views.transcript(runtime.session.messages), 'the whole read is the projection'
+
+            cases: list[tuple[int | None, int | None]] = [
+                (None, None),
+                (100, None),
+                (1, None),
+                (2, None),
+                (3, 5),
+                (2, 6),
+                (5, 99),
+                (7, 8),
+                (2, 0),
+                (99, 0),
+            ]
+            for limit, before in cases:
+                params: dict[str, Any] = {}
+                if limit is not None:
+                    params['limit'] = limit
+                if before is not None:
+                    params['before'] = before
+
+                page = await _transcript(client, **params)
+                oracle = views.transcript_page(items, limit=limit, before=before)
+
+                assert page['items'] == oracle.items, (limit, before)
+                assert page['first_index'] == oracle.first_index, (limit, before)
+                assert page['has_more'] == oracle.has_more, (limit, before)
+                assert page['total'] == oracle.total, (limit, before)
+
+    asyncio.run(go())

@@ -670,13 +670,16 @@ def create_app(
         carries an empty list: a waiting row is not history, so it cannot ride a
         chunk and must not be painted twice.
         """
-        items = views.transcript(runtime.session.messages)
         try:
             limit_items = _page_limit(limit)
             before_position = _page_before(before)
-            page = views.transcript_page(items, limit=limit_items, before=before_position)
         except ValueError as exc:
             return _refused(exc)  # type: ignore[return-value]
+        # The window is projected from the messages, not cut from a projection of
+        # the whole conversation: a page costs what the page holds, not what the
+        # session has. This runs on the event loop, so the difference is every other
+        # route's latency too.
+        page = views.transcript_window(runtime.session.messages, limit=limit_items, before=before_position)
         return {
             'session': views.session_view(runtime.session),
             'items': page.items,
