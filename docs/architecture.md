@@ -631,6 +631,35 @@ The scroll wiring itself is not automated: this repository has no DOM test
 environment, so `Transcript.tsx` is covered by the pure predicates it calls and by
 review, and the comparison is made by hand in a browser.
 
+### The waiting overlay is read cheaply, and off the loop
+
+A queued message is announced by an event that carries no text, so a screen that
+did not type it learns it from the rows. That read happens on every `state_changed`
+with `reason=queue`, which is once per announcement during a turn — the moment the
+service can least afford to be busy.
+
+Two facts made it expensive. `GET /api/session/durable` projects the whole
+conversation: 231 ms on a session of 1846 messages, for a screen that only paints
+the waiting rows. And it ran on the event loop, so the stream that carries the
+deltas waited behind it.
+
+The overlay now reads `GET /api/session/pending`, which answers `{'pending': [...]}`
+— the same rows, the same `views.waiting` rule, without the projection (0.46 ms on
+the same session). The durable read keeps its own callers: the web client still
+takes `queue`, `conflicted_entries` and `recoveries` from it for its recovery and
+conflict panels.
+
+Off the loop is a rule, not a one-off. `views.durable_session` and the unbounded
+transcript projection run under `asyncio.to_thread`, with their arguments resolved
+on the loop first: the database is built for it (`threading.RLock`,
+`check_same_thread=False`) and the response is assembled from what the thread
+returns. `GET /api/state` answers while a projection is still blocked in a thread,
+which is what `tests/test_server_runtime.py` asserts.
+
+The terminal reads it in a worker, and a read in flight absorbs the burst: five
+announcements that arrive together cost one read and at most one more, not five.
+The handler returns as soon as the work is scheduled, so no delta waits for it.
+
 ### The turn command
 
 `POST /api/turn` is the one way a message enters a session, and its shape is the

@@ -667,6 +667,17 @@ class ServiceClient:
         """
         return await self._get('/api/session/durable', absent=NoHistoryYet)
 
+    async def pending(self) -> dict[str, Any]:
+        """The queue's waiting rows, and nothing else.
+
+        Mid-turn the overlay wants the rows a queue event carries no text for; the
+        transcript is on screen already and being streamed into it. The reply has the
+        same shape the durable read calls ``pending``, so the overlay reads one
+        vocabulary while the two routes stay free to cost different things. A session
+        with no row yet has no queue: an empty list, never a 404.
+        """
+        return await self._get('/api/session/pending')
+
     # --- acting -------------------------------------------------------------
 
     async def send_turn(self, request: TurnRequest) -> dict[str, Any]:

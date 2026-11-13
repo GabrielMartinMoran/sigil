@@ -68,7 +68,6 @@ from src.ui.preferences_mixin import PreferencesMixin
 from src.ui.provider_mixin import ProviderMixin
 from src.ui.rollback_mixin import RollbackMixin
 from src.ui.service_client import (
-    NoHistoryYet,
     ServiceClient,
     ServiceClientError,
     ServiceEvent,
@@ -260,6 +259,10 @@ class SigilApp(
         self._service_following = False
         self._service_question: str | None = None
         self._service_answered: set[str] = set()
+        # The session the answered set and the open question belong to. A different
+        # id in the projection means a different conversation, and its `q1` is not
+        # the one this screen already answered.
+        self._service_session_id: str = ''
         self._service_steers: list[Any] = []
         self._service_pending: list[Any] = []
         # The queue rows the waiting overlay is painting, and the requests this
@@ -271,6 +274,11 @@ class SigilApp(
         # rebuilding the transcript then would drop the deltas streaming into the
         # block being written, so the rebuild waits for the end of the turn.
         self._service_rebuild_due = False
+        # The queue read runs beside the event that asks for it, so this is whether
+        # one is in flight and whether the queue events that arrived meanwhile still
+        # need it. A burst of N announcements costs at most two reads, never N.
+        self._queue_read_in_flight = False
+        self._queue_read_again = False
         self._service_reconnect_delay = SERVICE_RECONNECT_DELAY
         self._service_request = None
         self._cancel_shell = cancel_shell if cancel_shell is not None else running_commands.kill_all
@@ -944,7 +952,7 @@ class SigilApp(
             self.query_one(ChatLog).mark_delivered(widget)
 
     async def refresh_service_queue(self) -> None:
-        """Paints the queue rows this screen has not shown yet.
+        """Asks for the queue rows this screen has not shown yet.
 
         The service publishes the acceptance and not the text — the rows are the text
         — so the screen that did not type the message learns it by reading them.
@@ -960,6 +968,11 @@ class SigilApp(
         So the two facts are separated: a waiting row is painted as one queued line
         when it arrives, and the transcript itself is rebuilt from the rows when the
         stream stops (`_finish_turn`).
+
+        The read does not happen on this call's path. This runs inside the handler
+        that paints the stream, and waiting for a request there makes every delta
+        wait behind it; what it costs is one read for the burst of announcements
+        that arrive together (`_read_service_queue`).
         """
         client = self._client
         if client is None:
@@ -970,24 +983,57 @@ class SigilApp(
             # being pending.
             await self.repaint_from_rows()
             return
+        if self._queue_read_in_flight:
+            # One read is already on its way: this event only asks for one more, so
+            # five announcements cost two reads and not five.
+            self._queue_read_again = True
+            return
+        self._queue_read_in_flight = True
+        self.run_worker(self._read_service_queue(), group='service-queue', exclusive=False)
+
+    async def _read_service_queue(self) -> None:
+        """Reads the waiting rows beside the stream, once per burst.
+
+        `/api/session/pending` answers with the rows the durable read calls
+        ``pending`` and stops there: decoding the whole conversation to learn of one
+        queued message cost 231 ms on a real session, on the same loop that carries
+        the deltas. This worker waits for that read without holding the handler, and
+        repaints the overlay from what came back. A read still waiting when the turn
+        stops is left to `_finish_turn`, which rebuilds the transcript anyway.
+        """
+        chat = self.query_one(ChatLog)
+        client = self._client
         try:
-            durable = await client.durable()
-        except NoHistoryYet:
-            return
-        except ServiceClientError as exc:
-            await self.query_one(ChatLog).add_notice(f'✖ {failure_notice(exc)}', style='bold red')
-            return
-        # A row this window wrote is already on screen as its own queued line: the
-        # acceptance the service just published is about the message the reader typed.
-        pending = [
-            entry
-            for entry in durable.get('pending') or ()
-            if str(entry.get('request_id') or '') not in self._service_sent
-        ]
-        await self._paint_pending(pending)
-        # The transcript itself is rebuilt once the stream stops, so the line painted
-        # here becomes history instead of staying queued: `_finish_turn` does it.
-        self._service_rebuild_due = True
+            while True:
+                self._queue_read_again = False
+                if client is None or not self._turn_active:
+                    return
+                try:
+                    reply = await client.pending()
+                except ServiceClientError as exc:
+                    await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+                    return
+                if not self._turn_active:
+                    # The turn stopped while the read was in flight: `_finish_turn`
+                    # repaints the transcript from the rows, and a waiting line
+                    # painted now would be retired by that repaint.
+                    return
+                # A row this window wrote is already on screen as its own queued
+                # line: the acceptance the service just published is about the
+                # message the reader typed.
+                pending = [
+                    entry
+                    for entry in reply.get('pending') or ()
+                    if str(entry.get('request_id') or '') not in self._service_sent
+                ]
+                await self._paint_pending(pending)
+                # The transcript itself is rebuilt once the stream stops, so the line
+                # painted here becomes history instead of staying queued.
+                self._service_rebuild_due = True
+                if not self._queue_read_again:
+                    return
+        finally:
+            self._queue_read_in_flight = False
 
     async def _paint_pending(self, entries: Sequence[dict[str, Any]]) -> None:
         """Brings the waiting overlay in step with the rows the service still holds.
@@ -1177,6 +1223,17 @@ class SigilApp(
     def _apply_service_state(self, state: dict[str, Any]) -> None:
         """Paints the projection: what is running, what it is called, what is being asked."""
         self._service_state = state
+        projection = state.get('session') or {}
+        identifier = str(projection.get('id') or '')
+        if identifier and identifier != self._service_session_id:
+            self._service_session_id = identifier
+            # The answered ids belong to one session: a new session numbers its
+            # questions from one again, so a set carried over from the one that ended
+            # would hide `q1` and leave the turn waiting for an answer nobody is asked.
+            # Cleared on the identity change and not in the command that causes it: the
+            # projection can arrive before that command finishes, and then the question
+            # would be skipped as answered and never offered again.
+            self._service_answered.clear()
         busy = bool(state.get('busy'))
         self._turn_active = busy
         # The spinner follows the service, not this process: a terminal that attached

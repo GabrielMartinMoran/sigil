@@ -257,6 +257,24 @@ class _ServiceTransport(httpx.AsyncBaseTransport):
         mechanism a test watches: if the watcher painted the message without asking
         the service, the read would not happen and the number would not move.
         """
+        self.pending_reads = 0
+        """How many times a screen asked for the waiting rows and nothing else.
+
+        Mid-turn a queue event is about the wait: the transcript is already being
+        streamed into the screen. Reading the whole durable session there would
+        decode a conversation nobody asked for, so this counter is how a test proves
+        the queue overlay came from its own route.
+        """
+        self.pending_gate: asyncio.Event | None = None
+        """When set, a `/api/session/pending` read waits on it before answering.
+
+        A burst of queue events arrives while a read is in flight; a gate is how a
+        test holds that read open instead of guessing at timing.
+        """
+        self.pending_in_flight = 0
+        """How many pending reads have started and not answered yet."""
+        self.state_reads = 0
+        """How many times a screen re-read the state, in the order it asked."""
         self.transcript_reads = 0
         """How many transcript pages this connection asked for.
 
@@ -275,6 +293,16 @@ class _ServiceTransport(httpx.AsyncBaseTransport):
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         if request.url.path == '/api/session/durable':
             self.durable_reads += 1
+        if request.url.path == '/api/session/pending':
+            self.pending_reads += 1
+            self.pending_in_flight += 1
+            try:
+                if self.pending_gate is not None:
+                    await self.pending_gate.wait()
+            finally:
+                self.pending_in_flight -= 1
+        if request.url.path == '/api/state':
+            self.state_reads += 1
         if request.url.path == '/api/session/transcript':
             self.transcript_reads += 1
         if request.url.path == '/api/model-defaults' and request.method == 'POST':
@@ -866,6 +894,11 @@ def test_a_pending_input_is_painted_once_and_leaves_when_confirmed(composition: 
                 await _until(pilot, lambda: 'queued while busy' in _transcript(app), what='the waiting line')
                 assert _transcript(app).count('queued while busy') == 1
                 assert 'queued for the running turn' in _transcript(app)
+                # Ownership is registered after the widgets are mounted, so waiting for
+                # the text alone can win the race against the assignment. The line being
+                # on screen and the app vouching for it are two facts; this waits for the
+                # second instead of assuming it.
+                await _until(pilot, lambda: app._service_pending, what='ownership')
                 assert app._service_pending, 'the waiting line is owned by the app'
 
                 runtime.hub.publish('steer_delivered', enqueue_id='enqueue-1')
@@ -977,7 +1010,7 @@ def test_two_terminals_on_one_session_see_one_turn_and_never_a_duplicate(
                         ),
                         what='the durable history on both screens',
                     )
-                    durable_reads = transport.durable_reads
+                    pending_reads = transport.pending_reads
 
                     # One sends while the other only watches.
                     await sender_pilot.press('h', 'i')
@@ -1007,13 +1040,13 @@ def test_two_terminals_on_one_session_see_one_turn_and_never_a_duplicate(
                     )
 
                     # The mechanism behind that line, not just the line: the watcher
-                    # learned the message by asking the service for the durable rows
+                    # learned the message by asking the service for the waiting rows
                     # again, on its own stream. A screen that painted the message
                     # locally would satisfy the assertion above and fail this one.
                     assert watcher._client is not None
                     assert watcher._service_following is True
                     assert transport.streams >= 2, 'each terminal follows on a connection of its own'
-                    assert transport.durable_reads > durable_reads, 'the watcher re-read the durable rows'
+                    assert transport.pending_reads > pending_reads, 'the watcher re-read the waiting rows'
 
                     # The history both screens started from, and the message only one
                     # of them typed: each painted once, on both.
@@ -2985,7 +3018,7 @@ def test_a_message_accepted_by_one_terminal_is_waiting_on_the_other(
                 watcher = _terminal(watching_client, _session(runtime))
                 async with watcher.run_test(size=(100, 40)) as pilot:
                     await _until(pilot, lambda: watcher._turn_active, what='the running turn on the other screen')
-                    reads = transport.durable_reads
+                    reads = transport.pending_reads
 
                     await sending_client.send_turn(TurnRequest(text='queued while the turn runs'))
 
@@ -2998,7 +3031,7 @@ def test_a_message_accepted_by_one_terminal_is_waiting_on_the_other(
                         what='the waiting line of the other terminal',
                     )
                     assert watcher._turn_active is True, 'the line appeared while the turn was still running'
-                    assert transport.durable_reads > reads, 'the line came from the rows, not from this screen'
+                    assert transport.pending_reads > reads, 'the line came from the waiting rows, not from this screen'
 
                     release.set()
                     await _until(pilot, lambda: not watcher._turn_active, what='the end of the turn')
@@ -3006,6 +3039,119 @@ def test_a_message_accepted_by_one_terminal_is_waiting_on_the_other(
                         'the waiting line is history once'
                     )
             finally:
+                await watching_client.aclose()
+
+    asyncio.run(inner())
+
+
+def test_a_queue_event_mid_turn_reads_only_the_waiting_rows(
+    blocked: tuple[Composition, asyncio.Event], tmp_path: Path
+) -> None:
+    """A queue event asks for the wait, not for the conversation already on screen.
+
+    The overlay needs the rows that are waiting; the transcript is being streamed
+    into the screen and does not need to be decoded again to learn of one queued
+    message. Asking the durable read for it projected the whole session — 231 ms on
+    a real one — on the loop that also carries the stream, once per queue event.
+    """
+
+    async def inner() -> None:
+        composition, release = blocked
+        async with _service_under_test(composition, tmp_path) as (runtime, transport, sending_client):
+            await sending_client.send_turn(TurnRequest(text='go'))
+            await _wait_until(lambda: runtime.busy, what='the turn the sender started')
+            watching_client = ServiceClient(SERVICE, transport=transport)
+            try:
+                watcher = _terminal(watching_client, _session(runtime))
+                async with watcher.run_test(size=(100, 40)) as pilot:
+                    await _until(pilot, lambda: watcher._turn_active, what='the running turn on the other screen')
+                    durable_reads = transport.durable_reads
+                    pending_reads = transport.pending_reads
+
+                    await sending_client.send_turn(TurnRequest(text='queued while the turn runs'))
+
+                    await _until(
+                        pilot,
+                        lambda: 'queued while the turn runs' in _transcript(watcher),
+                        what='the waiting line of the other terminal',
+                    )
+                    assert watcher._turn_active is True, 'the turn had already stopped'
+                    assert transport.pending_reads > pending_reads, 'the wait was not read from its own route'
+                    assert transport.durable_reads == durable_reads, (
+                        'a queue event mid-turn re-read the whole durable session'
+                    )
+
+                    release.set()
+                    await _until(pilot, lambda: not watcher._turn_active, what='the end of the turn')
+                    assert _transcript(watcher).count('queued while the turn runs') == 1, (
+                        'the waiting line is history once'
+                    )
+            finally:
+                await watching_client.aclose()
+
+    asyncio.run(inner())
+
+
+def test_a_burst_of_queue_events_reads_the_wait_once(
+    blocked: tuple[Composition, asyncio.Event], tmp_path: Path
+) -> None:
+    """N announcements cost at most one read and one paint, not N of each.
+
+    A queue event carries no text: the rows do. Reading once per event turns a busy
+    queue into a burst of requests on the loop that is also painting the stream. A
+    read in flight only marks that another is due, and the rows it returns paint the
+    whole burst. The gate holds the first read open so the burst is a fact and not a
+    race, and the state reads that land while it waits are the proof the loop is free.
+    """
+
+    async def inner() -> None:
+        composition, release = blocked
+        async with _service_under_test(composition, tmp_path) as (runtime, transport, sending_client):
+            await sending_client.send_turn(TurnRequest(text='go'))
+            await _wait_until(lambda: runtime.busy, what='the turn the sender started')
+            watching_client = ServiceClient(SERVICE, transport=transport)
+            try:
+                watcher = _terminal(watching_client, _session(runtime))
+                async with watcher.run_test(size=(100, 40)) as pilot:
+                    await _until(pilot, lambda: watcher._turn_active, what='the running turn on the other screen')
+                    gate = asyncio.Event()
+                    transport.pending_gate = gate
+
+                    # The acceptance the sender typed is the first queue event, and its
+                    # read is held open here.
+                    await sending_client.send_turn(TurnRequest(text='queued while the turn runs'))
+                    await _wait_until(lambda: transport.pending_in_flight == 1, what='the first queue read')
+                    reads = transport.pending_reads
+                    states = transport.state_reads
+
+                    # Four more announcements: the burst a busy queue produces.
+                    for _ in range(4):
+                        runtime.hub.publish_state('queue')
+
+                    # The stream keeps being applied while the read is still in flight.
+                    await _wait_until(
+                        lambda: transport.state_reads >= states + 4,
+                        what='the burst applied while the read was in flight',
+                    )
+                    assert transport.pending_in_flight == 1, 'a second read started while the first was open'
+                    gate.set()
+
+                    await _until(
+                        pilot,
+                        lambda: 'queued while the turn runs' in _transcript(watcher),
+                        what='the waiting line of the other terminal',
+                    )
+                    assert transport.pending_reads - reads <= 1, (
+                        f'{transport.pending_reads - reads} reads for one burst of five events'
+                    )
+                    assert _transcript(watcher).count('queued while the turn runs') == 1, (
+                        'the row painted once per event'
+                    )
+
+                    release.set()
+                    await _until(pilot, lambda: not watcher._turn_active, what='the end of the turn')
+            finally:
+                transport.pending_gate = None
                 await watching_client.aclose()
 
     asyncio.run(inner())

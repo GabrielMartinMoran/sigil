@@ -1817,6 +1817,10 @@ class ChatLog(ReadOnlyScroll):
         self._reaches_end = True
         batches = widgets + list(queued)
         if batches:
+            # Marked before the mount, not after it: mounting awaits, and a frame in
+            # between would draw the conversation and the empty mark at once. The
+            # batch is what makes the log non-empty, not the mount finishing.
+            self._mark_filled()
             if self.is_mounted and self.app is not None:
                 # One layout for the whole page, exactly as `render_history` does:
                 # mounting one at a time makes restoring quadratic.
@@ -1825,11 +1829,6 @@ class ChatLog(ReadOnlyScroll):
             else:
                 for widget in batches:
                     await self.mount(widget)
-            # `clear` put the mark back, because a cleared log looks exactly like a
-            # session with nothing in it. This is the other half: something was
-            # painted, so the mark is no longer the truth and stops being drawn
-            # behind the conversation.
-            self._mark_filled()
         # A call the transcript never answered stays visibly interrupted, the same way
         # it looks live; a healthy transcript is untouched by this.
         self.finalize(close_pending=close_pending)

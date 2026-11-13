@@ -19,8 +19,10 @@ import json
 import struct
 import subprocess
 import sys
+import threading
+import uuid
 import zlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Coroutine
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -629,6 +631,121 @@ def test_the_durable_endpoint_is_registered(runtime: ServerRuntime) -> None:
     app = create_app(runtime, ServerConfig(password='x'), dist=runtime.composition.root / 'missing')
 
     assert '/api/session/durable' in {getattr(route, 'path', '') for route in app.routes}
+
+
+def test_the_pending_route_reports_the_same_rows_as_a_durable_read(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """The queue-only read and the durable one must not speak two vocabularies.
+
+    A screen mid-turn learns of a queued message from an event that carries no text,
+    so it asks for the rows — and only the rows. This route answers with the same
+    projection `durable['pending']` carries: same rows, same keys, so a client can
+    swap one read for the other without learning a second shape.
+    """
+    import uuid
+
+    request_id = str(uuid.uuid4())
+    store = runtime.composition.store
+    store.accept_input(runtime.session, request_id, 'waiting while nothing consumes', [], 'turn')
+
+    async def go() -> None:
+        async with _signed_in(runtime, tmp_path) as client:
+            pending = await client.get('/api/session/pending')
+            durable = await client.get('/api/session/durable')
+            assert pending.status_code == 200, pending.text
+            assert durable.status_code == 200, durable.text
+            rows = pending.json()['pending']
+            assert [row['request_id'] for row in rows] == [request_id], 'the waiting row is missing'
+            assert rows == durable.json()['pending'], 'the two reads disagree about the wait'
+            assert rows[0]['state'] in views.WAITING_STATES
+            assert rows[0]['delivered'] is False
+
+    asyncio.run(go())
+
+
+async def _the_loop_stays_free(
+    client: httpx.AsyncClient,
+    request: Coroutine[Any, Any, httpx.Response],
+    entered: threading.Event,
+    release: threading.Event,
+) -> httpx.Response:
+    """Starts a projection and proves the loop answered while it was still running.
+
+    ``entered`` is set from inside the projection, so the read has begun; ``release``
+    is what lets it finish. The watchdog releases it after two seconds so a
+    regression to an inline projection fails this test instead of hanging the suite.
+    """
+    watchdog = threading.Timer(2.0, release.set)
+    watchdog.start()
+    response = asyncio.create_task(request)
+    try:
+        assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 15), 20), 'the projection never started'
+        state = await asyncio.wait_for(client.get('/api/state'), 5)
+        assert state.status_code == 200, 'the loop did not answer while the projection ran'
+        assert not response.done(), 'the projection ran on the loop, so nothing else could answer'
+    finally:
+        release.set()
+        watchdog.cancel()
+    return await asyncio.wait_for(response, 5)
+
+
+def test_the_durable_projection_runs_off_the_event_loop(
+    runtime: ServerRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The durable read projected the whole conversation on the loop: 231 ms measured.
+
+    Everything else — the stream's deltas, every other route — waited behind it. The
+    projection now runs in a worker thread and the loop is free, which is what this
+    test holds it to: the projection is blocked on a real thread event and the state
+    route still answers.
+    """
+    real = views.durable_session
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocked(database: Any, session_id: str) -> dict[str, Any]:
+        entered.set()
+        assert release.wait(15), 'the projection was never released'
+        return real(database, session_id)
+
+    monkeypatch.setattr(views, 'durable_session', blocked)
+    # A draft session has no row to project, and the route would answer 404 without
+    # ever running the projection this test holds open.
+    runtime.composition.store.accept_input(runtime.session, str(uuid.uuid4()), 'stored', [], 'turn')
+
+    async def go() -> None:
+        async with _signed_in(runtime, tmp_path) as client:
+            response = await _the_loop_stays_free(client, client.get('/api/session/durable'), entered, release)
+            assert response.status_code == 200, response.text
+
+    asyncio.run(go())
+
+
+def test_the_whole_transcript_projection_runs_off_the_event_loop(
+    runtime: ServerRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without a window the transcript route projects the whole conversation.
+
+    That is the web client's read, and it costs what the conversation has. A page
+    costs 1.6 ms and stays on the loop; the whole read does not.
+    """
+    real = views.transcript_window
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocked(messages: Any, *, limit: int | None = None, before: int | None = None) -> Any:
+        if limit is None:
+            entered.set()
+            assert release.wait(15), 'the projection was never released'
+        return real(messages, limit=limit, before=before)
+
+    monkeypatch.setattr(views, 'transcript_window', blocked)
+
+    async def go() -> None:
+        async with _signed_in(runtime, tmp_path) as client:
+            response = await _the_loop_stays_free(client, client.get('/api/session/transcript'), entered, release)
+            assert response.status_code == 200, response.text
+
+    asyncio.run(go())
 
 
 def test_send_without_a_request_id_still_works(runtime: ServerRuntime) -> None:

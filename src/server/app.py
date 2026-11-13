@@ -678,8 +678,15 @@ def create_app(
         # The window is projected from the messages, not cut from a projection of
         # the whole conversation: a page costs what the page holds, not what the
         # session has. This runs on the event loop, so the difference is every other
-        # route's latency too.
-        page = views.transcript_window(runtime.session.messages, limit=limit_items, before=before_position)
+        # route's latency too. The whole read is the one that costs the session, so it
+        # is projected in a worker thread; the list is copied here first, because the
+        # turn appends to it and the projection must read one consistent version.
+        page = await asyncio.to_thread(
+            views.transcript_window,
+            list(runtime.session.messages),
+            limit=limit_items,
+            before=before_position,
+        )
         return {
             'session': views.session_view(runtime.session),
             'items': page.items,
@@ -696,15 +703,35 @@ def create_app(
     async def durable() -> dict[str, Any]:
         """The durable transcript, queue overlay and recovery facts in one read.
 
+        Decoding and projecting the whole conversation cost 231 ms on a real session,
+        and it ran on the event loop: every delta and every other route waited behind
+        it. The projection touches the database and the session id only — both
+        resolved here, before the thread — so it runs in a worker thread and the loop
+        stays free.
+
         A session that exists only in memory has no row to project. That is a typed
         404 — "nothing yet" — and not a failure: a terminal attached to a conversation
         that has not started is in a normal state, and answering 500 painted an error
         banner about mismatched versions on a service that was answering correctly.
         """
         try:
-            return views.durable_session(runtime.composition.store.database, runtime.session.id)
+            return await asyncio.to_thread(
+                views.durable_session, runtime.composition.store.database, runtime.session.id
+            )
         except views.SessionNotStored as exc:
             return JSONResponse({'error': str(exc)}, status_code=404)  # type: ignore[return-value]
+
+    @app.get('/api/session/pending')
+    async def pending() -> dict[str, Any]:
+        """The queue's waiting rows, and nothing else.
+
+        A screen mid-turn learns of a queued message from an event that carries no
+        text, so it reads the rows. This answers with exactly the shape
+        `/api/session/durable` calls ``pending`` — same rows, same keys — and stops
+        there, because the screen already holds the transcript it is streaming into.
+        A session with no row yet has no queue, which is an empty list, not a 404.
+        """
+        return {'pending': views.pending_rows(runtime.composition.store.database, runtime.session.id)}
 
     @app.get('/api/sessions')
     async def sessions() -> dict[str, Any]:
