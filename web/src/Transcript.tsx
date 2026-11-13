@@ -242,6 +242,22 @@ function Bubble({ item }: { item: TranscriptItem }) {
     );
   }
 
+  if (item.kind === 'subagent_report') {
+    // A subagent's answer travels as a durable user input, so the service recognizes
+    // the envelope and sends it as its own kind: painted as a bubble it would read as
+    // something the reader typed.
+    return (
+      <details className="group text-ink-faint text-xs">
+        <summary className="hover:text-ink-muted cursor-pointer font-mono select-none">
+          ↩ {item.label ?? 'Subagent'} #{item.short_id ?? '?'} sent a report.
+        </summary>
+        <pre className="scroll-thin border-border-subtle mt-2 max-h-60 overflow-auto border-l pl-3 font-mono whitespace-pre-wrap">
+          {item.text}
+        </pre>
+      </details>
+    );
+  }
+
   return <MarkdownText text={item.text ?? ''} />;
 }
 

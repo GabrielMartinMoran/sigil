@@ -3699,7 +3699,10 @@ def test_a_turn_the_service_wakes_is_painted_once_in_the_terminal(composition: C
                 await _until(pilot, lambda: not app._turn_active, what='the end of the woken turn')
 
                 text = _transcript(app)
-                assert text.count('The tree reads bottom-up.') == 1, 'the report was painted twice'
+                assert text.count('sent a report.') == 1, 'the report was painted twice'
+                # The report is a card that opens its execution, not the squad's words
+                # in the reader's mouth: the envelope's body is not a message here.
+                assert 'The tree reads bottom-up.' not in text, 'a report is not a user message'
                 assert text.count('done') == 1, 'the answer was painted twice'
 
     asyncio.run(inner())

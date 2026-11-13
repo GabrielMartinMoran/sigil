@@ -1,35 +1,14 @@
-"""Recognize persisted subagent reports without mistaking arbitrary user text for one."""
+"""Where a persisted subagent report is recognized, for the terminal.
+
+The rule lives in the engine (`src.engine.agents.tree.reports`): it is about the
+envelope a turn persists, not about a widget, and both the projection the service
+sends and the in-process renderer have to apply the same one. This module is the
+terminal's name for it, kept so the renderer does not reach across the boundary for
+a sentence it already imports.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from src.engine.agents.tree.reports import WAKE_PROMPT, split_reports
 
-from src.engine.agents.tree.models.agent_node import AgentNode
-from src.engine.agents.tree.summoner import _envelope
-
-WAKE_PROMPT = 'A subagent finished while the session was idle. Read its report and continue.'
-
-
-def split_reports(text: str, nodes: Sequence[AgentNode]) -> tuple[list[AgentNode], str]:
-    """Remove only complete reports matching a known execution and its saved result."""
-    reports: list[AgentNode] = []
-    remaining = text
-    while remaining:
-        for node in nodes:
-            if node.is_root or node.result is None:
-                continue
-            report = _envelope(node, node.result)
-            if remaining == report:
-                reports.append(node)
-                remaining = ''
-                break
-            prefix = report + '\n\n'
-            if remaining.startswith(prefix):
-                reports.append(node)
-                remaining = remaining[len(prefix) :]
-                break
-        else:
-            break
-    if reports and remaining == WAKE_PROMPT:
-        remaining = ''
-    return reports, remaining
+__all__ = ['WAKE_PROMPT', 'split_reports']

@@ -2002,6 +2002,18 @@ The prompt is the reports' envelopes followed by `WAKE_PROMPT`, word for word th
 terminal's sentence, so both clients paint a woken turn as reports and not as
 something the user typed.
 
+That last part is the projection's job, not the renderer's. A woken turn is a
+`user-prompt` part like any other, so `views.transcript` recognizes the envelope —
+`src.engine.agents.tree.reports.split_reports`, an exact match against a result the
+tree already saved — and emits one `subagent_report` item per report, with the node's
+id, label and short id, instead of a `user` item. The wake sentence goes with the
+envelope it came with; anything written after it stays as the user's line. A window
+counts those items the same way (`_part_count`), so a page cannot start in the wrong
+place, and a caller that passes no nodes gets exactly the answer it had before. The
+terminal paints the item as its `SubagentReport` card — a click opens that execution —
+and the web client as its own collapsible line. The card names the report; the words
+live in the node, which is the same thing the in-process renderer does.
+
 ### The tests
 
 `tests/test_server_runtime.py` proves the wake against the real composition and

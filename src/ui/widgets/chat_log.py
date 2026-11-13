@@ -249,11 +249,15 @@ def _describe_parts(images: Sequence[BinaryContent]) -> tuple[ImageAttachment, .
 
 
 class SubagentReport(Static):
-    """A compact, clickable record of a report delivered to the parent."""
+    """A compact, clickable record of a report delivered to the parent.
 
-    def __init__(self, node: AgentNode) -> None:
-        super().__init__(Text(f'↩ {node.label} #{node.short_id} sent a report.', style='cyan'))
-        self.node_id = node.id
+    Built from the three fields a projection carries, not from an `AgentNode`: an
+    attached terminal holds no tree, and the row it paints comes from the service.
+    """
+
+    def __init__(self, *, label: str, short_id: str, node_id: str) -> None:
+        super().__init__(Text(f'↩ {label} #{short_id} sent a report.', style='cyan'))
+        self.node_id = node_id
         self.add_class('clickable')
 
     def on_click(self) -> None:
@@ -1672,7 +1676,10 @@ class ChatLog(ReadOnlyScroll):
                             else next((item for item in content if isinstance(item, str)), '')
                         )
                         reports, remaining = split_reports(text, subagents)
-                        batches.extend(SubagentReport(node) for node in reports)
+                        batches.extend(
+                            SubagentReport(label=node.label, short_id=node.short_id, node_id=node.id)
+                            for node in reports
+                        )
                         if reports and not isinstance(content, str):
                             content = [remaining if item is text else item for item in content]
                         elif reports:
@@ -1888,6 +1895,15 @@ class ChatLog(ReadOnlyScroll):
                         _item_user_renderable(str(item.get('text') or ''), item.get('attachments') or ()),
                         seq=index if isinstance(index, int) else None,
                         classes='user-msg',
+                    )
+                )
+                follows_tool_block = False
+            elif kind == 'subagent_report':
+                blocks.append(
+                    SubagentReport(
+                        label=str(item.get('label') or ''),
+                        short_id=str(item.get('short_id') or ''),
+                        node_id=str(item.get('node_id') or ''),
                     )
                 )
                 follows_tool_block = False

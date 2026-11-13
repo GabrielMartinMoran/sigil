@@ -16,7 +16,7 @@ export type Attachment = {
 };
 
 export type TranscriptItem = {
-  kind: 'user' | 'assistant' | 'thinking' | 'tool_call' | 'tool_result';
+  kind: 'user' | 'assistant' | 'thinking' | 'tool_call' | 'tool_result' | 'subagent_report';
   index: number;
   text?: string;
   /** Present on a user message that carried pictures; never the payload itself. */
@@ -26,6 +26,10 @@ export type TranscriptItem = {
   args?: unknown;
   ok?: boolean;
   summary?: { text: string; status: 'good' | 'bad' | 'neutral' } | null;
+  /** Present on a report: the execution that sent it, and what to call it. */
+  node_id?: string;
+  label?: string;
+  short_id?: string;
 };
 
 /**

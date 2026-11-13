@@ -223,6 +223,20 @@ def _refused(exc: Exception) -> JSONResponse:
     return JSONResponse({'error': str(exc)}, status_code=400)
 
 
+def _report_nodes(runtime: Any) -> tuple[Any, ...]:
+    """The nodes whose saved results can make a persisted prompt a report.
+
+    Read on the loop and handed to the projection as a tuple: the thread that
+    projects must not walk a tree another task is adding to.
+    """
+    tree = getattr(getattr(runtime.composition, 'agent_trees', None), 'active', None)
+    walk = getattr(tree, 'nodes', None)
+    if walk is None:
+        return ()
+    nodes = walk() if callable(walk) else walk
+    return tuple(nodes)
+
+
 def _page_limit(raw: str | None) -> int | None:
     """``limit`` as a positive count, or "no window" when it was not asked for.
 
@@ -679,13 +693,16 @@ def create_app(
         # the whole conversation: a page costs what the page holds, not what the
         # session has. This runs on the event loop, so the difference is every other
         # route's latency too. The whole read is the one that costs the session, so it
-        # is projected in a worker thread; the list is copied here first, because the
-        # turn appends to it and the projection must read one consistent version.
+        # is projected in a worker thread; the list and the nodes are copied here
+        # first, because the turn appends to one and the tree may gain a node, and the
+        # projection must read one consistent version of both.
+        reports = tuple(_report_nodes(runtime))
         page = await asyncio.to_thread(
             views.transcript_window,
             list(runtime.session.messages),
             limit=limit_items,
             before=before_position,
+            reports=reports,
         )
         return {
             'session': views.session_view(runtime.session),

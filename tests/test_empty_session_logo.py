@@ -13,7 +13,7 @@ from textual.app import App, ComposeResult
 from textual.theme import Theme
 
 from src.engine.themes import ThemeRegistry
-from src.ui.widgets.chat_log import ChatLog
+from src.ui.widgets.chat_log import ChatLog, SubagentReport, UserMessage
 from src.ui.widgets.empty_logo import LOGO, SMALL_LOGO, logo_lines
 
 INK = next(glyph for glyph in LOGO[0] if glyph != ' ')
@@ -137,5 +137,38 @@ def test_repainting_an_empty_session_from_the_service_brings_the_mark_back():
             await chat.render_items([{'kind': 'user', 'text': 'restored from the service'}])
             await pilot.pause()
             assert INK not in app.export_screenshot()
+
+    asyncio.run(run())
+
+
+def test_a_report_from_the_service_is_painted_as_a_report():
+    """A projected report is a card, not a line the reader appears to have typed.
+
+    The service persists a subagent's answer as a durable user input, so the item it
+    sends carries the envelope's facts instead of the envelope: the client paints that
+    as the report it is. A user line would put the squad's words in the reader's mouth.
+    """
+
+    async def run() -> None:
+        app = with_themes(Harness())
+        async with app.run_test(size=(80, 30)) as pilot:
+            chat = app.query_one(ChatLog)
+            await chat.render_items(
+                [
+                    {
+                        'kind': 'subagent_report',
+                        'index': 0,
+                        'node_id': 'n1',
+                        'label': 'Scout',
+                        'short_id': 'n1sh',
+                        'text': 'found it',
+                    }
+                ]
+            )
+            await pilot.pause()
+            reports = list(chat.query(SubagentReport))
+            assert len(reports) == 1
+            assert reports[0].node_id == 'n1'
+            assert not list(chat.query(UserMessage)), 'a report is never painted as a user message'
 
     asyncio.run(run())

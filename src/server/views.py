@@ -28,6 +28,7 @@ from src.engine.agents.model_config import AgentModelConfig
 from src.engine.agents.model_defaults import ConfigFileState, ModelDefaultsState
 from src.engine.agents.rollback import PROMPT_KIND, Checkpoint, ForkOutcome, RollbackOutcome, prompt_of_turn
 from src.engine.agents.tree.models.agent_node import AgentNode
+from src.engine.agents.tree.reports import report_view, split_reports
 from src.engine.agents.tree.tree import AgentTree
 from src.engine.context.images import image_size
 from src.engine.context.meter.cost import SessionCost
@@ -422,7 +423,7 @@ def pending_rows(database: Database, session_id: str) -> list[dict[str, Any]]:
         return waiting(queue_entries(conn, session_id))
 
 
-def transcript(messages: list[ModelMessage]) -> list[dict[str, Any]]:
+def transcript(messages: list[ModelMessage], *, reports: Sequence[AgentNode] = ()) -> list[dict[str, Any]]:
     """The conversation as a flat list of items a client can paint.
 
     The shapes are the pydantic-ai part kinds, not a new vocabulary: ``user``,
@@ -430,6 +431,11 @@ def transcript(messages: list[ModelMessage]) -> list[dict[str, Any]]:
     A tool call and its result travel as two items with the same ``call_id``,
     because that is how they exist in the history — the pairing is the client's,
     and doing it here would lose the case where a result never arrived.
+
+    ``reports`` are the tree's nodes, and they are what turns a woken turn into
+    report items: the service persists a subagent's answer as a durable user input,
+    so without the envelopes a client would paint the squad's words as something the
+    reader typed. Recognition is exact, against a saved result of a known node.
 
     **Binary payloads never travel.** An image is described by what it is —
     ``1 image (640×480 PNG, 118 KB)`` — exactly as the terminal client paints it.
@@ -440,9 +446,7 @@ def transcript(messages: list[ModelMessage]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for index, message in enumerate(messages):
         for part in getattr(message, 'parts', ()):
-            item = _part_view(part, index)
-            if item is not None:
-                items.append(item)
+            items.extend(_part_views(part, index, reports))
     return items
 
 
@@ -524,9 +528,28 @@ def _projects(part: Any) -> bool:
     return getattr(part, 'part_kind', '') in RENDERED_KINDS or isinstance(part, BinaryContent)
 
 
-def _item_count(message: ModelMessage) -> int:
+def _item_count(message: ModelMessage, reports: Sequence[AgentNode] = ()) -> int:
     """How many items one message projects, counted without building any."""
-    return sum(1 for part in getattr(message, 'parts', ()) if _projects(part))
+    return sum(_part_count(part, reports) for part in getattr(message, 'parts', ()))
+
+
+def _part_count(part: Any, reports: Sequence[AgentNode]) -> int:
+    """How many items one part projects, without building them.
+
+    A woken turn's user prompt projects as one item per recognized report, plus the
+    user's line when text or an image is left over. The count has to agree with
+    `_part_views` or a page would start in the wrong place; `split_reports` is the
+    same exact match, so the two cannot disagree about whether a part is a report.
+    """
+    if not _projects(part):
+        return 0
+    if not reports or getattr(part, 'part_kind', '') != 'user-prompt':
+        return 1
+    text, attachments = _content_view(getattr(part, 'content', ''))
+    found, remaining = split_reports(text, reports)
+    if not found:
+        return 1
+    return len(found) + (1 if remaining or attachments else 0)
 
 
 def transcript_window(
@@ -534,6 +557,7 @@ def transcript_window(
     *,
     limit: int | None = None,
     before: int | None = None,
+    reports: Sequence[AgentNode] = (),
 ) -> TranscriptPage:
     """The window of a transcript, projected without projecting the whole of it.
 
@@ -552,7 +576,7 @@ def transcript_window(
     read has to build every item either way; this function does not impose a window
     the caller did not ask for.
     """
-    counts = [_item_count(message) for message in messages]
+    counts = [_item_count(message, reports) for message in messages]
     total = sum(counts)
     end = total if before is None else max(0, min(before, total))
     start = 0 if limit is None else max(0, end - limit)
@@ -574,11 +598,15 @@ def transcript_window(
                 break
             if not _projects(part):
                 continue
-            if position >= start:
-                item = _part_view(part, index)
-                if item is not None:
+            # A part can project more than one item — a woken turn's reports — so the
+            # page is cut inside it, by offset, instead of assuming one item per part.
+            views = _part_views(part, index, reports)
+            if not views:
+                continue
+            for offset, item in enumerate(views):
+                if position + offset >= start:
                     items.append(item)
-            position += 1
+            position += len(views)
 
     return TranscriptPage(items=items, first_index=start, has_more=start > 0, total=total)
 
@@ -711,6 +739,39 @@ def _part_view(part: Any, index: int) -> dict[str, Any] | None:
     if isinstance(part, BinaryContent):
         return {'kind': 'assistant', 'index': index, 'text': _described(part)}
     return None
+
+
+def _part_views(part: Any, index: int, reports: Sequence[AgentNode]) -> list[dict[str, Any]]:
+    """The items one part projects: a report card, the user's line, or both.
+
+    A woken turn is persisted as a user input — the reports' envelopes followed by
+    the wake sentence — because that is what makes it a durable row. Projected as one
+    ``user`` item it would read as something the reader typed, which is exactly what
+    the in-process renderer stopped doing when it started calling `split_reports`.
+    The same rule is applied here, on the side that builds the items.
+
+    A part with no recognizable envelope answers `_part_view` unchanged, which is why
+    a message the user wrote cannot be swallowed by this: `split_reports` matches an
+    envelope byte for byte against a result the tree already saved.
+
+    Images survive the split: `_content_view` keeps them apart from the text, so a
+    report that arrived with a picture is still one report plus its attachments.
+    """
+    if not reports or getattr(part, 'part_kind', '') != 'user-prompt':
+        item = _part_view(part, index)
+        return [] if item is None else [item]
+    text, attachments = _content_view(getattr(part, 'content', ''))
+    found, remaining = split_reports(text, reports)
+    if not found:
+        item = _part_view(part, index)
+        return [] if item is None else [item]
+    items: list[dict[str, Any]] = [{**report_view(node), 'index': index} for node in found]
+    if remaining or attachments:
+        item = {'kind': 'user', 'index': index, 'text': _cut(remaining)}
+        if attachments:
+            item['attachments'] = attachments
+        items.append(item)
+    return items
 
 
 def _jsonable(value: Any) -> Any:

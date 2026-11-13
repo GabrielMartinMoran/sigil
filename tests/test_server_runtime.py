@@ -732,11 +732,11 @@ def test_the_whole_transcript_projection_runs_off_the_event_loop(
     entered = threading.Event()
     release = threading.Event()
 
-    def blocked(messages: Any, *, limit: int | None = None, before: int | None = None) -> Any:
+    def blocked(messages: Any, *, limit: int | None = None, before: int | None = None, **kwargs: Any) -> Any:
         if limit is None:
             entered.set()
             assert release.wait(15), 'the projection was never released'
-        return real(messages, limit=limit, before=before)
+        return real(messages, limit=limit, before=before, **kwargs)
 
     monkeypatch.setattr(views, 'transcript_window', blocked)
 
