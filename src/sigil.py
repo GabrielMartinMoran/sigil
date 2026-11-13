@@ -92,9 +92,10 @@ def _app(client: ServiceClient, state: dict[str, Any], settings: SigilSettings) 
     inside the process that owns the session, and in an attached terminal that process
     is the service: it resolves on bind and on `POST /api/agent`, and the terminal
     paints the snapshot it sends back. `model_defaults_state` and
-    `save_model_default` write the defaults files, which the service owns too; no
-    endpoint projects them yet, so `/default-models` reports that this client cannot
-    edit them instead of writing a second copy of the truth.
+    `save_model_default` write the defaults files, which the service owns too, and the
+    transport table has no route to send them on: `/default-models` is `blocked`, so
+    typing it here answers with one notice — `/default-models is a service command, and
+    the service has no endpoint for it yet: …` — and opens no screen and writes nothing.
     """
     workspace = _workspace(state)
     session = _session(state)
