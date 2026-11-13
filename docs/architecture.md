@@ -367,6 +367,46 @@ reported unavailable without a broken link, and conflicted entries are kept
 separate from the current transcript. Live deltas are not mixed into this read.
 The web client is unchanged and not part of this slice.
 
+### A turn that is waiting says so
+
+A turn can be slow without being broken, and the service used to be unable to tell
+you the difference. The engine already retried transient model failures — five
+attempts with a backoff of 0.5 to 8 seconds, see
+`src/engine/agents/retry.py` — but only the in-process client listened for the
+notice: `SigilApp.notify_model_retry` paints every attempt in its chat. In the
+service that callback had no subscriber, so a provider that kept failing published
+nothing at all and the screen read "Thinking" for minutes.
+`ServerRuntime` now subscribes `RetryTransientModelErrors.on_retry` and publishes
+what the terminal would have painted.
+
+The event is the one both clients already know: `notice` with `tone` set to `warn`.
+Its text is the terminal's own sentence, so the two surfaces say the same thing
+about the same wait — the attempt that failed, the ceiling, the reason and the
+delay, as in `↻ Transient model failure (HTTP 502 · …); retry 2/5 in 0.8s`. Nothing
+new is asked of a client: the web store and the attached terminal already paint a
+`notice`, and the sink is wrapped so that a client which cannot be told is not a
+reason to fail the retry it describes.
+
+Silence gets a sentence too, and never a deadline. `SLOW_TURN_NOTICE_SECONDS` (60)
+is how long a turn may publish nothing before `ServerRuntime._watch_turn_silence`
+says it is still waiting. The watcher is a task of the turn, cancelled with it,
+which waits on an event every published event sets: a turn that is streaming, or
+retrying, never reaches the notice, and a turn that ends before the window passes
+never says it. It fires at most once per turn and it cancels nothing. That is the
+decision this cut records: **there is no turn deadline**. A model that takes
+minutes is legitimate, `agent.iter` runs with `UsageLimits(request_limit=None)`,
+and only an explicit stop, the question deadline, or the step budget ends a turn
+early.
+
+A turn that ends in error closes its rows, exactly as a cancelled one does.
+`ServerRuntime._turn` calls `_stop_pending` when the status is `error`, so the
+accepted input cannot stay `claimed` until the next start interrupts it — which is
+what used to happen, and what made a failed turn look like a lost one. The terminal
+state is `stopped`, not a new one: `_TRANSITIONS` in
+`src/engine/storage/accepted_inputs.py` allows `claimed → stopped` and has no
+failure state, while `interrupted` stays reserved for reconciling a process that
+died, as [idle shutdown](#idle-shutdown) states.
+
 ### The turn command
 
 `POST /api/turn` is the one way a message enters a session, and its shape is the

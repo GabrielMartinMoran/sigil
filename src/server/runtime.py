@@ -49,6 +49,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.usage import UsageLimits
 
 from src.engine.agents.profile.models.agent_profile import AgentProfile
+from src.engine.agents.retry import RetryNotice
 from src.engine.agents.rollback import Checkpoint, ForkOutcome, RollbackOutcome
 from src.engine.agents.step_budget import StepBudget
 from src.engine.agents.tree.models.agent_node import AgentNode
@@ -111,6 +112,14 @@ override it.
 
 QUESTION_TIMEOUT_ENV = 'SIGIL_QUESTION_TIMEOUT'
 """Environment override for :data:`QUESTION_TIMEOUT_SECONDS`, in seconds."""
+
+SLOW_TURN_NOTICE_SECONDS = 60.0
+"""Seconds a turn may publish nothing before the service says it is still waiting.
+
+A sign, not a limit: nothing is cancelled when it passes, and the notice is published
+once per turn. A model that takes minutes is legitimate — what a person cannot see is
+that the turn is alive — so the answer to silence is a sentence, never a deadline.
+"""
 
 
 def resolve_question_timeout(
@@ -309,6 +318,7 @@ class ServerRuntime:
         self._question_timeout = resolve_question_timeout(question_timeout)
         self._last_checkpoint_at = 0.0
         self._turn_session: Any = None
+        self._turn_activity: asyncio.Event | None = None
 
         # Durable consumer. The queue is the source of truth for accepted work;
         # the in-memory maps only connect a request to the enqueue it produced.
@@ -349,6 +359,13 @@ class ServerRuntime:
         # Every tool call and result travels as an event. The sink is sync and never
         # raises: a broken client must not fail the tool that triggered it.
         composition.tool_logger.add_sink(self._on_tool_event)
+
+        # A turn whose model is retrying is alive, and until this existed it looked
+        # dead: five attempts with a backoff of up to eight seconds published nothing
+        # because nothing subscribed. The terminal paints the same notice in-process
+        # (`SigilApp.notify_model_retry`); a service has no chat of its own, so the
+        # notice travels on the hub for every attached client.
+        composition.model_retry.on_retry = self._on_model_retry
 
         # The tree moves while subagents work; the sidebar follows it.
         composition.on_idle(self._on_tree_idle)
@@ -759,6 +776,14 @@ class ServerRuntime:
         run_for_final: Any = None
         prompt = stored_content(text, accepted.images) if accepted is not None else user_content(text)
 
+        # A turn that publishes nothing for a while says so once, from a task of its
+        # own. Created immediately before the `try` that cancels it, so every failure
+        # of the turn has a `finally` that stops the watcher.
+        activity = asyncio.Event()
+        self._turn_activity = activity
+        activity.set()
+        watcher = asyncio.get_running_loop().create_task(self._watch_turn_silence(activity))
+
         try:
             history = session.messages
             recovery = recover_history(history)
@@ -794,6 +819,11 @@ class ServerRuntime:
             run_for_final = self._run
             self._run = None
             self._turn_session = None
+            # The watcher belongs to this turn and to nothing else: cancelled here it
+            # can never speak for a turn that already ended.
+            watcher.cancel()
+            await asyncio.gather(watcher, return_exceptions=True)
+            self._turn_activity = None
             self._resolve_question(None)
 
         history = recover_history(history).messages
@@ -817,7 +847,13 @@ class ServerRuntime:
                 )
         self._confirmed.update(confirmation.request_id for confirmation in confirmations)
         self._finish_confirmed(set(self._confirmed))
-        if status == 'cancelled' or self._aborting:
+        if status in ('cancelled', 'error') or self._aborting:
+            # A failed turn closes its rows for the same reason a cancelled one does:
+            # nothing else will ever close them, and the next start is not a janitor
+            # for this process's failure. `stopped` is the terminal state the table
+            # allows from `claimed` — there is no failure state, and `interrupted` is
+            # reserved for reconciling a process that died. See
+            # `docs/architecture.md`, part A.
             self._stop_pending(session.id)
             self._aborting = False
 
@@ -865,6 +901,7 @@ class ServerRuntime:
     async def _stream(self, _ctx: Any, events: Any) -> None:
         """Turns a pydantic-ai stream into events a browser can apply."""
         async for event in events:
+            self._note_activity()
             self._pump_steering()
             self._checkpoint()
             if isinstance(event, PartStartEvent):
@@ -968,6 +1005,64 @@ class ServerRuntime:
             preview=(event.output if getattr(event, 'output', None) is not None else '')[:PREVIEW_CHARS],
             summary=None if summary is None else {'text': summary.text, 'status': summary.status},
         )
+
+    # --- what the turn is doing ----------------------------------------------
+
+    def _on_model_retry(self, notice: RetryNotice) -> None:
+        """Publishes the retry the model is about to attempt, and never raises.
+
+        The terminal announces the same fact in its chat (`SigilApp.on_model_retry_notice`);
+        the service had no listener at all, so a provider that retried published
+        nothing and the screen showed "Thinking" for minutes. It reuses the terminal's
+        sentence, so the two clients say the same thing about the same wait.
+
+        Notifying is not worth failing: the capability already protects the retry from
+        a broken callback, and this keeps the guarantee local to the sink.
+        """
+        self._note_activity()
+        try:
+            self.hub.publish(
+                'notice',
+                text=(
+                    f'↻ Transient model failure ({notice.reason}); '
+                    f'retry {notice.next_attempt}/{notice.max_attempts} in {notice.delay:.1f}s'
+                ),
+                tone='warn',
+            )
+        except Exception:  # noqa: BLE001, S110 - notifying must never break the retry
+            pass
+
+    def _note_activity(self) -> None:
+        """Marks that the turn said something, so the slow-turn notice keeps quiet."""
+        activity = self._turn_activity
+        if activity is not None:
+            activity.set()
+
+    async def _watch_turn_silence(self, activity: asyncio.Event) -> None:
+        """Says once that the turn is still waiting, then stops watching.
+
+        The wait is the same bounded-event pattern the consumer uses, so nothing
+        blocks and every event the turn publishes restarts the window. There is no
+        deadline behind it: when it fires, the turn goes on.
+        """
+        while not self._closing:
+            activity.clear()
+            try:
+                await asyncio.wait_for(activity.wait(), timeout=SLOW_TURN_NOTICE_SECONDS)
+            except TimeoutError:
+                if self._pending_question is not None:
+                    # That wait is a person's, it has its own deadline, and saying
+                    # "waiting on the model" about it would be a lie.
+                    continue
+                self.hub.publish(
+                    'notice',
+                    text=(
+                        f'Still waiting on the model: no output for {SLOW_TURN_NOTICE_SECONDS:g} seconds. '
+                        'The turn is still running.'
+                    ),
+                    tone='warn',
+                )
+                return
 
     # --- questions -----------------------------------------------------------
 

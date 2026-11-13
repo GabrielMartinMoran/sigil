@@ -28,6 +28,7 @@ from typing import Any
 import httpx
 import pytest
 from PIL import Image
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from starlette.types import Message, Receive, Scope, Send
 
@@ -1617,6 +1618,179 @@ def test_the_stop_all_route_answers_and_reaches_the_summoner(
 
     asyncio.run(go())
     assert calls == ['subagents']
+
+
+# --- what a turn says while it waits on the model ---------------------------
+#
+# The consumer was proven healthy end to end — `accepted -> claimed -> turn_started`
+# in a real subprocess — and the turn then said nothing at all: the service never
+# subscribed to the retry notices the in-process client paints, so five attempts with
+# a backoff of up to eight seconds published nothing and the screen read "Thinking"
+# for minutes. These tests are the contract that silence broke.
+
+
+def _flaky_model(failures: int = 2) -> tuple[FunctionModel, list[int]]:
+    """A streaming model that fails transiently ``failures`` times and then answers.
+
+    Streaming, because the service runs every turn with an event-stream handler and
+    that is the shape a real provider failure arrives in.
+    """
+    from pydantic_ai.exceptions import ModelHTTPError, ModelServerError
+    from pydantic_ai.messages import ModelMessage
+    from pydantic_ai.models.function import AgentInfo
+
+    error = ModelHTTPError.for_category(ModelServerError, status_code=502, model_name='test/model', body='bad gateway')
+    calls: list[int] = []
+
+    async def answer(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        calls.append(len(calls) + 1)
+        if len(calls) <= failures:
+            raise error
+        yield 'final answer'
+
+    return FunctionModel(stream_function=answer), calls
+
+
+def test_a_transient_model_error_publishes_a_numbered_notice_per_attempt(runtime: ServerRuntime) -> None:
+    """Each retry is a fact the clients can paint, not silence and a spinner."""
+    from pydantic_ai import Agent
+
+    retry = runtime.composition.model_retry
+    retry.base_delay = 0.0  # the notice, not the clock, is what this test measures
+    model, calls = _flaky_model(failures=2)
+    runtime.composition.agent = Agent(model, instructions='x', capabilities=[retry])
+
+    async def go() -> list[str]:
+        await runtime.send('hola')
+        await runtime.wait()
+        return [str(event.data.get('text') or '') for event in runtime.hub.replay() if event.type == 'notice']
+
+    texts = asyncio.run(go())
+
+    assert len(calls) == 3, 'the model was not actually retried'
+    retries = [text for text in texts if 'Transient model failure' in text]
+    assert len(retries) == 2, retries
+    assert f'retry 2/{retry.max_attempts}' in retries[0], retries
+    assert f'retry 3/{retry.max_attempts}' in retries[1], retries
+    assert 'HTTP 502' in retries[0], retries
+    assert 'in 0.0s' in retries[0], retries
+
+
+def test_a_notice_that_cannot_be_published_does_not_break_the_turn(
+    runtime: ServerRuntime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sink is a client boundary: its failure is not the turn's failure."""
+    from pydantic_ai import Agent
+
+    retry = runtime.composition.model_retry
+    retry.base_delay = 0.0
+    model, calls = _flaky_model(failures=1)
+    runtime.composition.agent = Agent(model, instructions='x', capabilities=[retry])
+    attempted: list[str] = []
+    original = runtime.hub.publish
+
+    def publish(event_type: str, **data: Any) -> Any:
+        text = str(data.get('text') or '')
+        if event_type == 'notice' and 'Transient model failure' in text:
+            attempted.append(text)
+            raise RuntimeError('the client blew up')
+        return original(event_type, **data)
+
+    monkeypatch.setattr(runtime.hub, 'publish', publish)
+
+    async def go() -> dict[str, Any]:
+        await runtime.send('hola')
+        await runtime.wait()
+        return next(event.data for event in runtime.hub.replay() if event.type == 'turn_finished')
+
+    finished = asyncio.run(go())
+
+    assert attempted, 'the retry notice was never even attempted'
+    assert len(calls) == 2, 'the retry did not happen'
+    assert finished['status'] == 'ok', finished
+    assert runtime.session.messages[-1].parts[0].content == 'final answer'
+
+
+def test_a_turn_that_ends_in_error_leaves_its_row_terminal(runtime: ServerRuntime) -> None:
+    """A failed turn must not leave a `claimed` row for the next start to find.
+
+    The engine refuses to start, which is the shape of every failure that is not the
+    model answering badly: nothing was delivered, so no checkpoint ever confirms the
+    row, and only the end of the turn can close it. `stopped` is the terminal state
+    the table allows from `claimed`; there is no failure state, and `interrupted` is
+    reserved for reconciling a process that died (see `docs/architecture.md`).
+    """
+    from src.engine.storage.accepted_inputs import AcceptedInputs
+
+    class Refusing:
+        """An agent whose run cannot start: the engine's failure, not the model's."""
+
+        def iter(self, *_args: Any, **_kwargs: Any) -> Any:
+            raise RuntimeError('the engine could not start')
+
+    runtime.composition.agent = Refusing()
+
+    async def go() -> dict[str, Any]:
+        await runtime.send('work')
+        await runtime.wait()
+        return next(event.data for event in runtime.hub.replay() if event.type == 'turn_finished')
+
+    finished = asyncio.run(go())
+
+    accepted = AcceptedInputs(runtime.composition.store.database)
+    assert finished['status'] == 'error', finished
+    assert [row.state for row in accepted.list(runtime.session.id)] == ['stopped']
+    assert accepted.has_open() is False
+
+
+def test_a_turn_that_says_nothing_says_once_that_it_is_still_waiting(
+    runtime: ServerRuntime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A slow model is legitimate; an invisible one is not.
+
+    The threshold is shortened, and the model is held on an event the test releases,
+    so the notice is measured without sleeping through it and without a real model.
+    """
+    from pydantic_ai import Agent
+    from pydantic_ai.messages import ModelMessage
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from src.server import runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, 'SLOW_TURN_NOTICE_SECONDS', 0.01)
+    release = asyncio.Event()
+
+    async def answer(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        await release.wait()
+        yield 'final answer'
+
+    runtime.composition.agent = Agent(FunctionModel(stream_function=answer), instructions='x')
+
+    async def go() -> tuple[int, list[str]]:
+        subscription = runtime.hub.subscribe()
+        try:
+            await runtime.send('hola')
+            while True:
+                event = await subscription.next(timeout=5)
+                assert event is not None, 'the service stopped publishing'
+                if event.type == 'notice' and 'still waiting' in str(event.data.get('text') or '').lower():
+                    break
+            release.set()
+            await asyncio.wait_for(runtime.wait(), 5)
+        finally:
+            subscription.close()
+        notices = [
+            str(event.data.get('text') or '')
+            for event in runtime.hub.replay()
+            if event.type == 'notice' and 'still waiting' in str(event.data.get('text') or '').lower()
+        ]
+        finished = [event for event in runtime.hub.replay() if event.type == 'turn_finished']
+        assert finished and finished[0].data['status'] == 'ok', finished
+        return len(notices), notices
+
+    count, notices = asyncio.run(go())
+
+    assert count == 1, notices
 
 
 def test_an_unconfigured_model_projects_an_unknown_image_capability() -> None:
