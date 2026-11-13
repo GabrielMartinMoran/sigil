@@ -206,7 +206,7 @@ decides how the facade is written.
 | --- | --- |
 | One session per process: `SessionStore.rebind`, `AgentTreeStore.bind`, `RoadmapStores.bind_session` | Many sessions; every command carries `session_id` and the `bind` methods disappear |
 | Closing the UI kills the turn | The turn survives the client; a client attaches to a turn in progress |
-| `ask_user` assumes someone is looking | A question with no client attached must have a policy: wait, or fail with a clear reason |
+| `ask_user` assumes someone is looking | A question has a deadline: `QUESTION_TIMEOUT_SECONDS`, overridable, after which it is withdrawn, the turn stops and the screen says why (see [the question deadline](#the-question-deadline)) |
 | One process, one writer | One writer per turn, many readers: a written rule, and a partial unique index in the schema (`turns_one_open`) |
 
 Those four are the reason the interface is worth doing; they are also the reason
@@ -955,9 +955,10 @@ silent `None`.
 - **Retrying.** `TurnRequest` generates the `request_id` on the client and keeps
   it, so retrying the same instance is the correct retry and a new instance is a
   new message. How many times to retry, and when, is the caller's.
-- **The question deadline.** A client that disappears still holds a question open,
-  as it does today; the timeout in the risks list is not solved by adding a
-  transport.
+
+The question deadline used to be on this list. It is not any more: a question now
+has a bound and a rule for what the user sees when it passes, documented under
+[the question deadline](#the-question-deadline).
 
 The tests live in `tests/test_ui_service_client.py`: unit tests for the protocol,
 ASGI contract tests for the routes, and scripted-transport tests for the stream.
@@ -982,7 +983,7 @@ own cut instead of half-moving all of them at once.
 | Streaming | `GET /events`, applied by `SigilApp.apply_service_event` | deltas, tool calls and results, turn boundaries, notices |
 | Steering | the same send, with the queued line marked until `steer_delivered` | the run reads it at its next seam, as before |
 | Stopping | `POST /api/abort`, after the same double `Esc` | the service kills the shells and cancels the run |
-| Questions | the same `QuestionPanel`, answered with `POST /api/answer` | the panel's keys and layout are unchanged |
+| Questions | the same `QuestionPanel`, answered with `POST /api/answer` | the panel's keys and layout are unchanged; a question counts as answered only once the service has taken the answer, and a failed send is offered again (see [the question deadline](#the-question-deadline)) |
 | Images | ordered `OutgoingImage`s with the `[Image #n]` marker | the picture that was attached is the one stored |
 | Reconnection | `events(after=last_event_id)`, then a state read | a gap is announced, never silently painted over |
 | Restart recovery | `ServiceClient.refresh_endpoint()` before the retry, then a fresh `/api/state` | the client re-discovers through the injected launcher, rebuilds its pool over the transport it was given, and restarts the cursor with the new run (see [When the service restarts](#when-the-service-restarts)) |
@@ -994,6 +995,47 @@ The dispatcher is not replaced any more. An earlier version swapped `handle_comm
 for a single refusal, which was honest about the missing senders and wrong about
 everything else: it refused `/theme` along with `/rollback`. The decision now comes
 from one table, read once, at the choke point every path goes through.
+
+### The question deadline
+
+A question is the one place the service waits on a person, and the wait is bounded.
+`src/server/runtime.py` holds the deadline as `QUESTION_TIMEOUT_SECONDS` (900 s, the
+same "someone will come back" as the idle window); `SIGIL_QUESTION_TIMEOUT` overrides
+it, and the `question_timeout=` argument of `ServerRuntime` is the seam tests use. A
+value that is not a positive number of seconds raises, naming the variable: a typo
+must not quietly leave the default in place.
+
+When the deadline passes, nothing is answered on the user's behalf. `_ask` resolves
+the waiting future with `None` — the value a cancellation already means — so
+`ask_user` takes the path it has always taken: it cancels the run, the turn ends where
+it stood, and `turn_finished` reports `cancelled`. The question itself is published as
+closed, and the person who comes back to the screen is told why:
+
+- `question_closed` carries `id` and `reason`. The reason is `answered` or `cancelled`
+  when a client resolved it, `timeout` when the deadline did, `closed` when the
+  process left with the question still open, and `withdrawn` when the turn stopped
+  first. A client that only needs the panel to stop asking reads `id`; the reason is
+  there for the one that wants to say what happened.
+- A `notice` with tone `warn` says the question went unanswered, that the turn
+  stopped, and that sending the message again continues. Without it the panel would
+  simply vanish, which reads as a bug rather than as a deadline.
+
+`ServerRuntime.close()` releases an open question with `reason='closed'` before
+anything else. `abort` and the turn's `finally` already did it on their paths; a
+graceful stop or a failing start did not, and the future left behind had a task
+awaiting it that no longer had a client.
+
+The terminal's half is a marking rule, and it lives in
+`SigilApp.answer_service_question`: a question is recorded in `_service_answered`
+**only after** `POST /api/answer` succeeds. A send that fails — a service that
+restarted, a connection that moved — shows `failure_notice(exc)` and returns without
+marking, and the claim on the panel is released in the `finally` so the next
+`/api/state`, or the reconnection, offers the same question again. Marking it on the
+way out instead would leave the service waiting out its deadline while the screen
+showed a prompt with nothing left to answer.
+
+Identity is the id (`q1`, `q2`, …), never the text: two questions asking the same
+words are two questions, and both can be open in one session's lifetime.
 
 ### Which commands run here
 

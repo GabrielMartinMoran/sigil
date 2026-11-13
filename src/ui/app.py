@@ -833,6 +833,13 @@ class SigilApp(
         The question stays claimed until the answer has been sent. Releasing it before
         that would let a state read taken in between offer the same question again, and
         two panels for one question is a screen asking the user to answer twice.
+
+        It is marked answered only once the service has taken the answer. A send that
+        fails — a service that restarted, a connection that moved — leaves the question
+        pending on the service, and a screen that recorded it as answered would never
+        offer it again: the turn would wait out its deadline while the user watched a
+        prompt that had nothing to answer. So the failure says so, the claim is
+        released, and the next state read offers the question again.
         """
         try:
             answers = await self.ask_question([_question_item(item) for item in raw])
@@ -849,12 +856,14 @@ class SigilApp(
             except ServiceClientError as exc:
                 await self.query_one(ChatLog).add_notice(f'✖ {failure_notice(exc)}', style='bold red')
                 return
+            self._service_answered.add(question_id)
             if not resolved:
                 # Answered elsewhere, or withdrawn when the turn ended: the state says
                 # which, and it is the only thing that knows.
                 await self.refresh_service_state()
         finally:
-            self._service_answered.add(question_id)
+            # Only the claim, never the record: whether this question was answered is
+            # decided above, by whether the service took it.
             self._service_question = None
 
     def _close_service_question(self, question_id: str) -> None:

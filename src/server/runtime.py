@@ -23,9 +23,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import os
 import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -85,6 +86,52 @@ Fifteen minutes: long enough that a user reading a long answer, or stepping away
 mid-thought, is not punished with a relaunch; short enough that a forgotten
 service does not outlive the day. ``--idle-grace`` overrides it.
 """
+
+QUESTION_TIMEOUT_SECONDS = 900.0
+"""Seconds a question waits for an answer before the turn is released.
+
+A question is the one place the server waits on a person, and until this deadline
+existed there was no bound on that wait: the turn was "busy" for ever, the service
+never went idle, and a browser that closed its tab left a process holding a session
+nobody could use. Fifteen minutes matches the idle window — the same "someone will
+come back" — and ``SIGIL_QUESTION_TIMEOUT`` or the ``question_timeout`` argument
+override it.
+"""
+
+QUESTION_TIMEOUT_ENV = 'SIGIL_QUESTION_TIMEOUT'
+"""Environment override for :data:`QUESTION_TIMEOUT_SECONDS`, in seconds."""
+
+
+def resolve_question_timeout(
+    value: float | None = None,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> float:
+    """The question deadline: the argument, then the environment, then the default.
+
+    Raises:
+        ValueError: when the configured value is not a positive number of seconds. A
+            typo has to be reported where it was made: falling back to the default
+            would hide a deadline the operator believes is set.
+    """
+    if value is not None:
+        return _checked_timeout(value, 'question_timeout')
+    source = os.environ if env is None else env
+    raw = source.get(QUESTION_TIMEOUT_ENV, '').strip()
+    if not raw:
+        return QUESTION_TIMEOUT_SECONDS
+    try:
+        seconds = float(raw)
+    except ValueError as exc:
+        raise ValueError(f'{QUESTION_TIMEOUT_ENV} must be a number of seconds; got {raw!r}') from exc
+    return _checked_timeout(seconds, QUESTION_TIMEOUT_ENV)
+
+
+def _checked_timeout(seconds: float, source: str) -> float:
+    """The deadline if it can bound a wait, refused loudly if it cannot."""
+    if not seconds > 0:
+        raise ValueError(f'{source} must be greater than zero seconds; got {seconds!r}')
+    return seconds
 
 
 PREVIEW_CHARS = 400
@@ -235,6 +282,7 @@ class ServerRuntime:
         *,
         require_ownership: bool = True,
         ownership: ServerOwnership | None = None,
+        question_timeout: float | None = None,
     ) -> None:
         self.composition = composition
         self.hub = hub
@@ -244,6 +292,10 @@ class ServerRuntime:
         self._run: Any = None
         self._pending_question: PendingQuestion | None = None
         self._question_ids = 0
+        # The deadline is resolved once, here: a question asked while the service
+        # runs cannot change how long it is allowed to wait. `question_timeout` is
+        # the testable seam, and the environment is the operator's.
+        self._question_timeout = resolve_question_timeout(question_timeout)
         self._last_checkpoint_at = 0.0
         self._turn_session: Any = None
 
@@ -857,7 +909,17 @@ class ServerRuntime:
     # --- questions -----------------------------------------------------------
 
     async def _ask(self, questions: list[QuestionItem]) -> list[QuestionAnswer] | None:
-        """Publishes the questions and waits for the browser to answer them."""
+        """Publishes the questions and waits for the browser to answer them.
+
+        The wait has a deadline. Until it did, the only way out of a question was an
+        answer: a browser that closed its tab, or a service whose client never
+        attached, left the turn holding the session for ever. When the deadline
+        passes the question is resolved with ``None`` — the value a cancellation
+        already means — so `ask_user` takes the path it has always taken: it cancels
+        the run, the turn ends where it stood, and the prompt comes back. No answer
+        is invented on the user's behalf; the fault of a person not being there is
+        not evidence of what they would have said.
+        """
         self._question_ids += 1
         pending = PendingQuestion(id=f'q{self._question_ids}', questions=questions)
         self._pending_question = pending
@@ -877,10 +939,40 @@ class ServerRuntime:
             ],
         )
         try:
-            return await pending.future
+            # `asyncio.wait` rather than `wait_for`: the latter cancels the future it
+            # was given on timeout, and a question that is withdrawn is not a question
+            # whose answer was cancelled. Nothing touches the future but `answer`.
+            done, _ = await asyncio.wait({pending.future}, timeout=self._question_timeout)
         except asyncio.CancelledError:
             self._pending_question = None
+            if not pending.future.done():
+                pending.future.cancel()
             raise
+        if pending.future in done:
+            return pending.future.result()
+        self._expire_question(pending)
+        return None
+
+    def _expire_question(self, pending: PendingQuestion) -> None:
+        """Withdraws a question nobody answered, visibly.
+
+        The client gets two events because they answer different needs: the close
+        retires the panel, which the id alone does, and the notice says why, which is
+        the part a person coming back to the screen cannot infer from an empty prompt.
+        """
+        if self._pending_question is pending:
+            self._pending_question = None
+        if not pending.future.done():
+            pending.future.set_result(None)
+        self.hub.publish('question_closed', id=pending.id, reason='timeout')
+        self.hub.publish(
+            'notice',
+            text=(
+                f'No answer to the question after {self._question_timeout:g} seconds, so it was withdrawn '
+                'and the turn stopped. What the agent asked is above; send your message again to continue.'
+            ),
+            tone='warn',
+        )
 
     def answer(self, question_id: str, answers: list[dict[str, Any]] | None) -> bool:
         """Resolves the pending question. ``None`` means the user cancelled."""
@@ -900,10 +992,10 @@ class ServerRuntime:
         self._pending_question = None
         if not pending.future.done():
             pending.future.set_result(parsed)
-        self.hub.publish('question_closed', id=question_id)
+        self.hub.publish('question_closed', id=question_id, reason='answered' if parsed is not None else 'cancelled')
         return True
 
-    def _resolve_question(self, answers: list[QuestionAnswer] | None) -> None:
+    def _resolve_question(self, answers: list[QuestionAnswer] | None, *, reason: str = 'withdrawn') -> None:
         """Releases a waiting question with nothing: the turn is not going to use it."""
         pending = self._pending_question
         if pending is None:
@@ -911,7 +1003,7 @@ class ServerRuntime:
         self._pending_question = None
         if not pending.future.done():
             pending.future.set_result(answers)
-        self.hub.publish('question_closed', id=pending.id)
+        self.hub.publish('question_closed', id=pending.id, reason=reason)
 
     @property
     def pending_question(self) -> PendingQuestion | None:
@@ -1204,7 +1296,15 @@ class ServerRuntime:
         marking it ``interrupted`` would be a lie the next run would act on. The
         lock is released last, so the store is never writable by a second process
         while this one is still closing.
+
+        A question still open here is released first. `abort` and the turn's own
+        `finally` do that on their paths, but a process that leaves while a question
+        waits — a graceful stop, a failing start — would otherwise leave a future
+        nobody will ever resolve, and the task awaiting it would be collected still
+        waiting. Closing it with nothing is the same value every other withdrawal
+        uses, so the caller takes the path it already knows.
         """
+        self._resolve_question(None, reason='closed')
         self._closing = True
         if self._consumer is not None and not self._consumer.done():
             try:

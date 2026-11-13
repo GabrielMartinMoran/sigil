@@ -208,6 +208,13 @@ class _ServiceTransport(httpx.AsyncBaseTransport):
         self.streams = 0
         self.cursors: list[int] = []
         self.cut_after_replay = False
+        self.answer_failure: Exception | None = None
+        """The failure `/api/answer` should raise, or ``None`` for the real route.
+
+        The route itself is the service's; what a test cannot get from it is a POST
+        that never arrives, which is the case the screen has to survive without
+        believing the question was answered.
+        """
         self.durable_reads = 0
         """How many times a screen asked for the durable rows.
 
@@ -220,6 +227,8 @@ class _ServiceTransport(httpx.AsyncBaseTransport):
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         if request.url.path == '/api/session/durable':
             self.durable_reads += 1
+        if request.url.path == '/api/answer' and self.answer_failure is not None:
+            raise self.answer_failure
         if request.url.path != '/events':
             return await self._inner.handle_async_request(request)
         self.streams += 1
@@ -570,6 +579,45 @@ def test_a_question_is_answered_through_the_client(composition: Composition, tmp
                 assert [answer.answer for answer in answers or []] == ['Recommended']
                 assert runtime.pending_question is None
                 assert await client.answer('q-does-not-exist', None) is False, 'a stale question is not retried'
+
+    asyncio.run(inner())
+
+
+def test_a_failed_answer_is_not_counted_as_answered(composition: Composition, tmp_path: Path) -> None:
+    """A POST that never arrived leaves the question pending, and it is offered again.
+
+    The send can fail for reasons the screen cannot fix — the service restarted, the
+    network moved — and the one thing it must not do is decide the question is over:
+    the service is still waiting, so the next state read has to offer it again.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await pilot.pause()
+                asked = asyncio.create_task(runtime.composition.question_hub.ask([_question()]))
+
+                await _until(pilot, lambda: app.query_one(QuestionPanel).display, what='the question panel')
+                identifier = str(runtime.pending_question.id if runtime.pending_question else '')
+                assert identifier
+                transport.answer_failure = httpx.ConnectError('the answer never left this process')
+
+                await pilot.press('enter')
+                await _until(pilot, lambda: 'No Sigil service answered' in _transcript(app), what='the failure notice')
+
+                assert identifier not in app._service_answered, 'a failed send must not mark the question answered'
+                assert runtime.pending_question is not None, 'the service is still waiting for the answer'
+
+                # The reconnection, or any state read, is what offers it again.
+                await app.refresh_service_state()
+                await _until(pilot, lambda: app.query_one(QuestionPanel).display, what='the question offered again')
+
+                transport.answer_failure = None
+                await pilot.press('enter')
+                answers = await asyncio.wait_for(asked, timeout=10)
+                assert [answer.answer for answer in answers or []] == ['Recommended']
+                assert runtime.pending_question is None
 
     asyncio.run(inner())
 

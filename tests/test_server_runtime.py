@@ -35,12 +35,20 @@ from src.engine.agents.tree.models.agent_node import AgentNode
 from src.engine.agents.tree.models.node_status import NodeStatus
 from src.engine.agents.tree.models.summon_error import SummonError
 from src.engine.bootstrap import Composition
+from src.engine.interaction.models.question_item import QuestionItem
+from src.engine.interaction.models.question_option import QuestionOption
 from src.engine.settings import load_settings
 from src.server.app import BodyLimitMiddleware, create_app
 from src.server.config import ServerConfig
 from src.server.events import EventHub
 from src.server.ownership import OwnershipError, ServerOwnership
-from src.server.runtime import ServerRuntime
+from src.server.runtime import (
+    QUESTION_TIMEOUT_ENV,
+    QUESTION_TIMEOUT_SECONDS,
+    PendingQuestion,
+    ServerRuntime,
+    resolve_question_timeout,
+)
 
 
 @pytest.fixture
@@ -188,6 +196,115 @@ def test_a_question_can_be_cancelled(runtime: ServerRuntime) -> None:
 
 def test_answering_an_unknown_question_is_reported(runtime: ServerRuntime) -> None:
     assert runtime.answer('nope', []) is False
+
+
+QUESTION_DEADLINE = 10.0
+"""How long a test waits for something that has to end by itself, not how long it takes.
+
+A turn released by the question deadline must finish on its own; this is the ceiling
+that turns "it hangs" into a failure instead of a suite that never returns.
+"""
+
+
+async def _await_pending(runtime: ServerRuntime) -> PendingQuestion:
+    """The question the runtime has just published, without a guessed sleep."""
+    for _ in range(1_000):
+        pending = runtime.pending_question
+        if pending is not None:
+            return pending
+        await asyncio.sleep(0)
+    raise AssertionError('the runtime never published its question')
+
+
+def _question_pair() -> list[QuestionItem]:
+    return [QuestionItem(question='¿Sigo?', options=[QuestionOption(label='si'), QuestionOption(label='no')])]
+
+
+def test_the_question_deadline_comes_from_the_argument_or_the_environment() -> None:
+    """The deadline is a named constant with two overrides, and a typo is not a default."""
+
+    assert resolve_question_timeout(env={}) == QUESTION_TIMEOUT_SECONDS
+    assert resolve_question_timeout(2.5) == 2.5
+    assert resolve_question_timeout(env={QUESTION_TIMEOUT_ENV: '7'}) == 7.0
+    with pytest.raises(ValueError, match=QUESTION_TIMEOUT_ENV):
+        resolve_question_timeout(env={QUESTION_TIMEOUT_ENV: 'soon'})
+    with pytest.raises(ValueError):
+        resolve_question_timeout(0)
+
+
+def test_a_question_nobody_answers_releases_the_turn(tmp_path: Path) -> None:
+    """A question with no client is a deadline, not a wait that never ends.
+
+    The turn is released with ``None`` — the value a cancellation already uses — so
+    `ask_user` cancels the run and the turn ends where it stood. Nothing is invented
+    on the user's behalf, and the events say which of the two it was.
+    """
+
+    async def go() -> None:
+        composition = Composition(
+            tmp_path,
+            settings=load_settings(),
+            # `ask_user` is the tool under test, so this model calls it and waits.
+            model=TestModel(custom_output_text='done', call_tools=['ask_user']),
+            provider_paths=_paths(tmp_path),
+        )
+        composition.meter.set_window(100_000)
+        # The deadline is injected: the test measures the release, not the wait.
+        runtime = ServerRuntime(composition, EventHub(), require_ownership=False, question_timeout=0.01)
+        try:
+            await runtime.send('hola')
+            await asyncio.wait_for(runtime.wait(), timeout=QUESTION_DEADLINE)
+
+            events = runtime.hub.replay()
+            closed = [event for event in events if event.type == 'question_closed']
+            notices = [str(event.data.get('text') or '') for event in events if event.type == 'notice']
+            finished = [event for event in events if event.type == 'turn_finished']
+            assert runtime.pending_question is None, 'an expired question stays published'
+            assert closed and closed[-1].data.get('reason') == 'timeout', closed
+            assert any('no answer' in text.lower() for text in notices), notices
+            assert finished and finished[-1].data.get('status') == 'cancelled', finished
+        finally:
+            runtime.close()
+
+    asyncio.run(go())
+
+
+def test_closing_with_a_question_open_releases_it(composition: Composition) -> None:
+    """A process that leaves with a question open must not leave a future behind it."""
+
+    runtime = ServerRuntime(composition, EventHub(), require_ownership=False)
+
+    async def go() -> None:
+        asked = asyncio.create_task(runtime.composition.question_hub.ask(_question_pair()))
+        pending = await _await_pending(runtime)
+        runtime.close()
+
+        assert await asyncio.wait_for(asked, timeout=QUESTION_DEADLINE) is None
+        assert pending.future.done(), 'the question was left waiting with no one to answer it'
+        closed = [event for event in runtime.hub.replay() if event.type == 'question_closed']
+        assert closed and closed[-1].data.get('reason') == 'closed', closed
+
+    asyncio.run(go())
+
+
+def test_two_questions_with_the_same_text_are_answered_apart(composition: Composition) -> None:
+    """The id is what identifies a question: the same words twice are two questions."""
+
+    runtime = ServerRuntime(composition, EventHub(), require_ownership=False)
+
+    async def ask_once(answer: str) -> str:
+        asked = asyncio.create_task(runtime.composition.question_hub.ask(_question_pair()))
+        pending = await _await_pending(runtime)
+        assert runtime.answer(pending.id, [{'question': '¿Sigo?', 'answer': answer}])
+        answers = await asyncio.wait_for(asked, timeout=QUESTION_DEADLINE)
+        assert answers is not None and answers[0].answer == answer
+        return pending.id
+
+    async def go() -> tuple[str, str]:
+        return await ask_once('si'), await ask_once('no')
+
+    first, second = asyncio.run(go())
+    assert first != second
 
 
 def test_new_session_and_open_session_round_trip(runtime: ServerRuntime) -> None:
