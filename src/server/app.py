@@ -100,6 +100,14 @@ for everything again, and the route would be as expensive as it was before it
 paged.
 """
 
+BACKEND_NOTICE = 'This is the Sigil backend; run `sigil serve` for the web client.'
+"""What `GET /` answers when the bundle is not part of this surface.
+
+A bare 404 is what a browser shows when a URL is wrong; this URL is right, and the
+sentence names the command that serves the page. The backend is not a broken web
+server — it is a different surface.
+"""
+
 
 class _BodyTooLarge(BaseException):
     """The body of the request passed `MAX_COMMAND_BYTES` while it was being read.
@@ -480,6 +488,13 @@ def create_app(
     The runtime is passed in rather than built here so a test can hand over one with
     a stub model and assert on the routes without a workspace or a network.
 
+    ``config.web`` selects the surface, so there is one source of truth for it: with
+    it, `web/dist` is mounted and `/api/login` exchanges the password for a cookie;
+    without it, the app is the API alone — token authentication, no page, no login
+    route. ``dist`` overrides where the bundle is read from, which is what a test
+    uses to point at a directory that does or does not exist; it is ignored when the
+    surface has no web client.
+
     ``publisher`` is the file a local client reads to find this service. It is
     published from the lifespan below and removed when the lifespan ends, because
     the lifespan is the only hook that runs *after* the listening socket exists and
@@ -496,7 +511,10 @@ def create_app(
     auth = Auth(config.password, service_token=publisher.token if publisher is not None else None)
     throttle = LoginThrottle()
     hub = runtime.hub
-    assets = dist if dist is not None else dist_root()
+    # `None` is not "no bundle found", it is "this surface has no bundle": the API
+    # has no page, no assets and no login form, and `dist` is ignored rather than
+    # mounted by accident.
+    assets = (dist if dist is not None else dist_root()) if config.web else None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -573,43 +591,56 @@ def create_app(
 
     @app.get('/api/status')
     async def status() -> dict[str, Any]:
-        """Unauthenticated: enough for the login page to say what it is talking to."""
+        """Unauthenticated: enough for a client to say what it is talking to.
+
+        The bundle section belongs to the surface that serves one. A backend that
+        reported on `web/dist` would be describing a file it never reads.
+        """
+        if assets is None:
+            return {'version': app.version, 'authenticated': False, 'web': False}
         state = staleness(assets.parent if dist is not None else None)
         return {
             'version': app.version,
             'authenticated': False,
+            'web': True,
             'bundle': {'stale': state.stale, 'reason': state.reason},
         }
 
-    @app.post('/api/login')
-    async def login(body: LoginBody, request: Request, response: Response) -> JSONResponse:
-        """Exchanges the password for a signed cookie."""
-        key = client_key(request.scope)
-        blocked = throttle.blocked_for(key)
-        if blocked > 0:
-            return JSONResponse(
-                {'error': f'Too many attempts. Try again in {blocked:.0f}s.'},
-                status_code=429,
-                headers={'retry-after': str(int(blocked) + 1)},
-            )
-        if not auth.check_password(body.password):
-            throttle.record_failure(key)
-            delay = throttle.delay_for(key)
-            if delay:
-                await asyncio.sleep(delay)
-            return JSONResponse({'error': 'Wrong password.'}, status_code=401)
-        throttle.reset(key)
-        token = auth.issue()
-        secure = request.url.scheme == 'https'
-        response = JSONResponse({'ok': True})
-        response.headers['set-cookie'] = session_cookie(auth, token, secure=secure)
-        return response
+    if config.web:
 
-    @app.post('/api/logout')
-    async def logout() -> JSONResponse:
-        response = JSONResponse({'ok': True})
-        response.headers['set-cookie'] = cleared_cookie(auth)
-        return response
+        @app.post('/api/login')
+        async def login(body: LoginBody, request: Request) -> JSONResponse:
+            """Exchanges the password for a signed cookie.
+
+            Registered only on `sigil serve`: the API surface has no password and no
+            browser, so there is nothing to exchange and no route to guess.
+            """
+            key = client_key(request.scope)
+            blocked = throttle.blocked_for(key)
+            if blocked > 0:
+                return JSONResponse(
+                    {'error': f'Too many attempts. Try again in {blocked:.0f}s.'},
+                    status_code=429,
+                    headers={'retry-after': str(int(blocked) + 1)},
+                )
+            if not auth.check_password(body.password):
+                throttle.record_failure(key)
+                delay = throttle.delay_for(key)
+                if delay:
+                    await asyncio.sleep(delay)
+                return JSONResponse({'error': 'Wrong password.'}, status_code=401)
+            throttle.reset(key)
+            token = auth.issue()
+            secure = request.url.scheme == 'https'
+            response = JSONResponse({'ok': True})
+            response.headers['set-cookie'] = session_cookie(auth, token, secure=secure)
+            return response
+
+        @app.post('/api/logout')
+        async def logout() -> JSONResponse:
+            response = JSONResponse({'ok': True})
+            response.headers['set-cookie'] = cleared_cookie(auth)
+            return response
 
     # --- state ---------------------------------------------------------
 
@@ -1192,7 +1223,14 @@ def create_app(
 
     # --- the client ----------------------------------------------------
 
-    if assets.is_dir():
+    if assets is None:
+
+        @app.get('/')
+        async def index_backend() -> Response:
+            """The API has no page, and says so instead of answering a mute 404."""
+            return JSONResponse({'service': 'sigil backend', 'web': False, 'message': BACKEND_NOTICE})
+
+    elif assets.is_dir():
         app.mount('/static', StaticFiles(directory=assets / 'assets'), name='static')
 
         @app.get('/')

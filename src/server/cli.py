@@ -1,12 +1,21 @@
-"""`sigil server`: the terminal-facing entry point of the web server.
+"""`sigil server` and `sigil serve`: the terminal-facing entry point of the web server.
+
+Two surfaces, one process:
+
+- **`sigil server`** is the API alone. No bundle is mounted, no login route exists and
+  no password is invented — local clients authenticate with the token the endpoint
+  file publishes. A browser that opens `/` is told which command serves the page.
+- **`sigil serve`** is the same API plus the web client: `web/dist` is mounted, `/`
+  and `/static` are served, and the password gate is in front of `/api/*`.
 
 What this file owns:
 
-- **Arguments.** `--host` and `--port` for the bind, `--password` for a throwaway
-  secret, `--rebuild-ui` for the one case where Node is available and wanted.
-- **The order of the checks.** The bundle is verified before the socket opens: a
-  server that starts and then serves a 503 is worse than one that refuses to start
-  and says which command fixes it.
+- **Arguments.** `--host` and `--port` for the bind, `--workspace` and `--idle-grace`
+  for the engine; `--password` and `--rebuild-ui` exist only on `sigil serve`, because
+  they are things only the web client needs.
+- **The order of the checks.** On `serve`, the bundle is verified before the socket
+  opens: a server that starts and then serves a 503 is worse than one that refuses to
+  start and says which command fixes it. `server` makes no such check.
 - **The socket, before uvicorn.** `listening_socket` binds and listens here, and
   uvicorn is handed the finished socket. The reason is the endpoint file: uvicorn
   starts the application's lifespan *before* it creates a listening socket of its
@@ -100,22 +109,34 @@ def idle_grace(value: str) -> float:
     return seconds
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(web: bool = True) -> argparse.ArgumentParser:
+    """The flags of one surface. `serve` gets the two the web client needs.
+
+    ``--password`` and ``--rebuild-ui`` are absent, not ignored, on the backend: a
+    flag that exists but does nothing is a promise the process does not keep, and a
+    password flag on an API with no login form is exactly that.
+    """
+    serve = 'serve' if web else 'server'
     parser = argparse.ArgumentParser(
-        prog='sigil server',
-        description='Serves the Sigil web client over HTTP, with a password gate.',
+        prog=f'sigil {serve}',
+        description=(
+            'Serves the Sigil API and the web client, with a password gate.'
+            if web
+            else 'Serves the Sigil API for local clients, without the web client.'
+        ),
     )
     parser.add_argument('--host', help='address to bind (default 127.0.0.1; 0.0.0.0 for the LAN)')
     parser.add_argument('--port', type=int, help='port to bind (default 8760)')
-    parser.add_argument(
-        '--password',
-        help=f'password for this run, not stored (the {PASSWORD_ENV} variable is the persistent one)',
-    )
-    parser.add_argument(
-        '--rebuild-ui',
-        action='store_true',
-        help='rebuild web/dist from web/ before serving (needs Node)',
-    )
+    if web:
+        parser.add_argument(
+            '--password',
+            help=f'password for this run, not stored (the {PASSWORD_ENV} variable is the persistent one)',
+        )
+        parser.add_argument(
+            '--rebuild-ui',
+            action='store_true',
+            help='rebuild web/dist from web/ before serving (needs Node)',
+        )
     parser.add_argument('--workspace', help='directory to open, instead of the current one')
     parser.add_argument(
         '--idle-grace',
@@ -131,32 +152,38 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run(argv: list[str] | None = None) -> int:
-    """Starts the server. Returns the process exit code."""
-    args = build_parser().parse_args(argv)
+def run(argv: list[str] | None = None, *, web: bool = True) -> int:
+    """Starts the server. Returns the process exit code.
+
+    ``web`` selects the surface: ``False`` is the API alone (`sigil server`), ``True``
+    adds the bundle, the login route and the password (`sigil serve`).
+    """
+    args = build_parser(web).parse_args(argv)
+    program = 'sigil serve' if web else 'sigil server'
 
     # `.env` first, for the same reason the terminal client does it: the password can
     # live there, and reading it after the config would make it invisible.
     load_dotenv()
 
     try:
-        config = resolve_config(host=args.host, port=args.port, password=args.password)
+        config = resolve_config(host=args.host, port=args.port, password=args.password, web=web)
     except ServerConfigError as exc:
-        print(f'sigil server: {exc}', file=sys.stderr)
+        print(f'{program}: {exc}', file=sys.stderr)
         return 2
 
-    if args.rebuild_ui:
+    if web and args.rebuild_ui:
         try:
             built = webbuild.build()
         except webbuild.BuildError as exc:
-            print(f'sigil server: {exc}', file=sys.stderr)
+            print(f'{program}: {exc}', file=sys.stderr)
             return 2
-        print(f'sigil server: web client rebuilt ({built})')
+        print(f'{program}: web client rebuilt ({built})')
 
-    state = webbuild.staleness()
-    if state.stale:
-        print(f'sigil server: {state.message()}', file=sys.stderr)
-        return 2
+    if web:
+        state = webbuild.staleness()
+        if state.stale:
+            print(f'{program}: {state.message()}', file=sys.stderr)
+            return 2
 
     # Imported here: uvicorn pulls in a lot, and `--help` should not pay for it.
     import uvicorn
@@ -175,7 +202,7 @@ def run(argv: list[str] | None = None) -> int:
     try:
         ownership.acquire()
     except OwnershipError as exc:
-        print(f'sigil server: {exc}', file=sys.stderr)
+        print(f'{program}: {exc}', file=sys.stderr)
         return 2
 
     try:
@@ -209,7 +236,7 @@ def run(argv: list[str] | None = None) -> int:
         try:
             sock = listening_socket(config.host, config.port)
         except OSError as exc:
-            print(f'sigil server: cannot listen on {config.host}:{config.port}: {exc}', file=sys.stderr)
+            print(f'{program}: cannot listen on {config.host}:{config.port}: {exc}', file=sys.stderr)
             return 2
 
         print(banner(config), flush=True)

@@ -367,6 +367,89 @@ def test_the_bundle_missing_is_a_503_and_not_a_crash(tmp_path: Path, composition
     assert 'not built' in response.text
 
 
+def _bundle(tmp_path: Path) -> Path:
+    """A `dist` with the two things `serve` mounts: the page and one asset."""
+    dist = tmp_path / 'dist'
+    (dist / 'assets').mkdir(parents=True)
+    (dist / 'index.html').write_text('<html>the web client</html>', encoding='utf-8')
+    (dist / 'assets' / 'app.js').write_text('console.log("client")', encoding='utf-8')
+    return dist
+
+
+def test_the_api_backend_serves_no_client_and_no_login(tmp_path: Path, composition: Composition) -> None:
+    """`sigil server` is the API alone: a bundle on disk changes nothing.
+
+    The bundle is deliberately real and passed in, because the assertion is that it
+    is *not* mounted. `/` answers with the sentence that names the command a browser
+    visitor should run, instead of a 404 that says nothing.
+    """
+    from fastapi.testclient import TestClient
+
+    from src.server.app import create_app
+    from src.server.config import resolve_config
+
+    runtime = ServerRuntime(composition, EventHub())
+    config = resolve_config(host='127.0.0.1', port=8760, env={}, web=False)
+    client = TestClient(create_app(runtime, config, dist=_bundle(tmp_path)))
+
+    root = client.get('/')
+    assert root.status_code == 200
+    assert 'sigil serve' in root.text
+    assert 'text/html' not in root.headers['content-type']
+
+    assert client.get('/static/assets/app.js').status_code == 404
+    assert client.get('/assets/app.js').status_code == 404
+    assert client.post('/api/login', json={'password': 'anything'}).status_code == 404
+
+
+def test_serve_mounts_the_client_and_asks_for_the_password(tmp_path: Path, composition: Composition) -> None:
+    """`sigil serve` is the same process plus the page, and the page is behind a password."""
+    from fastapi.testclient import TestClient
+
+    from src.server.app import create_app
+    from src.server.config import PASSWORD_ENV, resolve_config
+
+    runtime = ServerRuntime(composition, EventHub())
+    config = resolve_config(host='127.0.0.1', port=8760, env={PASSWORD_ENV: 'secret-pass'})
+    client = TestClient(create_app(runtime, config, dist=_bundle(tmp_path)))
+
+    assert config.web is True
+    page = client.get('/')
+    assert page.status_code == 200
+    assert 'the web client' in page.text
+    assert client.get('/static/app.js').status_code == 200
+
+    assert client.get('/api/state').status_code == 401
+    assert client.post('/api/login', json={'password': 'secret-pass'}).status_code == 200
+    assert client.get('/api/state').status_code == 200
+
+
+def test_the_backend_accepts_the_endpoint_token_for_a_turn(tmp_path: Path, runtime: ServerRuntime) -> None:
+    """The API surface is still the whole API: the token opens `/api/turn`."""
+    from src.server.app import create_app
+    from src.server.config import resolve_config
+    from src.server.endpoint import EndpointPublisher
+
+    publisher = EndpointPublisher(path=tmp_path / 'service' / 'endpoint.json')
+    app = create_app(
+        runtime,
+        resolve_config(host='127.0.0.1', port=8760, env={}, web=False),
+        dist=tmp_path / 'missing',
+        publisher=publisher,
+    )
+    bearer = {'Authorization': f'Bearer {publisher.token}'}
+
+    async def go() -> tuple[int, int]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url='http://sigil.test') as client:
+            refused = await client.post('/api/turn', json={'text': 'hello'})
+            accepted = await client.post('/api/turn', json={'text': 'hello'}, headers=bearer)
+            await runtime.wait()
+            return refused.status_code, accepted.status_code
+
+    assert asyncio.run(go()) == (401, 200)
+
+
 def test_logout_clears_the_cookie(tmp_path: Path, composition: Composition) -> None:
     from fastapi.testclient import TestClient
 

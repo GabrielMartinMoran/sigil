@@ -563,6 +563,18 @@ def test_the_default_command_re_executes_this_interpreter_and_main_py() -> None:
     assert command.env is None
 
 
+def test_the_default_command_starts_the_api_backend_without_the_web_client() -> None:
+    """The TUI launches the API: no bundle to check, no password to print, no page.
+
+    `server` is the backend surface, so a web flag here would publish a password the
+    terminal never shows and mount a client nobody asked for.
+    """
+    command = default_command()
+
+    assert command.argv[2] == 'server'
+    assert not any(flag in command.argv for flag in ('--password', '--rebuild-ui'))
+
+
 # --- the launcher, with real processes ------------------------------------
 
 

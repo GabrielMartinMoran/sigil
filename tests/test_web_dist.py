@@ -1,10 +1,13 @@
 """The committed web bundle: the hash, the guard, and the duplicación in Node.
 
-`web/dist` is committed so `sigil server` needs no Node, which makes one bug
+`web/dist` is committed so `sigil serve` needs no Node, which makes one bug
 possible: sources change, the bundle does not. The guard is a hash, and a hash is
 only worth anything if the two implementations agree. These tests pin the recipe,
 compare it with `web/scripts/source-hash.mjs` when Node exists, and check that the
 bundle in the repository is the one the sources produce.
+
+One thing the bundle is *not*: a requirement of `sigil server`. That surface is the
+API alone, so its parser has no web flag and its configuration invents no password.
 """
 
 from __future__ import annotations
@@ -154,3 +157,23 @@ def test_the_module_entry_point_reports_exit_codes(capsys: pytest.CaptureFixture
     assert capsys.readouterr().out.strip() == webbuild.source_hash()
     assert webbuild._main(['--json']) == 0
     assert '"stale": false' in capsys.readouterr().out
+
+
+def test_the_api_backend_needs_neither_a_password_nor_a_bundle() -> None:
+    """`serve` is the only surface that can invent a password or ask for the bundle."""
+    from src.server.cli import build_parser, describe
+    from src.server.config import PASSWORD_ENV, resolve_config
+
+    parser = build_parser(web=False)
+    for flag in (['--password', 'x'], ['--rebuild-ui']):
+        with pytest.raises(SystemExit):
+            parser.parse_args(flag)
+
+    config = resolve_config(web=False, env={PASSWORD_ENV: 'a-password-for-the-web-client'})
+
+    assert config.web is False
+    assert config.password == ''
+    assert config.generated is False
+    # The configured secret is ignored and never printed: there is no login to use it.
+    assert 'a-password-for-the-web-client' not in describe(config)
+    assert describe(config).startswith('Sigil backend')

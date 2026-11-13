@@ -1,10 +1,16 @@
-"""Where the web server listens, and the password that guards it.
+"""Where the server listens, and the password that guards the web client.
 
-The password is a secret of the deployment, not of the conversation: it is read
-from `SIGIL_SERVER_PASSWORD` and never written to the project. When the variable
-is missing one is generated, printed once on the terminal that started the
-server, and used for that process only — so an accidental `sigil server` on a
-laptop is protected by default instead of open to the local network.
+There are two surfaces, and only one of them has a password:
+
+- **The API** (`sigil server`): local clients authenticate with the token the
+  endpoint file publishes. No browser is involved, so there is nothing to type a
+  password into, and none is invented.
+- **The API plus the web client** (`sigil serve`): the password is a secret of the
+  deployment, not of the conversation. It is read from `SIGIL_SERVER_PASSWORD` and
+  never written to the project. When the variable is missing one is generated,
+  printed once on the terminal that started the server, and used for that process
+  only — so an accidental `sigil serve` on a laptop is protected by default
+  instead of open to the local network.
 
 Generated and configured are announced differently on purpose: the first is a
 one-time credential the user has to copy, the second is a reminder that the
@@ -68,6 +74,13 @@ class ServerConfig:
     machine, a static host. Never ``*``: a wildcard with cookies is refused by browsers.
     """
 
+    web: bool = True
+    """Whether the web client is part of this surface.
+
+    ``False`` is the API alone: no bundle is mounted, no login route exists and no
+    password is invented or read. Only ``True`` — `sigil serve` — can ask for one.
+    """
+
     @property
     def local_url(self) -> str:
         """The URL to paste in a browser when the server binds to this machine."""
@@ -95,8 +108,12 @@ def resolve_config(
     port: int | str | None = None,
     password: str | None = None,
     env: Mapping[str, str] | None = None,
+    web: bool = True,
 ) -> ServerConfig:
     """Builds the configuration: explicit arguments, then the environment, then a default.
+
+    ``web=False`` is the API-only surface: the password is neither read nor invented,
+    because the only credential there is the token in the endpoint file.
 
     Raises:
         ServerConfigError: When the port is not a port, or a configured password is
@@ -108,6 +125,17 @@ def resolve_config(
 
     raw_port: int | str | None = port if port is not None else source.get(PORT_ENV)
     resolved_port = _parse_port(raw_port)
+    origins = _parse_origins(source.get(ORIGINS_ENV))
+
+    if not web:
+        # Ignored on purpose, not just unset: an exported password must not turn the
+        # backend into something that prints a secret or accepts a login.
+        return ServerConfig(
+            host=resolved_host,
+            port=resolved_port,
+            web=False,
+            origins=origins,
+        )
 
     given = password if password is not None else source.get(PASSWORD_ENV)
     if given is None or not given.strip():
@@ -116,7 +144,7 @@ def resolve_config(
             port=resolved_port,
             password=generate_password(),
             generated=True,
-            origins=_parse_origins(source.get(ORIGINS_ENV)),
+            origins=origins,
         )
     cleaned = given.strip()
     if not cleaned:
@@ -131,7 +159,7 @@ def resolve_config(
         password=cleaned,
         generated=False,
         weak=len(cleaned) < PASSWORD_MIN_CHARS,
-        origins=_parse_origins(source.get(ORIGINS_ENV)),
+        origins=origins,
     )
 
 
@@ -170,13 +198,25 @@ def _parse_port(value: int | str | None) -> int:
 def banner(config: ServerConfig) -> str:
     """What the terminal says before the server starts accepting connections.
 
-    It is the only copy of a generated password, so it names the variable that
-    replaces it: a user who wants a stable secret has to know where it lives.
+    For the web surface it is the only copy of a generated password, so it names the
+    variable that replaces it: a user who wants a stable secret has to know where it
+    lives. The API surface has no password to print, and says where the token is
+    instead.
     """
-    lines = ['Sigil web server', f'  listening : {config.local_url}']
+    title = 'Sigil web server' if config.web else 'Sigil backend (API only)'
+    lines = [title, f'  listening : {config.local_url}']
     if config.host not in {'127.0.0.1', 'localhost', '::1'}:
         lines.append(f'  bind      : {config.host} (reachable from the network)')
-    if config.generated:
+    if not config.web:
+        lines.extend(
+            [
+                '  password  : none — local clients use the endpoint token',
+                '',
+                '  The web client is not mounted and there is no login form.',
+                '  Run `sigil serve` to also serve it, behind a password.',
+            ]
+        )
+    elif config.generated:
         lines.extend(
             [
                 '  password  : ' + config.password,

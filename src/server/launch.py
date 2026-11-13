@@ -323,7 +323,13 @@ def spawn_server(command: LaunchCommand) -> Child:
 
 
 def default_command(*, workspace: Path | None = None, entry: Path | None = None) -> LaunchCommand:
-    """``python main.py server`` from this checkout.
+    """``python main.py server`` from this checkout: the API, without the web client.
+
+    `server` is the backend surface on purpose. The terminal attaches to the API, and
+    it is the one client that does not need a page: launching `serve` instead would
+    mount `web/dist` and generate a password that the terminal never shows, printed
+    into the anonymous file the child's output goes to. So there is no ``--password``
+    and no ``--rebuild-ui`` here — neither flag exists on that subcommand.
 
     A re-exec of the running interpreter, not the ``sigil`` wrapper: the wrapper
     exists to find the checkout from wherever a human is standing, and this process

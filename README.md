@@ -42,6 +42,30 @@ and `scout`, and dropping a `wizard.md` there takes over the name.
 > projects, export them in your shell, or put them in a `.env` on the path upward
 > from the Sigil directory (`~/.env`, for example, when Sigil lives under your home).
 
+### The web client, when you ask for it
+
+`sigil` on its own runs the terminal client. The HTTP API is a subcommand, and the
+page is a second one:
+
+```bash
+sigil server           # the API alone, for local clients with the endpoint token
+sigil serve            # the same API plus web/dist, behind a password
+```
+
+`sigil server` mounts no bundle, has no `/api/login` and invents no password: a
+browser that opens it gets one JSON sentence naming `sigil serve`. It is the
+surface the terminal launches when it needs a backend, so a TUI run never
+publishes a page with a password nobody sees.
+
+`sigil serve` serves `/`, `/static` and the login form, prints the password it
+generated (or reads `SIGIL_SERVER_PASSWORD`), and refuses to start when the
+committed bundle is stale.
+
+Both take the same database lock, so only one can own a workspace at a time.
+`sigil serve` next to a running backend fails with the lock message instead of
+attaching: the process that owns the store has to end first, and idle shutdown is
+what ends it when there is no work left.
+
 ## Working with agents
 
 Sigil's behaviour is set by an **agent profile**: a Markdown file whose
