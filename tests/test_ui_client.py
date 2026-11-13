@@ -28,6 +28,8 @@ import asyncio
 import base64
 import io
 import json
+import os
+import subprocess
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -54,9 +56,11 @@ from src.server.endpoint import Endpoint, EndpointPublisher
 from src.server.events import Event, EventHub
 from src.server.launch import Launch
 from src.server.runtime import ServerRuntime
+from src.ui import command_transport
 from src.ui.app import SigilApp
-from src.ui.command_transport import TRANSPORT, TransportState
-from src.ui.commands_mixin import render_service_context
+from src.ui.command_transport import TRANSPORT, Transport, TransportState
+from src.ui.commands_mixin import BUSY_UNKNOWN, render_service_context
+from src.ui.rollback_mixin import _turn_for_seq
 from src.ui.service_client import (
     OutgoingImage,
     PayloadTooLarge,
@@ -100,6 +104,7 @@ def _composition(
     *,
     call_tools: tuple[str, ...] = (),
     mcp_servers: dict[str, Any] | None = None,
+    root: Path | None = None,
 ) -> Composition:
     """A real composition with one configured account and a scripted model.
 
@@ -111,6 +116,10 @@ def _composition(
     `config_paths()` otherwise falls back to `~/.sigil/config.json`, and the
     serving runtime now installs the layer on the first turn: unpinned, a test
     would start whatever servers the machine happens to have configured.
+
+    ``root`` is the workspace the engine runs in, when it is not the test's own
+    directory: cutting a worktree needs a git repository, and a test that only
+    needs one builds the composition inside it.
     """
     config = tmp_path / '.sigil' / 'config.json'
     config.parent.mkdir(parents=True, exist_ok=True)
@@ -121,7 +130,7 @@ def _composition(
     monkeypatch.setattr('src.engine.bootstrap.build_service', lambda *args, **kwargs: service)
     write_profile(tmp_path / '.sigil' / 'agents', 'reviewer', description='Reviews code.')
     composition = Composition(
-        tmp_path,
+        root or tmp_path,
         settings=load_settings(),
         model=TestModel(custom_output_text='done', call_tools=list(call_tools)),
         provider_paths=ProviderPaths(tmp_path / 'providers'),
@@ -381,6 +390,28 @@ def test_every_refusal_is_a_sentence_that_names_the_way_out() -> None:
 @pytest.fixture
 def composition(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Composition:
     return _composition(tmp_path, monkeypatch)
+
+
+def _git(root: Path, *args: str) -> None:
+    """One git command with an identity of its own, so no test depends on the user's."""
+    subprocess.run(
+        ['git', '-c', 'user.email=test@example.com', '-c', 'user.name=Test', *args],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+
+
+@pytest.fixture
+def repo(tmp_path: Path) -> Path:
+    """A repository with one commit, so a worktree has a HEAD to branch from."""
+    root = tmp_path / 'project'
+    root.mkdir()
+    _git(root, 'init', '-q')
+    (root / 'README.md').write_text('hello\n', encoding='utf-8')
+    _git(root, 'add', '.')
+    _git(root, 'commit', '-q', '-m', 'init')
+    return root
 
 
 @pytest.fixture
@@ -651,6 +682,17 @@ def test_a_pending_input_is_painted_once_and_leaves_when_confirmed(composition: 
     async def inner() -> None:
         async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
             await _seed_turn(runtime, client, 'earlier question')
+            # Nothing may claim the row while the renderer paints it. A steer the
+            # runtime finds with no run to hand it to becomes `stopped` on purpose,
+            # and the consumer looks every `QUEUE_POLL_INTERVAL` — so leaving that
+            # loop running makes the test race a timer, and it loses under load with
+            # the waiting line gone before the first read can paint it. Stopping the
+            # consumer turns "still queued" into a state the test sets.
+            consumer = runtime._consumer
+            assert consumer is not None, 'the seed above starts the consumer'
+            consumer.cancel()
+            await asyncio.gather(consumer, return_exceptions=True)
+            assert consumer.cancelled(), 'a consumer still running would stop the seeded steer'
             # The id comes from the same factory the composer uses: the queue requires a
             # canonical UUIDv4, and reusing `TurnRequest` means the seed cannot drift
             # from what a real send writes.
@@ -900,19 +942,39 @@ def test_a_client_command_runs_here_and_writes_nothing(name: str, composition: C
     asyncio.run(inner())
 
 
-REFUSED = [row.name for row in TRANSPORT if row.state in {TransportState.NOT_WIRED, TransportState.BLOCKED}]
-"""The rows with no way out: these are the ones that answer with one notice.
+BLOCKED_PROBE = Transport(
+    name='/probe',
+    owner=CommandOwner.CORE,
+    state=TransportState.BLOCKED,
+    reason='the service has no endpoint for it, so there is nothing to wire to.',
+)
+"""A row that exists only in this file, because the table has no such row any more.
 
-A `delegated` row is not in this list any more, and it should not be: it has a
-sender, so refusing it would be the dispatcher ignoring its own table. The four
-of them are exercised by the tests at the end of this file, which read the
-service afterwards.
+Every command the catalogue declares is now served: the eight client ones run here
+and the rest are delegated. The refusal stays a live decision all the same — the
+table has to be total, and a row that cannot act must answer with one sentence
+instead of borrowing another — so the sentence is proven on a row built for it
+rather than left to a future regression.
 """
 
+REFUSED: tuple[Transport, ...] = (
+    *[row for row in TRANSPORT if row.state in {TransportState.NOT_WIRED, TransportState.BLOCKED}],
+    BLOCKED_PROBE,
+)
+"""The rows with no way out, and the synthetic one the table no longer has.
 
-@pytest.mark.parametrize('name', REFUSED)
+An empty list here is not an empty test: `parametrize` turns it into a silent
+skip, which is how this proof once disappeared. The probe keeps the parameter set
+real without a second list that could drift from the table, and the assertion
+below is what makes a future empty set fail loudly instead of quietly.
+"""
+
+assert REFUSED, 'the refusal test must not become an empty parameter set: pytest skips those silently'
+
+
+@pytest.mark.parametrize('row', REFUSED, ids=[row.name for row in REFUSED])
 def test_a_core_command_says_who_serves_it_and_leaves_the_screen_alone(
-    name: str, composition: Composition, tmp_path: Path
+    row: Transport, composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A core command this terminal cannot reach is one sentence, not a failure.
 
@@ -921,7 +983,13 @@ def test_a_core_command_says_who_serves_it_and_leaves_the_screen_alone(
     and the command is supposed to add exactly one. `screen_stack` catches the
     panel a handler would have pushed; the durable rows catch the write a handler
     would have made.
+
+    The probe row is injected into the table here, because the answer under test is
+    the dispatcher's reading of a row: a synthetic row that never reaches
+    `transport_for` would prove the sentence and not the decision.
     """
+    name = row.name
+    monkeypatch.setitem(command_transport._BY_NAME, name, row)
 
     async def inner() -> None:
         async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
@@ -1231,12 +1299,19 @@ def test_a_restart_does_not_inherit_the_old_cursor_so_no_event_of_the_new_run_is
                     scripted.dead = True
                     scripted.streams[FIRST_RUN.host].end()
 
+                    # Both events, not just the first. The loop applies one event per
+                    # await, so a predicate the first event satisfies returns while the
+                    # second is still in the pipe, and the assertion after it races the
+                    # stream — which is how this test failed twice in thirty runs. The
+                    # fact it wants is "the new run was replayed whole", and both lines
+                    # on screen is that fact.
                     await _until(
                         pilot,
-                        lambda: 'the new run, event 1' in _transcript(app),
-                        what='the first event of the new run',
+                        lambda: (
+                            'the new run, event 1' in _transcript(app) and 'the new run, event 2' in _transcript(app)
+                        ),
+                        what='both events of the new run',
                     )
-                    assert 'the new run, event 2' in _transcript(app), 'the event after it too'
                     assert app._service_cursor == 2, 'the screen is on the new run, not ahead of it'
                     assert scripted.cursors[-1] == (SECOND_RUN.host, 0), 'the new stream starts at the new state'
                     assert [cursor for host, cursor in scripted.cursors if host == SECOND_RUN.host] == [0]
@@ -1418,7 +1493,7 @@ def test_a_refused_effort_change_says_why_and_changes_nothing(composition: Compo
                     await pilot.pause()
 
                 assert runtime.composition.model_service.snapshot().thinking == before
-                assert 'A turn is in progress' in _transcript(app)
+                assert 'A turn is running' in _transcript(app)
 
     asyncio.run(inner())
 
@@ -1516,24 +1591,78 @@ def test_new_creates_the_session_in_the_service(composition: Composition, tmp_pa
     asyncio.run(inner())
 
 
-def test_new_with_a_worktree_says_it_is_not_supported(composition: Composition, tmp_path: Path) -> None:
-    """The honest answer: no session, no worktree cut, no pretending."""
+def test_new_with_a_worktree_cuts_it_in_the_service_and_starts_the_session_there(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, repo: Path
+) -> None:
+    """`/new --worktree` is the service's tree and the service's session.
 
-    async def inner() -> None:
-        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
-            app = _terminal(client, _session(runtime))
-            async with app.run_test(size=(100, 40)) as pilot:
-                await _until(pilot, lambda: app._service_state is not None, what='the state')
-                before = runtime.session.id
+    `create_and_switch` moves the *process*, so the directory this test started in
+    is restored in a `finally`: a later test that resolved a relative path would
+    otherwise inherit a worktree whose teardown has already removed it.
+    """
+    composition = _composition(tmp_path, monkeypatch, root=repo)
+    original = Path.cwd()
+    try:
 
-                await app.handle_command('/new', '--worktree fresh')
-                await pilot.pause()
+        async def inner() -> None:
+            async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+                app = _terminal(client, _session(runtime))
+                async with app.run_test(size=(100, 40)) as pilot:
+                    await _until(pilot, lambda: app._service_state is not None, what='the state')
+                    before = runtime.session.id
 
-                assert runtime.session.id == before, 'nothing was created'
-                assert 'not supported from an attached terminal' in _transcript(app)
-                assert 'worktree first' in _transcript(app)
+                    await app.handle_command('/new', '--worktree fresh')
+                    await pilot.pause()
 
-    asyncio.run(inner())
+                    created = Path(os.path.realpath(str(runtime.session.cwd)))
+                    assert runtime.session.id != before, 'the session is new'
+                    assert created == Path(os.path.realpath(str(runtime.composition.workspace_manager.root)))
+                    assert created.name == 'fresh', 'the session runs in the worktree that was cut'
+                    assert (created / 'README.md').is_file(), 'and that directory is a real checkout'
+                    assert 'Workspace: fresh.' in _transcript(app), 'the move is announced'
+                    assert f'New session {runtime.session.short_id}' in _transcript(app)
+
+        asyncio.run(inner())
+    finally:
+        os.chdir(original)
+
+
+def test_a_worktree_name_git_refuses_creates_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, repo: Path
+) -> None:
+    """A refused name is one notice: no session, no tree, no move.
+
+    The name is refused by the service, so this also proves the command reports the
+    service's own sentence instead of inventing one — and that a refusal leaves the
+    repository, the workspace and the queue exactly as they were.
+    """
+    composition = _composition(tmp_path, monkeypatch, root=repo)
+    original = Path.cwd()
+    try:
+
+        async def inner() -> None:
+            async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+                app = _terminal(client, _session(runtime))
+                async with app.run_test(size=(100, 40)) as pilot:
+                    await _until(pilot, lambda: app._service_state is not None, what='the state')
+                    before = runtime.session.id
+                    workspace = runtime.composition.workspace_manager.current().label
+                    inputs = _inputs(runtime)
+
+                    await app.handle_command('/new', '--worktree UPPER_case')
+                    await pilot.pause()
+
+                    text = _transcript(app)
+                    assert 'Invalid worktree name' in text, "the service's reason reaches the screen"
+                    assert 'New session' not in text, 'nothing was announced because nothing happened'
+                    assert runtime.session.id == before, 'no session was created'
+                    assert runtime.composition.workspace_manager.current().label == workspace
+                    assert runtime.composition.root == Path(os.path.realpath(str(repo)))
+                    assert _inputs(runtime) == inputs, 'and the queue is untouched'
+
+        asyncio.run(inner())
+    finally:
+        os.chdir(original)
 
 
 def test_load_opens_the_chosen_session_through_the_service(composition: Composition, tmp_path: Path) -> None:
@@ -1646,6 +1775,51 @@ def test_rollback_truncates_the_services_session_and_restores_the_prompt(
     asyncio.run(inner())
 
 
+def test_the_restored_prompt_brings_its_image_back_to_the_composer(composition: Composition, tmp_path: Path) -> None:
+    """A rollback returns the picture, not a marker pointing at nothing.
+
+    The service re-encodes every image before it stores it, so the bytes on the way
+    back are not the bytes that were sent. The comparison is the pixels: a test that
+    compared bytes would be measuring the encoder, and would break the day it
+    changed its mind about compression.
+    """
+    from src.ui.widgets.rollback_screen import ROLLBACK_ONLY
+
+    color = (10, 120, 200)
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            await client.send_turn(
+                TurnRequest(
+                    '[Image #1] put this back',
+                    images=(OutgoingImage(media_type='image/png', data=base64.b64encode(_png(color)).decode('ascii')),),
+                )
+            )
+            await asyncio.wait_for(runtime.wait(), timeout=20)
+            points = (await client.rollback_points())['points']
+            assert points
+
+            app = _terminal(client, _session(runtime))
+            app.push_screen_wait = _Chooser([SimpleNamespace(turn_id=points[0]['turn_id'], action=ROLLBACK_ONLY)])
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+
+                await app.handle_command('/rollback')
+                await pilot.pause()
+
+                composer = app.query_one(PromptInput)
+                assert 'put this back' in composer.value, 'the words came back'
+                assert '[Image #1]' in composer.value, 'and the marker that stands for the picture'
+                assert len(composer.attachments) == 1, 'the picture came back with them'
+                attachment = composer.attachments[0]
+                assert attachment.media_type == 'image/png'
+                with Image.open(io.BytesIO(attachment.data)) as restored:
+                    assert restored.size == (4, 4)
+                    assert restored.convert('RGB').getpixel((0, 0)) == color, 'the pixels, not the bytes'
+
+    asyncio.run(inner())
+
+
 def test_fork_creates_a_session_in_the_service_and_keeps_this_one(composition: Composition, tmp_path: Path) -> None:
     from src.ui.widgets.rollback_screen import FORK
 
@@ -1668,6 +1842,70 @@ def test_fork_creates_a_session_in_the_service_and_keeps_this_one(composition: C
                 assert len((await client.sessions())['sessions']) == before + 1
                 assert runtime.session.id == open_session, 'a fork destroys nothing'
                 assert 'Forked to' in _transcript(app)
+
+    asyncio.run(inner())
+
+
+# --- clicking a message: the seq is the turn ----------------------------------
+#
+# A click carries the transcript position the line was painted at; a rollback point
+# carries a turn id. `/api/rollback` projects `seq` on every point for exactly this
+# lookup, so the preselection is a table read in the terminal and not a guess about
+# which message opened which turn.
+
+
+def test_a_clicked_position_names_the_turn_that_opened_it() -> None:
+    """The mapping, as a function: no screen, no service, no event loop."""
+    rows = (
+        {'turn_id': 'turn-second', 'seq': 7},
+        {'turn_id': 'turn-first', 'seq': 3},
+        {'turn_id': 'turn-without-a-prompt', 'seq': None},
+    )
+
+    assert _turn_for_seq(rows, 7) == 'turn-second'
+    assert _turn_for_seq(rows, 3) == 'turn-first'
+    assert _turn_for_seq(rows, 11) is None, 'a position no point claims preselects nothing'
+    assert _turn_for_seq(rows, None) is None, 'a command carries no position at all'
+    assert _turn_for_seq(({'turn_id': None, 'seq': 1},), 1) is None, 'a point without a turn id is not usable'
+
+
+def test_a_clicked_message_preselects_its_turn_in_the_points_list(composition: Composition, tmp_path: Path) -> None:
+    """The click opens the list on the row the user pointed at.
+
+    The screen is captured rather than driven: what a key does inside it has its own
+    test, and what this proves is that the position the line carries became the turn
+    the list starts on — through the message the line posts, not by calling the
+    handler with a number the test made up.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            await _seed_turn(runtime, client, 'first question')
+            await _seed_turn(runtime, client, 'second question')
+            points = (await client.rollback_points())['points']
+            clicked = next(point for point in points if point['preview'] == 'first question')
+            assert isinstance(clicked['seq'], int), 'the projection carries the position a click sends'
+
+            seen: list[Any] = []
+
+            async def capture(screen: Any) -> None:
+                seen.append(screen)
+
+            app = _terminal(client, _session(runtime))
+            app.push_screen_wait = capture
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: 'first question' in _transcript(app), what='the history')
+                painted = [
+                    widget
+                    for widget in app.query_one(ChatLog).children
+                    if getattr(widget, 'seq', None) == clicked['seq']
+                ]
+                assert painted, 'the position the projection reports is the position the transcript paints'
+
+                painted[0].on_click()
+                await _until(pilot, lambda: bool(seen), what='the rollback list')
+
+                assert seen[0]._preselected == clicked['turn_id'], 'the list starts on the clicked turn'
 
     asyncio.run(inner())
 
@@ -1729,6 +1967,7 @@ def test_a_side_door_opens_no_panel_while_a_turn_runs(key: str, composition: Com
 
                     chat = app.query_one(ChatLog)
                     before = len(chat.children)
+                    inputs_before = _inputs(runtime)
 
                     await pilot.press(key)
                     await _until(pilot, lambda: len(chat.children) > before, what=f'the {key} refusal')
@@ -1737,5 +1976,179 @@ def test_a_side_door_opens_no_panel_while_a_turn_runs(key: str, composition: Com
                     assert 'A turn is running' in '\n'.join(
                         _block_text(widget) for widget in list(chat.children)[before:]
                     )
+                    assert _inputs(runtime) == inputs_before, f'{key} wrote nothing to the queue'
+
+    asyncio.run(inner())
+
+
+# --- the state a client must not guess about ----------------------------------
+#
+# `busy` is the only thing that says whether a turn is running, so the two ways the
+# projection can fail to say it are both refusals: an absent field, and a read that
+# does not answer. "Probably idle" is exactly the assumption that would swap a
+# session out from under a running agent.
+
+
+class _StateProjection(httpx.AsyncBaseTransport):
+    """The real service, with `/api/state` answered by ``respond`` instead.
+
+    Everything else — `/events` included — goes through the transport it wraps, so a
+    test that reshapes one field still talks to the same application, the same routes
+    and the same bearer check as every other test in this file.
+    """
+
+    def __init__(self, inner: httpx.AsyncBaseTransport, respond: Callable[[dict[str, Any]], httpx.Response]) -> None:
+        self._inner = inner
+        self._respond = respond
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        response = await self._inner.handle_async_request(request)
+        if request.url.path != '/api/state':
+            return response
+        await response.aread()
+        return self._respond(json.loads(response.content))
+
+
+class _StateDiesAfterAttaching(httpx.AsyncBaseTransport):
+    """The service until `/api/state` has answered once, then a socket that refuses.
+
+    A terminal attaches to a live service and that route stops answering afterwards.
+    Failing the very first read instead would test the attach path rather than the
+    guard a typed command runs.
+    """
+
+    def __init__(self, inner: httpx.AsyncBaseTransport) -> None:
+        self._inner = inner
+        self.reads = 0
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path == '/api/state':
+            self.reads += 1
+            if self.reads > 1:
+                raise httpx.ConnectError('the service stopped answering', request=request)
+        return await self._inner.handle_async_request(request)
+
+
+def _without_busy(state: dict[str, Any]) -> httpx.Response:
+    """The projection with the one field removed: a service that cannot say."""
+    return httpx.Response(200, json={key: value for key, value in state.items() if key != 'busy'})
+
+
+def test_a_projection_without_busy_refuses_instead_of_assuming_idle(composition: Composition, tmp_path: Path) -> None:
+    """Fail closed: the command does not run on a guess about whether a turn runs.
+
+    The field is absent rather than false — an older service, or a bug — and the
+    sentence says exactly that instead of borrowing the busy one, which would assert a
+    turn nobody can see.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, transport, _ignored):
+            without_busy = _StateProjection(transport, _without_busy)
+            client = ServiceClient(SERVICE, transport=without_busy)
+            try:
+                app = _terminal(client, _session(runtime))
+                async with app.run_test(size=(100, 40)) as pilot:
+                    await _until(pilot, lambda: app._service_state is not None, what='the state')
+                    chat = app.query_one(ChatLog)
+                    before = len(chat.children)
+                    inputs_before = _inputs(runtime)
+                    agent_before = runtime.session.agent
+
+                    await app.handle_command('/agent', 'reviewer')
+                    await pilot.pause()
+
+                    added = list(chat.children)[before:]
+                    assert len(added) == 1, '/agent answers in exactly one notice'
+                    assert BUSY_UNKNOWN.format(name='/agent') in _block_text(added[0])
+                    assert len(app.screen_stack) == 1, 'a command that cannot check opens no panel'
+                    assert _inputs(runtime) == inputs_before, 'nothing was written'
+                    assert runtime.session.agent == agent_before, 'and nothing was switched'
+            finally:
+                await client.aclose()
+
+    asyncio.run(inner())
+
+
+def test_an_unreadable_state_refuses_the_command_instead_of_assuming_idle(
+    composition: Composition, tmp_path: Path
+) -> None:
+    """The other half of fail-closed: no answer is not permission.
+
+    The attach succeeded and the route stopped answering afterwards, which is what the
+    morning after a service crash looks like. The command is refused with the failure's
+    own sentence — the way out is in it — and the picker never opens.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, transport, _ignored):
+            client = ServiceClient(SERVICE, transport=_StateDiesAfterAttaching(transport))
+            try:
+                app = _terminal(client, _session(runtime))
+                async with app.run_test(size=(100, 40)) as pilot:
+                    await _until(pilot, lambda: app._service_state is not None, what='the state')
+                    chat = app.query_one(ChatLog)
+                    before = len(chat.children)
+                    inputs_before = _inputs(runtime)
+
+                    await app.handle_command('/effort')
+                    await pilot.pause()
+
+                    added = list(chat.children)[before:]
+                    assert len(added) == 1, '/effort answers in exactly one notice'
+                    text = _block_text(added[0])
+                    assert '✖' in text, 'the notice is a failure, not a silent return'
+                    assert 'sigil server' in text, 'and it names the way out'
+                    assert len(app.screen_stack) == 1, 'no picker opened on a state that could not be read'
+                    assert _inputs(runtime) == inputs_before, 'nothing was written'
+            finally:
+                await client.aclose()
+
+    asyncio.run(inner())
+
+
+@pytest.mark.parametrize('name', ('/new', '/load', '/provider'))
+def test_a_command_that_swaps_the_session_refuses_when_the_state_cannot_be_read(
+    name: str, composition: Composition, tmp_path: Path
+) -> None:
+    """A command that *changes* the session does not run on a state it could not read.
+
+    `/effort` above cannot show what the guard is worth: it refuses twice, here and in
+    its own `is_refused_while_busy`. These three are the ones the guard is the only
+    thing standing in front of, and each has its own way of hurting: `/new` creates a
+    session, `/load` opens the picker that would replace it, and `/provider` opens the
+    accounts screen, whose next keypresses add, rename or delete an account. A guard
+    that answered `False` on a failed read would reach the service through routes that
+    still answer while `/api/state` does not. That is the mutation this test exists for.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, transport, _ignored):
+            client = ServiceClient(SERVICE, transport=_StateDiesAfterAttaching(transport))
+            try:
+                app = _terminal(client, _session(runtime))
+                async with app.run_test(size=(100, 40)) as pilot:
+                    await _until(pilot, lambda: app._service_state is not None, what='the state')
+                    chat = app.query_one(ChatLog)
+                    before = len(chat.children)
+                    inputs_before = _inputs(runtime)
+                    service_session = runtime.session.id
+                    local_session = app._session.id
+
+                    await app.handle_command(name)
+                    await pilot.pause()
+
+                    added = list(chat.children)[before:]
+                    # The cost first: a guard that let this through would have created
+                    # or opened a conversation, and the notice count would only say the
+                    # screen drew two blocks instead of one.
+                    assert runtime.session.id == service_session, 'the service kept its session'
+                    assert app._session.id == local_session, 'and the reading here was not swapped'
+                    assert _inputs(runtime) == inputs_before, f'{name} wrote nothing to the queue'
+                    assert len(app.screen_stack) == 1, f'{name} opened what it cannot complete'
+                    assert len(added) == 1, f'{name} answers in exactly one notice'
+                    assert '✖' in _block_text(added[0]), 'the notice is the failure, not a panel'
+            finally:
+                await client.aclose()
 
     asyncio.run(inner())

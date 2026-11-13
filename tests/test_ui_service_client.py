@@ -1029,3 +1029,255 @@ def test_fork_creates_a_session_and_destroys_nothing(runtime: ServerRuntime, tmp
             assert (await client.rollback_points())['points'] == before_points
 
     asyncio.run(go())
+
+
+# --- provider accounts -------------------------------------------------------
+#
+# The credential check is a deterministic double: `tests/test_provider_service.py`
+# builds the service with a `probe` that accepts any key, so nothing here reaches a
+# provider and no real credential is needed.
+
+
+def _without_secrets(payload: Any) -> str:
+    import json as _json
+
+    return _json.dumps(payload)
+
+
+def test_the_accounts_route_lists_accounts_and_never_a_credential(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            payload = await client.accounts()
+            rows = payload['accounts']
+            assert rows, 'the fixture configures one account'
+            row = rows[0]
+            assert {'alias', 'provider', 'has_credential', 'active', 'auth'} <= set(row)
+            assert row['has_credential'] is True
+            assert sum(1 for item in rows if item['active']) == 1
+            # Not the key, and not anything that looks like one.
+            assert 'sk-' not in _without_secrets(payload)
+
+    asyncio.run(go())
+
+
+def test_adding_an_account_stores_it_and_makes_it_active(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            payload = await client.add_account('second', 'openrouter', 'sk-new-key')
+            aliases = [row['alias'] for row in payload['accounts']]
+            assert 'second' in aliases
+            active = next(row for row in payload['accounts'] if row['active'])
+            assert active['alias'] == 'second'
+            # The key is stored, never echoed.
+            assert 'sk-new-key' not in _without_secrets(payload)
+            assert runtime.composition.model_service.find('second').alias == 'second'
+
+    asyncio.run(go())
+
+
+def test_an_unknown_provider_is_a_rejection(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            with pytest.raises(RequestRejected) as caught:
+                await client.add_account('x', 'not-a-provider', 'sk-test')
+            assert 'Unknown provider' in str(caught.value)
+
+    asyncio.run(go())
+
+
+def test_a_missing_key_is_a_rejection(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            with pytest.raises(RequestRejected) as caught:
+                await client.add_account('nokey', 'openrouter', '')
+            assert 'API key is required' in str(caught.value)
+
+    asyncio.run(go())
+
+
+def test_an_oauth_account_is_refused_with_the_in_process_reason(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            with pytest.raises(RequestRejected) as caught:
+                await client.add_account('browser', 'openai', '', auth='oauth')
+            assert 'only available from the terminal running the engine' in str(caught.value)
+
+    asyncio.run(go())
+
+
+def test_adding_an_account_is_refused_while_a_turn_runs(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            async with _busy(runtime):
+                with pytest.raises(ServiceBusy):
+                    await client.add_account('blocked', 'openrouter', 'sk-test')
+            assert all(row['alias'] != 'blocked' for row in (await client.accounts())['accounts'])
+
+    asyncio.run(go())
+
+
+def test_deleting_the_active_account_is_refused(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """The rule this route applies: activate another one first."""
+
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            active = next(row for row in (await client.accounts())['accounts'] if row['active'])
+            with pytest.raises(RequestRejected) as caught:
+                await client.delete_account(active['alias'])
+            assert 'is the active account' in str(caught.value)
+            assert any(row['alias'] == active['alias'] for row in (await client.accounts())['accounts'])
+
+    asyncio.run(go())
+
+
+def test_deleting_the_only_account_is_refused(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """With one account the active rule fires first, and that is the answer given."""
+
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            rows = (await client.accounts())['accounts']
+            assert len(rows) == 1
+            with pytest.raises(RequestRejected) as caught:
+                await client.delete_account(rows[0]['alias'])
+            assert 'active account' in str(caught.value)
+            assert len((await client.accounts())['accounts']) == 1
+
+    asyncio.run(go())
+
+
+def test_a_non_active_account_can_be_deleted(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            await client.add_account('second', 'openrouter', 'sk-second')
+            first = next(row for row in (await client.accounts())['accounts'] if row['alias'] != 'second')
+            payload = await client.delete_account(first['alias'])
+            assert all(row['alias'] != first['alias'] for row in payload['accounts'])
+            assert runtime.composition.model_service.secrets.get(first['id']) is None
+
+    asyncio.run(go())
+
+
+def test_renaming_to_an_existing_alias_is_refused(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            await client.add_account('second', 'openrouter', 'sk-second')
+            first = next(row for row in (await client.accounts())['accounts'] if row['alias'] != 'second')
+            with pytest.raises(RequestRejected) as caught:
+                await client.rename_account(first['alias'], 'second')
+            assert 'second' in str(caught.value)
+            # Nothing moved.
+            assert any(row['alias'] == first['alias'] for row in (await client.accounts())['accounts'])
+
+    asyncio.run(go())
+
+
+def test_renaming_and_activating_change_the_projection(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            await client.add_account('second', 'openrouter', 'sk-second')
+            first = next(row for row in (await client.accounts())['accounts'] if row['alias'] != 'second')
+
+            renamed = await client.rename_account(first['alias'], 'renamed')
+            assert any(row['alias'] == 'renamed' for row in renamed['accounts'])
+
+            activated = await client.activate_account('renamed')
+            active = next(row for row in activated['accounts'] if row['active'])
+            assert active['alias'] == 'renamed'
+
+    asyncio.run(go())
+
+
+# --- worktrees, and the images a rollback gives back -------------------------
+
+
+def _git_repo(root: Path) -> Path:
+    """A one-commit repository, the minimum a worktree needs."""
+    import subprocess
+
+    root.mkdir(parents=True, exist_ok=True)
+    for args in (('init', '-q', '-b', 'main'), ('config', 'user.email', 't@t'), ('config', 'user.name', 't')):
+        subprocess.run(('git', *args), cwd=root, check=True, capture_output=True)
+    (root / 'README.md').write_text('x\n', encoding='utf-8')
+    for args in (('add', '.'), ('commit', '-qm', 'init')):
+        subprocess.run(('git', *args), cwd=root, check=True, capture_output=True)
+    return root
+
+
+def test_a_worktree_outside_a_repository_is_refused_without_effects(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            before = (await client.state())['workspace']['root']
+            with pytest.raises(RequestRejected) as caught:
+                await client.create_worktree('feature')
+            assert 'not a git repository' in str(caught.value)
+            assert (await client.state())['workspace']['root'] == before
+
+    asyncio.run(go())
+
+
+def test_a_worktree_is_created_and_the_new_session_starts_in_it(tmp_path: Path) -> None:
+    """The route cuts the tree, then `/api/session/new` starts there."""
+    import os
+
+    from tests.test_server_parity import _composition
+
+    repo = _git_repo(tmp_path)
+    previous = os.getcwd()
+    try:
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            composition = _composition(repo, monkeypatch)
+            runtime = ServerRuntime(composition, EventHub(), require_ownership=False)
+
+            async def go() -> None:
+                async with _served(runtime, repo) as client:
+                    created = await client.create_worktree('one')
+                    assert created['workspace']['label'] == 'one'
+                    session = await client.new_session(worktree='two')
+                    assert session['id']
+                    state = await client.state()
+                    assert state['workspace']['label'] == 'two'
+
+            asyncio.run(go())
+    finally:
+        os.chdir(previous)
+
+
+def test_a_rollback_returns_the_prompt_with_its_image(runtime: ServerRuntime, tmp_path: Path) -> None:
+    import base64 as _b64
+
+    from src.ui.service_client import OutgoingImage
+
+    buffer = io.BytesIO()
+    Image.new('RGB', (2, 2), (200, 30, 30)).save(buffer, format='PNG')
+    png = buffer.getvalue()
+
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            await client.send_turn(
+                TurnRequest(
+                    '[Image #1]',
+                    images=(OutgoingImage(media_type='image/png', data=_b64.b64encode(png).decode('ascii')),),
+                )
+            )
+            await runtime.wait()
+
+            points = (await client.rollback_points())['points']
+            payload = await client.rollback(points[0]['turn_id'], files=False)
+            images = payload['rollback']['prompt_images']
+            assert len(images) == 1
+            assert images[0]['media_type'] == 'image/png'
+            decoded = _b64.b64decode(images[0]['data'])
+            assert Image.open(io.BytesIO(decoded)).tobytes() == Image.open(io.BytesIO(png)).tobytes()
+
+    asyncio.run(go())
+
+
+def test_a_rollback_point_carries_the_seq_a_click_needs(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            await client.send_turn(TurnRequest('one'))
+            await runtime.wait()
+            points = (await client.rollback_points())['points']
+            assert isinstance(points[0]['seq'], int)
+
+    asyncio.run(go())

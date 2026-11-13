@@ -351,7 +351,16 @@ def test_the_rollback_points_are_the_view_and_are_listed_for_a_real_turn(
             points = response.json()['points']
 
             checkpoint = runtime.composition.rollback.points(runtime.session.id)[0]
-            assert points == [views.rollback_point_view(checkpoint, preview='first')]
+            # The route's own view, with the position read from the rows instead of
+            # from the projection that computes it. A row assembled by hand here is
+            # what drifted: it defaulted `seq` to `None` while the route projected the
+            # prompt's position, and the test kept passing on a field it never checked.
+            # Reading the position independently is what lets the two disagree.
+            seq = runtime.composition.store.database.value(
+                'SELECT seq FROM messages WHERE turn_id = ? AND payload LIKE ? ORDER BY seq LIMIT 1',
+                (checkpoint.turn_id, f'%"part_kind":"{views.PROMPT_KIND}"%'),
+            )
+            assert points == [views.rollback_point_view(checkpoint, preview='first', seq=seq)]
 
     asyncio.run(go())
 

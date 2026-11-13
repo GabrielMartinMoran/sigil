@@ -135,9 +135,15 @@ def test_the_commands_that_run_here_are_exactly_the_client_ones():
     assert local == CLIENT_COMMANDS
 
 
-def test_provider_is_the_only_blocked_command():
-    blocked = [row.name for row in TRANSPORT if row.state is TransportState.BLOCKED]
-    assert blocked == ['/provider']
+def test_no_command_is_blocked_any_more():
+    """Every command the service serves has a sender here now.
+
+    The `blocked` state stays in the table because the decision has to be total: a
+    command the service has no endpoint for must say that, not borrow the answer meant
+    for a command that is merely not wired yet. The sentence is proven below on a row
+    built for it, since no real row holds the state.
+    """
+    assert [row.name for row in TRANSPORT if row.state is TransportState.BLOCKED] == []
 
 
 def test_a_row_that_does_not_run_here_says_why_and_where():
@@ -181,10 +187,16 @@ def test_the_not_wired_notice_still_names_the_command_the_route_and_the_gap():
     assert row.reason in notice
 
 
-def test_provider_says_no_endpoint_exists_rather_than_a_missing_setting():
-    """The blocked notice must not send the user to configure a provider they have."""
+def test_the_blocked_notice_says_no_endpoint_rather_than_a_missing_setting():
+    """The blocked sentence must not send the user to configure what they have."""
 
-    notice = unavailable_notice(transport_for('/provider'))
+    row = Transport(
+        name='/provider',
+        owner=CommandOwner.CORE,
+        state=TransportState.BLOCKED,
+        reason='the service has no accounts endpoint.',
+    )
+    notice = unavailable_notice(row)
 
     assert '/provider' in notice
     assert 'no endpoint' in notice
@@ -209,6 +221,7 @@ def test_a_delegated_row_has_a_route_and_is_dispatched_to_its_handler():
         '/mcp',
         '/model',
         '/new',
+        '/provider',
         '/rollback',
     }
     for row in TRANSPORT:
