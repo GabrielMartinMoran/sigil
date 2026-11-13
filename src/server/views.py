@@ -22,7 +22,7 @@ from typing import Any
 
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelMessagesTypeAdapter
 
-from src.engine.agents.rollback import Checkpoint, ForkOutcome, RollbackOutcome, prompt_of_turn
+from src.engine.agents.rollback import PROMPT_KIND, Checkpoint, ForkOutcome, RollbackOutcome, prompt_of_turn
 from src.engine.agents.tree.models.agent_node import AgentNode
 from src.engine.agents.tree.tree import AgentTree
 from src.engine.context.images import image_size
@@ -563,6 +563,26 @@ def model_view(snapshot: Any) -> dict[str, Any]:
     }
 
 
+def account_view(account: Any, *, active: bool, has_credential: bool) -> dict[str, Any]:
+    """One provider account, as data.
+
+    The credential is never here. `has_credential` is a boolean computed from the
+    secret store in the process that owns it, and the key itself never leaves that
+    process — not in this projection, not in an error, not in a log line.
+    """
+    return {
+        'id': account.id,
+        'alias': account.alias,
+        'provider': str(getattr(account.kind, 'value', account.kind)),
+        'provider_label': account.provider_label,
+        'variant': str(getattr(account.variant, 'value', account.variant)),
+        'auth': str(getattr(account.auth, 'value', account.auth)),
+        'last_model': account.last_model,
+        'has_credential': has_credential,
+        'active': active,
+    }
+
+
 def agent_view(profile: Any, *, active: bool) -> dict[str, Any]:
     """One agent profile, as the picker paints it."""
     return {
@@ -585,12 +605,16 @@ def rollback_points(database: Database, checkpoints: list[Checkpoint]) -> list[d
     same points in the same order.
     """
     return [
-        rollback_point_view(checkpoint, preview=_turn_preview(database, checkpoint.turn_id))
+        rollback_point_view(
+            checkpoint,
+            preview=_turn_preview(database, checkpoint.turn_id),
+            seq=_prompt_seq(database, checkpoint.turn_id),
+        )
         for checkpoint in checkpoints
     ]
 
 
-def rollback_point_view(checkpoint: Checkpoint, *, preview: str) -> dict[str, Any]:
+def rollback_point_view(checkpoint: Checkpoint, *, preview: str, seq: int | None = None) -> dict[str, Any]:
     """One point of the rollback list.
 
     The file cost of a restore is deliberately absent: it is a diff of the
@@ -604,6 +628,7 @@ def rollback_point_view(checkpoint: Checkpoint, *, preview: str) -> dict[str, An
         'label': checkpoint.label,
         'preview': preview,
         'tree_commit': checkpoint.tree_commit,
+        'seq': seq,
     }
 
 
@@ -630,7 +655,9 @@ def catalog_view(catalog: ModelCatalog) -> dict[str, Any]:
     }
 
 
-def rollback_view(outcome: RollbackOutcome, *, prompt: str | None = None, prompt_images: int = 0) -> dict[str, Any]:
+def rollback_view(
+    outcome: RollbackOutcome, *, prompt: str | None = None, prompt_images: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """What a rollback did, as data: the counts are the engine's, not an estimate.
 
     ``prompt`` is the text the user typed to open the turn that was dropped, read
@@ -648,7 +675,7 @@ def rollback_view(outcome: RollbackOutcome, *, prompt: str | None = None, prompt
         'files_unavailable': outcome.files_unavailable,
         'undo_checkpoint': outcome.undo_checkpoint,
         'prompt': prompt,
-        'prompt_images': prompt_images,
+        'prompt_images': list(prompt_images or []),
     }
 
 
@@ -701,6 +728,22 @@ def context_view(snapshot: ContextSnapshot, cost: SessionCost) -> dict[str, Any]
             'requests': cost.requests,
         },
     }
+
+
+def _prompt_seq(database: Database, turn_id: str | None) -> int | None:
+    """Where the turn's prompt sits in the transcript.
+
+    A click on a message carries a `seq`; a rollback point carries a turn id. This
+    column is what lets a client preselect the point the user actually clicked,
+    without keeping a transcript of its own.
+    """
+    if turn_id is None:
+        return None
+    row = database.one(
+        'SELECT seq FROM messages WHERE turn_id = ? AND payload LIKE ? ORDER BY seq LIMIT 1',
+        (turn_id, f'%"part_kind":"{PROMPT_KIND}"%'),
+    )
+    return None if row is None else int(row['seq'])
 
 
 def _turn_preview(database: Database, turn_id: str | None) -> str:

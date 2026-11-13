@@ -19,6 +19,7 @@ transcript to redraw it would be worse than applying deltas that end with a
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import mimetypes
 import os
@@ -38,7 +39,9 @@ from src.engine.agents.profile.models.agent_not_found import AgentNotFound
 from src.engine.agents.rollback import RollbackError, prompt_of_turn
 from src.engine.agents.tree.models.summon_error import SummonError
 from src.engine.context.meter.cost import session_cost
+from src.engine.providers.domain.auth_method import AuthMethod, auth_methods_for
 from src.engine.providers.domain.provider_error import BusyError, ProviderError
+from src.engine.providers.domain.provider_kind import ProviderKind
 from src.engine.sessions.catalog import catalog
 from src.engine.sessions.catalog import workspaces as discover_workspaces
 from src.engine.workspace.models.workspace_error import WorkspaceError
@@ -53,6 +56,20 @@ from src.server.webbuild import dist_root, staleness
 
 HEARTBEAT_SECONDS = 20.0
 """How often an idle stream says something, so a proxy does not close it."""
+
+ACCOUNT_TIMEOUT_SECONDS = 30.0
+"""Longest a route waits for a credential check.
+
+Adding an account is the one call that reaches the provider with the user's key,
+so it is the one that can hang. The bound is here for the same reason as the
+catalogue's: a refusal with a sentence beats a request that never returns.
+"""
+
+OAUTH_OVER_HTTP = (
+    'Browser sign-in is only available from the terminal running the engine, not over '
+    'the API. Add this account there, or add it here with an API key.'
+)
+"""What an OAuth account is told. The flow needs a browser and the process that owns it."""
 
 CATALOG_TIMEOUT_SECONDS = 15.0
 """Longest a client waits for one account's model list.
@@ -254,6 +271,37 @@ class EffortBody(BaseModel):
     """The reasoning level to apply to the model in effect."""
 
     effort: str = Field(min_length=1)
+
+
+class AccountBody(BaseModel):
+    """A provider account to add, with the credential it needs.
+
+    ``auth`` is accepted so an OAuth request is answered explicitly instead of
+    being misread as a key-less API-key account.
+    """
+
+    alias: str = Field(min_length=1)
+    provider: str = Field(min_length=1)
+    api_key: str | None = None
+    auth: str = 'api_key'
+
+
+class NewSessionBody(BaseModel):
+    """A conversation to start, optionally in a worktree cut first."""
+
+    worktree: str | None = None
+
+
+class WorktreeBody(BaseModel):
+    """A worktree to create and move into."""
+
+    name: str = Field(min_length=1)
+
+
+class RenameBody(BaseModel):
+    """The new label for an account. The id, and saved sessions, stay valid."""
+
+    new_alias: str = Field(min_length=1)
 
 
 class AgentBody(BaseModel):
@@ -599,12 +647,49 @@ def create_app(
         return {'resolved': resolved}
 
     @app.post('/api/session/new')
-    async def new_session() -> dict[str, Any]:
+    async def new_session(body: NewSessionBody | None = None) -> dict[str, Any]:
+        """Starts an empty conversation, in a worktree cut first when one is named.
+
+        The order is the engine's: create the worktree, then start the session, so a
+        name git refuses leaves the service where it was instead of half moved.
+        """
+        worktree = '' if body is None else (body.worktree or '').strip()
+        reply: dict[str, Any] = {}
+        if worktree:
+            try:
+                switch = await asyncio.to_thread(runtime.create_worktree, worktree)
+            except RuntimeError as exc:
+                return _conflict(exc)  # type: ignore[return-value]
+            except (WorkspaceError, OSError) as exc:
+                return _refused(exc)  # type: ignore[return-value]
+            reply['workspace'] = views.workspace_view(switch.workspace)
         try:
             session = runtime.new_session()
         except RuntimeError as exc:
-            return JSONResponse({'error': str(exc)}, status_code=409)  # type: ignore[return-value]
-        return {'session': views.session_view(session)}
+            return _conflict(exc)  # type: ignore[return-value]
+        reply['session'] = views.session_view(session)
+        return reply
+
+    @app.post('/api/worktree')
+    async def create_worktree(body: WorktreeBody) -> dict[str, Any]:
+        """Cuts a worktree and moves the service into it.
+
+        The engine half is `WorkspaceManager.create_and_switch` — the very call the
+        in-process `/new --worktree` makes — so the two clients cut the same tree the
+        same way and a failure leaves the repository and the session untouched.
+        """
+        try:
+            runtime.refuse_while_busy('create a worktree')
+        except RuntimeError as exc:
+            return _conflict(exc)  # type: ignore[return-value]
+        try:
+            switch = await asyncio.to_thread(runtime.create_worktree, body.name)
+        except (WorkspaceError, OSError) as exc:
+            return _refused(exc)  # type: ignore[return-value]
+        return {
+            'workspace': views.workspace_view(switch.workspace),
+            'previous': views.workspace_view(switch.previous),
+        }
 
     @app.post('/api/session/open')
     async def open_session(body: SessionBody) -> dict[str, Any]:
@@ -664,6 +749,113 @@ def create_app(
         if catalog.error is not None and not catalog.models:
             return _refused(RuntimeError(f'{alias}: {catalog.error}'))  # type: ignore[return-value]
         return {'account': alias, 'catalog': views.catalog_view(catalog)}
+
+    @app.get('/api/accounts')
+    async def accounts() -> dict[str, Any]:
+        """Every configured account, and whether it holds a credential. Never the key."""
+        return {'accounts': _account_rows(runtime.composition.model_service)}
+
+    @app.post('/api/accounts')
+    async def add_account(body: AccountBody) -> dict[str, Any]:
+        """Adds an API-key account and makes it active, refused while a turn runs."""
+        service = runtime.composition.model_service
+        if body.auth != AuthMethod.API_KEY.value:
+            return _refused(RuntimeError(OAUTH_OVER_HTTP))  # type: ignore[return-value]
+        try:
+            kind = ProviderKind(body.provider)
+        except ValueError:
+            known = ', '.join(item.value for item in ProviderKind)
+            return _refused(RuntimeError(f'Unknown provider {body.provider!r}. Known providers: {known}.'))  # type: ignore[return-value]
+        if AuthMethod.API_KEY not in auth_methods_for(kind):
+            return _refused(RuntimeError(OAUTH_OVER_HTTP))  # type: ignore[return-value]
+        key = (body.api_key or '').strip()
+        if not key:
+            return _refused(RuntimeError('An API key is required to add an account from this client.'))  # type: ignore[return-value]
+        try:
+            runtime.refuse_while_busy('add a provider account')
+        except RuntimeError as exc:
+            return _conflict(exc)  # type: ignore[return-value]
+        try:
+            snapshot = await asyncio.wait_for(
+                service.add_api_key(kind, body.alias, key), timeout=ACCOUNT_TIMEOUT_SECONDS
+            )
+        except TimeoutError:
+            return _refused(
+                RuntimeError(
+                    f'The credential check for {body.alias!r} did not answer within '
+                    f'{ACCOUNT_TIMEOUT_SECONDS:.0f}s. Check the network and try again.'
+                )
+            )  # type: ignore[return-value]
+        except ProviderError as exc:
+            return _refused(exc)  # type: ignore[return-value]
+        runtime.adopt_model(snapshot)
+        return {'accounts': _account_rows(service), 'model': views.model_view(snapshot)}
+
+    @app.post('/api/accounts/{alias}/activate')
+    async def activate_account(alias: str) -> dict[str, Any]:
+        """Makes an account active, using the model it last had."""
+        service = runtime.composition.model_service
+        try:
+            runtime.refuse_while_busy('activate a provider account')
+        except RuntimeError as exc:
+            return _conflict(exc)  # type: ignore[return-value]
+        try:
+            account = service.find(alias)
+            model = account.last_model
+            if not model:
+                catalog = await asyncio.wait_for(service.catalog_for(alias), timeout=CATALOG_TIMEOUT_SECONDS)
+                model = catalog.models[0].name if catalog.models else ''
+            if not model:
+                return _refused(RuntimeError(f'{alias} has no model to activate yet. Pick one with /model first.'))  # type: ignore[return-value]
+            snapshot = runtime.set_model(alias, model)
+        except TimeoutError:
+            return _refused(RuntimeError(f'The model list of {alias!r} did not answer in time.'))  # type: ignore[return-value]
+        except BusyError as exc:
+            return _conflict(exc)  # type: ignore[return-value]
+        except ProviderError as exc:
+            return _refused(exc)  # type: ignore[return-value]
+        return {'accounts': _account_rows(service), 'model': views.model_view(snapshot)}
+
+    @app.delete('/api/accounts/{alias}')
+    async def delete_account(alias: str) -> dict[str, Any]:
+        """Removes an account and its credential.
+
+        Two rules, both refusals with a reason: the **last** account cannot go (the
+        session would have nothing to run), and neither can the **active** one. The
+        engine promotes a successor when the active account is removed, but only a
+        person at the terminal sees the model change under their feet; an API caller
+        would switch models mid-session without asking. Activating another account
+        first is the explicit step, and this route insists on it.
+        """
+        service = runtime.composition.model_service
+        try:
+            runtime.refuse_while_busy('delete a provider account')
+        except RuntimeError as exc:
+            return _conflict(exc)  # type: ignore[return-value]
+        try:
+            account = service.find(alias)
+            if any(view.active and view.account.id == account.id for view in service.account_views()):
+                return _refused(
+                    RuntimeError(f'{alias} is the active account. Activate another one before deleting it.')
+                )  # type: ignore[return-value]
+            service.remove(alias)
+        except ProviderError as exc:
+            return _refused(exc)  # type: ignore[return-value]
+        return {'accounts': _account_rows(service)}
+
+    @app.post('/api/accounts/{alias}/rename')
+    async def rename_account(alias: str, body: RenameBody) -> dict[str, Any]:
+        """Changes an account's label. Its id, and saved sessions, stay valid."""
+        service = runtime.composition.model_service
+        try:
+            runtime.refuse_while_busy('rename a provider account')
+        except RuntimeError as exc:
+            return _conflict(exc)  # type: ignore[return-value]
+        try:
+            service.rename(alias, body.new_alias)
+        except ProviderError as exc:
+            return _refused(exc)  # type: ignore[return-value]
+        return {'accounts': _account_rows(service)}
 
     @app.post('/api/model')
     async def change_model(body: ModelBody) -> dict[str, Any]:
@@ -737,7 +929,7 @@ def create_app(
             'rollback': views.rollback_view(
                 outcome,
                 prompt=None if prompt is None else prompt[0],
-                prompt_images=0 if prompt is None else len(prompt[1]),
+                prompt_images=[] if prompt is None else [_image_payload(image) for image in prompt[1]],
             ),
             'session': views.session_view(runtime.session),
         }
@@ -947,6 +1139,32 @@ async def _state(runtime: ServerRuntime) -> dict[str, Any]:
         'skills': views.skills_view(session.messages),
         'seq': runtime.hub.last_seq,
     }
+
+
+def _image_payload(image: Any) -> dict[str, Any]:
+    """One restored image, base64 so it survives JSON. The bytes, not a path.
+
+    A rollback gives the prompt back the way it was sent, picture included: a
+    message whose text returns without its image points at an `[Image #1]` that no
+    longer exists.
+    """
+    return {
+        'data': base64.b64encode(image.data).decode('ascii'),
+        'media_type': image.media_type or 'application/octet-stream',
+        'identifier': image.identifier,
+    }
+
+
+def _account_rows(service: Any) -> list[dict[str, Any]]:
+    """The accounts as the screen paints them, with no credential in sight."""
+    return [
+        views.account_view(
+            view.account,
+            active=view.active,
+            has_credential=service.secrets.get(view.account.id) is not None,
+        )
+        for view in service.account_views()
+    ]
 
 
 def _repository_name(composition: Any) -> str | None:

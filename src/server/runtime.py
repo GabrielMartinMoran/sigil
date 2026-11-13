@@ -1090,6 +1090,45 @@ class ServerRuntime:
         self._refuse_while_busy('fork')
         return self.composition.rollback.fork_to(self.session.id, turn_id)
 
+    def create_worktree(self, name: str) -> Any:
+        """Cuts a worktree and moves the service into it, like `/new --worktree`.
+
+        Blocks: it runs git and changes the process directory, so the route calls it
+        off the event loop the way the terminal calls it off its worker.
+
+        Raises:
+            RuntimeError: while a turn is running.
+            WorkspaceError: when the name is unusable or git refuses.
+        """
+        self._refuse_while_busy('create a worktree')
+        switch = self.composition.workspace_manager.create_and_switch(name)
+        self.composition.root = switch.workspace.root
+        self.hub.publish_state('workspace')
+        return switch
+
+    def refuse_while_busy(self, action: str) -> None:
+        """The busy refusal, for a route that must answer before slow work.
+
+        An account route reaches the network to check a credential; being told the
+        session is busy only after that call would be a wait for nothing.
+
+        Raises:
+            RuntimeError: while a turn is running.
+        """
+        self._refuse_while_busy(action)
+
+    def adopt_model(self, snapshot: Any) -> None:
+        """Applies a model change the engine already made and republishes the shell.
+
+        `add_api_key` selects its new account itself, so the agent has to be rebuilt
+        here the way `set_model` does it: the agent closes over the model it was
+        built with, and without this the projection would change and the next turn
+        would not.
+        """
+        self.composition.apply_model_change(snapshot)
+        self.composition.rebuild_agent()
+        self.hub.publish_state('model')
+
     def _refuse_while_busy(self, action: str) -> None:
         """The one refusal for the history commands: a turn is still running."""
         if self.busy:
