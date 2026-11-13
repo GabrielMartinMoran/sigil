@@ -17,19 +17,33 @@ Three responsibilities, all of them about the same object — the session's tree
 
 The node view replaces the chat the same way the debug view does; the two are
 mutually exclusive because they occupy the same space.
+
+**Whose tree it is.** On an attached terminal there is no local tree at all: the
+service owns the nodes, and this module reads them from the projection it already
+receives (`/api/state` carries `tree`) and drives them through
+`/api/tree/stop`, `/api/tree/background` and `/api/tree/node/{id}`. The in-process
+store is the fallback of the test seam only, which is why `_client is None` is the
+one condition that selects it: a second source of truth on the same screen is how
+a list starts disagreeing with the agent it describes.
 """
 
 from __future__ import annotations
 
+import time
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
 from textual.app import ScreenStackError
 from textual.css.query import NoMatches
 
+from src.engine.agents.profile.models.agent_role import AgentRole
 from src.engine.agents.tree.models.agent_node import AgentNode
+from src.engine.agents.tree.models.node_status import NodeStatus
 from src.engine.skills.loaded import loaded_skills
 from src.ui.messages import NodeOpened, TreeChanged
+from src.ui.service_client import ServiceClient, ServiceClientError
 from src.ui.subagent_reports import WAKE_PROMPT
+from src.ui.turn_mixin import failure_notice
 from src.ui.widgets.agent_tree_screen import AgentTreeScreen, TreeAction
 from src.ui.widgets.agent_view import AgentView
 from src.ui.widgets.chat_log import ChatLog, SummonBlock
@@ -38,6 +52,9 @@ from src.ui.widgets.sidebar_panel import SidebarPanel
 
 NO_TREE_NOTICE = 'This session has no agents yet: send a message and the tree starts with it.'
 """What the tree shortcut says when the app was built without a tree."""
+
+MISSING_NODE_NOTICE = 'That subagent is not part of this session anymore.'
+"""What opening a node the tree no longer holds says."""
 
 WAKE_DELAY = 0.6
 """Seconds to wait before waking the agent for answers nobody read.
@@ -51,49 +68,72 @@ three turns racing each other.
 class TreeMixin:
     """The tree view, the node view and the delivery of late messages.
 
-    It expects the app to define ``_summoner``, ``_agent_tree``, ``_turn_active``
-    and ``_current_run``.
+    It expects the app to define ``_summoner``, ``_agent_tree``, ``_turn_active``,
+    ``_current_run`` and — on an attached terminal — ``_client`` and
+    ``_service_state``, with ``refresh_service_state`` as the way to re-read it.
     """
 
     _summoner: Any
     _agent_tree: Any
     _turn_active: bool
+    _client: ServiceClient | None
+    _service_state: dict[str, Any] | None
     _wake_timer: Any = None
     _wake_pending: bool = False
 
     # --- the tree ----------------------------------------------------------
 
     def agent_tree(self) -> Any:
-        """The tree in effect, or ``None`` when the app has none."""
+        """The local tree in effect, or ``None`` when this process holds none.
+
+        ``None`` does not mean "no agents": an attached terminal holds no tree at
+        all, and its nodes come from the service's projection — see `tree_nodes`.
+        """
         return self._agent_tree
 
     def tree_nodes(self) -> list[AgentNode]:
+        """What the tree window lists: the service's nodes, or the local store's.
+
+        There is one source of truth on purpose. Attached, the nodes are the ones
+        the last state carried — the service runs them and is the only process that
+        can say how they are doing. The local store answers only in the in-process
+        seam, where a client does not exist.
+        """
+        if self._client is not None:
+            return _nodes_from_tree((self._service_state or {}).get('tree'))
         tree = self.agent_tree()
         return [] if tree is None else tree.active.nodes()
 
     def node(self, node_id: str | None) -> AgentNode | None:
+        """The node a full id names, or ``None``."""
+        if not node_id:
+            return None
         tree = self.agent_tree()
-        return None if tree is None or not node_id else tree.active.node(node_id)
+        if tree is not None:
+            return tree.active.node(node_id)
+        return next((candidate for candidate in self.tree_nodes() if candidate.id == node_id), None)
 
     def find_node(self, ref: str) -> AgentNode | None:
         """The node a reference names, resolving a unique id prefix.
 
         The ids on screen are eight characters — the tree row, the prompt block of
         the neighbours, the spawn block the user clicks — while the tree stores the
-        full one. The summoner already resolves prefixes for the tools, and the UI
-        reads the same references, so it resolves them the same way instead of
-        carrying a second rule.
+        full one. In process, the summoner already resolves prefixes for the tools,
+        and the UI reads the same references, so it resolves them the same way
+        instead of carrying a second rule. Attached, the prefix is resolved over the
+        service's own nodes, which is the only list this process has.
         """
         exact = self.node(ref)
         if exact is not None:
             return exact
         summoner = getattr(self, '_summoner', None)
-        if summoner is None:
-            return None
-        try:
-            return summoner.resolve(ref)
-        except Exception:  # noqa: BLE001 - an unknown id is a miss, not a failure
-            return None
+        if summoner is not None:
+            try:
+                return summoner.resolve(ref)
+            except Exception:  # noqa: BLE001 - an unknown id is a miss, not a failure
+                return None
+        matches = [candidate for candidate in self.tree_nodes() if candidate.id.startswith(ref)]
+        return matches[0] if len(matches) == 1 else None
 
     async def open_tree(self) -> None:
         """`ctrl+t`: the list of agents of the session, and what to do with one.
@@ -101,10 +141,13 @@ class TreeMixin:
         It opens even when the session agent has summoned nobody: the empty state is
         information — what the tree is, and that it fills in while the agent works —
         and a shortcut that answers with a toast instead of a window reads as broken.
+        Attached, the list is read from the service in the same keypress, so the
+        window is the truth as of now rather than the last event that moved a node.
         """
         chat = self.query_one(ChatLog)
-        tree = self.agent_tree()
-        if tree is None:
+        if self._client is not None:
+            await self.refresh_service_state()
+        elif self.agent_tree() is None:
             await chat.add_notice(NO_TREE_NOTICE, style='yellow')
             return
         chosen = await self.push_screen_wait(AgentTreeScreen(self.tree_nodes(), viewed=self.viewed_node_id()))
@@ -125,6 +168,8 @@ class TreeMixin:
 
     async def send_to_background(self, node_id: str, chat: ChatLog) -> bool:
         """`b`: the node keeps working and answers later, instead of blocking."""
+        if self._client is not None:
+            return await self._service_tree_action(self._client.background_node, node_id, chat)
         summoner = getattr(self, '_summoner', None)
         if summoner is None:
             await chat.add_notice('This app has no subagents.', style='yellow')
@@ -139,6 +184,8 @@ class TreeMixin:
 
     async def stop_node(self, node_id: str, chat: ChatLog) -> bool:
         """`k`: the node is stopped, along with everything it summoned."""
+        if self._client is not None:
+            return await self._service_tree_action(self._client.stop_node, node_id, chat)
         summoner = getattr(self, '_summoner', None)
         if summoner is None:
             await chat.add_notice('This app has no subagents.', style='yellow')
@@ -151,8 +198,34 @@ class TreeMixin:
         await chat.add_notice(message, style='cyan')
         return True
 
+    async def _service_tree_action(
+        self,
+        action: Callable[[str], Awaitable[dict[str, Any]]],
+        node_id: str,
+        chat: ChatLog,
+    ) -> bool:
+        """Runs one tree action in the service and paints the engine's own sentence.
+
+        The node changes in the service, not here: the reply is read for what it
+        says, and the state is re-read so the open list and the sidebar show what
+        the service now holds. A refusal is its reason — `failure_notice` — because a
+        terminal that guessed the cause would be a second opinion about a tree it
+        does not run.
+        """
+        try:
+            reply = await action(node_id)
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return False
+        await chat.add_notice(str(reply.get('message') or ''), style='cyan')
+        await self.refresh_service_state()
+        return True
+
     async def goto_node(self, node_id: str) -> None:
         """Opens ``node_id``: the subagent view, or the chat for the root."""
+        if self._client is not None:
+            await self._open_service_node(node_id)
+            return
         node = self.find_node(node_id)
         if node is None:
             return
@@ -160,6 +233,49 @@ class TreeMixin:
             self.show_chat()
             return
         await self.open_subagent(node)
+
+    async def _open_service_node(self, node_id: str) -> None:
+        """Opens a node the service owns, with its transcript read in the same call.
+
+        The tree the list paints carries no messages: they are large, and a list does
+        not need them. Opening one is the moment they are needed, so the read asks
+        for them and the answer is painted where the node view keeps its body.
+        """
+        chat = self.query_one(ChatLog)
+        try:
+            view = await self._client.tree_node(node_id, include_messages=True)
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        node = _node_from_view(view)
+        if node is None:
+            await chat.add_notice(MISSING_NODE_NOTICE, style='yellow')
+            return
+        if node.is_root:
+            self.show_chat()
+            return
+        await self.open_subagent(node)
+        await self._paint_service_transcript(view.get('transcript') or (), finished=node.status.finished)
+
+    async def _paint_service_transcript(self, items: Sequence[Mapping[str, Any]], *, finished: bool) -> None:
+        """Paints a node's conversation from the service's own projection.
+
+        `AgentView` rebuilds its body from `ModelMessage`s, which an attached terminal
+        never holds; the projection is the same conversation in the shape the chat
+        already knows how to draw, so it is painted through `render_items` and the
+        widget is left as it is. Nothing is painted when the service sent no
+        messages: the view's own line is the honest one.
+        """
+        if not items:
+            return
+        try:
+            view = self.query_one(AgentView)
+        except NoMatches:
+            return
+        chat = view.transcript
+        await chat.clear()
+        await chat.render_items(items)
+        chat.finalize(close_pending=finished)
 
     def on_node_opened(self, message: NodeOpened) -> None:
         """A subagent was clicked in the chat: open it.
@@ -178,10 +294,7 @@ class TreeMixin:
             chat = self.query_one(ChatLog)
         except NoMatches:
             return
-        await chat.add_notice(
-            'That subagent is not part of this session anymore.',
-            style='yellow',
-        )
+        await chat.add_notice(MISSING_NODE_NOTICE, style='yellow')
 
     async def open_subagent(self, node: AgentNode) -> None:
         """Replaces the chat with the node and locks the composer."""
@@ -271,13 +384,29 @@ class TreeMixin:
     # --- repainting --------------------------------------------------------
 
     def on_tree_changed(self, message: TreeChanged) -> None:
-        """A node was born or moved on: repaint what shows it."""
+        """A node was born or moved on: repaint what shows it.
+
+        On an attached terminal the node in the event is not one this process holds:
+        the truth is the service's projection, so the state is re-read and the node on
+        screen with it. In process the event *is* the node, and the chat blocks take
+        it directly.
+        """
+        if self._client is not None:
+            self.run_worker(self._refresh_tree_from_service())
+            return
         node = message.node
         for block in self.query(SummonBlock):
             block.set_node(node)
         if self.subagent_open and self.viewed_node_id() == node.id:
             self.run_worker(self._refresh_node_view(node))
         self._refresh_tree_screen()
+
+    async def _refresh_tree_from_service(self) -> None:
+        """Re-reads the tree the service owns, and the node on screen with it."""
+        await self.refresh_service_state()
+        node_id = self.viewed_node_id()
+        if node_id is not None and self.subagent_open:
+            await self._open_service_node(node_id)
 
     async def _refresh_node_view(self, node: AgentNode | None = None) -> None:
         try:
@@ -465,4 +594,68 @@ def _label(node: AgentNode | None) -> str:
     return node.label if not node.is_root else f'the agent ({node.label})'
 
 
-__all__ = ['NO_TREE_NOTICE', 'TreeMixin']
+def _nodes_from_tree(tree: Mapping[str, Any] | None) -> list[AgentNode]:
+    """The nodes of one service tree projection, as the screen paints them.
+
+    The order is the service's and is not re-derived: it sends the tree in tree
+    order, and the screen already re-arranges by attention. An entry that does not
+    read back is dropped — the same rule a stored tree keeps — because one
+    unreadable node must not take the window down.
+    """
+    raw = (tree or {}).get('nodes') or ()
+    nodes = (_node_from_view(item) for item in raw if isinstance(item, Mapping))
+    return [node for node in nodes if node is not None]
+
+
+def _node_from_view(view: Mapping[str, Any]) -> AgentNode | None:
+    """One node of the projection as the type the widget was built around.
+
+    The projection is the service's truth in JSON: names, states and durations as
+    text and numbers. The screen paints an `AgentNode`, so this is the single place
+    the two meet — the widget keeps its own type and the local tree keeps building
+    its nodes the way it always did.
+
+    ``elapsed`` is the service's measurement of how long the node has worked. A
+    finished node is stamped with it so its clock stops where the service stopped
+    counting; a running one starts from it and keeps going. Nothing else is
+    inferred: a state this client does not know drops the node instead of inventing
+    a row.
+    """
+    node_id = str(view.get('id') or '')
+    if not node_id:
+        return None
+    try:
+        status = NodeStatus(str(view.get('status') or NodeStatus.RUNNING))
+        parent = view.get('parent_id')
+        now = time.time()
+        return AgentNode(
+            id=node_id,
+            name=str(view.get('name') or ''),
+            role=AgentRole(str(view.get('role') or AgentRole.AGENT)),
+            parent_id=None if parent is None else str(parent),
+            depth=int(view.get('depth') or 0),
+            task=str(view.get('task') or ''),
+            status=status,
+            mode=str(view.get('mode') or 'sync'),
+            model=str(view.get('model') or ''),
+            result=None if view.get('result') is None else str(view.get('result')),
+            error=None if view.get('error') is None else str(view.get('error')),
+            started_at=now - _seconds(view.get('elapsed')),
+            finished_at=now if status.finished else None,
+            runs=int(view.get('runs') or 0),
+            delivered=bool(view.get('delivered', True)),
+            budget_exhausted=bool(view.get('budget_exhausted')),
+        )
+    except TypeError, ValueError:
+        return None
+
+
+def _seconds(raw: Any) -> float:
+    """A duration the service sent, or zero when it sent none."""
+    try:
+        return max(0.0, float(raw))
+    except TypeError, ValueError:
+        return 0.0
+
+
+__all__ = ['MISSING_NODE_NOTICE', 'NO_TREE_NOTICE', 'TreeMixin']

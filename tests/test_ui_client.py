@@ -39,8 +39,12 @@ from typing import Any
 import httpx
 import pytest
 from PIL import Image
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
+from textual.widgets import OptionList
 
+from src.engine.agents.profile.models.agent_role import AgentRole
+from src.engine.agents.tree.models.node_status import NodeStatus
 from src.engine.attachments.images import prepare_image
 from src.engine.bootstrap import Composition
 from src.engine.commands import CommandOwner, owned_by
@@ -71,7 +75,10 @@ from src.ui.service_client import (
     TurnRequest,
     Unauthorized,
 )
+from src.ui.tree_mixin import _nodes_from_tree
 from src.ui.turn_mixin import failure_notice, pending_request
+from src.ui.widgets.agent_tree_screen import AgentTreeScreen, TreeAction
+from src.ui.widgets.agent_view import AgentView
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.mcp_screen import MCPScreen
 from src.ui.widgets.prompt_input import PromptInput
@@ -81,6 +88,7 @@ from src.ui.widgets.status_bar import StatusBar
 from tests.test_agents import write_profile
 from tests.test_provider_service import _add, _service
 from tests.test_server_parity import _busy
+from tests.ui_helpers import render_text
 
 PASSWORD = 'secret-pass'
 """What the browser logs in with; the terminal uses the run token instead."""
@@ -2150,5 +2158,240 @@ def test_a_command_that_swaps_the_session_refuses_when_the_state_cannot_be_read(
                     assert '✖' in _block_text(added[0]), 'the notice is the failure, not a panel'
             finally:
                 await client.aclose()
+
+    asyncio.run(inner())
+
+
+# --- the tree, through the service -------------------------------------------
+
+
+def _service_subagent(runtime: ServerRuntime, *, mode: str = 'sync', task: str = 'Review the diff.') -> Any:
+    """A node of the service's real tree, hanging from the session agent.
+
+    Added through the tree the summoner owns, which is the object the routes act
+    on: a subagent `TestModel` really ran would be finished before the assertion
+    read it, and "stop a running node" would be a race instead of a fact.
+    """
+    return runtime.composition.agent_trees.active.add(
+        parent_id=None,
+        name='reviewer',
+        role=AgentRole.SUBAGENT,
+        task=task,
+        mode=mode,
+        model='test',
+    )
+
+
+async def _open_tree(pilot: Any, app: SigilApp) -> AgentTreeScreen:
+    """`ctrl+t`, and the window it opens."""
+    await pilot.press('ctrl+t')
+    await _until(pilot, lambda: isinstance(app.screen, AgentTreeScreen), what='the tree window')
+    return app.screen
+
+
+def _rows(screen: AgentTreeScreen) -> list[str]:
+    """The list as a reader sees it: one string per painted row."""
+    return [render_text(option.prompt) for option in screen.query_one(OptionList).options]
+
+
+def _highlight(screen: AgentTreeScreen, node_id: str) -> None:
+    """Puts the cursor on a row by id: the list is ordered by attention, not by birth."""
+    options = screen.query_one(OptionList)
+    options.highlighted = options.get_option_index(node_id)
+
+
+def _subagent_text(app: SigilApp) -> str:
+    """The transcript of the subagent on screen, read the way it is painted."""
+    return '\n'.join(_block_text(widget) for widget in app.query_one(AgentView).transcript.children)
+
+
+def test_the_projection_becomes_the_nodes_the_widget_paints() -> None:
+    """The one place the service's JSON becomes an `AgentNode`.
+
+    The widget is not touched by this cut, so the projection has to arrive as the
+    type it already knows: its ids, its tree position, its state, and a clock that
+    stops when the service stopped counting.
+    """
+
+    nodes = _nodes_from_tree(
+        {
+            'root_id': 'a',
+            'nodes': [
+                {
+                    'id': 'a',
+                    'name': 'wizard',
+                    'role': 'agent',
+                    'parent_id': None,
+                    'depth': 0,
+                    'task': '',
+                    'status': 'running',
+                    'mode': 'sync',
+                    'model': 'test',
+                    'elapsed': 2.0,
+                    'runs': 1,
+                    'delivered': True,
+                    'budget_exhausted': False,
+                },
+                {
+                    'id': 'b',
+                    'name': 'reviewer',
+                    'role': 'subagent',
+                    'parent_id': 'a',
+                    'depth': 1,
+                    'task': 'Review the diff.',
+                    'status': 'done',
+                    'mode': 'async',
+                    'model': 'test',
+                    'elapsed': 4.5,
+                    'runs': 2,
+                    'delivered': False,
+                    'budget_exhausted': True,
+                    'result': 'looks fine',
+                },
+            ],
+        }
+    )
+
+    root, child = nodes
+    assert root.is_root is True
+    assert root.label == 'Wizard'
+    assert child.id == 'b'
+    assert child.parent_id == 'a'
+    assert child.depth == 1
+    assert child.status is NodeStatus.DONE
+    assert child.mode == 'async'
+    assert child.runs == 2
+    assert child.delivered is False
+    assert child.budget_exhausted is True
+    assert child.result == 'looks fine'
+    assert child.elapsed == pytest.approx(4.5, abs=0.1), "a finished node's clock does not keep running"
+
+
+def test_the_tree_opens_when_the_service_has_no_subagents(composition: Composition, tmp_path: Path) -> None:
+    """`ctrl+t` always opens, and an empty tree is information, not a refusal.
+
+    The false sentence this replaces was about "this session has no agents": the
+    session's agent exists, and the list is where a summon will appear.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                screen = await _open_tree(pilot, app)
+
+                assert 'No subagents' in render_text(screen.query_one('#tree-status').render())
+                assert any('appear here' in row for row in _rows(screen))
+                assert 'no agents yet' not in _transcript(app)
+
+    asyncio.run(inner())
+
+
+def test_the_tree_lists_the_subagents_the_service_has(composition: Composition, tmp_path: Path) -> None:
+    """The list is the service's tree: the attached terminal holds none of its own."""
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            node = _service_subagent(runtime, task='read the tree')
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                screen = await _open_tree(pilot, app)
+                rows = _rows(screen)
+
+                assert any('Reviewer' in row and node.short_id in row for row in rows)
+                assert any('read the tree' in row for row in rows)
+                assert '1 subagent' in render_text(screen.query_one('#tree-status').render())
+
+    asyncio.run(inner())
+
+
+def test_stopping_a_node_from_the_tree_stops_it_in_the_service(composition: Composition, tmp_path: Path) -> None:
+    """The key, the list, and the stop landing where the node actually runs."""
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            node = _service_subagent(runtime)
+            tree = runtime.composition.agent_trees.active
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                screen = await _open_tree(pilot, app)
+                _highlight(screen, node.id)
+                await pilot.press('k')
+
+                await _until(
+                    pilot,
+                    lambda: tree.node(node.id).status is NodeStatus.CANCELLED,
+                    what='the stop at the service',
+                )
+                screen = await _open_tree(pilot, app)
+                assert any('cancelled' in row for row in _rows(screen))
+
+    asyncio.run(inner())
+
+
+def test_sending_a_node_to_the_background_changes_it_in_the_service(composition: Composition, tmp_path: Path) -> None:
+    """`b` is the service's decision: the node keeps working and answers later."""
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            node = _service_subagent(runtime)
+            tree = runtime.composition.agent_trees.active
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await app.run_tree_action(TreeAction(kind='detach', node_id=node.id))
+
+                await _until(pilot, lambda: tree.node(node.id).mode == 'async', what='the background at the service')
+                screen = await _open_tree(pilot, app)
+                assert any('async' in row for row in _rows(screen))
+
+    asyncio.run(inner())
+
+
+def test_opening_a_subagent_shows_the_transcript_the_service_keeps(composition: Composition, tmp_path: Path) -> None:
+    """`enter` reads the node's own messages, which only the service has."""
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            node = _service_subagent(runtime, task='read the tree')
+            node.messages.append(ModelRequest(parts=[UserPromptPart(content='read the tree')]))
+            node.messages.append(ModelResponse(parts=[TextPart('it has three modules')]))
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                screen = await _open_tree(pilot, app)
+                _highlight(screen, node.id)
+                await pilot.press('enter')
+
+                await _until(pilot, lambda: app.subagent_open, what='the subagent view')
+                await _until(
+                    pilot,
+                    lambda: 'it has three modules' in _subagent_text(app),
+                    what='the transcript the service kept',
+                )
+                assert app.viewed_node_id() == node.id
+                assert app.query_one(PromptInput).disabled is True, 'a subagent is read, not talked to'
+
+    asyncio.run(inner())
+
+
+def test_a_tree_change_on_the_service_repaints_the_open_list(composition: Composition, tmp_path: Path) -> None:
+    """`tree_changed` refreshes the list, not only the state behind it."""
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                screen = await _open_tree(pilot, app)
+                assert any('appear here' in row for row in _rows(screen))
+
+                node = _service_subagent(runtime)
+                # The event the summoner publishes when it adds a node: the bytes the
+                # service would send, from the hub the service publishes into.
+                runtime.hub.publish('tree_changed', node_id=node.id)
+
+                await _until(
+                    pilot,
+                    lambda: any('Reviewer' in row for row in _rows(screen)),
+                    what='the new row in the open list',
+                )
 
     asyncio.run(inner())

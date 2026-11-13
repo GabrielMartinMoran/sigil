@@ -1012,6 +1012,9 @@ class SigilApp(
         self.refresh_sidebar()
         self.refresh_agent()
         self.paint_window_title()
+        # The tree travels in the state, so every state applied keeps an open tree
+        # window in step — the `tree_changed` event lands here like any other refresh.
+        self._refresh_tree_screen()
         question = state.get('question')
         if isinstance(question, dict):
             identifier = str(question.get('id') or '')

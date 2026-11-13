@@ -59,6 +59,7 @@ from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Self
+from urllib.parse import quote
 
 import httpx
 
@@ -626,6 +627,39 @@ class ServiceClient:
     async def abort(self) -> bool:
         """Stops the running turn. ``False`` when there was nothing to stop."""
         return bool((await self._post('/api/abort', {})).get('stopped'))
+
+    # --- the tree ------------------------------------------------------------
+
+    async def tree_node(self, node_id: str, *, include_messages: bool = False) -> dict[str, Any]:
+        """One node of the session's tree, addressed by id or a unique prefix.
+
+        ``include_messages`` asks for the transcript the subagent view paints. It is
+        advisory: the route always returns the transcript, so this flag documents the
+        caller's intent and shapes the request, never what comes back. The node is
+        the service's, and a ref nothing names is a ``400`` — `RequestRejected`
+        carrying the service's own sentence.
+        """
+        path = f'/api/tree/node/{quote(node_id, safe="")}'
+        if include_messages:
+            path = f'{path}?include_messages=true'
+        return (await self._get(path)).get('node') or {}
+
+    async def stop_node(self, node_id: str) -> dict[str, Any]:
+        """Stops a subagent and everything it summoned, in the service's tree.
+
+        The reply carries the node, the tree it lives in and the engine's sentence.
+        The root is refused with ``409`` — `ServiceBusy` carrying its reason, not a
+        sentence this client invented.
+        """
+        return await self._post('/api/tree/stop', {'node_id': node_id})
+
+    async def background_node(self, node_id: str) -> dict[str, Any]:
+        """Sends a running subagent to the background: it answers as a message later.
+
+        A node that already finished, and the session's own agent, are ``409`` for
+        the engine's own reasons; ``400`` names a node the tree does not have.
+        """
+        return await self._post('/api/tree/background', {'node_id': node_id})
 
     async def answer(self, question_id: str, answers: Sequence[Mapping[str, Any]] | None = None) -> bool:
         """Answers the question the service is waiting on. ``None`` cancels it.

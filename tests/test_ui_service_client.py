@@ -38,7 +38,10 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from PIL import Image
+from pydantic_ai.messages import ModelRequest, UserPromptPart
 
+from src.engine.agents.profile.models.agent_role import AgentRole
+from src.engine.agents.tree.models.node_status import NodeStatus
 from src.engine.bootstrap import Composition
 from src.engine.mcp.deferred import build_manager
 from src.server.app import create_app
@@ -1279,5 +1282,142 @@ def test_a_rollback_point_carries_the_seq_a_click_needs(runtime: ServerRuntime, 
             await runtime.wait()
             points = (await client.rollback_points())['points']
             assert isinstance(points[0]['seq'], int)
+
+    asyncio.run(go())
+
+
+# --- the tree -----------------------------------------------------------------
+
+
+def _subagent(runtime: ServerRuntime, *, mode: str = 'sync', task: str = 'Review the diff.') -> Any:
+    """A node of the service's real tree, hanging from the session agent.
+
+    The routes act on the tree the summoner owns, so the node is added there. A
+    subagent `TestModel` really ran would be finished before the assertion read it,
+    and "stop a running node" would then be a race instead of a contract.
+    """
+    return runtime.composition.agent_trees.active.add(
+        parent_id=None,
+        name='reviewer',
+        role=AgentRole.SUBAGENT,
+        task=task,
+        mode=mode,
+        model='test',
+    )
+
+
+def test_tree_node_returns_the_node_and_its_transcript(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """`include_messages=True` is the read the subagent view paints from."""
+
+    node = _subagent(runtime)
+    node.messages.append(ModelRequest(parts=[UserPromptPart(content='read the tree')]))
+
+    async def go() -> dict[str, Any]:
+        async with _served(runtime, tmp_path) as client:
+            return await client.tree_node(node.id, include_messages=True)
+
+    view = asyncio.run(go())
+
+    assert view['id'] == node.id
+    assert view['status'] == str(NodeStatus.RUNNING)
+    assert view['parent_id'] == node.parent_id
+    assert [item['text'] for item in view['transcript']] == ['read the tree']
+
+
+def test_tree_node_without_messages_still_names_the_node(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """The list does not need the transcript, and this is the read that says so."""
+
+    node = _subagent(runtime)
+
+    async def go() -> dict[str, Any]:
+        async with _served(runtime, tmp_path) as client:
+            return await client.tree_node(node.id)
+
+    view = asyncio.run(go())
+
+    assert view['id'] == node.id
+    assert view['name'] == 'reviewer'
+
+
+def test_an_unknown_tree_node_is_a_typed_refusal(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """`400`: a request that names nothing, which is not what `409` says."""
+
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            with pytest.raises(RequestRejected) as caught:
+                await client.tree_node('no-such-node')
+
+        assert 'No agent with id' in str(caught.value)
+
+    asyncio.run(go())
+
+
+def test_stopping_a_node_changes_it_in_the_service(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """The reply carries the node, the tree it lives in, and the engine's sentence."""
+
+    node = _subagent(runtime)
+
+    async def go() -> dict[str, Any]:
+        async with _served(runtime, tmp_path) as client:
+            return await client.stop_node(node.id)
+
+    reply = asyncio.run(go())
+
+    assert reply['node']['id'] == node.id
+    assert reply['node']['status'] == str(NodeStatus.CANCELLED)
+    assert reply['message']
+    assert [item['id'] for item in reply['tree']['nodes']] == [
+        item.id for item in runtime.composition.agent_trees.active.nodes()
+    ]
+    assert runtime.composition.agent_trees.active.node(node.id).status is NodeStatus.CANCELLED
+
+
+def test_backgrounding_a_node_changes_it_in_the_service(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """`b`: the node keeps working and answers later. The service is where that lands."""
+
+    node = _subagent(runtime)
+
+    async def go() -> dict[str, Any]:
+        async with _served(runtime, tmp_path) as client:
+            return await client.background_node(node.id)
+
+    reply = asyncio.run(go())
+
+    assert reply['node']['mode'] == 'async'
+    assert reply['message']
+    assert runtime.composition.agent_trees.active.node(node.id).mode == 'async'
+
+
+@pytest.mark.parametrize('action', ['stop_node', 'background_node'])
+def test_the_sessions_agent_is_a_typed_conflict(action: str, runtime: ServerRuntime, tmp_path: Path) -> None:
+    """`409`: the root is not a subagent, and the reason is the engine's own."""
+
+    root = runtime.composition.agent_trees.active.root
+    assert root is not None
+
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            with pytest.raises(ServiceBusy) as caught:
+                await getattr(client, action)(root.id)
+
+        assert 'not a subagent' in str(caught.value)
+        assert root.status is NodeStatus.RUNNING
+
+    asyncio.run(go())
+
+
+def test_a_finished_node_refuses_the_background(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """`409` again: a node that already answered has nothing left to detach."""
+
+    node = _subagent(runtime)
+    node.finish('it has three modules')
+
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as client:
+            with pytest.raises(ServiceBusy) as caught:
+                await client.background_node(node.id)
+
+        assert 'already finished' in str(caught.value)
+        assert node.mode == 'sync'
 
     asyncio.run(go())

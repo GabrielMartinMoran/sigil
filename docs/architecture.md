@@ -987,7 +987,8 @@ own cut instead of half-moving all of them at once.
 | Reconnection | `events(after=last_event_id)`, then a state read | a gap is announced, never silently painted over |
 | Restart recovery | `ServiceClient.refresh_endpoint()` before the retry, then a fresh `/api/state` | the client re-discovers through the injected launcher, rebuilds its pool over the transport it was given, and restarts the cursor with the new run (see [When the service restarts](#when-the-service-restarts)) |
 | Commands | `handle_command`, through `src/ui/command_transport.py` | client commands run here; core commands name the route that serves them and what is still missing (see [Which commands run here](#which-commands-run-here)) |
-| Provider, agent, rollback, tree | unchanged, still local | those panels read files and rows this process can see |
+| Provider, agent, rollback | unchanged, still local | those panels read files and rows this process can see |
+| The agent tree | `state.tree`, `POST /api/tree/stop`, `POST /api/tree/background`, `GET /api/tree/node/{id}` | read and driven by the service; see [part H](#the-agent-tree-through-the-service-part-h) |
 
 The dispatcher is not replaced any more. An earlier version swapped `handle_command`
 for a single refusal, which was honest about the missing senders and wrong about
@@ -1289,3 +1290,86 @@ stopping with the two-press rule, a question answered over HTTP, an image with i
 marker, the first cursor, and a cut stream that announces the gap, resumes and
 re-reads the state. Nothing waits on a fixed sleep; every wait is for a row, a
 rendered line or a request count.
+
+## The agent tree through the service (part H)
+
+The tree window reads and drives the service's tree. Before this cut it read
+`SigilApp._summoner` and `_agent_tree`, and both are `None` on an attached
+terminal: `ctrl+t` opened an empty list and every action on a row did nothing.
+
+### Where the nodes come from
+
+There is one source of truth per mode, and the mode is one attribute:
+
+| Mode | Nodes from | When |
+| --- | --- | --- |
+| Attached | `state['tree']['nodes']` of the last `/api/state` | `_client is not None` |
+| In process | `_agent_tree.active.nodes()` | the test seam only |
+
+`TreeMixin.tree_nodes()` picks by `_client`, and `open_tree` re-reads the state
+before pushing the screen, so the window is the truth as of the keypress instead
+of the last event that moved a node. A second source of truth would be a list
+that disagrees with the agent it describes.
+
+The projection is JSON; the screen paints `AgentNode`. `tree_mixin.nodes_from_tree`
+and `node_from_view` are the one place the two meet, and the widget is untouched:
+ids, tree position, state, mode, task, runs and budget travel, and `elapsed` is
+turned back into a clock — a finished node's clock stops where the service
+stopped counting, a running one keeps going. An entry that does not read back is
+dropped, the same rule a stored tree keeps.
+
+### `ctrl+t` always opens
+
+The window opens with one subagent, with forty, and with none. The empty case is
+drawn by the list itself: the status line says `No subagents in this session
+yet.` and the row `Subagents appear here while the agent works.` The old
+`NO_TREE_NOTICE` — "this session has no agents yet" — now belongs only to an
+in-process app built without a tree; an attached terminal never shows it, because
+the session does have an agent and the service is the one that knows.
+
+### Actions are the service's
+
+| Key | Route | What changes |
+| --- | --- | --- |
+| `enter` | `GET /api/tree/node/{id}?include_messages=true` | the node view, painted from the service's transcript |
+| `k` | `POST /api/tree/stop` | the node and everything under it, in the service |
+| `b` | `POST /api/tree/background` | `mode` becomes `async`, in the service |
+
+`ServiceClient.tree_node`, `stop_node` and `background_node` are the three calls.
+They carry the client's existing failure vocabulary: `400` is `RequestRejected`
+(a ref that names nothing), `409` is `ServiceBusy` (the root, or a node that
+already finished) with the engine's own sentence, and `failure_notice` prints it.
+`include_messages` is **advisory**: the route always returns `transcript`, and the
+flag documents the caller's intent rather than switching the wire.
+
+The transcript is painted through `ChatLog.render_items`, the same projection
+renderer the main transcript already uses, because `AgentView` rebuilds its body
+from `ModelMessage`s an attached terminal never holds. The widget keeps its type
+and its header; only the body's source differs.
+
+### What is left of the local path
+
+It is the in-process seam and nothing else. `TreeMixin` keeps the summoner calls
+(`summoner.kill`, `summoner.detach`, `summoner.resolve`) behind `_client is None`,
+which is the same fence part G describes for `run_turn`: those paths serve the
+widget tests that mount `SigilApp` with an engine. No production entry point can
+reach them, and nothing new may grow in them that both modes need.
+
+### Keeping the list current
+
+`tree_changed` is a state change, so it lands in `_apply_service_state`, which now
+calls `_refresh_tree_screen()`: an open tree repaints from the freshly read
+projection. On an attached terminal `on_tree_changed` does not read the node out of
+the event — that node is not one this process holds — it refreshes the state and,
+when a subagent is open, re-reads that node with `include_messages`. No timer and
+no fixed sleep: the repaint is driven by the event and by the state it asks for.
+
+### The tests
+
+`tests/test_ui_service_client.py` proves the three methods against the real
+application (happy path, `400` for an unknown node, `409` for the root and for a
+finished node) and `tests/test_ui_client.py` proves the window: empty tree opens
+and says so, a service subagent appears in the list, `k` and `b` change the node in
+the service and the list shows it, `enter` paints the transcript the service
+keeps, and a published `tree_changed` repaints an open list. Every wait is for a
+rendered row or a service fact, never a sleep.
