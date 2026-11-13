@@ -471,16 +471,34 @@ added: the widget is mounted with `mount(before=0)`, and `call_after_refresh` th
 puts the row the reader was looking at back on its screen row with
 `scroll_to(immediate=True)`. What they were reading does not move.
 
-Past the bound the page held longest is let go. Pages only ever arrive above, so
-that is the request the reader has scrolled furthest from, and dropping it moves
-nothing on screen. The block being streamed into and the queue's waiting lines
-belong to no page and are never destroyed; a page that somehow held one is kept,
-and the window grows past its bound rather than losing what is live. A page that
-leaves is asked for again with the cursor it carried, so history is never lost —
-only unmounted. See `tests/test_ui_client.py` for the seven cases: the window a long
-session mounts, the cursor a scroll asks for, the row that does not move, the second
-page, the bound, the click that still names its turn, and the end of the
-conversation.
+Past the bound the page furthest from the reading position is let go, not the page
+held longest: what has to stay is what the screen is showing. The position is taken
+before the page above is inserted — the insertion moves the scroll offset, not the
+row the reader is on — and turned into a position among the mounted items, because
+items are what a page is counted in and a tool block is not as tall as a line of
+text. It gives two outcomes, one for each way a reader arrives at the bound. A
+reader at the top is furthest from the newest page, so that one leaves and the
+window stops ending where the conversation ends. A reader who came back down is
+furthest from the page at the top, which is the page the cursor can ask for again.
+Either way the page that leaves is the one the viewport shows least of, so nothing
+on screen moves. The block being streamed into and the queue's waiting lines belong
+to no page and are never destroyed; a page that somehow held one is skipped, and the
+window grows past its bound rather than losing what is live.
+
+What leaves above is asked for again with the cursor it carried, so history is never
+lost — only unmounted. What leaves below cannot be: the route pages backwards only,
+and there is no `after` cursor to walk down with. So a window that no longer ends
+where the conversation ends — `_reaches_end` false in `ChatLog`, `reachesEnd` on the
+web — reads the newest page again, the same read the screen opened with, as soon as
+the reader reaches the bottom. Once per arrival: while that read is in flight, and
+after it lands, the window ends the conversation again and a reader who keeps
+scrolling at the bottom asks for nothing more. The anchor goes back to the bottom
+with it, because the bottom is what they asked for. See `tests/test_ui_client.py`
+for the ten cases: the window a long session mounts, the cursor a scroll asks for,
+the row that does not move, the second page, the bound and the live block, the newest
+page a reader at the top lets go of, the newest page read again at the bottom, the
+page at the top a reader near the bottom gives up, the click that still names its
+turn, and the window preference that falls back and clamps.
 
 The web client is the second, and it holds the same bound with a different
 mechanism. `web/src/transcriptWindow.ts` is the whole rule, as pure functions over

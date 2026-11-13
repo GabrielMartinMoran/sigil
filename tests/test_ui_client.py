@@ -3562,11 +3562,13 @@ def test_a_second_trip_to_the_top_loads_another_page(composition: Composition, t
 def test_the_window_stays_bounded_and_never_drops_the_block_being_written(
     composition: Composition, tmp_path: Path
 ) -> None:
-    """Past the bound, the page it has held longest goes — never the live block.
+    """Past the bound, the page furthest from the reader goes — never the live block.
 
-    The page let go of is the one the reader has scrolled furthest from, so nothing on
-    screen moves when it leaves; the block being streamed into is not part of any page
-    and is not a candidate at all.
+    With the reader at the top that page is the newest one, so the window stops ending
+    where the conversation ends; when they come back down the newest page is read
+    again. The block being streamed into belongs to no page, so it is not a candidate
+    for eviction and neither letting a page go nor reading the newest one back takes
+    it off the screen.
     """
 
     async def inner() -> None:
@@ -3580,6 +3582,8 @@ def test_the_window_stays_bounded_and_never_drops_the_block_being_written(
                 await chat.begin_response()
                 await chat.add_text('still being written')
                 await pilot.pause()
+                writing = chat._current
+                assert writing is not None
 
                 for before in (400, 300, 200):
                     chat.scroll_to(y=0, animate=False, immediate=True)
@@ -3589,11 +3593,149 @@ def test_the_window_stays_bounded_and_never_drops_the_block_being_written(
                     await pilot.pause()
                     await pilot.pause()
                     assert len(chat.children) <= 3 * DEFAULT_TRANSCRIPT_WINDOW + 1, 'the window is bounded'
+                    assert writing in chat.children, 'the block being written is still mounted'
 
-                assert chat._current is not None, 'the streaming block is still the one being written'
-                assert chat._current in chat.children, 'and it is still mounted'
                 assert 'still being written' in _transcript(app)
-                assert 'question 249' not in _transcript(app), 'the page it held longest is the one that left'
+                assert 'question 249' not in _transcript(app), (
+                    'the page furthest from a reader at the top is the one that left'
+                )
+
+                # Back at the bottom the newest page is read again; the live block is
+                # not a page and is still the same object being written into.
+                chat.scroll_end(animate=False)
+                await _until(
+                    pilot, lambda: 'question 249' in _transcript(app), what='the end of the conversation again'
+                )
+                assert chat._current is writing, 'the reload does not start a second block'
+                assert writing in chat.children, 'and does not take the live one down'
+                assert 'still being written' in _transcript(app)
+                assert len(chat.children) <= DEFAULT_TRANSCRIPT_WINDOW + 1, 'the window is one page and the live block'
+
+    asyncio.run(inner())
+
+
+def test_a_reader_at_the_top_lets_go_of_the_newest_page(composition: Composition, tmp_path: Path) -> None:
+    """Distance, not age: a reader at the top is furthest from the newest page.
+
+    Three trips up mount one page over the bound. The page that leaves is the one the
+    reader is furthest from — the newest — and because it is the page that held the end
+    of the conversation, the window no longer ends there.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            _grow_session(runtime, 250)
+            reads = _windows(client)
+            app = _windowed(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                chat = app.query_one(ChatLog)
+                await _until(pilot, lambda: len(chat.children) == DEFAULT_TRANSCRIPT_WINDOW, what='the window')
+
+                for before in (400, 300, 200):
+                    chat.scroll_to(y=0, animate=False, immediate=True)
+                    await _until(
+                        pilot, lambda before=before: reads[-1].get('before') == before, what=f'the page before {before}'
+                    )
+                    await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the restored reading position')
+
+                assert [read.get('before') for read in reads] == [None, 400, 300, 200]
+                assert chat._reaches_end is False, 'the newest page left, so the window no longer ends there'
+                assert 'question 249' not in _transcript(app), (
+                    'the newest page is what a reader at the top is furthest from'
+                )
+                assert 'question 100' in _transcript(app), 'the page the reader is on stays'
+
+    asyncio.run(inner())
+
+
+def test_reaching_the_bottom_reads_the_newest_page_once(composition: Composition, tmp_path: Path) -> None:
+    """What left the bottom has no cursor to come back with, so it is read again.
+
+    The route pages backwards only, so the repair for a window that let the end go is
+    the read the screen opened with. Once per arrival: a reader who keeps scrolling at
+    the bottom asks for nothing more, because the window ends there again.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            _grow_session(runtime, 250)
+            reads = _windows(client)
+            app = _windowed(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                chat = app.query_one(ChatLog)
+                await _until(pilot, lambda: len(chat.children) == DEFAULT_TRANSCRIPT_WINDOW, what='the window')
+                for before in (400, 300, 200):
+                    chat.scroll_to(y=0, animate=False, immediate=True)
+                    await _until(
+                        pilot, lambda before=before: reads[-1].get('before') == before, what=f'the page before {before}'
+                    )
+                    await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the restored reading position')
+                assert chat._reaches_end is False
+
+                asked = len(reads)
+                chat.scroll_end(animate=False)
+                await _until(pilot, lambda: len(reads) == asked + 1, what='the newest page again')
+                await _until(pilot, lambda: 'question 249' in _transcript(app), what='the end of the conversation')
+
+                assert reads[-1] == {'limit': DEFAULT_TRANSCRIPT_WINDOW}, 'the read is the one the screen opened with'
+                assert chat._reaches_end is True, 'the window ends where the conversation ends again'
+                assert len(chat.children) == DEFAULT_TRANSCRIPT_WINDOW, 'the newest page is the window again'
+
+                # A reader who keeps scrolling at the bottom asks for nothing more.
+                chat.scroll_to(y=chat.max_scroll_y - 1, animate=False, immediate=True)
+                await pilot.pause()
+                chat.scroll_end(animate=False)
+                await pilot.pause()
+                await pilot.pause()
+
+                assert len(reads) == asked + 1, 'one read per arrival, not one per scroll event'
+
+    asyncio.run(inner())
+
+
+def test_a_reader_near_the_bottom_gives_up_the_page_at_the_top(composition: Composition, tmp_path: Path) -> None:
+    """The page being read is never the one let go of while another is further away.
+
+    A page above can arrive while the reader is at the bottom of the window, and then
+    the newest page is the one they are inside. What is furthest from them is the top,
+    which the cursor can still ask for again, so that is the page that leaves.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            _grow_session(runtime, 250)
+            reads = _windows(client)
+            app = _windowed(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                chat = app.query_one(ChatLog)
+                await _until(pilot, lambda: len(chat.children) == DEFAULT_TRANSCRIPT_WINDOW, what='the window')
+                for before in (400, 300):
+                    chat.scroll_to(y=0, animate=False, immediate=True)
+                    await _until(
+                        pilot, lambda before=before: reads[-1].get('before') == before, what=f'the page before {before}'
+                    )
+                    await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the restored reading position')
+                assert len(chat._pages) == 3
+
+                # The window still ends the conversation, so coming back down asks
+                # for nothing.
+                asked = len(reads)
+                chat.scroll_end(animate=False)
+                await pilot.pause()
+                await pilot.pause()
+                assert len(reads) == asked, 'a window that ends the conversation has nothing to read'
+
+                # The page above arrives while the reader is at the bottom.
+                page = await client.transcript(limit=DEFAULT_TRANSCRIPT_WINDOW, before=chat.older_cursor)
+                await chat.prepend_items(page['items'], first_index=page['first_index'], has_more=page['has_more'])
+                await pilot.pause()
+
+                assert len(chat._pages) == 3, 'the window is still bounded'
+                assert 'question 249' in _transcript(app), 'the page the reader is inside stays'
+                assert 'question 050' not in _transcript(app), 'the page furthest from the reader is the one that left'
+                assert chat.older_cursor == 200, 'the window starts where the page after it starts'
+                assert chat.has_older is True, 'and the page that left can be asked for again'
+                assert chat._reaches_end is True, 'nothing left from the bottom'
 
     asyncio.run(inner())
 

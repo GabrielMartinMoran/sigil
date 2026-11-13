@@ -106,9 +106,11 @@ MAX_MOUNTED_PAGES = 3
 
 The bound is on pages, not on items, because a page is the unit the service hands
 over and the unit the cursor walks back in: 100 items by default, so this is a few
-hundred widgets of history behind and ahead of the reader instead of thousands. A
-page that leaves the window is asked for again with the cursor it carried, which is
-why the one let go of is the one the reader has scrolled furthest from.
+hundred widgets of history behind and ahead of the reader instead of thousands. The
+page let go of is the one furthest from the reader, and how it comes back depends on
+where it was: a page that left above them is asked for again with the cursor it
+carried, and a page that left below is read again with the newest window, because
+the route has no forward cursor.
 """
 
 
@@ -1109,9 +1111,11 @@ class ChatLog(ReadOnlyScroll):
     The conversation itself is painted a page at a time. A long session is thousands
     of items, and mounting a widget for every one of them made attaching quadratic:
     the log holds a bounded window of pages, asks the service for the page above it
-    when the reader reaches the top, and lets go of the page it has been holding
-    longest once the window is full. What the window holds is what the screen shows,
-    not what the session has.
+    when the reader reaches the top, and lets go of the page furthest from the reader
+    once the window is full — the newest one for a reader at the top, and the one at
+    the top for a reader who came back down. A window that let the bottom go does not
+    end where the conversation ends, so reaching the bottom reads the newest page
+    again. What the window holds is what the screen shows, not what the session has.
     """
 
     class OlderPageWanted(Message):
@@ -1124,6 +1128,15 @@ class ChatLog(ReadOnlyScroll):
         def __init__(self, before: int) -> None:
             super().__init__()
             self.before = before
+
+    class NewestPageWanted(Message):
+        """The reader reached the bottom of a window that no longer ends there.
+
+        What left the bottom cannot be asked for with a cursor — the route pages
+        backwards only — so the repair is the read the screen opened with. Sent as a
+        message for the same reason the page above is: the widget knows what its
+        window holds, and the client is the app's.
+        """
 
     def __init__(
         self,
@@ -1151,6 +1164,12 @@ class ChatLog(ReadOnlyScroll):
         self._page_first = 0
         self._has_more = False
         self._wanting_page = False
+        # Whether the bottom of the window is still the end of the conversation, and
+        # whether the read that repairs it is already on its way. A page let go of
+        # below the reader takes the end with it, and there is no cursor that would
+        # bring it back: the newest window is read again instead.
+        self._reaches_end = True
+        self._wanting_newest = False
         # The lines the queue overlay owns. They are never history and never leave
         # with a page, whatever the window does.
         self._pending_rows: list[Static] = []
@@ -1230,6 +1249,8 @@ class ChatLog(ReadOnlyScroll):
         super().watch_scroll_y(old_value, new_value)
         if new_value <= 0:
             self.ask_for_older_page()
+        if new_value >= self.max_scroll_y:
+            self.ask_for_newest_page()
 
     def ask_for_older_page(self) -> None:
         """Posts for the page above, unless one is already on its way or there is none."""
@@ -1248,6 +1269,30 @@ class ChatLog(ReadOnlyScroll):
         would close the block being streamed into.
         """
         self._wanting_page = False
+
+    def ask_for_newest_page(self) -> None:
+        """Posts for the newest page again, when the bottom is no longer the end.
+
+        A window that let its newest page go has a hole below the mounted window, and
+        the route pages backwards only: no cursor walks down. So the read the screen
+        opened with is asked for again, once per arrival — while it is on its way, and
+        after it lands, the window ends the conversation and a reader who keeps
+        scrolling at the bottom asks for nothing more.
+        """
+        if self._wanting_newest or self._reaches_end:
+            return
+        if self.scroll_offset.y < self.max_scroll_y:
+            return
+        self._wanting_newest = True
+        self.post_message(self.NewestPageWanted())
+
+    def newest_page_finished(self) -> None:
+        """The ask for the newest page ended without one, so the reader may ask again.
+
+        Retried the next time they reach the bottom, and nothing is printed for the
+        failure, for the same reason an older page prints nothing.
+        """
+        self._wanting_newest = False
 
     # --- open calls -----------------------------------------------------------
 
@@ -1506,6 +1551,8 @@ class ChatLog(ReadOnlyScroll):
         self._page_first = 0
         self._has_more = False
         self._wanting_page = False
+        self._reaches_end = True
+        self._wanting_newest = False
         self._pending_rows = []
         self.refresh()
         # After clearing, the new history follows the bottom again.
@@ -1663,7 +1710,6 @@ class ChatLog(ReadOnlyScroll):
         Returns:
             The pending lines, in queue order, for the caller to retire.
         """
-        page = self._page_widgets(items)
         queued = [
             UserMessage(
                 _item_user_renderable(str(entry.get('text') or ''), (), queued=True),
@@ -1671,18 +1717,67 @@ class ChatLog(ReadOnlyScroll):
             )
             for entry in pending
         ]
+        self._pending_rows = list(queued)
+        await self._paint_newest(items, queued, first_index=first_index, has_more=has_more, close_pending=True)
+        return queued
+
+    async def reload_newest(
+        self, items: Sequence[dict[str, Any]], *, first_index: int = 0, has_more: bool = False
+    ) -> None:
+        """Paints the newest page in place of the mounted window, keeping what is live.
+
+        What left the bottom has no cursor to come back with, so the repair is the read
+        the screen opened with, painted again where the window is: the pages go, and
+        whatever belongs to no page — the block being streamed into and the lines the
+        queue still holds — stays where it is. The anchor goes back to the bottom,
+        because the bottom is what the reader asked for.
+
+        A call still waiting for its result is left open: this is not a transcript
+        rebuilt from stored rows, and marking a live call interrupted would be a lie.
+        """
+        mounted = self._pages
+        self._pages = []
+        if mounted:
+            with self.app.batch_update():
+                for page in mounted:
+                    await self.remove_children(list(page))
+        # What is left belongs to no page and stays under the new one.
+        above = self.children[0] if self.children else None
+        await self._paint_newest(
+            items, (), first_index=first_index, has_more=has_more, close_pending=False, before=above
+        )
+
+    async def _paint_newest(
+        self,
+        items: Sequence[dict[str, Any]],
+        queued: Sequence[Static],
+        *,
+        first_index: int,
+        has_more: bool,
+        close_pending: bool,
+        before: Static | None = None,
+    ) -> None:
+        """Mounts the newest page as the whole window, and points the view at its end.
+
+        The state is the window's, not the screen's: one page, the position it starts
+        at, whether the service says anything older exists, and the end of the
+        conversation restored. `before` is where the page goes when live widgets are
+        already mounted below it.
+        """
+        page = self._page_widgets(items)
         self._pages = [page] if page else []
         self._page_first = first_index
         self._has_more = has_more
         self._wanting_page = False
-        self._pending_rows = list(queued)
-        batches = page + queued
+        self._wanting_newest = False
+        self._reaches_end = True
+        batches = page + list(queued)
         if batches:
             if self.is_mounted and self.app is not None:
                 # One layout for the whole page, exactly as `render_history` does:
                 # mounting one at a time makes restoring quadratic.
                 with self.app.batch_update():
-                    await self.mount_all(batches)
+                    await self.mount_all(batches, before=before)
             else:
                 for widget in batches:
                     await self.mount(widget)
@@ -1693,9 +1788,8 @@ class ChatLog(ReadOnlyScroll):
             self._mark_filled()
         # A call the transcript never answered stays visibly interrupted, the same way
         # it looks live; a healthy transcript is untouched by this.
-        self.finalize()
+        self.finalize(close_pending=close_pending)
         self.anchor()
-        return queued
 
     def _page_widgets(self, items: Sequence[dict[str, Any]]) -> list[Static]:
         """The blocks one page of the service's projection paints, in order.
@@ -1780,6 +1874,12 @@ class ChatLog(ReadOnlyScroll):
         Both numbers are taken around the layout that paints the page: the height
         cannot be guessed from the items, and the position, once measured, is not
         derived again from a total that has changed.
+
+        Where the reader is is captured here, before the insertion, and handed to the
+        eviction: the page arrives above them, so they keep looking at the same content
+        while the offset grows, and an offset read after the insertion would describe a
+        row they are not on. The position is taken in the window as it is now, and the
+        page's own length moves it along the window that is about to exist.
         """
         self._page_first = first_index
         self._has_more = has_more
@@ -1787,6 +1887,7 @@ class ChatLog(ReadOnlyScroll):
         page = self._page_widgets(items)
         if not page:
             return
+        position = self._reading_position()
         below = self.children[0] if self.children else None
         reading = None if below is None else below.virtual_region.y - self.scroll_offset.y
         self._close_page(page)
@@ -1800,7 +1901,7 @@ class ChatLog(ReadOnlyScroll):
         self._mark_filled()
         if below is not None and reading is not None:
             self.call_after_refresh(self._keep_reading, below, reading)
-        await self._drop_far_pages()
+        await self._drop_far_pages(position + len(page))
 
     def _close_page(self, page: Sequence[Static]) -> None:
         """Flushes one page's blocks without touching the ones being written.
@@ -1826,21 +1927,102 @@ class ChatLog(ReadOnlyScroll):
         """Puts ``anchor`` back on the screen row it had before the insertion."""
         self.scroll_to(y=anchor.virtual_region.y - row, animate=False, immediate=True, release_anchor=False)
 
-    async def _drop_far_pages(self) -> None:
-        """Lets go of the page it has held longest while the window is over its bound.
+    async def _drop_far_pages(self, reading: float) -> None:
+        """Lets go of the page furthest from the reader while the window is over its bound.
 
-        Pages arrive above, so the one held longest is the page the reader has
-        scrolled furthest away from, and letting it go moves nothing on screen. The
-        streaming block and the queue's lines belong to no page and are never
-        destroyed; a page that somehow held one is kept, and the window grows past its
-        bound rather than losing what is live.
+        Distance, not age, decides which page leaves. A reader at the top is furthest
+        from the newest page, so that is the one let go of and the window stops ending
+        where the conversation ends; a reader who came back down is furthest from the
+        page at the top, which is the page a cursor can ask for again. The page the
+        screen shows least of is the one whose leaving moves nothing.
+
+        ``reading`` is the position among the mounted items captured before the page
+        above was inserted, already moved along by the page's length. It is a position
+        in the window, not the scroll offset, because inserting above changes the
+        offset without changing what the reader is looking at.
+
+        The block being streamed into and the queue's waiting lines belong to no page
+        and are never candidates: a page that somehow held one is skipped, and when
+        every page holds something live the window grows past its bound rather than
+        losing what is live.
         """
         while len(self._pages) > MAX_MOUNTED_PAGES:
-            oldest = self._pages[-1]
-            if any(self._is_live(widget) for widget in oldest):
-                return
-            self._pages.pop()
-            await self.remove_children(list(oldest))
+            farthest = self._farthest_page(reading)
+            if farthest is None:
+                break
+            newest = len(self._pages) - 1
+            above = sum(len(page) for page in self._pages[:farthest])
+            page = self._pages.pop(farthest)
+            if farthest == 0:
+                # The window now starts where that page ended, and the page that left
+                # is itself the proof that something older exists.
+                self._page_first += len(page)
+                self._has_more = True
+            if farthest == newest:
+                # The newest page left with the end of the conversation: the bottom of
+                # the window is no longer the bottom of the transcript.
+                self._reaches_end = False
+            # The window the position is measured in is shorter now, above the reader.
+            if reading >= above + len(page):
+                reading -= len(page)
+            elif reading > above:
+                reading = float(above)
+            await self.remove_children(list(page))
+
+    def _farthest_page(self, reading: float) -> int | None:
+        """Index of the mounted page furthest from ``reading``, or `None` for no candidate.
+
+        A page holding a live widget is not a candidate. A page the reader is inside is
+        at distance zero and cannot win while another page is mounted, so the page
+        being read is never the one let go of. Ties go to the page nearest the top,
+        which is the side a cursor can walk back into.
+        """
+        farthest: int | None = None
+        reach = -1.0
+        for index in range(len(self._pages)):
+            if any(self._is_live(widget) for widget in self._pages[index]):
+                continue
+            distance = self._page_distance(index, reading)
+            if distance > reach:
+                farthest = index
+                reach = distance
+        return farthest
+
+    def _reading_position(self) -> float:
+        """Where the reader is among the mounted items, as a position in the window.
+
+        The scroll gives a fraction of the content — 0 at its top, 1 at its bottom,
+        read from the middle of the visible rows because a screen shows a span and not
+        a row — and that fraction becomes a position among the mounted items, because
+        items are what a page is counted in. Rows are not: a tool block is not as tall
+        as a line of text, and the layout of a page that has just arrived is not
+        settled when the eviction is decided.
+
+        Called before a page is inserted, never after: the offset the reader holds is
+        the one of the window they are reading, and the insertion above them moves the
+        offset, not the row they are on.
+        """
+        items = sum(len(page) for page in self._pages)
+        visible = self.container_size.height or 1
+        content = self.max_scroll_y + visible
+        if items <= 0 or content <= 0:
+            return 0.0
+        fraction = min(1.0, max(0.0, (self.scroll_offset.y + visible / 2) / content))
+        return fraction * items
+
+    def _page_distance(self, index: int, reading: float) -> float:
+        """How far the reader is from one mounted page, in items, to its nearest edge.
+
+        A page the reader is inside is at distance zero, so holding the position is
+        worth more than being one item further away.
+        """
+        start = sum(len(page) for page in self._pages[:index])
+        end = start + len(self._pages[index]) - 1
+        if reading < start:
+            return start - reading
+        if reading > end:
+            return reading - end
+        return 0.0
 
     def _is_live(self, widget: Static) -> bool:
         """Whether the transcript must keep the widget whatever the window does."""

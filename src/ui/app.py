@@ -1113,6 +1113,36 @@ class SigilApp(
             has_more=bool(page.get('has_more')),
         )
 
+    def on_chat_log_newest_page_wanted(self, message: ChatLog.NewestPageWanted) -> None:
+        """The reader reached the bottom of a window that let the end go."""
+        message.stop()
+        self.run_worker(self.load_newest_page(), group=SERVICE_HISTORY)
+
+    async def load_newest_page(self) -> None:
+        """Reads the newest page again, which is the only way back down the transcript.
+
+        The route pages backwards only, so a window that dropped its newest page has
+        no cursor to walk forward with. The repair is the read the screen opened with.
+        A read that fails is released and retried the next time the reader reaches the
+        bottom, and nothing is printed for it, for the same reason an older page that
+        fails prints nothing.
+        """
+        client = self._client
+        chat = self.query_one(ChatLog)
+        if client is None:
+            chat.newest_page_finished()
+            return
+        try:
+            page = await client.transcript(limit=self._preferences.transcript_window)
+        except ServiceClientError:
+            chat.newest_page_finished()
+            return
+        await chat.reload_newest(
+            page.get('items') or (),
+            first_index=int(page.get('first_index') or 0),
+            has_more=bool(page.get('has_more')),
+        )
+
     def _state_cursor(self) -> int:
         """Where the stream starts the first time: the sequence number of the state.
 
