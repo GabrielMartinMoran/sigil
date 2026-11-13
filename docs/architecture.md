@@ -1280,6 +1280,7 @@ own cut instead of half-moving all of them at once.
 | Streaming | `GET /events`, applied by `SigilApp.apply_service_event` | deltas, tool calls and results, turn boundaries, notices |
 | Steering | the same send, with the queued line marked until `steer_delivered` | the run reads it at its next seam, as before |
 | Stopping | `POST /api/abort`, after the same double `Esc` | the service kills the shells and cancels the run |
+| Leaving a node | `Esc` inside a subagent goes back to whoever summoned it | the abort is asked *after* that, not before: a node is usually open while a run is in flight, and the old order armed the confirmation on every press so the reader could never leave. Stopping is still two `Esc`s, from the conversation |
 | Leaving | nothing is sent on the way out: `/quit` and the window key close the stream and detach | the service keeps running, another terminal's turn is untouched, and [idle shutdown](#leaving-a-terminal-detaches-the-service-keeps-the-work) is what ends it |
 | Questions | the same `QuestionPanel`, answered with `POST /api/answer` | the panel's keys and layout are unchanged; a question counts as answered only once the service has taken the answer, and a failed send is offered again (see [the question deadline](#the-question-deadline)) |
 | Images | ordered `OutgoingImage`s with the `[Image #n]` marker | the picture that was attached is the one stored |

@@ -493,12 +493,19 @@ class PromptInput(TextArea):
         self.app.action_tab_noop()
 
     async def action_menu_escape(self) -> None:
-        """Esc: closes the menu and asks to stop the turn.
+        """Esc: closes the menu, then goes back or asks to stop the turn.
 
-        Both happen in one press. With no turn running the second part is a no-op,
-        so `Esc` keeps behaving exactly as it did: it closes the menu.
+        Inside a node the press is the way back to whoever summoned it, which is what
+        `Esc` means in a view that replaced the conversation; a run in flight does not
+        change that, and the alternative is a reader who can never leave. Everywhere
+        else it keeps its behaviour: closing the menu, and asking to stop the turn —
+        a no-op with nothing running.
         """
         self.app.menu_hide()
+        if self.app.subagent_open:
+            self.app.cancel_abort()
+            self.app.run_worker(self.app.open_parent())
+            return
         if self.app.request_abort():
             self.app.abort_turn()
 

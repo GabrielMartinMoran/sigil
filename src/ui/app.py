@@ -1301,6 +1301,13 @@ class SigilApp(
         kills the run and leaves the question on screen waiting for an answer that
         can never come; cancelling the question is what the user meant.
 
+        A node outranks the abort too. Inside a subagent, `Esc` is the way back — the
+        one navigation key that has to work while the composer is disabled — and a
+        run is almost always in flight there, so the abort branch would take every
+        press and the reader could never leave. Stopping the turn is still two
+        `Esc`s and three seconds; they start from the conversation, where what is
+        being stopped is what is on screen.
+
         It is a `key_escape` method and not a binding on purpose: a non-priority
         binding would show up in the help as a second way to do the same thing,
         and a priority one would run before the question panel and swallow the
@@ -1310,14 +1317,14 @@ class SigilApp(
         if panel is not None:
             panel.action_cancel()
             return
+        if self.subagent_open:
+            # A confirmation armed before the node opened must not survive the move:
+            # the second press belongs to the conversation, not to this one.
+            self.cancel_abort()
+            await self.open_parent()
+            return
         if self.request_abort():
             self.abort_turn()
-            return
-        # Not aborting and not running: `Esc` inside a subagent is the way back,
-        # which is the one navigation key that has to work with the composer
-        # disabled.
-        if not self._turn_active and self.subagent_open:
-            await self.open_parent()
 
     async def on_key(self, event: events.Key) -> None:
         """Any key that is not the confirming `Esc` cancels a pending abort.

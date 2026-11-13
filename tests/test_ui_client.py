@@ -96,7 +96,7 @@ from src.ui.service_client import (
 )
 from src.ui.token_format import compact_tokens
 from src.ui.tree_mixin import _nodes_from_tree
-from src.ui.turn_mixin import failure_notice, pending_request
+from src.ui.turn_mixin import ABORT_HINT, failure_notice, pending_request
 from src.ui.widgets.agent_tree_screen import AgentTreeScreen, TreeAction
 from src.ui.widgets.agent_view import AgentView
 from src.ui.widgets.chat_log import ChatLog, ToolCallBlock, format_tool_args
@@ -2622,6 +2622,42 @@ def test_opening_a_subagent_shows_the_transcript_the_service_keeps(composition: 
                 )
                 assert app.viewed_node_id() == node.id
                 assert app.query_one(PromptInput).disabled is True, 'a subagent is read, not talked to'
+
+    asyncio.run(inner())
+
+
+def test_escape_inside_a_subagent_goes_back_instead_of_offering_to_kill(
+    blocked: tuple[Composition, asyncio.Event], tmp_path: Path
+) -> None:
+    """`Esc` in a node is the way back, even while a turn is running.
+
+    The abort branch used to be asked first and the navigation was gated on no turn
+    being active, which is the opposite of the case: a node is usually open while a
+    run is in flight, so every press armed the confirmation and the reader could not
+    leave. Killing the run is still two `Esc`s, from the conversation.
+    """
+    held, release = blocked
+
+    async def inner() -> None:
+        async with _service_under_test(held, tmp_path) as (runtime, _transport, client):
+            await client.send_turn(TurnRequest(text='go'))
+            await _wait_until(lambda: runtime.busy, what='the running turn')
+            node = _service_subagent(runtime, task='read the tree')
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._turn_active, what='the running turn on screen')
+                screen = await _open_tree(pilot, app)
+                _highlight(screen, node.id)
+                await pilot.press('enter')
+                await _until(pilot, lambda: app.subagent_open, what='the subagent view')
+
+                await pilot.press('escape')
+
+                await _until(pilot, lambda: not app.subagent_open, what='the way back')
+                assert app._turn_active is True, 'going back does not stop the run'
+                assert app._abort_deadline is None, 'the press armed the confirmation'
+                assert ABORT_HINT not in app.query_one(StatusBar).render().plain, 'the press asked to kill'
+                release.set()
 
     asyncio.run(inner())
 
