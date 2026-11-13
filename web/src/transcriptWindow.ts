@@ -21,6 +21,11 @@
  *   furthest from the top. Distance, not age, is what makes an eviction invisible —
  *   and a page the reader is inside is never the one dropped while another is
  *   further away.
+ * - **The reading position has one unit, and it is a fraction.** The component that
+ *   measures it sees pixels, so it reports how far down the scroll the reader is,
+ *   between 0 (the top) and 1 (the bottom). `readingIndex` is the only place that
+ *   becomes an item — a page is counted in items, and mixing the two units is how
+ *   an eviction once dropped the page the reader had just asked for.
  * - **What leaves the bottom is asked for again.** The service pages backwards only,
  *   so there is no `after` cursor to walk down with: when the reader reaches the
  *   bottom of a window that does not end at the end of the conversation,
@@ -48,6 +53,34 @@ export const MAX_MOUNTED_PAGES = 3;
 
 /** How close to the bottom, in CSS pixels, counts as reaching it. */
 export const BOTTOM_REACH = 80;
+
+/**
+ * Where the reader is in the mounted window: the fraction of the scroll they have
+ * passed, 0 at the top and 1 at the bottom.
+ *
+ * A fraction and not an item index, because the component that reports it measures
+ * pixels and the eviction below is counted in items. `readingIndex` is the only
+ * conversion between the two, so they cannot drift into different units again.
+ */
+export type ReadingFraction = number;
+
+/** A reading fraction made safe: inside 0..1, and 0 when it could not be measured. */
+export function clampReadingFraction(readingFraction: ReadingFraction): ReadingFraction {
+  if (!Number.isFinite(readingFraction)) return 0;
+  return Math.min(Math.max(readingFraction, 0), 1);
+}
+
+/**
+ * The item a reading fraction points at, in a window of `itemCount` items.
+ *
+ * Both ends are exact — 0 is the first item and 1 is the last — and the middle is
+ * the middle item, rounded the way the component rounds its measurement. An empty
+ * window has no item to point at, which is 0: the reader is nowhere yet.
+ */
+export function readingIndex(readingFraction: ReadingFraction, itemCount: number): number {
+  if (itemCount <= 0) return 0;
+  return Math.round(clampReadingFraction(readingFraction) * (itemCount - 1));
+}
 
 /** The fields of a page the window is built from. */
 export type PageSlice = {
@@ -126,23 +159,29 @@ export function wantsNewestWindow(
 /**
  * The window after a page arrives above it, keeping at most `MAX_MOUNTED_PAGES`.
  *
- * `reading` is the position in the resulting items the reader is looking at, and it
- * decides which page leaves: the one furthest from it. A reader at the top (the
- * usual case — that is what asks for an older page) drops the newest page; a reader
- * who has come back down drops the page at the top, which `before` can fetch again.
- * Ties go to the front for the same reason: the top of the window is the side with a
- * cursor.
+ * `readingFraction` is where the reader is, as the fraction of the resulting items
+ * between the top (0) and the bottom (1) — the unit the component measures, never an
+ * item index. `readingIndex` turns it into the item the eviction is measured from.
+ * That item decides which page leaves: the one furthest from it. A reader at the top
+ * (the usual case — that is what asks for an older page) drops the newest page; a
+ * reader who has come back down drops the page at the top, which `before` can fetch
+ * again. Ties go to the front for the same reason: the top of the window is the side
+ * with a cursor.
  *
  * An empty page carries no items to show but still carries the answer, so it closes
  * the walk without growing the window.
  */
-export function withOlderPage(window: TranscriptWindow, page: PageSlice, reading = 0): TranscriptWindow {
+export function withOlderPage(
+  window: TranscriptWindow,
+  page: PageSlice,
+  readingFraction: ReadingFraction = 0,
+): TranscriptWindow {
   if (page.items.length === 0) return { ...window, hasMore: page.has_more };
   let items = [...page.items, ...window.items];
   let pages = [page.items.length, ...window.pages];
   let firstIndex = page.first_index;
   let droppedFromTop = false;
-  const position = Math.min(Math.max(reading, 0), Math.max(items.length - 1, 0));
+  const position = readingIndex(readingFraction, items.length);
   while (pages.length > MAX_MOUNTED_PAGES) {
     const drop = farthestPage(pages, position);
     const count = pages[drop] ?? 0;

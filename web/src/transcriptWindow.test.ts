@@ -8,11 +8,12 @@ import {
   TRANSCRIPT_WINDOW,
   newestWindow,
   reachesEnd,
+  readingIndex,
   wantsNewestWindow,
   wantsOlderPage,
   withOlderPage,
 } from './transcriptWindow';
-import type { PageSlice } from './transcriptWindow';
+import type { PageSlice, TranscriptWindow } from './transcriptWindow';
 import type { TranscriptItem } from './types';
 
 function item(index: number): TranscriptItem {
@@ -103,6 +104,69 @@ void test('an empty older page changes no item and closes the walk', () => {
   assert.equal(window.hasMore, false);
 });
 
+void test('a reading fraction becomes an item index in one place, and only there', () => {
+  // A 300-item window: both ends are exact, the middle is the middle item, and a
+  // position outside the window is impossible instead of becoming a cursor.
+  assert.equal(readingIndex(0, 300), 0);
+  assert.equal(readingIndex(1, 300), 299);
+  assert.equal(readingIndex(0.5, 300), 150, 'round(0.5 * 299)');
+  assert.equal(readingIndex(-0.4, 300), 0, 'a scroll cannot be above the top');
+  assert.equal(readingIndex(9, 300), 299, 'nor below the bottom');
+  assert.equal(readingIndex(Number.NaN, 300), 0, 'a geometry that could not be measured');
+  assert.equal(readingIndex(0.5, 0), 0, 'an empty window has no item to point at');
+
+  // The unit is a fraction, so the same number as an index would name a different
+  // item: that mismatch is the defect this pins.
+  assert.equal(readingIndex(0.99, 1000), 989);
+  assert.notEqual(readingIndex(0.5, 300), 0.5, 'a fraction is never handed on as an index');
+});
+
+/** A window three pages deep: 300 items, 200..499 of a 500-item transcript. */
+function threePages(): TranscriptWindow {
+  let window = newestWindow(page(400, 100, true, 500));
+  window = withOlderPage(window, page(300, 100, true, 500), 0);
+  return withOlderPage(window, page(200, 100, true, 500), 0);
+}
+
+void test('the eviction is decided in items, from the fraction the component measures', () => {
+  const window = threePages();
+  const incoming = page(100, 100, true, 500);
+  assert.equal(window.items.length, 300);
+
+  // At the top the reader is furthest from the newest page, so that one leaves and
+  // the window stops ending where the conversation ends.
+  const top = withOlderPage(window, incoming, 0);
+  assert.equal(indexes(top.items)[0], 100);
+  assert.equal(indexes(top.items).slice(-1)[0], 399);
+  assert.equal(reachesEnd(top), false);
+
+  // At the bottom the newest page is the one the reader is inside, so the page at
+  // the top leaves. This is the reader the old unit sent to the eviction as 1000.
+  const bottom = withOlderPage(window, incoming, 1);
+  assert.equal(indexes(bottom.items)[0], 200);
+  assert.equal(indexes(bottom.items).slice(-1)[0], 499);
+  assert.equal(reachesEnd(bottom), true, 'the newest page is never lost under a reader at the bottom');
+
+  // Halfway down: round(0.5 * 399) = 200, which is inside the third page. The top
+  // page is then the furthest away, and one item decides it — 199 would have made
+  // the newest page the furthest one instead.
+  const middle = withOlderPage(window, incoming, 0.5);
+  assert.equal(readingIndex(0.5, 400), 200);
+  assert.equal(indexes(middle.items)[0], 200);
+  assert.equal(indexes(middle.items).slice(-1)[0], 499);
+  assert.equal(reachesEnd(middle), true);
+
+  // The regression, at the fraction a reader working through old content reports:
+  // 0.2 is item 80, inside the page that just arrived. As an index it would have
+  // been the second item, and as a value out of a thousand it saturated at the
+  // bottom — which is how the page being read came to be the page discarded.
+  const reading = withOlderPage(window, incoming, 0.2);
+  assert.equal(readingIndex(0.2, 400), 80);
+  assert.equal(indexes(reading.items)[0], 100, 'the page being read stays mounted');
+  assert.equal(indexes(reading.items).slice(-1)[0], 399);
+  assert.equal(reachesEnd(reading), false, 'the newest page is what that reader is furthest from');
+});
+
 // --- the store, with the routes it calls stubbed ----------------------------
 
 let requests: string[] = [];
@@ -139,7 +203,7 @@ beforeEach(() => {
   stubTranscript(null, 3, true);
   useStore.setState({
     ...newestWindow({ items: [], first_index: 0, has_more: false, total: 0 }),
-    reading: 0,
+    readingFraction: 0,
     loadingOlder: false,
     durable: null,
     busy: false,
@@ -210,13 +274,13 @@ void test('the page the reader is on decides which one an eviction lets go', asy
   // reaching the end of the conversation.
   stubTranscript(null, 3, true, 13);
   await useStore.getState().refetchTranscript();
-  for (const [start, reading] of [
+  for (const [start, readingFraction] of [
     [7, 0],
     [4, 0],
     [1, 0],
   ] as const) {
     stubTranscript(start, 3, true, 13);
-    useStore.getState().setReading(reading);
+    useStore.getState().setReading(readingFraction);
     await useStore.getState().loadOlder();
   }
 
@@ -237,13 +301,13 @@ void test('the page the reader is on decides which one an eviction lets go', asy
 void test('a reader who stayed at the bottom keeps the newest page mounted', async () => {
   stubTranscript(null, 3, true, 13);
   await useStore.getState().refetchTranscript();
-  for (const [start, reading] of [
+  for (const [start, readingFraction] of [
     [7, 0],
-    [4, 8],
-    [1, 8],
+    [4, 1],
+    [1, 1],
   ] as const) {
     stubTranscript(start, 3, true, 13);
-    useStore.getState().setReading(reading);
+    useStore.getState().setReading(readingFraction);
     await useStore.getState().loadOlder();
   }
 
@@ -251,8 +315,34 @@ void test('a reader who stayed at the bottom keeps the newest page mounted', asy
   assert.deepEqual(indexes(useStore.getState().items).slice(-3), [10, 11, 12]);
 });
 
-// --- the two scroll decisions, also without a DOM ---------------------------
+// --- what a reload is allowed to reset -------------------------------------
 
+void test('a reload asked for by a scroll keeps the turn that is still streaming', async () => {
+  await useStore.getState().refetchTranscript();
+  useStore.setState({
+    stream: { text: 'half an answer', thinking: 'why', tools: [], batch: 0, afterTools: false },
+  });
+  stubTranscript(null, 3, true, 5000);
+
+  await useStore.getState().refetchTranscript({ keepStream: true });
+
+  assert.deepEqual(indexes(useStore.getState().items), [4997, 4998, 4999], 'the newest window is still painted');
+  assert.equal(useStore.getState().stream.text, 'half an answer', 'the deltas belong to the running turn');
+  assert.equal(useStore.getState().stream.thinking, 'why');
+});
+
+void test('the reload that ends a turn drops the deltas, because the transcript is the record', async () => {
+  useStore.setState({
+    stream: { text: 'half an answer', thinking: 'why', tools: [], batch: 0, afterTools: false },
+  });
+
+  await useStore.getState().refetchTranscript();
+
+  assert.equal(useStore.getState().stream.text, '');
+  assert.equal(useStore.getState().stream.thinking, '');
+});
+
+// --- the two scroll decisions, also without a DOM ---------------------------
 void test('the top edge asks for an older page only when one can arrive', () => {
   assert.equal(wantsOlderPage(0, true, false), true);
   assert.equal(wantsOlderPage(0, false, false), false, 'the service says there is nothing older');

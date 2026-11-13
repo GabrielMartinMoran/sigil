@@ -12,7 +12,8 @@ import { create } from 'zustand';
 import { ApiError, api, Unauthorized } from './api';
 import { finishTool } from './toolPresentation';
 import type { ToolView } from './toolPresentation';
-import { TRANSCRIPT_WINDOW, emptyWindow, newestWindow, withOlderPage } from './transcriptWindow';
+import { TRANSCRIPT_WINDOW, clampReadingFraction, emptyWindow, newestWindow, withOlderPage } from './transcriptWindow';
+import type { ReadingFraction } from './transcriptWindow';
 import type {
   DurableEntry,
   DurableSession,
@@ -35,6 +36,21 @@ type Stream = {
 
 const emptyStream = (): Stream => ({ text: '', thinking: '', tools: [], batch: 0, afterTools: false });
 
+/** How finely a reading fraction is kept: a thousandth of the scroll, for stability. */
+const READING_STEPS = 1000;
+
+/** What a transcript reload is allowed to reset. */
+type RefetchOptions = {
+  /**
+   * Keep the deltas of a running turn.
+   *
+   * A scroll can ask for the newest window in the middle of a turn; the text already
+   * received is still the answer being written, so only the read that follows the end
+   * of a turn may drop it.
+   */
+  keepStream?: boolean;
+};
+
 type Store = {
   phase: Phase;
   status: LoginState | null;
@@ -53,17 +69,18 @@ type Store = {
   /** Items in the whole transcript: whether the window still ends at the end. */
   total: number;
   /**
-   * Where the reader is, as a position in `items`.
+   * Where the reader is in the mounted window, as the fraction of the scroll they
+   * have passed: 0 at the top, 1 at the bottom.
    *
-   * It decides which page an eviction lets go: the one furthest from here. The
-   * transcript component reports it on scroll, because only the DOM knows what is on
-   * screen — the store cannot and should not guess.
+   * A fraction, not an index, because only the DOM knows where the scroll is and what
+   * it measures is pixels. It decides which page an eviction lets go — the one
+   * furthest from here — and `withOlderPage` is what turns it into an item.
    */
-  reading: number;
+  readingFraction: ReadingFraction;
   /** One older page at a time, so a scroll that fires twice is still one read. */
   loadingOlder: boolean;
   /** Reports where the reader is, so an eviction can drop the page furthest away. */
-  setReading: (position: number) => void;
+  setReading: (readingFraction: ReadingFraction) => void;
   durable: DurableSession | null;
   pendingSend: { requestId: string; text: string } | null;
   stream: Stream;
@@ -77,7 +94,7 @@ type Store = {
   logout: () => Promise<void>;
 
   refresh: () => Promise<void>;
-  refetchTranscript: () => Promise<void>;
+  refetchTranscript: (options?: RefetchOptions) => Promise<void>;
   loadOlder: () => Promise<void>;
   refreshDurable: () => Promise<void>;
   openRecovery: (id: string) => Promise<void>;
@@ -145,7 +162,7 @@ export const useStore = create<Store>((set, get) => ({
   notice: '',
   state: null,
   ...emptyWindow(),
-  reading: 0,
+  readingFraction: 0,
   loadingOlder: false,
   durable: null,
   pendingSend: null,
@@ -204,26 +221,36 @@ export const useStore = create<Store>((set, get) => ({
     set({ state, busy: state.busy });
   },
 
-  async refetchTranscript() {
+  async refetchTranscript({ keepStream = false }: RefetchOptions = {}) {
     // One window, not the whole conversation: a session of thousands of messages is
     // the reason this route pages at all.
     const page = await api.transcript(TRANSCRIPT_WINDOW);
-    set({ ...newestWindow(page), loadingOlder: false, stream: emptyStream() });
+    set({
+      ...newestWindow(page),
+      loadingOlder: false,
+      // The deltas are the turn that is still typing, and this reload can be asked
+      // for in the middle of one: a scroll that reaches the bottom asks for the
+      // newest window again, and erasing the text already received would make the
+      // answer vanish until the next delta. Only a reload that runs where the turn
+      // has ended is allowed to drop them.
+      stream: keepStream ? get().stream : emptyStream(),
+    });
     void get().refreshDurable();
   },
 
   async loadOlder() {
-    const { hasMore, loadingOlder, firstIndex, items, total, pages, reading } = get();
+    const { hasMore, loadingOlder, firstIndex, items, total, pages, readingFraction } = get();
     // `hasMore` is the service's answer, not a guess: at the start of a conversation
     // it stays false and nothing here asks again.
     if (!hasMore || loadingOlder || items.length === 0) return;
     set({ loadingOlder: true });
     try {
       const page = await api.transcript(TRANSCRIPT_WINDOW, firstIndex);
-      // `reading` decides which page leaves when the window is over its bound: the one
-      // furthest from where the reader actually is, not always the newest one.
+      // `readingFraction` decides which page leaves when the window is over its
+      // bound: the one furthest from where the reader actually is, not always the
+      // newest one. `withOlderPage` is where the fraction becomes an item.
       set({
-        ...withOlderPage({ items, firstIndex, total, hasMore, pages }, page, reading),
+        ...withOlderPage({ items, firstIndex, total, hasMore, pages }, page, readingFraction),
         loadingOlder: false,
       });
     } catch (error) {
@@ -231,9 +258,13 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
-  setReading(position) {
-    if (get().reading === position) return;
-    set({ reading: position });
+  setReading(readingFraction) {
+    // Quantized: a scroll event fires continuously and an eviction is decided in
+    // whole items, so storing a new fraction per pixel would only repaint for
+    // nothing. Clamped so the store never holds a position the window cannot have.
+    const stable = Math.round(clampReadingFraction(readingFraction) * READING_STEPS) / READING_STEPS;
+    if (get().readingFraction === stable) return;
+    set({ readingFraction: stable });
   },
 
   async refreshDurable() {

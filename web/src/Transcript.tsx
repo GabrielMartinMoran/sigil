@@ -5,6 +5,7 @@ import { Tools } from './Tools';
 import { transcriptBlocks } from './toolPresentation';
 import { durableSections, useStore } from './store';
 import { BOTTOM_REACH, wantsNewestWindow, wantsOlderPage } from './transcriptWindow';
+import type { ReadingFraction } from './transcriptWindow';
 import type { Attachment, DurableEntry, DurableSession, TranscriptItem } from './types';
 
 /**
@@ -53,16 +54,20 @@ export function Transcript({ items }: { items: TranscriptItem[] }) {
       const distance = node.scrollHeight - node.scrollTop - node.clientHeight;
       stick.current = distance < BOTTOM_REACH;
       const state = useStore.getState();
+      // Report first: the eviction the read below triggers is measured from here, and
+      // a position that is only known on arrival would be the reader's old one.
+      state.setReading(readingFraction(node));
       if (wantsOlderPage(node.scrollTop, state.hasMore, state.loadingOlder)) {
         pending.current = { height: node.scrollHeight, top: node.scrollTop, firstIndex: state.firstIndex };
         void state.loadOlder();
       } else if (wantsNewestWindow(distance, state) && !reloading.current) {
         // A page was let go below this reader and the route pages backwards only, so
         // the newest window is asked for again. Not a new cursor: the same read the
-        // screen opened with.
+        // screen opened with, and the turn that may be streaming into the view is
+        // kept — this reload is not the end of a turn.
         reloading.current = true;
         void state
-          .refetchTranscript()
+          .refetchTranscript({ keepStream: true })
           .catch(() => undefined)
           .finally(() => {
             reloading.current = false;
@@ -81,11 +86,14 @@ export function Transcript({ items }: { items: TranscriptItem[] }) {
       // A page arrived above: keep the line the reader was on where it was.
       pending.current = null;
       node.scrollTop = node.scrollHeight - (held.height - held.top);
+      // The insertion moved the window under the reader, not the reader: the fraction
+      // that decides the next eviction is the one they are on now.
+      useStore.getState().setReading(readingFraction(node));
       return;
     }
     if (stick.current) node.scrollTop = node.scrollHeight;
     // Report where the reader is, so an eviction lets go of the page furthest away.
-    useStore.getState().setReading(readingPosition(node));
+    useStore.getState().setReading(readingFraction(node));
   }, [items, firstIndex]);
 
   return (
@@ -117,20 +125,17 @@ function entryLine(entry: DurableEntry) {
 }
 
 /**
- * Where the reader is, as a position in the mounted items.
+ * Where the reader is, as the fraction of the scrollable content they have passed.
  *
- * Read from the scroll geometry, because the store cannot see the screen. It is an
- * estimate between the ends and exact at both of them — which is what the eviction
- * decision actually needs: a reader at the top drops the newest page, a reader at the
- * bottom drops the page at the top, and a reader in between keeps whichever page they
- * are inside. Pages hold the same number of items, so an estimate a page off still
- * answers with the page furthest away.
+ * Read from the scroll geometry, because the store cannot see the screen. The unit is
+ * a fraction — 0 at the top, 1 at the bottom — and never an item: an item is what the
+ * eviction is counted in, and `readingIndex` in `transcriptWindow.ts` is the only
+ * place the two meet.
  */
-function readingPosition(node: HTMLDivElement): number {
+function readingFraction(node: HTMLDivElement): ReadingFraction {
   const room = node.scrollHeight - node.clientHeight;
   if (room <= 0) return 0;
-  const fraction = Math.min(Math.max(node.scrollTop / room, 0), 1);
-  return Math.round(fraction * 1000);
+  return Math.min(Math.max(node.scrollTop / room, 0), 1);
 }
 
 function DurableSections({

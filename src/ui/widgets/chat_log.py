@@ -1404,6 +1404,17 @@ class ChatLog(ReadOnlyScroll):
         await self._append(widget)
         return widget
 
+    def retire_pending(self, widget: Static) -> None:
+        """Stops vouching for a waiting line the caller has taken down.
+
+        The lines in `_pending_rows` are the ones `_is_live` protects from an eviction,
+        so a line the app retires — the run read it, or its row stopped being pending —
+        must stop being counted: holding a removed widget keeps it alive and protects
+        nothing that is still painted. Retiring a line twice is a no-op, because a
+        confirmation and a repaint can both retire the same row.
+        """
+        self._pending_rows = [row for row in self._pending_rows if row is not widget]
+
     def mark_delivered(self, widget: Static) -> None:
         """Drops the "queued" mark from a message the run just injected."""
         text = getattr(widget, '_queued_text', None)

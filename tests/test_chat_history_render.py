@@ -357,3 +357,34 @@ def test_streamed_refusal_recovers_call_arguments_by_id():
             assert 'refused' in text
 
     asyncio.run(inner())
+
+
+def test_a_waiting_line_that_leaves_stops_counting_as_live():
+    """The overlay holds the lines it painted only while they are on the screen.
+
+    `_is_live` is what keeps the window from letting go of a page that holds a waiting
+    line, so a line the app has retired — the run read it, or its row stopped being
+    pending — has to stop being vouched for: holding a removed widget keeps it alive
+    and protects nothing that is painted.
+    """
+
+    async def inner() -> None:
+        app = Harness()
+        async with app.run_test(size=(120, 40)) as pilot:
+            chat = app.query_one(ChatLog)
+            waiting = await chat.add_user('a message nobody has read yet', queued=True)
+            await pilot.pause()
+            assert chat._is_live(waiting) is True, 'a waiting line is never evicted with a page'
+
+            chat.retire_pending(waiting)
+
+            assert chat._pending_rows == [], 'a retired line is not a waiting line'
+            assert chat._is_live(waiting) is False
+            assert waiting in chat.children, 'dropping the claim is not taking the line down'
+
+            # Retiring the same line twice — a confirmation and a repaint can both see
+            # it — is not an error and changes nothing.
+            chat.retire_pending(waiting)
+            assert chat._pending_rows == []
+
+    asyncio.run(inner())

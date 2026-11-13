@@ -483,7 +483,11 @@ furthest from the page at the top, which is the page the cursor can ask for agai
 Either way the page that leaves is the one the viewport shows least of, so nothing
 on screen moves. The block being streamed into and the queue's waiting lines belong
 to no page and are never destroyed; a page that somehow held one is skipped, and the
-window grows past its bound rather than losing what is live.
+window grows past its bound rather than losing what is live. A waiting line stops
+being live as soon as the app retires it — the run read it, or its row stopped being
+pending — and `ChatLog.retire_pending` is what says so: `_is_live` reads that list, and
+a line left in it after it was taken off the screen would keep a removed widget alive
+while vouching for nothing that is painted.
 
 What leaves above is asked for again with the cursor it carried, so history is never
 lost — only unmounted. What leaves below cannot be: the route pages backwards only,
@@ -514,6 +518,18 @@ the scroll is, and when it reached an edge. The size is `TRANSCRIPT_WINDOW` (100
 mirroring `DEFAULT_TRANSCRIPT_WINDOW`, because the web client has no settings
 surface of its own.
 
+That reported position has one unit: a fraction of the scroll, 0 at the top of the
+window and 1 at the bottom, held in the store as `readingFraction`. It is not an item,
+because what the component measures is pixels and what the eviction is counted in is
+items — two units with no conversion is the defect this replaced: a position out of a
+thousand was handed to `withOlderPage` as an index, so a reader below the first tenth
+of a 300-item window read as "at the bottom" and the page being read was the page let
+go of. `readingIndex(fraction, itemCount)` in `transcriptWindow.ts` is the only place
+the two meet, which is why the mismatch cannot come back silently. The component
+reports on every scroll event, before the read that event may ask for, and again after
+restoring the scroll offset when a page lands above — the reader is where the insertion
+left them, not where they were before it.
+
 The reading position is what an eviction is measured against, and that is the
 difference from a window that simply keeps the newest page. `withOlderPage` computes
 the distance from the reader to the nearest edge of each mounted page and lets go of
@@ -528,9 +544,14 @@ What leaves the bottom has to come back a different way, because the route pages
 backwards only: there is no `after` cursor. So when the reader reaches the bottom of
 a window that no longer ends at the end of the conversation — `reachesEnd` false —
 the client asks for the newest window again with the same read the screen opened
-with, `refetchTranscript()`, rather than inventing a forward cursor. Between the two
-edges the screen holds at most `MAX_MOUNTED_PAGES` (3) pages: at most 300 items of a
-conversation that may hold thousands, and no read of the whole thing at any point.
+with, `refetchTranscript({ keepStream: true })`, rather than inventing a forward
+cursor. `keepStream` is explicit because that read can land in the middle of a turn:
+the deltas already received are the answer being written, and dropping them would
+blank the block until the next one arrived. Only the reload that runs where the turn
+has ended — `turn_finished`, a lagged stream, an opened session — clears the stream,
+because there the transcript is the record. Between the two edges the screen holds at
+most `MAX_MOUNTED_PAGES` (3) pages: at most 300 items of a conversation that may hold
+thousands, and no read of the whole thing at any point.
 
 An insertion above the viewport moves the scroll by exactly the height it added:
 the component records `scrollHeight` and `scrollTop` before asking and, once the

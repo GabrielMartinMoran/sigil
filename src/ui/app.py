@@ -923,6 +923,11 @@ class SigilApp(
                 self._service_pending_ids.pop(0)
             with suppress(NoMatches):
                 await widget.remove()
+            # The line is gone from the screen, so it stops being a waiting line the
+            # transcript has to keep mounted. Guarded like the removal above: a
+            # confirmation that arrives with no transcript mounted is the same silence.
+            with suppress(NoMatches):
+                self.query_one(ChatLog).retire_pending(widget)
             return
         if not self._service_steers:
             return
@@ -998,6 +1003,9 @@ class SigilApp(
                 continue
             with suppress(NoMatches):
                 await widget.remove()
+            # Its row stopped being pending, so the line is no longer waiting for
+            # anything and the transcript must not keep vouching for it.
+            chat.retire_pending(widget)
         self._service_pending = kept
         self._service_pending_ids = kept_ids
         for entry, identifier in zip(entries, wanted, strict=False):

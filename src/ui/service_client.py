@@ -683,15 +683,6 @@ class ServiceClient:
         """Stops the running turn. ``False`` when there was nothing to stop."""
         return bool((await self._post('/api/abort', {})).get('stopped'))
 
-    async def stop_all(self) -> bool:
-        """Stops the turn and anything else the service still runs for this session.
-
-        ``abort`` is about a turn, and a subagent working in the background has no
-        turn to abort. Leaving the terminal asks for this so the service is not left
-        spending on work no screen is watching. ``False`` means nothing was running.
-        """
-        return bool((await self._post('/api/stop-all', {})).get('stopped'))
-
     # --- the tree ------------------------------------------------------------
 
     async def tree_node(self, node_id: str, *, include_messages: bool = False) -> dict[str, Any]:
