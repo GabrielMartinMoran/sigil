@@ -1023,7 +1023,7 @@ own cut instead of half-moving all of them at once.
 | Streaming | `GET /events`, applied by `SigilApp.apply_service_event` | deltas, tool calls and results, turn boundaries, notices |
 | Steering | the same send, with the queued line marked until `steer_delivered` | the run reads it at its next seam, as before |
 | Stopping | `POST /api/abort`, after the same double `Esc` | the service kills the shells and cancels the run |
-| Leaving | `POST /api/stop-all` from `/quit`, awaited before the window closes | the whole session stops, including work with no turn to abort (see [Leaving](#leaving-quit-stops-the-service-a-closed-window-does-not)) |
+| Leaving | nothing is sent on the way out: `/quit` and the window key close the stream and detach | the service keeps running, another terminal's turn is untouched, and [idle shutdown](#leaving-a-terminal-detaches-the-service-keeps-the-work) is what ends it |
 | Questions | the same `QuestionPanel`, answered with `POST /api/answer` | the panel's keys and layout are unchanged; a question counts as answered only once the service has taken the answer, and a failed send is offered again (see [the question deadline](#the-question-deadline)) |
 | Images | ordered `OutgoingImage`s with the `[Image #n]` marker | the picture that was attached is the one stored |
 | Reconnection | `events(after=last_event_id)`, then a state read | a gap is announced, never silently painted over |
@@ -1342,20 +1342,38 @@ letting the provider refuse it after a whole turn was spent. This is a wire cont
 `null` now means *unknown*, and a client that reads the field as a boolean has to handle
 it.
 
-### Leaving: `/quit` stops the service, a closed window does not
+### Leaving a terminal detaches: the service keeps the work
 
 The service outlives a terminal by design: closing the window is not a reason to
 interrupt work, and the service stops itself when that work ends (see
-[idle shutdown](#idle-shutdown)). `/quit` is the explicit exception. It is the one exit
-that says *stop the session*, and it stops the whole session, not only the turn.
+[idle shutdown](#idle-shutdown)). Leaving is that and nothing more — `/quit` and the
+window's own quit key both close this client's stream and detach it. **No exit path
+sends anything.** Sending a stop from the exit was the bug: `abort` is global to the
+service, so closing one terminal cancelled the turn a user had started from another
+one, and because the session is saved at cancellation, the message only then appeared
+in the transcript.
 
-`POST /api/stop-all` is the operation, and it is a thin wrapper rather than new engine
-work: `ServerRuntime.stop_all()` calls `abort()` — shells killed by process group, the
-run cancelled, open queue rows stopped — and then `summoner.cancel_all()`. That second
-call is what `abort` cannot cover: with no turn running, `abort` returns `False` and a
-subagent in the background would keep spending after the screen it reported to is gone.
-Nothing in the route kills the service's process. The terminal awaits it on a worker
-before closing, so the request is not raced by the shutdown that would cancel it.
+`POST /api/stop-all` still exists and is unchanged — `ServerRuntime.stop_all()` calls
+`abort()` (shells killed by process group, the run cancelled, open queue rows stopped)
+and then `summoner.cancel_all()`, which is the half `abort` cannot cover: with no turn
+running a background subagent would otherwise keep spending. Nothing in the route kills
+the service's process. What changed is the caller: no client calls it on the way out.
+Stopping the whole session is a deliberate act, never a side effect of closing a window,
+so the route is there for an explicit command rather than for an exit.
+
+The one thing that ends the service is therefore the idle window: when no row is open
+and no turn runs for `DEFAULT_IDLE_GRACE` (900 s), the watch asks for a graceful stop.
+A closed terminal is not part of that decision — it is not work, so it neither keeps the
+service alive nor ends it.
+
+The attached terminal's queue overlay is the other half of the same contract, and it is
+painted per row rather than per turn. The service announces an acceptance with
+`state_changed` and `reason='queue'`, carrying the fact and not the text; the screen
+that did not type the message re-reads `/api/session/durable` and paints the waiting
+lines from `pending`. Only the overlay is repainted — the transcript is rebuilt from the
+rows when the stream stops — because clearing the chat mid-turn would drop the deltas
+streaming into the block being written. That is what used to keep another terminal's
+message invisible for the whole turn while its screen only said "Thinking".
 
 
 

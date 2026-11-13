@@ -234,6 +234,7 @@ class TurnMixin:
     _client: ServiceClient | None
     _service_request: TurnRequest | None
     _service_steers: list[Static]
+    _service_sent: set[str]
 
     def model_settings(self) -> dict[str, Any] | None:
         """Per-request settings: the reasoning level of the active model.
@@ -573,6 +574,10 @@ class TurnMixin:
             await self.refuse_message(exc, request, attachments)
             return
         self._service_request = None
+        # This window wrote this row, and its line is already in the transcript as
+        # queued. The acceptance the service publishes for it must not be painted a
+        # second time by the queue overlay (`refresh_service_queue`).
+        self._service_sent.add(request.request_id)
         if widget is not None:
             # The service confirms it when the run reads it; until then the line says
             # it is waiting.
@@ -610,25 +615,6 @@ class TurnMixin:
         if not stopped:
             # Nothing was running: the hint goes away instead of sitting there.
             self._paint_status('')
-
-    async def stop_service_work(self) -> None:
-        """Leaving the terminal stops what the service still runs for this session.
-
-        `abort` is about a turn, and a subagent in the background is not a turn:
-        with nothing running, abort answers ``False`` and the node keeps spending
-        after the screen it reported to is gone. The service owns the work, so this
-        asks it to stop everything. Nothing here kills the service's process.
-        """
-        client = self._client
-        if client is None:
-            return
-        try:
-            await client.stop_all()
-        except ServiceClientError as exc:
-            # Leaving must not wait on a service that cannot answer: the request is
-            # best effort, and the failure is a debug line, not a notice the user
-            # will never read.
-            self.log.debug(f'stop-all did not reach the service: {exc}')
 
     @work(exclusive=True)
     async def run_turn(self, text: str, *, attachments: tuple[ImageAttachment, ...] = ()) -> None:

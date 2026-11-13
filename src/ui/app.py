@@ -262,6 +262,11 @@ class SigilApp(
         self._service_answered: set[str] = set()
         self._service_steers: list[Any] = []
         self._service_pending: list[Any] = []
+        # The queue rows the waiting overlay is painting, and the requests this
+        # window wrote itself. A row it wrote is already on screen as a queued line,
+        # so re-reading the queue must not paint it twice.
+        self._service_pending_ids: list[str] = []
+        self._service_sent: set[str] = set()
         # Set when another client accepted a message while this screen was mid-turn:
         # rebuilding the transcript then would drop the deltas streaming into the
         # block being written, so the rebuild waits for the end of the turn.
@@ -900,18 +905,22 @@ class SigilApp(
         """The run read one of the waiting messages: its line stops waiting.
 
         Two kinds of line can be waiting, and they are retired differently on purpose.
-        One painted from the durable read is *removed*: the run has now read it, so it
-        belongs to the transcript, and the rebuild that follows the confirmation paints
-        it there — keeping both would show the same message twice. One typed in this
-        window keeps its place and only loses the queued mark, which is what the live
-        turn has always done.
+        One painted from the durable rows is *removed*: the run has now read it, so it
+        belongs to the transcript, and the rebuild that follows the end of the turn
+        paints it there — keeping both would show the same message twice. One typed in
+        this window keeps its place and only loses the queued mark, which is what the
+        live turn has always done.
 
-        Confirmations arrive in queue order, so the oldest waiting line is the one that
-        was read; the event carries the service's own enqueue id, not the request id this
+        The overlay goes first: a line painted from the rows is the service's own
+        record, and what the service confirms is always about a row. Confirmations
+        arrive in queue order, so the oldest waiting line is the one that was read;
+        the event carries the service's own enqueue id, not the request id this
         terminal generated, and inventing a mapping would be worse than the ordering.
         """
         if self._service_pending:
             widget = self._service_pending.pop(0)
+            if self._service_pending_ids:
+                self._service_pending_ids.pop(0)
             with suppress(NoMatches):
                 await widget.remove()
             return
@@ -922,19 +931,80 @@ class SigilApp(
             self.query_one(ChatLog).mark_delivered(widget)
 
     async def refresh_service_queue(self) -> None:
-        """Re-reads the durable transcript when another client accepted a message.
+        """Paints the queue rows this screen has not shown yet.
 
         The service publishes the acceptance and not the text — the rows are the text
-        — so the screen that did not type the message learns it by reading them. An
-        append is not an option: the message is already part of the history this
-        screen was given, and adding it again is exactly the duplication the queue's
-        identity rules exist to prevent. The transcript is rebuilt instead.
+        — so the screen that did not type the message learns it by reading them.
 
-        Mid-turn the repair waits. ``chat.clear()`` would drop the deltas streaming
-        into the block being written, so the flag is left set and `_finish_turn` does
-        it once the stream has stopped.
+        Only the *waiting overlay* is repainted, never the transcript. An append is
+        not an option there: the message is already part of the history this screen
+        was given, and adding it again is exactly the duplication the queue's identity
+        rules exist to prevent. And a full rebuild is not an option mid-turn either:
+        ``chat.clear()`` would drop the deltas streaming into the block being written,
+        which is how a message another terminal sent used to stay invisible for the
+        whole turn — the reader saw "Thinking" and never their message.
+
+        So the two facts are separated: a waiting row is painted as one queued line
+        when it arrives, and the transcript itself is rebuilt from the rows when the
+        stream stops (`_finish_turn`).
         """
-        await self.repaint_from_rows()
+        client = self._client
+        if client is None:
+            return
+        if not self._turn_active:
+            # Nothing is streaming, so the whole transcript is painted from the rows
+            # again — which is also what retires a waiting line whose row stopped
+            # being pending.
+            await self.repaint_from_rows()
+            return
+        try:
+            durable = await client.durable()
+        except NoHistoryYet:
+            return
+        except ServiceClientError as exc:
+            await self.query_one(ChatLog).add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        # A row this window wrote is already on screen as its own queued line: the
+        # acceptance the service just published is about the message the reader typed.
+        pending = [
+            entry
+            for entry in durable.get('pending') or ()
+            if str(entry.get('request_id') or '') not in self._service_sent
+        ]
+        await self._paint_pending(pending)
+        # The transcript itself is rebuilt once the stream stops, so the line painted
+        # here becomes history instead of staying queued: `_finish_turn` does it.
+        self._service_rebuild_due = True
+
+    async def _paint_pending(self, entries: Sequence[dict[str, Any]]) -> None:
+        """Brings the waiting overlay in step with the rows the service still holds.
+
+        A line leaves when its row stops being pending, and a row arrives as one line
+        marked queued. Rows are compared by request id, not by text: the same message
+        sent twice is two rows, and a text comparison would silently hide the second.
+
+        Adding a line closes whatever block was being written (`ChatLog.add_user`
+        does it), so a delta arriving afterwards starts its own block instead of
+        appending to text the queued line now sits above.
+        """
+        chat = self.query_one(ChatLog)
+        wanted = [str(entry.get('request_id') or '') for entry in entries]
+        kept: list[Any] = []
+        kept_ids: list[str] = []
+        for widget, identifier in zip(self._service_pending, self._service_pending_ids, strict=False):
+            if identifier in wanted:
+                kept.append(widget)
+                kept_ids.append(identifier)
+                continue
+            with suppress(NoMatches):
+                await widget.remove()
+        self._service_pending = kept
+        self._service_pending_ids = kept_ids
+        for entry, identifier in zip(entries, wanted, strict=False):
+            if identifier in kept_ids:
+                continue
+            self._service_pending.append(await chat.add_user(str(entry.get('text') or ''), queued=True))
+            self._service_pending_ids.append(identifier)
 
     async def repaint_from_rows(self) -> None:
         """Repaints the transcript from the durable rows, or waits for the turn to stop.
@@ -1003,9 +1073,11 @@ class SigilApp(
         chat = self.query_one(ChatLog)
         if rebuild:
             await chat.clear()
-        self._service_pending = await chat.render_items(
-            durable.get('transcript') or [], pending=durable.get('pending') or ()
-        )
+        pending = durable.get('pending') or ()
+        self._service_pending = await chat.render_items(durable.get('transcript') or [], pending=pending)
+        # The ids are what `_paint_pending` compares, so the overlay painted here is
+        # the same overlay an acceptance from another terminal will update.
+        self._service_pending_ids = [str(entry.get('request_id') or '') for entry in pending]
 
     def _state_cursor(self) -> int:
         """Where the stream starts the first time: the sequence number of the state.

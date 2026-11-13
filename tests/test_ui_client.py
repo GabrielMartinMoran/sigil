@@ -2758,29 +2758,98 @@ class _RecordingTransport(httpx.AsyncBaseTransport):
         return await self._inner.handle_async_request(request)
 
 
-def test_leaving_an_attached_terminal_stops_everything_the_service_runs(
-    composition: Composition, tmp_path: Path
+@pytest.mark.parametrize('leaving', ['/quit', 'ctrl+q'])
+def test_leaving_an_attached_terminal_detaches_instead_of_stopping_the_work(
+    leaving: str, blocked: tuple[Composition, asyncio.Event], tmp_path: Path
 ) -> None:
-    """`/quit` is the whole session, not only the turn.
+    """A closed terminal is not a stop, and the work it did not start keeps running.
 
-    A subagent in the background has no turn to abort, and the abort route is a
-    no-op while nothing is running. The exit path asks the service to stop
-    everything, and never kills the service's process.
+    The bug this pins: the exit path posted `/api/stop-all`, and `abort` is global to
+    the service, so closing one terminal cancelled the turn a user had started from
+    another one — and the session was saved at that cancellation, which is why the
+    message only then appeared in the transcript. Leaving detaches: the service keeps
+    the work, and its idle shutdown is the only thing that ends it (see
+    `tests/test_server_idle.py`).
+
+    Both ways out are checked because they are the same promise made twice: the
+    `/quit` command and the window's own quit key.
     """
 
     async def inner() -> None:
-        async with _service_under_test(composition, tmp_path) as (runtime, transport, _attached):
+        composition, release = blocked
+        async with _service_under_test(composition, tmp_path) as (runtime, transport, sending_client):
+            # The turn belongs to another terminal: the one that leaves never sent it.
+            await sending_client.send_turn(TurnRequest(text='a turn another terminal started'))
+            await _wait_until(lambda: runtime.busy, what='the turn the other terminal started')
             recorded = _RecordingTransport(transport)
             client = ServiceClient(SERVICE, transport=recorded)
             try:
                 app = _terminal(client, _session(runtime))
                 async with app.run_test(size=(100, 40)) as pilot:
-                    await pilot.pause()
-                    await app.handle_command('/quit')
+                    await _until(pilot, lambda: app._turn_active, what='the running turn on screen')
+                    if leaving == 'ctrl+q':
+                        await pilot.press('ctrl+q')
+                    else:
+                        await app.handle_command('/quit')
                     await _until(pilot, lambda: app._exit is True, what='the exit')
-                    assert '/api/stop-all' in recorded.paths, 'leaving asks the service to stop everything'
+
+                    assert '/api/stop-all' not in recorded.paths, 'leaving asked the service to stop everything'
+                    assert '/api/abort' not in recorded.paths, 'leaving stopped the running turn'
+                # The screen is gone and the work is not: the service is still running it.
+                assert runtime.busy is True, 'the turn another terminal started outlived the screen'
+                assert _inputs(runtime)[0]['state'] in {'accepted', 'claimed'}, 'the exit stopped the queue row'
             finally:
                 await client.aclose()
+                release.set()
+                await asyncio.wait_for(runtime.wait(), timeout=20)
+
+    asyncio.run(inner())
+
+
+def test_a_message_accepted_by_one_terminal_is_waiting_on_the_other(
+    blocked: tuple[Composition, asyncio.Event], tmp_path: Path
+) -> None:
+    """The queue overlay is the service's, so every attached screen paints the same row.
+
+    The user's report was a message accepted in one terminal that never showed on the
+    other, which was mid-turn and only said "Thinking". The service announces the
+    acceptance — `state_changed` with `reason='queue'` and no text — so the screen that
+    did not type the message has to read the rows and paint the waiting line, without
+    dropping the answer streaming into the transcript it already holds.
+    """
+
+    async def inner() -> None:
+        composition, release = blocked
+        async with _service_under_test(composition, tmp_path) as (runtime, transport, sending_client):
+            await sending_client.send_turn(TurnRequest(text='go'))
+            await _wait_until(lambda: runtime.busy, what='the turn the sender started')
+            watching_client = ServiceClient(SERVICE, transport=transport)
+            try:
+                watcher = _terminal(watching_client, _session(runtime))
+                async with watcher.run_test(size=(100, 40)) as pilot:
+                    await _until(pilot, lambda: watcher._turn_active, what='the running turn on the other screen')
+                    reads = transport.durable_reads
+
+                    await sending_client.send_turn(TurnRequest(text='queued while the turn runs'))
+
+                    await _until(
+                        pilot,
+                        lambda: (
+                            'queued while the turn runs' in _transcript(watcher)
+                            and 'queued for the running turn' in _transcript(watcher)
+                        ),
+                        what='the waiting line of the other terminal',
+                    )
+                    assert watcher._turn_active is True, 'the line appeared while the turn was still running'
+                    assert transport.durable_reads > reads, 'the line came from the rows, not from this screen'
+
+                    release.set()
+                    await _until(pilot, lambda: not watcher._turn_active, what='the end of the turn')
+                    assert _transcript(watcher).count('queued while the turn runs') == 1, (
+                        'the waiting line is history once'
+                    )
+            finally:
+                await watching_client.aclose()
 
     asyncio.run(inner())
 

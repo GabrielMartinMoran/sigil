@@ -36,16 +36,19 @@ BUSY_COMMANDS = frozenset(
         '/effort',
         '/external-files',
         '/mcp',
-        '/quit',
     }
 )
 """Commands a running turn refuses.
 
-They are the ones that would change what the turn is working with, or end the
-process: `/new` and `/load` swap the session out from under it, `/agent` swaps
-the instructions and the tool set of a run whose definitions were already
-computed, `/provider` adds and deletes accounts, `/model` and `/effort` would
-swap the model mid-run, and `/quit` closes the app.
+They are the ones that would change what the turn is working with: `/new` and
+`/load` swap the session out from under it, `/agent` swaps the instructions and
+the tool set of a run whose definitions were already computed, `/provider` adds
+and deletes accounts, and `/model` and `/effort` would swap the model mid-run.
+
+`/quit` is deliberately **not** here. Leaving detaches — it sends nothing to the
+service and stops no work (see `action_quit`), so refusing it while a turn runs
+would only trap a user in a window whose other exit, `Ctrl+Q`, is not refusable:
+the same act answered two ways.
 
 `/default-models` is here because a subagent reads `agents.<name>` the moment it is
 summoned: rewriting that entry under a running tree changes the model of a branch
@@ -63,7 +66,8 @@ command whose action would change the session must not open a panel it cannot
 complete, and the service would refuse the change anyway.
 
 The rest read state and are safe mid-turn: `/context`, `/debug`, `/sidebar`,
-and `/help` do not touch the conversation or the model. `/mcp` changes the tool set.
+`/help` and `/quit` do not touch the conversation or the model. `/mcp` changes the
+tool set.
 """
 
 BUSY_REFUSAL = 'A turn is running: finish or stop it before you use {name}. Esc twice stops the turn first.'
@@ -432,42 +436,30 @@ class CommandsMixin:
         await self.handle_theme(args, chat)
 
     def action_quit(self) -> None:
-        """Closes the application, persisting the session.
+        """Closes the window, persisting this process's own session.
 
-        With a turn running there is a run in flight and, possibly, shell
-        commands: closing the terminal only ends the UI, so the commands are
-        killed and the run cancelled first, and what was completed is already on
-        disk thanks to the checkpoints.
+        Attached, leaving **detaches**. The work belongs to the service, another
+        terminal may be watching it, and `abort` is global to the service: asking it
+        to stop here would cancel a turn a user started somewhere else. So nothing is
+        sent on the way out — the stream is closed by `on_unmount`, the service keeps
+        running, and its idle shutdown is what ends it once no work is left (see
+        [idle shutdown](../docs/architecture.md#idle-shutdown)). Stopping work is a
+        deliberate act, never a side effect of closing a window.
+
+        In-process there is no service and no one else: the run and the shell
+        commands are this process's, so they are killed before the save below, and
+        what was completed is already on disk thanks to the checkpoints.
 
         The two-press `Esc` guard is skipped on purpose: `Ctrl+Q` is the exit, not
         a mistake, and making the exit conditional would leave a user who lost
         the key stuck in a turn.
-
-        Attached, the whole session is the unit of leaving, not the turn: a
-        subagent in the background has no turn to abort, and abort is a no-op while
-        nothing runs. The stop is awaited on a worker — it is a network call and
-        this method is synchronous — and only then is the window closed. This is
-        the one exit that stops the service's work on purpose; a window that merely
-        disappears leaves the service running until its work ends.
         """
-        if self._client is not None:
-            self.run_worker(self._quit_attached())
-            return
-        self._cancel_shell()
-        # `abort_turn` also stops the asynchronous subagents, before the save below:
-        # they outlive a turn on purpose, but not the process, and a tree on disk
-        # with a node saying it is still working would be a lie.
-        self.abort_turn()
-        self.persist()
-        self.exit()
-
-    async def _quit_attached(self) -> None:
-        """Stops what the service still runs, then closes this window.
-
-        The order is the point: the request is awaited while the app is still
-        running, so `/quit` does not race the shutdown that would cancel it.
-        """
-        await self.stop_service_work()
+        if self._client is None:
+            self._cancel_shell()
+            # `abort_turn` also stops the asynchronous subagents, before the save below:
+            # they outlive a turn on purpose, but not the process, and a tree on disk
+            # with a node saying it is still working would be a lie.
+            self.abort_turn()
         self.persist()
         self.exit()
 
