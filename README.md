@@ -555,15 +555,10 @@ account alias, a model ID, and a reasoning effort:
 }
 ```
 
-`/default-models` writes these entries from the TUI, so the file does not have to
-be edited by hand. The list holds the default for new conversations, then the
-installed agents, then the installed subagents — `agents.<name>` decides what a
-profile runs on whether a person picks it or a `summon` starts it, so both roles
-have a default here. `Enter` picks the model and the effort with the same screens
-`/model` uses, `d` clears an entry, and `Tab` chooses the file the write goes to —
-the project's or yours. The destination starts on the file that already sets the
-row you are on, and the list says which one that is. With `SIGIL_CONFIG` there is
-one file and nothing to switch.
+`agents.<name>` decides what a profile runs on whether a person picks it or a
+`summon` starts it, so agents and subagents both have a default here. A
+configured subagent always uses its own selection; an unconfigured one inherits
+the model and effort of the agent that summoned it, including when nested.
 
 The project entry replaces the global entry for the same agent. `SIGIL_CONFIG`
 selects a single config file instead of both. Accepted efforts are `default`,
@@ -571,18 +566,30 @@ selects a single config file instead of both. Accepted efforts are `default`,
 be a custom ID, but the account and provider must support it and the chosen
 effort.
 
-Selecting a main agent or starting a new session applies its configured model
-and effort. You can still change either afterward with `/model` and `/effort`.
-Loading a saved session restores its selection rather than reapplying the
-profile default. A configured
-subagent always uses its own selection; an unconfigured subagent inherits the
-model and effort of the agent that summoned it, including when nested.
+**The service owns the model; the terminal paints it.** The process that runs
+the turn resolves the selection, records it on the session, and publishes it to
+every attached client. The terminal paints what the service reports and sends
+the changes back: `/model` and `/effort` travel to the service, which owns the
+accounts, the catalogues and the switch. Nothing in the terminal decides which
+model a conversation runs on.
+
+`/default-models` is the one command that cannot follow that split yet. The
+screen edits the two config files above, and those files belong to the service —
+a terminal that wrote them would be a second writer on one configuration. There
+is no endpoint for them, so in an attached terminal the command answers that
+model defaults are not editable from this client instead of pretending to save.
+Edit `.sigil/config.json` by hand until that route exists.
+
+Selecting a main agent applies its configured model and effort through the same
+path `/model` takes. You can still change either afterward with `/model` and
+`/effort`. Loading a saved session restores its selection rather than
+reapplying the profile default.
 
 ### The default model
 
 Not every profile needs to name a model. `default_model` sets the one a
 conversation starts on when the agent has no preference of its own, in the same
-shape as an `agents` entry — the first row of `/default-models` writes it:
+shape as an `agents` entry:
 
 ```json
 {
@@ -1297,7 +1304,7 @@ accounts with `/model`.
 ```
 /provider                 manage accounts: add, rename, remove
 /model                    choose a model across accounts, then its reasoning effort
-/default-models           set the model each agent starts on, project or global
+/default-models           not editable here: the service owns the defaults files
 /effort [level]           open the effort picker, or set a level directly
 ```
 

@@ -1034,11 +1034,17 @@ the running service's sequence, and an old number would silently skip everything
 new session publishes. Opening a session can also move the service to another
 workspace; the header follows the projection, not a local guess.
 
-No core command is `not_wired` and none is `blocked`: every command the catalogue
-declares has a sender here. The two states stay in the table because the decision has to
-be total — a command the service has no endpoint for, or one this terminal has not wired
-yet, must say so precisely rather than borrow another answer — and both sentences are
-proven on rows built for them.
+One core command is `blocked`: `/default-models`. The screen edits the two config files
+that decide what a profile starts on, and those files belong to the service — a terminal
+that wrote them would be a second writer on one configuration, which is the failure the
+attached terminal exists to remove. No route projects them yet, so the row names no
+endpoint and `show_default_models` answers that model defaults are not editable from
+this client instead of failing somewhere the user cannot read.
+
+That row is the single exception, and `test_only_the_documented_gap_is_blocked` pins the
+blocked set to exactly it. `not_wired` stays empty: it would promise a sender that is not
+coming in this cut. The decision has to be total — a command the service has no endpoint
+for must say so precisely rather than borrow another answer.
 
 `/provider` was the last one, and it needed a route rather than a sentence.
 `GET /api/accounts` lists the accounts with `has_credential` as a boolean — the key
@@ -1192,6 +1198,21 @@ A gap during a live turn **discards the block in progress**. The transcript is r
 from the rows and the deltas that follow open a new block, because an unknown number of
 deltas never arrived: a conversation with a hole in it reads better for a second and
 lies for as long as it is on screen.
+
+### Attention waits for the service's subagents
+
+A turn that ends with something to report asks for attention. The request is held until
+the squad is quiet, and the squad is the service's tree, not this process's:
+`settle_attention` stores the event, and `subagents_running` counts the node statuses of
+the state projection.
+
+Counting locally would report zero the moment the turn closed, because a subagent
+outlives the turn that summoned it. The notification would fire while the work still
+ran and call the user back to a screen where nothing was ready — the early ring this
+waiting exists to prevent.
+
+The summoner remains the fallback for the in-process seam, which has no projection to
+read. Attached, the client never touches it.
 
 ### What the terminal still holds locally
 
