@@ -358,6 +358,7 @@ AccountFormScreen,
 GroupedModelScreen,
 CommandPaletteScreen,
 ModelPickerScreen,
+ModelDefaultsScreen,
 MCPScreen,
 AgentPickerScreen,
 ConfirmScreen,
@@ -382,6 +383,7 @@ TextPromptScreen {
 #provider-list,
 #form-options,
 #picker-models,
+#defaults-list,
 #mcp-list,
 #palette-commands,
 #agent-list,
@@ -411,9 +413,16 @@ TextPromptScreen {
 #grouped-status,
 #palette-status,
 #agent-status,
+#defaults-status,
 #prompt-status {
     margin-top: 1;
     height: auto;
+}
+
+/* The config errors the list is showing: they explain an `invalid` row. */
+#defaults-error {
+    height: auto;
+    color: $warning;
 }
 
 #provider-hint {

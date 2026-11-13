@@ -34,6 +34,7 @@ from pydantic_ai import Agent
 from sigil_tools import ToolContext
 from src.engine.agents.factory import AgentFactory, AgentSpec
 from src.engine.agents.model_config import AgentModelConfig
+from src.engine.agents.model_defaults import ConfigScope, ModelDefaultsState, read_defaults, save_default
 from src.engine.agents.model_features import IMAGE_INPUT, ModelFeatureGate
 from src.engine.agents.profile.registry import AgentRegistry
 from src.engine.agents.retry import RetryTransientModelErrors
@@ -558,14 +559,8 @@ class Composition:
         self.mcp.set_overrides(session.mcp_overrides)
         workspace = Path(os.path.realpath(session.cwd))
         if workspace != self._agent_config_root:
-            config = load_config(cwd=workspace)
-            self.mcp_config = replace(
-                self.mcp_config,
-                agents=config.agents,
-                invalid_agents=config.invalid_agents,
-                default_model=config.default_model,
-            )
             self._agent_config_root = workspace
+            self.reload_agent_models()
         self.agent_trees.bind(session, root_name=session.agent or self.agent_registry.active_name)
         self.roadmap_store.bind_session(session.id)
         if model:
@@ -595,6 +590,45 @@ class Composition:
             return None
         session.selection = snapshot.selection
         return snapshot
+
+    def model_defaults_state(self) -> ModelDefaultsState:
+        """What the two config files say about default models, per file.
+
+        Read on every call, never cached: the screen writes to one of these files and
+        then shows the result, and a cached copy would show its own memory instead of
+        what is on disk — including an edit made by hand while the app was open.
+        """
+        return read_defaults(cwd=self._agent_config_root)
+
+    def save_model_default(
+        self, target: str | None, config: AgentModelConfig | None, scope: ConfigScope
+    ) -> tuple[str, ...]:
+        """Writes one default and re-reads the config that reads it.
+
+        ``target`` is an agent name, or ``None`` for the block a conversation starts
+        on; ``config`` is ``None`` to clear the entry. The re-read is what makes the
+        write take effect without a restart: `default_selection`, `select_agent_model`
+        and `subagent_model` all read `mcp_config`, and they read it next time.
+        """
+        errors = save_default(target, config, scope, cwd=self._agent_config_root)
+        if not errors:
+            self.reload_agent_models()
+        return errors
+
+    def reload_agent_models(self) -> tuple[str, ...]:
+        """Re-reads `agents` and `default_model` for the workspace in effect.
+
+        Only those two: the MCP servers are already running, and re-reading them here
+        would leave `mcp_config` describing a set of servers that nothing started.
+        """
+        config = load_config(cwd=self._agent_config_root)
+        self.mcp_config = replace(
+            self.mcp_config,
+            agents=config.agents,
+            invalid_agents=config.invalid_agents,
+            default_model=config.default_model,
+        )
+        return config.errors
 
     def default_selection(self, agent_name: str) -> Selection | None:
         """What a conversation starts on when nothing has been chosen for it.

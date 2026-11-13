@@ -9,8 +9,13 @@ split is what keeps the destructive and the network paths in one testable place.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Mapping
 from typing import Any
 
+from src.engine.agents.model_config import AgentModelConfig
+from src.engine.agents.model_defaults import ConfigScope, ModelDefaultsState
+from src.engine.agents.profile.models.agent_profile import AgentProfile
+from src.engine.agents.profile.models.agent_role import AgentRole
 from src.engine.providers.domain.auth_method import AuthMethod
 from src.engine.providers.domain.model_capability import ModelCatalog
 from src.engine.providers.domain.provider_error import (
@@ -26,6 +31,7 @@ from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.confirm_screen import ConfirmScreen
 from src.ui.widgets.effort_screen import EffortScreen
 from src.ui.widgets.grouped_model_screen import AccountCatalog, GroupedModelScreen
+from src.ui.widgets.model_defaults_screen import DefaultsChoice, DefaultsRow, ModelDefaultsScreen
 from src.ui.widgets.model_picker_screen import ModelChoice
 from src.ui.widgets.provider_screen import ProviderAction, ProviderScreen
 from src.ui.widgets.sidebar_panel import ModelState
@@ -83,17 +89,8 @@ class ProviderMixin:
             await chat.add_notice('Configure a provider first: /provider', style='yellow')
             return
 
-        accounts = service.list_accounts()
         await chat.add_notice('Fetching the model lists…', style='cyan')
-        results = await asyncio.gather(
-            *(service.catalog_for(account.alias) for account in accounts), return_exceptions=True
-        )
-        catalogs = []
-        for account, result in zip(accounts, results, strict=True):
-            if isinstance(result, BaseException):
-                await chat.add_notice(f'{account.alias}: model list unavailable ({result})', style='yellow')
-                result = ModelCatalog(error=str(result))
-            catalogs.append(AccountCatalog(account.id, account.alias, result))
+        catalogs = await self._account_catalogs(chat)
         if not catalogs:
             return
         choice = await self.push_screen_wait(
@@ -110,7 +107,143 @@ class ProviderMixin:
             await chat.add_notice(str(exc), style='bold red')
             return
         self._after_model_change(snapshot)
-        await chat.add_notice(f'Model: {snapshot.label}', style='green')
+        await chat.add_notice(f'Model: {snapshot.display_name}', style='green')
+
+    async def _account_catalogs(self, chat: ChatLog) -> list[AccountCatalog]:
+        """Every account's catalogue, fetched at once, with the failures kept.
+
+        A provider that is down shortens the list instead of closing the screen: the
+        picker says which lists are incomplete and still offers the rest.
+        """
+        accounts = self._model_service.list_accounts()
+        results = await asyncio.gather(
+            *(self._model_service.catalog_for(account.alias) for account in accounts), return_exceptions=True
+        )
+        catalogs = []
+        for account, result in zip(accounts, results, strict=True):
+            if isinstance(result, BaseException):
+                await chat.add_notice(f'{account.alias}: model list unavailable ({result})', style='yellow')
+                result = ModelCatalog(error=str(result))
+            catalogs.append(AccountCatalog(account.id, account.alias, result, account.provider_label))
+        return catalogs
+
+    # --- the defaults ------------------------------------------------------
+
+    async def show_default_models(self, chat: ChatLog) -> None:
+        """`/default-models`: the model each agent starts on, and the one for the rest.
+
+        The screen collects a target and a destination, the same pickers `/model` uses
+        collect the account, the model and the effort, and the write goes to the file
+        the destination names. Nothing here changes the model in effect: a default is
+        what a *new* conversation starts on, and moving the one in front of the user
+        from a screen about defaults is the surprise `/model` exists to avoid.
+        """
+        service = getattr(self, '_model_service', None)
+        read = getattr(self, '_model_defaults_state', None)
+        save = getattr(self, '_save_model_default', None)
+        if service is None or read is None or save is None:
+            await chat.add_notice('Model defaults are not editable from this client.', style='yellow')
+            return
+        accounts = service.list_accounts()
+        if not accounts:
+            await chat.add_notice('Configure a provider first: /provider', style='yellow')
+            return
+
+        await chat.add_notice('Fetching the model lists…', style='cyan')
+        catalogs = await self._account_catalogs(chat)
+        if not catalogs:
+            return
+        providers = {account.alias: account.provider_label for account in accounts}
+        while True:
+            state = read()
+            rows = defaults_rows(
+                state,
+                profiles=self._profiles(),
+                active=self._active_agent_name(),
+                providers=providers,
+            )
+            choice = await self.push_screen_wait(ModelDefaultsScreen(rows, state))
+            if choice is None:
+                return
+            if choice.clear:
+                await self._clear_default(choice, save, read, chat)
+            else:
+                await self._set_default(choice, catalogs, save, read, chat)
+            # The list comes back either way: a cancelled picker is not a reason to
+            # close the flow, and Esc on the list is one press away.
+
+    def _profiles(self) -> dict[str, AgentProfile]:
+        """Every installed profile, by name: agents and subagents alike.
+
+        `list()` and not `agents()`: the picker hides subagents because the user
+        cannot *be* one, but `agents.<name>` decides what a subagent runs on just the
+        same, and its default is set here like any other.
+        """
+        registry = getattr(self, '_agent_registry', None)
+        if registry is None:
+            return {}
+        return {profile.name: profile for profile in registry.list()}
+
+    def _active_agent_name(self) -> str:
+        registry = getattr(self, '_agent_registry', None)
+        return getattr(registry, 'active_name', '') or ''
+
+    async def _set_default(
+        self,
+        choice: DefaultsChoice,
+        catalogs: list[AccountCatalog],
+        save: Callable[[str | None, AgentModelConfig | None, ConfigScope], tuple[str, ...]],
+        read: Callable[[], ModelDefaultsState],
+        chat: ChatLog,
+    ) -> None:
+        """Collects the model and the effort, then writes the entry."""
+        picked = await self.push_screen_wait(
+            GroupedModelScreen(catalogs, self._preferences.model_favorites, on_favorites=self._save_model_favorites)
+        )
+        if picked is None:
+            return
+        effort = await self.push_screen_wait(EffortScreen(accepted=picked.model.efforts, model=picked.model.name))
+        if effort is None:
+            return
+
+        config = AgentModelConfig(account=picked.alias, model=picked.model.name, effort=effort.effort)
+        errors = save(choice.row.target, config, choice.scope)
+        if errors:
+            for error in errors:
+                await chat.add_notice(f'✖ {error}', style='bold red')
+            return
+
+        after = read()
+        await chat.add_notice(
+            f'{choice.row.label}: {picked.display_name} · {config.model} · {config.effort} '
+            f'→ {_file_label(after, choice.scope)}',
+            style='green',
+        )
+        if choice.scope not in after.sources(choice.row.target):
+            # The write returned no error and the file still does not show it: the
+            # list is about to lie unless this says so.
+            await chat.add_notice('The entry did not land; the config errors are in the list.', style='yellow')
+        elif after.effective(choice.row.target) != config:
+            await chat.add_notice(
+                f'{_higher_file(after, choice.row.target)} still overrides this one; clear it with d on the same row.',
+                style='yellow',
+            )
+        await chat.add_notice(_effect_note(choice.row), style='dim')
+
+    async def _clear_default(
+        self,
+        choice: DefaultsChoice,
+        save: Callable[[str | None, AgentModelConfig | None, ConfigScope], tuple[str, ...]],
+        read: Callable[[], ModelDefaultsState],
+        chat: ChatLog,
+    ) -> None:
+        errors = save(choice.row.target, None, choice.scope)
+        if errors:
+            for error in errors:
+                await chat.add_notice(f'✖ {error}', style='bold red')
+            return
+        after = read()
+        await chat.add_notice(f'Cleared {choice.row.label} from the {_file_label(after, choice.scope)}', style='green')
 
     def _save_model_favorites(self, favorites: tuple[tuple[str, str], ...]) -> None:
         self._preferences = self._preferences.with_favorites(favorites)
@@ -146,7 +279,7 @@ class ProviderMixin:
             chat.post_message(ChatNotice(str(exc), style='bold red'))
             return
         self._after_model_change(snapshot)
-        chat.post_message(ChatNotice(f'Model: {snapshot.label}', style='green'))
+        chat.post_message(ChatNotice(f'Model: {snapshot.display_name}', style='green'))
 
     async def show_effort(self, chat: ChatLog, argument: str = '') -> None:
         """Sets the reasoning level, or opens the picker when there is no argument."""
@@ -191,7 +324,7 @@ class ProviderMixin:
         accepted = snapshot.efforts or ()
         available = ', '.join(accepted) if accepted else 'none reported'
         lines = [
-            f'Model   : {snapshot.label}',
+            f'Model   : {snapshot.display_name}',
             f'Effort  : {snapshot.thinking}',
             f'Accepted: {available}',
             '',
@@ -280,7 +413,7 @@ class ProviderMixin:
             await chat.add_notice(str(exc), style='bold red')
             return
         self._after_model_change(snapshot)
-        await chat.add_notice(f'Active: {snapshot.label}', style='green')
+        await chat.add_notice(f'Active: {snapshot.display_name}', style='green')
 
     async def _rename(self, alias: str, chat: ChatLog) -> None:
         from src.ui.widgets.text_prompt_screen import TextPromptScreen
@@ -354,4 +487,114 @@ def _notice(text: str, style: str) -> ChatNotice:
     return ChatNotice(text, style=style)
 
 
-__all__ = ['ProviderMixin']
+def defaults_rows(
+    state: ModelDefaultsState,
+    *,
+    profiles: Mapping[str, AgentProfile] | None = None,
+    active: str = '',
+    providers: Mapping[str, str] | None = None,
+) -> tuple[DefaultsRow, ...]:
+    """The screen's rows: the default first, then the agents, then the subagents.
+
+    Both roles are listed. `agents.<name>` decides what a profile runs on whether the
+    user picks it or a `summon` starts it, so a subagent is a target with a default of
+    its own — hiding it would leave its model reachable only by editing the file.
+
+    A profile the config names but the registry no longer has is listed last, and
+    marked. An entry for a deleted agent is exactly the one worth clearing, and
+    hiding it would leave `agents.<gone>` in the file with no way out from the TUI.
+    """
+    installed = dict(profiles or {})
+    accounts = dict(providers or {})
+    agents = sorted((item for item in installed.values() if item.role.selectable), key=lambda item: item.name)
+    subagents = sorted((item for item in installed.values() if not item.role.selectable), key=lambda item: item.name)
+    orphans = sorted(name for name in state.agent_names() if name not in installed)
+
+    rows = [
+        DefaultsRow(
+            target=None,
+            label='Default for new conversations',
+            summary=_summary(state.effective(None), state.invalid(None), accounts),
+            sources=state.sources(None),
+            invalid=state.invalid(None),
+        )
+    ]
+    rows.extend(_profile_row(profile, state, accounts, active) for profile in (*agents, *subagents))
+    rows.extend(
+        DefaultsRow(
+            target=name,
+            label=name,
+            summary=_summary(state.effective(name), state.invalid(name), accounts),
+            sources=state.sources(name),
+            invalid=state.invalid(name),
+            installed=False,
+        )
+        for name in orphans
+    )
+    return tuple(rows)
+
+
+def _profile_row(
+    profile: AgentProfile, state: ModelDefaultsState, accounts: Mapping[str, str], active: str
+) -> DefaultsRow:
+    return DefaultsRow(
+        target=profile.name,
+        label=profile.label,
+        summary=_summary(state.effective(profile.name), state.invalid(profile.name), accounts),
+        sources=state.sources(profile.name),
+        invalid=state.invalid(profile.name),
+        active=profile.name == active,
+        role=profile.role,
+    )
+
+
+def _summary(config: AgentModelConfig | None, invalid: bool, accounts: Mapping[str, str]) -> str:
+    """One entry as a reader recognizes it, or why there is nothing to show.
+
+    ``accounts`` maps an alias to its provider. The config stores the alias, and an
+    alias on its own says nothing about who answers the request — so the provider is
+    shown too, and its absence is what tells the user the account is gone.
+    """
+    if invalid:
+        return 'invalid entry: see the config errors below'
+    if config is None:
+        return 'not set'
+    provider = accounts.get(config.account)
+    served_by = f'{config.account} · {provider}' if provider else config.account
+    summary = f'{served_by} · {config.model} · {config.effort}'
+    if accounts and provider is None:
+        summary += f' · account {config.account!r} is not configured'
+    return summary
+
+
+def _file_label(state: ModelDefaultsState, scope: ConfigScope) -> str:
+    """The file a write went to, named the way the user chose it."""
+    if state.fixed is not None:
+        return f'SIGIL_CONFIG ({state.fixed})'
+    name = 'project config' if scope is ConfigScope.PROJECT else 'global config'
+    return f'{name} ({state.path_for(scope)})'
+
+
+def _higher_file(state: ModelDefaultsState, target: str | None) -> str:
+    """The other file that still decides for ``target``."""
+    for scope in state.destinations:
+        if scope in state.sources(target):
+            return _file_label(state, scope)
+    return 'Another config file'
+
+
+def _effect_note(row: DefaultsRow) -> str:
+    """Where the default just written actually takes effect.
+
+    A subagent and an agent are reached differently, and saying "new conversations"
+    about a subagent would be wrong: it never starts a conversation, it answers a
+    summon.
+    """
+    if row.target is None:
+        return 'New conversations start on it; this session keeps its model.'
+    if row.role is AgentRole.SUBAGENT:
+        return 'Every summon of that subagent uses it; this session keeps its model.'
+    return 'New conversations and that agent use it; this session keeps its model.'
+
+
+__all__ = ['ProviderMixin', 'defaults_rows']

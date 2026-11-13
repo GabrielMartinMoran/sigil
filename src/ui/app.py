@@ -149,6 +149,8 @@ class SigilApp(
         summoner: SubagentSummoner | None = None,
         on_bind_session: Callable[[Session], object] | None = None,
         on_agent_selected: Callable[[str], Any] | None = None,
+        model_defaults_state: Callable[[], Any] | None = None,
+        save_model_default: Callable[..., tuple[str, ...]] | None = None,
         extensions: Any = None,
     ) -> None:
         super().__init__()
@@ -159,6 +161,11 @@ class SigilApp(
         self._session = session
         self._on_bind_session = on_bind_session
         self._on_agent_selected = on_agent_selected
+        # `/default-models` writes a config file, so the read and the write are
+        # callbacks into the composition: the client collects, the core decides
+        # which file it is and re-reads it afterwards.
+        self._model_defaults_state = model_defaults_state
+        self._save_model_default = save_model_default
         self._model_service = model_service
         self._login_flow = login_flow
         self._tool_logger = tool_logger
