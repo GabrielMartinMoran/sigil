@@ -236,17 +236,16 @@ def test_persisting_a_session_does_not_copy_the_active_model_into_it(tmp_path, m
     assert store.load(second.id).selection.model == 'second/model'
 
 
-# --- and opening a workspace opens its conversation's model ------------------
+# --- and an explicit open brings that conversation's model with it -----------
 
 
-def test_switching_workspace_brings_the_opened_conversation_s_model_back(tmp_path, monkeypatch):
-    """A workspace switch opens a conversation, so the model comes back with it.
+def test_switching_workspace_starts_empty_and_an_explicit_open_restores_the_model(tmp_path, monkeypatch):
+    """A workspace switch opens a draft; the model comes back only with an explicit open.
 
-    The runtime loads the workspace's last session and binds it. Binding is where a
-    conversation's model is restored, in one place, for every client — and it is the
-    same rule `/load` follows. `model=False` here would leave the router on the model
-    of the workspace the user left, so the conversation they just opened would run on
-    someone else's model until they selected one again.
+    Switching workspace is not opening a conversation: the user names one with `/load`
+    or `/api/session/open`, and the switch must not choose for them. Binding is still
+    where a conversation's model is restored, in one place, for every client, so the
+    conversation opened on purpose runs on its own model again.
     """
     from src.server.events import EventHub
     from src.server.runtime import ServerRuntime
@@ -256,25 +255,25 @@ def test_switching_workspace_brings_the_opened_conversation_s_model_back(tmp_pat
     composition, service = _composition(tmp_path, monkeypatch)
     runtime = ServerRuntime(composition, EventHub(), require_ownership=False)
 
-    # The conversation of the workspace we leave runs on the default, `first/model`.
+    # The conversation this workspace keeps runs on the default, `first/model`.
     leaving = composition.store.create_session()
     leaving.agent = 'wizard'
     composition.bind_session(leaving)
     composition.store.save(leaving)
     assert leaving.selection.model == 'first/model'
 
-    # The conversation of the workspace we move to runs on `second/model`.
+    # Leaving and coming back opens an empty draft instead of that conversation.
     runtime.switch_workspace(str(other))
-    arriving = composition.store.create_session()
-    arriving.agent = 'wizard'
-    composition.bind_session(arriving)
+    runtime.switch_workspace(str(tmp_path))
+
+    assert composition.session.id != leaving.id
+    assert composition.session.messages == []
+
+    # Opening it explicitly is what brings its own model back.
     service.select('work', 'second/model', 'high')
-    arriving.selection = service.snapshot().selection
-    composition.store.save(arriving)
     assert service.snapshot().model == 'second/model'
 
-    # Coming back opens the conversation that was left, and its own model with it.
-    runtime.switch_workspace(str(tmp_path))
+    runtime.open_session(leaving.id)
 
     assert composition.session.id == leaving.id
     assert service.snapshot().model == 'first/model'

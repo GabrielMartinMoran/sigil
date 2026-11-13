@@ -1414,7 +1414,7 @@ class ServerRuntime:
     # --- workspace -----------------------------------------------------------
 
     def switch_workspace(self, root: str) -> dict[str, Any]:
-        """Moves the server to another workspace and opens its last session.
+        """Moves the server to another workspace and starts an empty conversation.
 
         Refused mid-turn: `os.chdir` while a tool is running would make the tool read
         a different tree than the one it started in.
@@ -1422,12 +1422,12 @@ class ServerRuntime:
         self._refuse_while_busy('switch workspace')
         switch = self.composition.workspace_manager.switch(root)
         self.composition.root = switch.workspace.root
-        store = self.composition.store
-        session = store.load_last() or store.draft_session()
-        # Opening the workspace's conversation is opening a conversation, so binding
-        # restores the model that belongs to it — the same rule `/load` follows. A
-        # `model=False` here would leave the router on the model of the workspace the
-        # user left, and the session they just opened would run on it.
+        session = self.composition.store.draft_session()
+        # A workspace switch starts a conversation, it does not choose one: the user
+        # opens a stored conversation with `/load` or `/api/session/open`, and that is
+        # where its own model comes back with it. Reopening the last one here decided
+        # for them. Binding the draft resolves the model the way `new_session` does —
+        # the agent's own, then `default_model`, then the last one used.
         self.composition.bind_session(session)
         self.composition.rebuild_agent()
         self.hub.publish_state('workspace')

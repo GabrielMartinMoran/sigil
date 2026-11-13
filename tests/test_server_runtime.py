@@ -489,6 +489,32 @@ def test_startup_does_not_resume_previous_session(composition: Composition, tmp_
     assert reopened.store.load(previous.id) is not None
 
 
+def test_switching_workspace_leaves_an_empty_draft(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """Coming back to a workspace starts empty instead of reopening its last conversation.
+
+    The turn below is saved in this workspace, so the switch back used to find it and
+    open it. That is the regression: the workspace switch chose the conversation for
+    the user. Opening one is an explicit act (`/load`, `/api/session/open`).
+    """
+
+    async def go() -> None:
+        await runtime.send('guardado')
+        await runtime.wait()
+
+    asyncio.run(go())
+    saved = runtime.session
+    assert saved.messages
+    assert runtime.composition.store.load(saved.id) is not None
+
+    other = tmp_path / 'other'
+    other.mkdir()
+    runtime.switch_workspace(str(other))
+    runtime.switch_workspace(str(tmp_path))
+
+    assert runtime.session.id != saved.id
+    assert runtime.session.messages == []
+
+
 def test_abort_cancels_only_the_runtime_composition(runtime: ServerRuntime) -> None:
     from src.engine.shell.running import RunningCommands
 
