@@ -44,7 +44,9 @@ def test_should_persist_alert_preference_without_changing_other_preferences(tmp_
         async with app.run_test():
             app._turn_active = True
             await app.handle_command('/alerts', 'off')
-            expected = Preferences(reasoning_visible=True, tools_expanded=True, desktop_notifications=False)
+            expected = Preferences(
+                theme='dark', reasoning_visible=True, tools_expanded=True, desktop_notifications=False
+            )
             assert app._preferences == expected
             assert app._preferences_store.load() == expected
             await app.handle_command('/alerts', 'on')

@@ -112,6 +112,15 @@ _ROWS: tuple[Transport, ...] = (
         route='/api/effort',
         reason='the service owns the model and the levels it accepts.',
     ),
+    # The defaults are files the service reads and writes, and no route projects
+    # them yet. `blocked` and not `not_wired`: there is nothing to point a sender
+    # at, so the command says so instead of failing somewhere the user cannot read.
+    Transport(
+        name='/default-models',
+        owner=CommandOwner.CORE,
+        state=TransportState.BLOCKED,
+        reason='the service owns the defaults files, and no endpoint exposes them yet.',
+    ),
     Transport(
         name='/external-files',
         owner=CommandOwner.CORE,

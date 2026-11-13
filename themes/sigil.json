@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "name": "sigil",
+  "dark": true,
+  "colors": {
+    "logo-start": "#ff9d00",
+    "logo-end": "#d93d00",
+    "primary": "#f59e0b",
+    "secondary": "#d55a1f",
+    "accent": "#f59e0b",
+    "warning": "#f5b64c",
+    "error": "#ef7168",
+    "success": "#9ebd83",
+    "foreground": "#e7d7c1",
+    "background": "#0b0a0d",
+    "surface": "#17100f",
+    "panel": "#211512",
+    "boost": "#352018",
+    "tool-border": "#704431",
+    "tool-title": "#f59e0b",
+    "tool-output": "#bcaa99",
+    "reasoning": "#bcaa99",
+    "diff-added": "#9ebd83",
+    "diff-removed": "#ef7168",
+    "sidebar-section": "#d6b99d",
+    "muted": "#ad9988"
+  }
+}

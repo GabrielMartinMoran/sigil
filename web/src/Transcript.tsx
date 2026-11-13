@@ -53,7 +53,12 @@ export function Transcript({ items }: { items: TranscriptItem[] }) {
     <div ref={container} className="scroll-thin flex-1 overflow-y-auto">
       <div className="mx-auto max-w-3xl space-y-4 px-3 py-5 sm:px-4">
         {items.length === 0 ? (
-          <p className="text-ink-faint py-16 text-center text-sm">Nothing here yet. Ask something and it starts.</p>
+          <div className="flex flex-col items-center gap-5 py-16 text-center">
+            {/* The same mark the terminal shows on an empty session, and the same
+                silence about it: it is decoration, so it carries no alternative text. */}
+            <img src="./sigil-logo.svg" alt="" aria-hidden="true" className="h-24 w-auto" />
+            <p className="text-ink-faint text-sm">Nothing here yet. Ask something and it starts.</p>
+          </div>
         ) : null}
         <DurableSections durable={durable} busy={busy} onOpenRecovery={openRecovery} />
         {transcriptBlocks(items).map((block, position) =>

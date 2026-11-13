@@ -9,7 +9,6 @@ from typing import Any
 
 from src.engine.context.meter.render import render_report
 from src.engine.mcp.tool_models.server_status import ServerStatus
-from src.engine.providers.domain.provider_error import ProviderError
 from src.engine.sessions.catalog import CatalogEntry, catalog
 from src.engine.sessions.session_store import Session, SessionSummary
 from src.engine.workspace.arguments import UsageError, parse_new_args
@@ -27,7 +26,18 @@ from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.session_picker import SessionPicker
 
 BUSY_COMMANDS = frozenset(
-    {'/new', '/load', '/agent', '/provider', '/model', '/effort', '/external-files', '/mcp', '/quit'}
+    {
+        '/new',
+        '/load',
+        '/agent',
+        '/provider',
+        '/model',
+        '/default-models',
+        '/effort',
+        '/external-files',
+        '/mcp',
+        '/quit',
+    }
 )
 """Commands a running turn refuses.
 
@@ -36,6 +46,11 @@ process: `/new` and `/load` swap the session out from under it, `/agent` swaps
 the instructions and the tool set of a run whose definitions were already
 computed, `/provider` adds and deletes accounts, `/model` and `/effort` would
 swap the model mid-run, and `/quit` closes the app.
+
+`/default-models` is here because a subagent reads `agents.<name>` the moment it is
+summoned: rewriting that entry under a running tree changes the model of a branch
+that has not started yet, and a turn would end with two halves written by two
+different models.
 
 `/model` and `/effort` are here even though the service also refuses them: the
 service refuses the *change*, and only after the picker fetched the catalogue and
@@ -337,6 +352,7 @@ class CommandsMixin:
             '/agent': lambda: self.show_agent(chat, args),
             '/provider': lambda: self.show_providers(chat),
             '/model': lambda: self.show_models(chat, args),
+            '/default-models': lambda: self.show_default_models(chat),
             '/effort': lambda: self.show_effort(chat, args),
             '/external-files': lambda: self.handle_external_files(args, chat),
             '/reasoning-visibility': lambda: self.handle_reasoning_visibility(args, chat),
@@ -446,29 +462,25 @@ class CommandsMixin:
             switch = None
 
         session = self._store.draft_session()
-        service = getattr(self, '_model_service', None)
-        if service is not None:
-            session.selection = service.snapshot().selection
         # A new session inherits the agent in effect: starting a conversation
         # should not silently drop back to the default profile.
         profile = self.active_agent()
         session.agent = profile.name if profile is not None else ''
+        # `bind_session` resolves the model: the agent's own if it declares one, then
+        # `default_model`, then the last one used. The session keeps the answer, and a
+        # model chosen later reaches this session only.
         self.bind_session(session)
-        model_error = None
-        select_model = getattr(self, '_on_agent_selected', None)
-        if select_model is not None and profile is not None:
-            try:
-                snapshot = select_model(profile.name)
-                if snapshot is not None:
-                    self._after_model_change(snapshot)
-            except ProviderError as exc:
-                model_error = str(exc)
+        service = getattr(self, '_model_service', None)
+        if session.selection is None and service is not None:
+            # Nothing to resolve it with — a bare app in a test — so the session
+            # starts on what is in effect, the way it always did.
+            session.selection = service.snapshot().selection
+        if service is not None:
+            self._after_model_change(service.snapshot())
         if self._scope is not None:
             self._scope.reset()
         self.refresh_sidebar()
         await chat.clear()
-        if model_error is not None:
-            await chat.add_notice(f'Agent model: {model_error}', style='bold red')
         if switch is not None:
             await self.announce_switch(switch, chat)
         await chat.add_notice(f'New session {self._session.short_id}.', style='green')
@@ -651,7 +663,6 @@ class CommandsMixin:
 
     def persist(self) -> None:
         """Saves the current session if it has messages."""
-        self._sync_session_selection()
         if self._session.messages:
             # What the meter measured rides with the row: `/load` reads it back.
             self._meter.stamp(self._session)
@@ -662,13 +673,6 @@ class CommandsMixin:
                 view.post_message(
                     ChatNotice('Session updated by another process; reloaded the latest version.', style='yellow')
                 )
-
-    def _sync_session_selection(self) -> None:
-        """Copies the active model into the session before it is written."""
-        service = getattr(self, '_model_service', None)
-        if service is None:
-            return
-        self._session.selection = service.snapshot().selection
 
     async def handle_sidebar(self, args: str, chat: ChatLog) -> None:
         """`/sidebar` toggles; `/sidebar on|off` sets the state.

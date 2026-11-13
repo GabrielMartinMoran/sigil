@@ -7,9 +7,9 @@ import json
 from src.engine.preferences import Preferences, PreferencesStore
 
 
-def test_defaults_are_the_dark_theme_and_collapsed_reasoning():
+def test_defaults_are_the_sigil_theme_and_collapsed_reasoning():
     preferences = Preferences()
-    assert preferences.theme == 'dark'
+    assert preferences.theme == 'sigil'
     assert preferences.reasoning_visible is False
 
 
@@ -38,7 +38,7 @@ def test_a_wrong_type_keeps_the_default_for_that_key(tmp_path):
 def test_an_empty_theme_name_falls_back(tmp_path):
     path = tmp_path / 'ui.json'
     path.write_text(json.dumps({'theme': '   '}), encoding='utf-8')
-    assert PreferencesStore(path).load().theme == 'dark'
+    assert PreferencesStore(path).load().theme == 'sigil'
 
 
 def test_unknown_keys_are_ignored(tmp_path):
@@ -66,6 +66,6 @@ def test_an_unwritable_location_does_not_raise(tmp_path):
 def test_the_updaters_do_not_mutate():
     original = Preferences()
     assert original.with_theme('synthwave').theme == 'synthwave'
-    assert original.theme == 'dark'
+    assert original.theme == 'sigil'
     assert original.with_reasoning_visible(True).reasoning_visible is True
     assert original.reasoning_visible is False

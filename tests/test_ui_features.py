@@ -604,19 +604,20 @@ def test_the_builtin_themes_are_registered_and_the_default_applies():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)):
-                assert app.theme == 'dark'
+                assert app.theme == 'sigil'
                 assert 'synthwave' in app.available_themes
 
     asyncio.run(inner())
 
 
-def test_a_stored_theme_is_applied_on_start():
+@pytest.mark.parametrize('theme', ['dark', 'synthwave'])
+def test_a_stored_theme_is_applied_on_start(theme):
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
-            PreferencesStore(Path(tmp) / 'ui.json').save(Preferences(theme='synthwave'))
+            PreferencesStore(Path(tmp) / 'ui.json').save(Preferences(theme=theme))
             app = _app(tmp)
             async with app.run_test(size=(100, 30)):
-                assert app.theme == 'synthwave'
+                assert app.theme == theme
 
     asyncio.run(inner())
 
@@ -675,18 +676,18 @@ def test_the_picker_previews_on_highlight_and_restores_on_cancel():
                         break
                 assert isinstance(app.screen, ThemePickerScreen)
 
-                await pilot.press('down')
+                await pilot.press('down', 'down')
                 # Moving the highlight is what changes the app behind the modal.
                 assert app.theme == 'synthwave'
 
                 await pilot.press('escape')
                 for _ in range(5):
                     await pilot.pause()
-                    if not isinstance(app.screen, ThemePickerScreen) and app.theme == 'dark':
+                    if not isinstance(app.screen, ThemePickerScreen) and app.theme == 'sigil':
                         break
                 assert not isinstance(app.screen, ThemePickerScreen)
-                assert app.theme == 'dark'
-                assert PreferencesStore(Path(tmp) / 'ui.json').load().theme == 'dark'
+                assert app.theme == 'sigil'
+                assert PreferencesStore(Path(tmp) / 'ui.json').load().theme == 'sigil'
 
     asyncio.run(inner())
 
@@ -703,7 +704,7 @@ def test_the_picker_applies_the_highlighted_theme_on_enter():
                         break
                 assert isinstance(app.screen, ThemePickerScreen)
 
-                await pilot.press('down')
+                await pilot.press('down', 'down')
                 await pilot.press('enter')
                 for _ in range(5):
                     await pilot.pause()
@@ -763,3 +764,44 @@ def _git(cwd: Path, *args: str) -> None:
             'HOME': str(cwd),
         },
     )
+
+
+def test_markdown_uses_theme_colors_and_repaints_on_theme_change():
+    from rich.color import Color
+
+    from src.ui.widgets.chat_log import AssistantBlock
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _app(tmp)
+            async with app.run_test(size=(100, 30)) as pilot:
+                chat = app.query_one(ChatLog)
+                await chat.add_text(
+                    '## Heading\n\n`inline` [link](https://example.com)\n\n```python\ndef example():\n    return 42\n```'
+                )
+                chat.finalize()
+                block = chat.query_one(AssistantBlock)
+
+                def rendered():
+                    return list(app.console.render(block._build(), app.console.options.update_width(80)))
+
+                def foreground(segments, text):
+                    return next(s.style.color for s in segments if text in s.text and s.style and s.style.color)
+
+                original_visual = block.render()
+                first = rendered()
+                assert foreground(first, 'Heading') == Color.parse(app.theme_variables['primary'])
+                assert foreground(first, 'inline') == Color.parse(app.theme_variables['primary'])
+                assert any(s.style and s.style.link == 'https://example.com' for s in first)
+                assert foreground(first, 'def') == Color.parse(app.theme_variables['primary'])
+
+                app.theme = 'synthwave'
+                await pilot.pause()
+                assert block.render() is not original_visual
+                second = rendered()
+                assert foreground(second, 'Heading') == Color.parse(app.theme_variables['primary'])
+                assert foreground(second, 'inline') == Color.parse(app.theme_variables['primary'])
+                assert foreground(second, 'def') == Color.parse(app.theme_variables['primary'])
+                assert any(s.style and s.style.link == 'https://example.com' for s in second)
+
+    asyncio.run(inner())

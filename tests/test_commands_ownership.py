@@ -135,15 +135,22 @@ def test_the_commands_that_run_here_are_exactly_the_client_ones():
     assert local == CLIENT_COMMANDS
 
 
-def test_no_command_is_blocked_any_more():
-    """Every command the service serves has a sender here now.
+def test_only_the_documented_gap_is_blocked():
+    """Every command the service serves has a sender here, except one.
 
     The `blocked` state stays in the table because the decision has to be total: a
     command the service has no endpoint for must say that, not borrow the answer meant
-    for a command that is merely not wired yet. The sentence is proven below on a row
-    built for it, since no real row holds the state.
+    for a command that is merely not wired yet.
+
+    `/default-models` is that command, and the exception is the point. It edits files
+    the service owns, so a terminal that wrote them would be a second writer on one
+    configuration — the failure the attached terminal exists to remove. There is no
+    route to point a sender at, so the row is `blocked` and the command says so. The
+    alternative, hiding it behind `not_wired`, would promise a sender that is not
+    coming in this cut. When an endpoint lands, this list empties again.
     """
-    assert [row.name for row in TRANSPORT if row.state is TransportState.BLOCKED] == []
+    blocked = {row.name for row in TRANSPORT if row.state is TransportState.BLOCKED}
+    assert blocked == {'/default-models'}
 
 
 def test_a_row_that_does_not_run_here_says_why_and_where():

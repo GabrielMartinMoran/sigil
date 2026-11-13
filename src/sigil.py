@@ -86,6 +86,15 @@ def _app(client: ServiceClient, state: dict[str, Any], settings: SigilSettings) 
     to paint what they paint locally: preferences and themes are this client's own,
     and the agent profiles and the roadmap are files and rows it reads the same way the
     service does. None of them executes anything.
+
+    The three callbacks the in-process composition supplies have no counterpart here
+    on purpose. `on_bind_session` and `on_agent_selected` exist to resolve a model
+    inside the process that owns the session, and in an attached terminal that process
+    is the service: it resolves on bind and on `POST /api/agent`, and the terminal
+    paints the snapshot it sends back. `model_defaults_state` and
+    `save_model_default` write the defaults files, which the service owns too; no
+    endpoint projects them yet, so `/default-models` reports that this client cannot
+    edit them instead of writing a second copy of the truth.
     """
     workspace = _workspace(state)
     session = _session(state)

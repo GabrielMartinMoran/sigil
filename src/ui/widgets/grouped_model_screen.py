@@ -21,6 +21,17 @@ class AccountCatalog:
     account_id: str
     alias: str
     catalog: ModelCatalog
+    provider: str = ''
+    """What the account talks to — ``"OpenRouter"``, ``"OpenCode Go"``.
+
+    The alias is a name the user chose and it is the only handle the service takes;
+    the provider is what answers. A list that shows one without the other asks the
+    reader to remember which is which.
+    """
+
+    @property
+    def display_name(self) -> str:
+        return f'{self.alias} · {self.provider}' if self.provider else self.alias
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +39,11 @@ class GroupedModelChoice:
     account_id: str
     alias: str
     model: ModelCapability
+    provider: str = ''
+
+    @property
+    def display_name(self) -> str:
+        return f'{self.alias} · {self.provider}' if self.provider else self.alias
 
 
 class GroupedModelScreen(ProviderModal):
@@ -72,10 +88,10 @@ class GroupedModelScreen(ProviderModal):
     def _refresh(self, query: str, selected: tuple[str, str] | None = None) -> None:
         needle = query.casefold().strip()
         self.visible_models = [
-            GroupedModelChoice(group.account_id, group.alias, model)
+            GroupedModelChoice(group.account_id, group.alias, model, group.provider)
             for group in self._catalogs
             for model in group.catalog.models
-            if needle in f'{group.alias} {model.name} {model.display_name}'.casefold()
+            if needle in f'{group.alias} {group.provider} {model.name} {model.display_name}'.casefold()
         ]
         self.visible_models.sort(
             key=lambda row: (
@@ -87,7 +103,7 @@ class GroupedModelScreen(ProviderModal):
         custom_entry = bool(needle and not self.visible_models)
         if custom_entry:
             self.visible_models = [
-                GroupedModelChoice(group.account_id, group.alias, ModelCapability(query.strip()))
+                GroupedModelChoice(group.account_id, group.alias, ModelCapability(query.strip()), group.provider)
                 for group in self._catalogs
             ]
         options = self.query_one(OptionList)
@@ -98,11 +114,15 @@ class GroupedModelScreen(ProviderModal):
             group = ('Favorites', '') if favorite else ('Provider', row.alias)
             text = Text()
             if group != last_group:
-                text.append(('Favorites' if favorite else row.alias) + '\n', style='bold cyan')
+                # The heading names the account when the group is one; under
+                # `Favorites` the rows have to carry it themselves.
+                text.append(('Favorites' if favorite else row.display_name) + '\n', style='bold cyan')
                 last_group = group
             text.append('★ ' if favorite else '  ', style='yellow')
             text.append(f'Use {row.model.label} as typed' if custom_entry else row.model.label, style='bold')
-            text.append(f'  {row.alias}\n    {row.model.window_label} ctx · {row.model.efforts_label}', style='dim')
+            if favorite:
+                text.append(f'  {row.display_name}', style='dim')
+            text.append(f'\n    {row.model.window_label} ctx · {row.model.efforts_label}', style='dim')
             options.add_option(Option(text, id=str(index)))
         failures = sum(bool(group.catalog.error) for group in self._catalogs)
         self.query_one('#grouped-status', Static).update(

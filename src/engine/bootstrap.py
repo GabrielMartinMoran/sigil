@@ -33,6 +33,8 @@ from pydantic_ai import Agent
 
 from sigil_tools import ToolContext
 from src.engine.agents.factory import AgentFactory, AgentSpec
+from src.engine.agents.model_config import AgentModelConfig
+from src.engine.agents.model_defaults import ConfigScope, ModelDefaultsState, read_defaults, save_default
 from src.engine.agents.model_features import IMAGE_INPUT, ModelFeatureGate
 from src.engine.agents.profile.models.agent_not_found import AgentNotFound
 from src.engine.agents.profile.registry import AgentRegistry
@@ -65,6 +67,7 @@ from src.engine.mcp.tools import register_mcp_tools
 from src.engine.paths import providers_dir
 from src.engine.providers.bootstrap import ProviderPaths, build_service
 from src.engine.providers.domain.provider_error import ProviderError
+from src.engine.providers.domain.selection import Selection
 from src.engine.providers.domain.thinking import settings_value as thinking_settings
 from src.engine.providers.factory.unconfigured import UnconfiguredModel
 from src.engine.providers.login.chatgpt_flow import ChatGPTLoginFlow
@@ -205,19 +208,21 @@ class Composition:
             initial_model=UnconfiguredModel(),
             oauth_provider_factory=chatgpt_provider_factory(secrets),
         )
-        selected = self.model_service.resolve(self.session.selection)
-        if selected is not None:
-            self.model_service.apply(selected)
-            self.session.selection = self.model_service.state.last_selection()
-
-        if session is None and model is None:
-            try:
-                snapshot = self.select_agent_model(self.agent_registry.active_name)
-                if snapshot is not None:
-                    self.session.selection = snapshot.selection
-            except ProviderError as exc:
-                self.mcp_config = replace(self.mcp_config, errors=(*self.mcp_config.errors, f'Agent model: {exc}'))
-
+        # The model the conversation runs on. The session's own wins, and a session
+        # that has none gets the default chain. It is the same path every `/load`
+        # takes, so a conversation opened cold and one opened mid-run agree — and
+        # changing a model later reaches this session and no other.
+        if model is None:
+            active = self.agent_registry.active_name
+            if active in self.mcp_config.invalid_agents:
+                self.mcp_config = replace(
+                    self.mcp_config,
+                    errors=(
+                        *self.mcp_config.errors,
+                        f'Invalid model configuration for agent {active!r}; check the config errors.',
+                    ),
+                )
+            self.apply_session_model(self.session)
         # The meter needs the window before any client exists, or the first turn of
         # a cold start shows `ctx: ?` and cannot budget. The selection carries the
         # last known value, so this needs no network.
@@ -594,7 +599,10 @@ class Composition:
         """
         current = self.store.save_current(self.session)
         if current is not self.session:
-            self.bind_session(current)
+            # Adopting the winner's row must not re-resolve the model: the turn or
+            # the command that got here already chose it, and a background rebind
+            # that silently moved the router would be a second, invisible decision.
+            self.bind_session(current, model=False)
 
     # --- derived state the prompt is rendered from --------------------------
 
@@ -698,8 +706,13 @@ class Composition:
             on_idle=callback,
         )
 
-    def bind_session(self, session: Session) -> Session:
-        """Points the composition at another session of the same workspace."""
+    def bind_session(self, session: Session, *, model: bool = True) -> Session:
+        """Points the composition at another session of the same workspace.
+
+        The model comes with it. A conversation's model is part of the conversation —
+        changing it here changes it for this session and for no other — so binding is
+        also where it is restored, in one place, for every client.
+        """
         self.session = session
         self.mcp.set_overrides(session.mcp_overrides)
         # The measured half of the context travels on the session, because the
@@ -707,12 +720,109 @@ class Composition:
         self.meter.restore(session)
         workspace = Path(os.path.realpath(session.cwd))
         if workspace != self._agent_config_root:
-            config = load_config(cwd=workspace)
-            self.mcp_config = replace(self.mcp_config, agents=config.agents, invalid_agents=config.invalid_agents)
             self._agent_config_root = workspace
+            self.reload_agent_models()
         self.agent_trees.bind(session, root_name=session.agent or self.agent_registry.active_name)
         self.roadmap_store.bind_session(session.id)
+        if model:
+            self.apply_session_model(session)
         return session
+
+    def apply_session_model(self, session: Session) -> ModelSnapshot | None:
+        """Points the router at the model the conversation runs on, and records it.
+
+        The session's own selection wins. When it has none — a session created before
+        models were stored with a conversation, or one that was never used — the
+        default chain decides, and its answer is written back so the session keeps it.
+
+        Nothing here raises: a session whose account was removed must still open, and
+        the conversation keeps the model currently in effect. The client says so.
+        """
+        if self.model_service.is_busy():
+            return None
+        selection = session.selection
+        if selection is None or self.model_service.accounts.find_id(selection.account_id) is None:
+            selection = self.default_selection(session.agent or self.agent_registry.active_name)
+        if selection is None:
+            return None
+        try:
+            snapshot = self.model_service.apply(selection)
+        except ProviderError:
+            return None
+        session.selection = snapshot.selection
+        return snapshot
+
+    def model_defaults_state(self) -> ModelDefaultsState:
+        """What the two config files say about default models, per file.
+
+        Read on every call, never cached: the screen writes to one of these files and
+        then shows the result, and a cached copy would show its own memory instead of
+        what is on disk — including an edit made by hand while the app was open.
+        """
+        return read_defaults(cwd=self._agent_config_root)
+
+    def save_model_default(
+        self, target: str | None, config: AgentModelConfig | None, scope: ConfigScope
+    ) -> tuple[str, ...]:
+        """Writes one default and re-reads the config that reads it.
+
+        ``target`` is an agent name, or ``None`` for the block a conversation starts
+        on; ``config`` is ``None`` to clear the entry. The re-read is what makes the
+        write take effect without a restart: `default_selection`, `select_agent_model`
+        and `subagent_model` all read `mcp_config`, and they read it next time.
+        """
+        errors = save_default(target, config, scope, cwd=self._agent_config_root)
+        if not errors:
+            self.reload_agent_models()
+        return errors
+
+    def reload_agent_models(self) -> tuple[str, ...]:
+        """Re-reads `agents` and `default_model` for the workspace in effect.
+
+        Only those two: the MCP servers are already running, and re-reading them here
+        would leave `mcp_config` describing a set of servers that nothing started.
+        """
+        config = load_config(cwd=self._agent_config_root)
+        self.mcp_config = replace(
+            self.mcp_config,
+            agents=config.agents,
+            invalid_agents=config.invalid_agents,
+            default_model=config.default_model,
+        )
+        return config.errors
+
+    def default_selection(self, agent_name: str) -> Selection | None:
+        """What a conversation starts on when nothing has been chosen for it.
+
+        The order is the whole feature: the agent's own model, then `default_model`
+        from the Sigil config, then the last model used. A profile that names a model
+        always wins over the global default, and the global default always wins over
+        a memory of the last session.
+        """
+        chosen = self._config_selection(self.mcp_config.agents.get(agent_name))
+        if chosen is not None:
+            return chosen
+        chosen = self._config_selection(self.mcp_config.default_model)
+        if chosen is not None:
+            return chosen
+        return self.model_service.resolve(None)
+
+    def _config_selection(self, config: AgentModelConfig | None) -> Selection | None:
+        """A configured `{account, model, effort}` as a selection, if its account exists."""
+        if config is None:
+            return None
+        account = next((item for item in self.model_service.accounts.load() if item.alias == config.account), None)
+        if account is None:
+            return None
+        capability = self.model_service.agent_capability(account.alias, config.model)
+        return Selection(
+            account_id=account.id,
+            model=config.model,
+            thinking=config.effort,
+            window=capability.context_window,
+            efforts=capability.efforts,
+            images=capability.supports_images,
+        )
 
     def close(self) -> None:
         """Lets the summoner go: no listener outlives the client."""

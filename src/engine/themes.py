@@ -144,10 +144,41 @@ def load_file(path: Path) -> ThemeDefinition:
     return _validated(data, source=path)
 
 
-def _dark() -> ThemeDefinition:
-    """The default: a neutral dark surface with a cool accent.
+def _sigil() -> ThemeDefinition:
+    """Sigil's ember palette, adapted for legible terminal surfaces."""
+    return ThemeDefinition(
+        name='sigil',
+        dark=True,
+        colors={
+            'logo-start': '#ff9d00',
+            'logo-end': '#d93d00',
+            'primary': '#f59e0b',
+            'secondary': '#d55a1f',
+            'accent': '#f59e0b',
+            'warning': '#f5b64c',
+            'error': '#ef7168',
+            'success': '#9ebd83',
+            'foreground': '#e7d7c1',
+            'background': '#0b0a0d',
+            'surface': '#17100f',
+            'panel': '#211512',
+            'boost': '#352018',
+            'tool-border': '#704431',
+            'tool-title': '#f59e0b',
+            'tool-output': '#bcaa99',
+            'reasoning': '#bcaa99',
+            'diff-added': '#9ebd83',
+            'diff-removed': '#ef7168',
+            'sidebar-section': '#d6b99d',
+            'muted': '#ad9988',
+        },
+    )
 
-    Deliberately quiet. It is the theme a session starts in, so it should not
+
+def _dark() -> ThemeDefinition:
+    """A neutral dark surface with a cool accent.
+
+    Deliberately quiet. It should not
     compete with the content, and it must stay legible on a black terminal where
     pure black would erase the panel borders.
     """
@@ -213,7 +244,7 @@ def _synthwave() -> ThemeDefinition:
     )
 
 
-BUILTIN_THEMES: tuple[ThemeDefinition, ...] = (_dark(), _synthwave())
+BUILTIN_THEMES: tuple[ThemeDefinition, ...] = (_sigil(), _dark(), _synthwave())
 """Themes that ship with Sigil and cannot be deleted from the picker."""
 
 BUILTIN_NAMES = frozenset(theme.name for theme in BUILTIN_THEMES)

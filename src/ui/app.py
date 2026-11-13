@@ -105,6 +105,13 @@ SERVICE_RECONNECT_CEILING = 5.0
 TONE_STYLES = {'danger': 'bold red', 'warn': 'yellow', 'muted': 'dim'}
 """How the service's notice tones are painted. An unknown tone is a warning."""
 
+FINISHED_NODE_STATUSES = frozenset({'done', 'failed', 'cancelled'})
+"""Node statuses that will not change again on their own.
+
+The complement of `NodeStatus.running`, spelled as data because the client reads
+the service's projection as dictionaries and never imports the engine's model.
+"""
+
 
 def _question_item(raw: dict[str, Any]) -> QuestionItem:
     """One question of the service's payload, as the panel's own model."""
@@ -211,6 +218,8 @@ class SigilApp(
         summoner: SubagentSummoner | None = None,
         on_bind_session: Callable[[Session], object] | None = None,
         on_agent_selected: Callable[[str], Any] | None = None,
+        model_defaults_state: Callable[[], Any] | None = None,
+        save_model_default: Callable[..., tuple[str, ...]] | None = None,
         extensions: Any = None,
         cancel_shell: Callable[[], int] | None = None,
         client: ServiceClient | None = None,
@@ -267,6 +276,11 @@ class SigilApp(
         self._session = session
         self._on_bind_session = on_bind_session
         self._on_agent_selected = on_agent_selected
+        # `/default-models` writes a config file, so the read and the write are
+        # callbacks into the composition: the client collects, the core decides
+        # which file it is and re-reads it afterwards.
+        self._model_defaults_state = model_defaults_state
+        self._save_model_default = save_model_default
         self._model_service = model_service
         self._login_flow = login_flow
         self._tool_logger = tool_logger
@@ -328,6 +342,9 @@ class SigilApp(
         # window stops the turn.
         self._abort_deadline: float | None = None
         self._abort_timer: Any = None
+        # Desktop attention held back because a subagent outlived its turn
+        # (see `settle_attention`).
+        self._held_attention: Attention | None = None
         # The window title: what was last written to the terminal (the terminal
         # cannot be read back), how many times naming each session was tried and
         # the worker of the request in flight, so an unnameable session does not
@@ -360,6 +377,9 @@ class SigilApp(
                         id='chat',
                         reasoning_visible=self._preferences.reasoning_visible,
                         tools_expanded=self._preferences.tools_expanded,
+                        # The mark of an empty transcript belongs to the app's
+                        # conversation, not to a subagent's view of its own.
+                        welcome=True,
                     ),
                     AgentDebugView(id='debug'),
                     AgentView(id='agent'),
@@ -788,7 +808,20 @@ class SigilApp(
             await chat.add_notice('Turn cancelled.', style='yellow')
         elif status == 'error':
             await chat.add_notice(f'Error: {data.get("error") or "the turn failed"}', style='bold red')
+        # The turn closed; the squad may not have. `settle_attention` holds the
+        # signal while a subagent is still working and delivers it when the turn
+        # that reads the answers ends — the same rule the in-process path applies,
+        # read here from the service's own tree instead of this process's summoner.
+        # A cancelled turn is not an answer the user is waiting for: they asked it
+        # to stop, and calling them back to say so would be noise.
+        if status != 'cancelled':
+            self.settle_attention(self._turn_attention(status))
         self._restore_prompt_focus()
+
+    @staticmethod
+    def _turn_attention(status: str) -> Attention:
+        """How a finished turn reads to a notification, once it is not a cancellation."""
+        return Attention.FAILED if status == 'error' else Attention.FINISHED
 
     async def answer_service_question(self, question_id: str, raw: list[dict[str, Any]]) -> None:
         """Shows the questions the service is holding and answers them over HTTP.
@@ -1079,6 +1112,56 @@ class SigilApp(
                 self.repository_label(), self._session.title or f'Session {self._session.short_id}'
             )
             self._deliver_attention(event, context)
+
+    def settle_attention(self, event: Attention) -> None:
+        """Raises the attention of a finished turn, once the squad is quiet.
+
+        A turn can end while a background subagent keeps working, and the answer the
+        user is waiting for is the one that is still being written. Notifying the end
+        of the parent's turn would pull them back to a screen where the work goes on;
+        the signal waits for the last running node instead, and the turn that reads
+        the answers ends by delivering it.
+
+        Only the latest event is kept: what matters when everything stops is how the
+        turn that just closed went, not how an earlier one did.
+        """
+        self._held_attention = event
+        if self.subagents_running():
+            return
+        held, self._held_attention = self._held_attention, None
+        if held is not None:
+            self.notify_attention(held)
+
+    def subagents_running(self) -> int:
+        """How many subagents are still working, from whichever side knows.
+
+        An attached terminal counts the service's tree: the subagents outlive the
+        turn that summoned them, so the only process that can say whether the squad
+        is quiet is the one running it. Counting this process's summoner here would
+        report zero the moment the turn closed and call the user back to a screen
+        where the work goes on — the exact early notification this method exists to
+        prevent. The summoner stays as the fallback for the in-process seam, which
+        has no projection to read.
+        """
+        if self._client is not None:
+            return self._running_nodes(self._service_state)
+        return self._summoner.running() if self._summoner is not None else 0
+
+    @staticmethod
+    def _running_nodes(state: dict[str, Any] | None) -> int:
+        """Non-finished nodes of the service's tree projection, root included.
+
+        A node that is not `running` has stopped for good (`NodeStatus.finished`),
+        and the root is the session's own agent: one node, the same way
+        `Summoner.running` never counted a turn.
+        """
+        tree = (state or {}).get('tree') or {}
+        nodes = tree.get('nodes') or []
+        return sum(
+            1
+            for node in nodes
+            if isinstance(node, dict) and str(node.get('status') or '') not in FINISHED_NODE_STATUSES
+        )
 
     @work(thread=True, group='desktop-notifications', exit_on_error=False)
     def _deliver_attention(self, event: Attention, context: NotificationContext) -> None:

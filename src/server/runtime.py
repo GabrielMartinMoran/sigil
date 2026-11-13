@@ -59,7 +59,6 @@ from src.engine.bootstrap import Composition, model_settings
 from src.engine.context.media_compatibility import PORTABLE_IMAGE_TYPES
 from src.engine.interaction.models.question_answer import QuestionAnswer
 from src.engine.interaction.models.question_item import QuestionItem
-from src.engine.providers.domain.provider_error import ProviderError
 from src.engine.sessions.recovery import recover_history
 from src.engine.storage.accepted_inputs import AcceptedInput, AcceptedInputs, DeliveryConfirmation, ImageInput
 from src.engine.tooling.outputs import present_output
@@ -1144,7 +1143,9 @@ class ServerRuntime:
         """
         reloaded = self.composition.store.load(self.session.id)
         if reloaded is not None:
-            self.composition.bind_session(reloaded)
+            # The rows moved; the model did not. Resolving it here would let a
+            # rollback change which model the conversation runs on.
+            self.composition.bind_session(reloaded, model=False)
 
     # --- workspace -----------------------------------------------------------
 
@@ -1159,7 +1160,10 @@ class ServerRuntime:
         self.composition.root = switch.workspace.root
         store = self.composition.store
         session = store.load_last() or store.draft_session()
-        self.composition.bind_session(session)
+        # The workspace changed, not the user's model choice: resolving here would
+        # let a workspace switch move the router behind the user's back. The next
+        # explicit selection, or the next `/model`, is where a model is decided.
+        self.composition.bind_session(session, model=False)
         self.composition.rebuild_agent()
         self.hub.publish_state('workspace')
         return {'root': str(switch.workspace.root), 'label': switch.workspace.label, 'changed': switch.changed}
@@ -1169,12 +1173,11 @@ class ServerRuntime:
         self._refuse_while_busy('start a session')
         session = self.composition.store.draft_session()
         session.agent = self.composition.agent_registry.active_name
-        try:
-            selected = self.composition.select_agent_model(session.agent)
-        except ProviderError as exc:
-            raise RuntimeError(f'Agent model: {exc}') from exc
-        session.selection = (selected or self.composition.model_service.snapshot()).selection
+        # Binding resolves and records the model: the agent's own, then
+        # `default_model`, then the last one used. A model chosen later belongs to
+        # this session only.
         self.composition.bind_session(session)
+        session.selection = session.selection or self.composition.model_service.snapshot().selection
         self.hub.publish_state('session')
         return session
 

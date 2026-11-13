@@ -41,6 +41,7 @@ from rich.panel import Panel
 from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
+from textual.color import Color
 from textual.events import Click
 from textual.selection import Selection
 from textual.timer import Timer
@@ -52,9 +53,11 @@ from src.engine.attachments.image_attachment import ImageAttachment
 from src.engine.context.images import image_size
 from src.engine.tooling.outputs import present_output
 from src.engine.tooling.presentation import ToolSummary, display_name
+from src.ui.markdown_theme import markdown_themes
 from src.ui.messages import NodeOpened, RollbackRequested
 from src.ui.palette import color
 from src.ui.subagent_reports import split_reports
+from src.ui.widgets.empty_logo import logo_lines
 from src.ui.widgets.reading import ReadOnlyScroll
 from src.ui.widgets.rows import fit
 from src.ui.widgets.status_bar import SPINNER_FRAMES, SPINNER_INTERVAL
@@ -282,10 +285,15 @@ def link_urls(text: Text) -> Text:
 class LinkedMarkdown:
     """Render Markdown while adding terminal links to bare HTTP URLs."""
 
-    def __init__(self, text: str) -> None:
-        self.markdown = Markdown(text)
+    def __init__(self, text: str, widget: Any = None) -> None:
+        self.theme, code_theme = markdown_themes(lambda name: color(widget, name))
+        self.markdown = Markdown(text, code_theme=code_theme)
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        with console.use_theme(self.theme):
+            yield from self._render_linked(console, options)
+
+    def _render_linked(self, console: Console, options: ConsoleOptions) -> RenderResult:
         for segment in console.render(self.markdown, options):
             if segment.control or (segment.style and segment.style.link):
                 yield segment
@@ -408,7 +416,7 @@ class AssistantBlock(Static):
         if self._has_thinking:
             parts.append(self._reasoning_renderable())
         if self._text:
-            parts.append(LinkedMarkdown(self._text))
+            parts.append(LinkedMarkdown(self._text, self))
         if not parts:
             return Text('')
         if len(parts) == 1:
@@ -855,7 +863,18 @@ class SummonBlock(ToolCallBlock):
 
     def set_node(self, node: AgentNode) -> None:
         """Reconcile a background hand-off with its actual execution."""
-        if not self._node_id or not node.id.startswith(self._node_id) or self._status != 'working':
+        if not self._node_id or not node.id.startswith(self._node_id):
+            return
+        # A resume carries no profile in its arguments, so the node it continues is
+        # where its name comes from. Without it the block would go on naming an id,
+        # which says nothing about who is actually working.
+        renamed = False
+        if not self._spawn['agent'] and not self._node_name:
+            self._node_name = node.name
+            renamed = True
+        if self._status != 'working':
+            if renamed:
+                self._update_content()
             return
         self._background_running = not node.status.finished
         if self._background_running:
@@ -916,8 +935,10 @@ class SummonBlock(ToolCallBlock):
             self._clickable = True
             self.add_class('clickable')
         # A resume names no profile in its arguments; its answer does, in the
-        # envelope: `[subagent Scout (scout #1a2b3c, sync) finished]`.
-        named = re.search(r'\(([a-z0-9][a-z0-9-]*)\s+#', text)
+        # envelope: `[subagent Scout (scout #1a2b3c, sync) finished]`. An async one
+        # answers `#1a2b3c (Scout) is working in the background`, so both shapes are
+        # read here: a replayed block has nothing but this text to name itself from.
+        named = re.search(r'\(([a-z0-9][a-z0-9-]*)\s+#', text) or re.match(r'#[0-9a-f]{8,}\s+\(([^)]+)\)', text)
         if named:
             self._node_name = named.group(1)
         self._status = self._read_status(text, ok=ok)
@@ -963,8 +984,8 @@ class SummonBlock(ToolCallBlock):
         resumed = bool(self._spawn['agent_id'])
         text = Text()
         text.append(GUTTER, style=border)
-        mark = SPINNER_FRAMES[self._pending_frame] if self._pending or self._background_running else '●'
-        text.append(f'{mark} ', style=f'bold {color(self, "success")}')
+        mark, mark_style = self._state_mark()
+        text.append(f'{mark} ', style=mark_style)
         # One name, and never the word "subagent" standing in for one: the label is
         # the profile name with its dashes opened up, so painting both would be
         # saying the same thing twice.
@@ -981,8 +1002,31 @@ class SummonBlock(ToolCallBlock):
         elif not resumed:
             text.append('(unknown agent)', style=color(self, 'muted'))
         if resumed:
-            text.append(f'  resume #{self._spawn["agent_id"][:8]}', style=color(self, 'muted'))
+            # The id is what a resume runs on, so it goes next to the name it
+            # continues: `Pas Developer (#f7c01c8a)` says which execution this is,
+            # where the bare id said nothing about who was working. A spawn never
+            # carries one, which is what makes the parenthesis the resume mark.
+            short = f'#{self._spawn["agent_id"][:8]}'
+            text.append(f' ({short})' if label else f'  resume {short}', style=color(self, 'muted'))
         return text
+
+    def _state_mark(self) -> tuple[str, str]:
+        """The mark of the hand-off: animated while it works, `✓` once it is done.
+
+        A `●` used to stand for every outcome, and it is the mark of a node that is
+        *running* everywhere else in the UI (the tree, the node header). A finished
+        subagent is a completed step, so it is painted as one — and a failure or a
+        stop keeps its own mark instead of looking like a hand-off still in flight.
+        """
+        if self._pending or self._background_running:
+            return SPINNER_FRAMES[self._pending_frame], f'bold {color(self, "success")}'
+        return {
+            'finished': ('✓', color(self, 'success')),
+            'out of steps': ('✓', 'yellow'),
+            'failed': ('✖', color(self, 'diff-removed')),
+            'refused': ('✖', color(self, 'diff-removed')),
+            'stopped': ('◼', color(self, 'muted')),
+        }.get(self._status, ('●', color(self, 'muted')))
 
     def _label(self) -> str:
         """The agent's name, humanized: from the call, or from its own answer."""
@@ -1008,7 +1052,9 @@ class SummonBlock(ToolCallBlock):
         text = Text()
         text.append(GUTTER, style=border)
         text.append(self._spawn['mode'], style=color(self, 'muted'))
-        if self._node_id:
+        # A resume already painted the id beside the name, where it is the mark of
+        # the execution being continued; repeating it here would be the same id twice.
+        if self._node_id and not self._spawn['agent_id']:
             text.append(' · ', style=color(self, 'muted'))
             text.append(f'#{self._node_id[:8]}', style=f'bold {color(self, "muted")}')
         text.append(' · ', style=color(self, 'muted'))
@@ -1050,7 +1096,14 @@ class ChatLog(ReadOnlyScroll):
     user goes back to the bottom, so whoever is reading history is respected.
     """
 
-    def __init__(self, *, reasoning_visible: bool = False, tools_expanded: bool = False, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        reasoning_visible: bool = False,
+        tools_expanded: bool = False,
+        welcome: bool = False,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self._tools_expanded = tools_expanded
         self._current: AssistantBlock | None = None
@@ -1060,6 +1113,57 @@ class ChatLog(ReadOnlyScroll):
         self._group_rows: list[ToolCallBlock] = []
         self._last_block: Static | None = None
         self._reasoning_visible = reasoning_visible
+        self._welcome = welcome
+        self._empty = True
+
+    # --- the empty transcript ------------------------------------------------
+
+    def render(self) -> Text:
+        """The Sigil mark, centered, while nothing has been said yet.
+
+        A container paints its own content behind its children, so the mark needs
+        no widget of its own: it is drawn until the first block arrives and then
+        it simply stops being drawn. Notices are the exception — a new session
+        announces itself and the transcript is still empty.
+        """
+        if not self._welcome or not self._empty:
+            return Text('')
+        width, height = self.content_size
+        lines = logo_lines(width, max(0, height - 2), *self._logo_colors())
+        block = max((len(line.plain) for line in lines), default=0)
+        left = ' ' * max(0, (width - block) // 2)
+        result = Text('\n' * max(0, (height - len(lines)) // 2), no_wrap=True, overflow='crop')
+        for index, line in enumerate(lines):
+            if index:
+                result.append('\n')
+            result.append(left)
+            result.append_text(line)
+        return result
+
+    def _logo_colors(self) -> tuple[str, str]:
+        """Top and bottom of the gradient, from the theme.
+
+        A theme names both ends when it has a gradient in mind; the rest fall back
+        to their own accent pair. A theme whose two ends are the same color would
+        paint a flat silhouette and lose the depth the mark is drawn for, so it is
+        blended toward the foreground by a step that still reads as light.
+        """
+        variables = getattr(self.app, 'theme_variables', None) or {}
+        start = variables.get('logo-start', '') or color(self, 'primary')
+        end = variables.get('logo-end', '') or color(self, 'secondary')
+        if Color.parse(start) == Color.parse(end):
+            base = Color.parse(end)
+            target = Color.parse(color(self, 'foreground'))
+            if base == target:
+                target = Color.parse('#000000' if base.brightness > 0.5 else '#ffffff')
+            end = base.blend(target, 0.4).hex
+        return start, end
+
+    def _mark_filled(self) -> None:
+        """The transcript is no longer empty: the mark goes away."""
+        if self._empty:
+            self._empty = False
+            self.refresh()
 
     def on_mount(self) -> None:
         # Anchors the view to the bottom from the start.
@@ -1141,6 +1245,8 @@ class ChatLog(ReadOnlyScroll):
     async def _append(self, widget: Static) -> None:
         # Anchoring takes care of the scroll; there is no need to force scroll_end.
         self._last_block = widget
+        if not isinstance(widget, LinkNotice):
+            self._mark_filled()
         await self.mount(widget)
 
     async def add_user(
@@ -1271,6 +1377,7 @@ class ChatLog(ReadOnlyScroll):
                 reasoning_visible=self._reasoning_visible,
                 classes='assistant-msg',
             )
+            self._mark_filled()
             await self.mount(self._current)
             self._last_block = self._current
 
@@ -1301,6 +1408,7 @@ class ChatLog(ReadOnlyScroll):
         Asking each block to rebuild from its own state is what makes the live
         preview in the theme picker real.
         """
+        self.refresh()
         for child in self.children:
             if isinstance(child, AssistantBlock):
                 child.finalize()
@@ -1311,6 +1419,8 @@ class ChatLog(ReadOnlyScroll):
         self._current = None
         self._open_tools.clear()
         await self.remove_children()
+        self._empty = True
+        self.refresh()
         # After clearing, the new history follows the bottom again.
         self.anchor()
 
@@ -1419,6 +1529,7 @@ class ChatLog(ReadOnlyScroll):
 
         if not batches:
             return
+        self._mark_filled()
         for block in batches:
             if isinstance(block, SummonBlock):
                 for node in subagents:
@@ -1537,6 +1648,11 @@ class ChatLog(ReadOnlyScroll):
             else:
                 for widget in batches:
                     await self.mount(widget)
+            # `clear` put the mark back, because a cleared log looks exactly like a
+            # session with nothing in it. This is the other half: something was
+            # painted, so the mark is no longer the truth and stops being drawn
+            # behind the conversation.
+            self._mark_filled()
         # A call the transcript never answered stays visibly interrupted, the same way
         # it looks live; a healthy transcript is untouched by this.
         self.finalize()

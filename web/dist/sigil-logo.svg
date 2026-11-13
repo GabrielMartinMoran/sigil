@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 150" role="img" aria-label="Sigil">
+  <defs>
+    <linearGradient id="sigil-ember" x1="0" y1="5" x2="0" y2="145" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f89b00" />
+      <stop offset="0.18" stop-color="#f89200" />
+      <stop offset="0.44" stop-color="#f78300" />
+      <stop offset="0.74" stop-color="#ea5c00" />
+      <stop offset="1" stop-color="#d24100" />
+    </linearGradient>
+  </defs>
+  <g fill="url(#sigil-ember)" transform="translate(-55.000003,-69.999987)">
+    <rect x="100" y="75.000015" width="10.000003" height="44.999989" />
+    <rect x="100" y="170" width="10.000003" height="44.999989" />
+    <path d="M 92.999998,94.999997 93.000001,106 75.000002,125 150,164.99999 l -33,30 v -10 l 18,-20 L 60.000001,125 Z" />
+    <path d="M 92.999998,184.99999 75,164.99999 88.000002,158 v -8 l -28.000001,14.99999 32.999997,30 z" />
+    <path d="M 117,94.999997 V 105 L 135,124.99999 122,132 v 8 l 28,-15 z" />
+  </g>
+</svg>

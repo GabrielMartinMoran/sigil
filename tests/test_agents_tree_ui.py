@@ -163,8 +163,10 @@ def test_alt_t_opens_the_tree_and_choosing_a_node_opens_it():
                 screen = app.screen
                 assert len(screen._rows) == 3
 
-                # Highlight the subagent and open it.
-                screen.query_one(OptionList).highlighted = 1
+                # Highlight the subagent and open it. By id, not by index: the list
+                # is ordered by attention, so the row a node lands on is not fixed.
+                options = screen.query_one(OptionList)
+                options.highlighted = options.get_option_index(first.id)
                 await pilot.press('enter')
                 for _ in range(30):
                     await pilot.pause()
@@ -255,17 +257,29 @@ def test_going_back_from_a_nested_node_lands_on_its_parent():
     asyncio.run(inner())
 
 
-def test_alt_t_without_subagents_says_so_instead_of_opening_an_empty_box():
+def test_alt_t_without_subagents_opens_the_window_that_says_so():
+    """The empty state is information, and it belongs in the window, not in a toast."""
+
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
-                # Nobody to open yet: the app says so instead of showing a box with
-                # the one row the user already knows.
-                await app.open_tree()
-                await pilot.pause()
-                chat = app.query_one(ChatLog)
-                assert any('No subagents' in render_text(child.render()) for child in chat.children)
+                await pilot.press('ctrl+t')
+                for _ in range(30):
+                    await pilot.pause()
+                    if isinstance(app.screen, AgentTreeScreen):
+                        break
+                assert isinstance(app.screen, AgentTreeScreen), 'the list opens, it does not refuse'
+                screen = app.screen
+                assert 'No subagents' in render_text(screen.query_one('#tree-status').render())
+                rows = [render_text(option.prompt) for option in screen.query_one(OptionList).options]
+                assert any('appear here' in row for row in rows)
+
+                await pilot.press('escape')
+                for _ in range(30):
+                    await pilot.pause()
+                    if not isinstance(app.screen, AgentTreeScreen):
+                        break
                 assert not isinstance(app.screen, AgentTreeScreen)
 
     asyncio.run(inner())

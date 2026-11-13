@@ -29,6 +29,7 @@ def test_match_commands_filters_by_prefix():
         '/agent',
         '/provider',
         '/model',
+        '/default-models',
         '/effort',
         '/external-files',
         '/mcp',
