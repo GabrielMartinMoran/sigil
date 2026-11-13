@@ -530,9 +530,14 @@ class ServiceClient:
         """
         return await self._post('/api/agent', {'name': name})
 
-    async def new_session(self) -> dict[str, Any]:
-        """Starts an empty conversation in the workspace the service owns."""
-        return (await self._post('/api/session/new', {})).get('session') or {}
+    async def new_session(self, worktree: str | None = None) -> dict[str, Any]:
+        """Starts an empty conversation, in a worktree cut first when one is named."""
+        body = {} if not worktree else {'worktree': worktree}
+        return (await self._post('/api/session/new', body)).get('session') or {}
+
+    async def create_worktree(self, name: str) -> dict[str, Any]:
+        """Cuts a worktree and moves the service into it."""
+        return await self._post('/api/worktree', {'name': name})
 
     async def sessions(self) -> dict[str, Any]:
         """Every conversation of this repository, newest first, plus the current id."""
@@ -572,6 +577,30 @@ class ServiceClient:
     async def fork(self, turn_id: str) -> dict[str, Any]:
         """Branches a new session at the instant before a turn."""
         return await self._post('/api/fork', {'turn_id': turn_id})
+
+    async def accounts(self) -> dict[str, Any]:
+        """The provider accounts, with whether each holds a credential."""
+        return await self._get('/api/accounts')
+
+    async def add_account(
+        self, alias: str, provider: str, api_key: str = '', *, auth: str = 'api_key'
+    ) -> dict[str, Any]:
+        """Adds an account and makes it active, refused while a turn runs."""
+        return await self._post(
+            '/api/accounts', {'alias': alias, 'provider': provider, 'api_key': api_key, 'auth': auth}
+        )
+
+    async def activate_account(self, alias: str) -> dict[str, Any]:
+        """Makes an existing account active."""
+        return await self._post(f'/api/accounts/{alias}/activate', {})
+
+    async def delete_account(self, alias: str) -> dict[str, Any]:
+        """Removes an account and its credential."""
+        return await self._delete(f'/api/accounts/{alias}')
+
+    async def rename_account(self, alias: str, new_alias: str) -> dict[str, Any]:
+        """Changes an account's label."""
+        return await self._post(f'/api/accounts/{alias}/rename', {'new_alias': new_alias})
 
     async def durable(self) -> dict[str, Any]:
         """The durable session: transcript, queue, deliveries and recovery facts.
@@ -663,6 +692,9 @@ class ServiceClient:
 
     async def _post(self, path: str, body: Mapping[str, Any]) -> dict[str, Any]:
         return await self._send(self._client.build_request('POST', path, json=body))
+
+    async def _delete(self, path: str) -> dict[str, Any]:
+        return await self._send(self._client.build_request('DELETE', path))
 
     async def _send(self, request: httpx.Request, *, absent: type[ServiceClientError] | None = None) -> dict[str, Any]:
         """One request, its refusals named, its body read as a JSON object.

@@ -14,10 +14,13 @@ from typing import Any
 
 from src.engine.providers.domain.auth_method import AuthMethod
 from src.engine.providers.domain.model_capability import ModelCapability, ModelCatalog
+from src.engine.providers.domain.provider_account import ProviderAccount
 from src.engine.providers.domain.provider_error import (
     AliasError,
     ProviderError,
 )
+from src.engine.providers.domain.provider_kind import ProviderKind
+from src.engine.providers.domain.provider_variant import ProviderVariant
 from src.engine.providers.domain.thinking import EFFORT_LEVELS
 from src.engine.providers.snapshot import ModelSnapshot
 from src.ui.messages import ChatNotice
@@ -32,6 +35,23 @@ from src.ui.widgets.grouped_model_screen import AccountCatalog, GroupedModelScre
 from src.ui.widgets.model_picker_screen import ModelChoice
 from src.ui.widgets.provider_screen import ProviderAction, ProviderScreen
 from src.ui.widgets.sidebar_panel import ModelState
+
+
+def _projected_account(row: Mapping[str, Any]) -> ProviderAccount:
+    """One projected account, rebuilt as the row `ProviderScreen` paints.
+
+    The screen reads the id, the alias, the provider label, the auth label and the
+    last model, so those are rebuilt from the projection. None of them is the
+    credential: the service sends a boolean where the key would be.
+    """
+    return ProviderAccount(
+        id=str(row.get('id') or ''),
+        alias=str(row.get('alias') or ''),
+        kind=ProviderKind(str(row.get('provider') or ProviderKind.OPENROUTER.value)),
+        variant=ProviderVariant(str(row.get('variant') or ProviderVariant.DEFAULT.value)),
+        auth=AuthMethod(str(row.get('auth') or AuthMethod.API_KEY.value)),
+        last_model=row.get('last_model'),
+    )
 
 
 def _projected_model(row: Mapping[str, Any]) -> ModelCapability:
@@ -71,7 +91,14 @@ class ProviderMixin:
 
         The loop is what makes the flow feel like a screen rather than a chain of
         modal boxes: after adding an account you land back in the list.
+
+        An attached terminal delegates every action: the accounts, their credentials
+        and the active one belong to the service. The screen stays here, fed by
+        `GET /api/accounts`, and every refusal is the service's own sentence.
         """
+        if self._client is not None:
+            await self._service_providers(self._client, chat)
+            return
         while True:
             action = await self.push_screen_wait(
                 ProviderScreen(self._model_service.list_accounts(), self._active_account_id())
@@ -81,6 +108,65 @@ class ProviderMixin:
             keep_going = await self._run_action(action, chat)
             if not keep_going:
                 return
+
+    async def _service_providers(self, client: ServiceClient, chat: ChatLog) -> None:
+        """The account screen over the service's accounts, in the same loop."""
+        while True:
+            try:
+                listing = await client.accounts()
+            except ServiceClientError as exc:
+                await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+                return
+            rows = [row for row in listing.get('accounts') or [] if str(row.get('alias') or '')]
+            accounts = [_projected_account(row) for row in rows]
+            active_id = next((str(row.get('id')) for row in rows if row.get('active')), None)
+            action = await self.push_screen_wait(ProviderScreen(accounts, active_id))
+            if action is None:
+                return
+            if not await self._service_provider_action(client, chat, action):
+                return
+
+    async def _service_provider_action(self, client: ServiceClient, chat: ChatLog, action: ProviderAction) -> bool:
+        """One action from the screen, applied where the accounts live."""
+        try:
+            if action.action == 'add':
+                values = await self.push_screen_wait(AccountFormScreen())
+                if values is None:
+                    return True
+                await chat.add_notice(f'Checking the key for {values.kind.label}…', style='cyan')
+                payload = await client.add_account(
+                    values.alias, values.kind.value, values.api_key, auth=values.auth.value
+                )
+                label = str((payload.get('model') or {}).get('label') or values.alias)
+                await chat.add_notice(f'Added {values.alias}. Active: {label}', style='green')
+            elif action.action == 'activate':
+                await client.activate_account(action.alias)
+                await chat.add_notice(f'Active: {action.alias}', style='green')
+            elif action.action == 'rename':
+                from src.ui.widgets.text_prompt_screen import TextPromptScreen
+
+                new_alias = await self.push_screen_wait(
+                    TextPromptScreen(title=f'Rename {action.alias}', placeholder='New alias…', value=action.alias)
+                )
+                if not new_alias or new_alias == action.alias:
+                    return True
+                await client.rename_account(action.alias, new_alias)
+                await chat.add_notice(f'Renamed to {new_alias}.', style='green')
+            elif action.action == 'delete':
+                confirmed = await self.push_screen_wait(
+                    ConfirmScreen(f"Remove '{action.alias}' and its stored credential?", confirm_label='Yes, remove it')
+                )
+                if not confirmed:
+                    return True
+                await client.delete_account(action.alias)
+                await chat.add_notice(f'Removed {action.alias}.', style='green')
+        except ServiceClientError as exc:
+            # The service's sentence: an alias in use, an OAuth-only provider, the
+            # active account, the last one. None of these is guessed here.
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return True
+        await self.refresh_service_state()
+        return True
 
     async def _run_action(self, action: ProviderAction, chat: ChatLog) -> bool:
         if action.action == 'add':

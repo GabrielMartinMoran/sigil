@@ -7,7 +7,8 @@ message when you decided.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import base64
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from textual.css.query import NoMatches
@@ -28,6 +29,39 @@ from src.ui.widgets.rollback_screen import (
     RollbackChoice,
     RollbackScreen,
 )
+
+
+def _turn_for_seq(rows: Sequence[Mapping[str, Any]], seq: int | None) -> str | None:
+    """The turn a clicked transcript position belongs to, or ``None``.
+
+    A click on a message carries the `seq` it was painted at; a rollback point
+    carries a turn id. `/api/rollback` projects both, so the mapping is a lookup and
+    not a guess — and it is a function so the preselection can be tested without
+    opening a screen.
+    """
+    if seq is None:
+        return None
+    for row in rows:
+        if row.get('seq') == seq:
+            turn_id = row.get('turn_id')
+            return None if turn_id is None else str(turn_id)
+    return None
+
+
+def _binary_image(row: Mapping[str, Any]) -> Any:
+    """One restored image, decoded from the route's base64 back to bytes.
+
+    The composer wants the payload it can attach, not a path or a promise: this is
+    the same `BinaryContent` the turn carried, so the markers in the restored text
+    still point at their pictures.
+    """
+    from pydantic_ai.messages import BinaryContent
+
+    return BinaryContent(
+        data=base64.b64decode(str(row.get('data') or '')),
+        media_type=str(row.get('media_type') or 'application/octet-stream'),
+        identifier=row.get('identifier'),
+    )
 
 
 def _files_report(*, unavailable: bool, restored: int, deleted: int) -> str:
@@ -86,7 +120,7 @@ class RollbackMixin:
         order the terminal has always shown them.
         """
         if self._client is not None:
-            await self._service_rollback(self._client, chat, args)
+            await self._service_rollback(self._client, chat, args, preselected_seq=preselected_seq)
             return
         rollback = getattr(self, '_rollback', None)
         session = getattr(self, '_session', None)
@@ -115,7 +149,9 @@ class RollbackMixin:
             return
         await self.apply_rollback(chat, choice)
 
-    async def _service_rollback(self, client: ServiceClient, chat: ChatLog, args: str) -> None:
+    async def _service_rollback(
+        self, client: ServiceClient, chat: ChatLog, args: str, *, preselected_seq: int | None = None
+    ) -> None:
         """Lists the service's points, opens the same screen, applies the choice there."""
         if self._turn_active:
             await chat.add_notice('A turn is running: finish or stop it before going back.', style='yellow')
@@ -133,6 +169,10 @@ class RollbackMixin:
         chosen = str(args).strip()
         shorthand = chosen.isdigit() and 1 <= int(chosen) <= len(points)
         preselected = points[int(chosen) - 1].checkpoint.turn_id if shorthand else None
+        if preselected is None and preselected_seq is not None:
+            # The click carries a transcript position; the point carries a turn id.
+            # `seq` on the projection is what maps one to the other.
+            preselected = _turn_for_seq(listing.get('points') or [], preselected_seq)
         choice = await self.push_screen_wait(
             RollbackScreen(points, preselected=preselected, start_on_actions=shorthand)
         )
@@ -185,15 +225,9 @@ class RollbackMixin:
             style='green',
         )
         prompt = outcome.get('prompt')
-        if isinstance(prompt, str) and prompt.strip():
-            self._restore_prompt((prompt, []))
-            if int(outcome.get('prompt_images') or 0):
-                # The text came back; an attached image does not travel through this
-                # route yet, and saying so beats a prompt that silently lost it.
-                await chat.add_notice(
-                    'The restored prompt had images; attach them again before sending.',
-                    style='yellow',
-                )
+        images = [_binary_image(row) for row in outcome.get('prompt_images') or []]
+        if (isinstance(prompt, str) and prompt.strip()) or images:
+            self._restore_prompt((prompt if isinstance(prompt, str) else '', images))
 
     def on_rollback_requested(self, message) -> None:
         """A user message was clicked: open the same screen, on that instant.

@@ -94,8 +94,9 @@ _ROWS: tuple[Transport, ...] = (
     Transport(
         name='/provider',
         owner=CommandOwner.CORE,
-        state=TransportState.BLOCKED,
-        reason='provider accounts are not exposed over the API, so there is nothing to call.',
+        state=TransportState.DELEGATED,
+        route='/api/accounts',
+        reason='the service owns the accounts and their credentials.',
     ),
     Transport(
         name='/model',

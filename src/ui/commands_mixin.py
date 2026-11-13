@@ -52,6 +52,17 @@ and `/help` do not touch the conversation or the model. `/mcp` changes the tool 
 """
 
 BUSY_REFUSAL = 'A turn is running: finish or stop it before you use {name}. Esc twice stops the turn first.'
+
+BUSY_UNKNOWN = (
+    'The service did not report whether a turn is running, so {name} was not started. '
+    'Try again once its state can be read.'
+)
+"""What a command says when the projection omits `busy`.
+
+Not the busy sentence: that one asserts a turn. This one says what is true — the
+state could not be read — and refuses anyway, because a command that changes the
+session must not proceed on a guess about whether one is running.
+"""
 """What a refused command says. It names the way out, so the refusal is not a dead end."""
 
 
@@ -222,6 +233,31 @@ class CommandsMixin:
         await render_refreshed_session(view, latest, chat)
         await chat.add_notice('Session updated by another process; reloaded the latest version.', style='yellow')
 
+    async def _guard_delegated_busy(self, name: str, chat: ChatLog) -> bool:
+        """Refreshes the service's busy flag once before a delegated command acts.
+
+        The cached state can be a minute old, and a picker opened on a stale `busy` is
+        a panel the user cannot complete. One read narrows the window. When the read
+        fails, or the projection does not say whether a turn runs, the command stops
+        here: this process cannot see the session's state, so it must not change it.
+        Both cases are refusals rather than guesses, and neither is silent.
+        """
+        if self._client is None or name not in BUSY_COMMANDS:
+            return False
+        try:
+            state = await self._client.state()
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return True
+        self._apply_service_state(state)
+        if 'busy' not in state:
+            await chat.add_notice(BUSY_UNKNOWN.format(name=name), style='yellow')
+            return True
+        if state.get('busy'):
+            await self.refuse_while_busy(name, chat)
+            return True
+        return False
+
     def is_refused_while_busy(self, name: str) -> bool:
         """Whether ``name`` is one of the commands a running turn forbids.
 
@@ -276,6 +312,8 @@ class CommandsMixin:
         which only have a sentence to say; this is the only place that reads it.
         """
         chat = self.query_one(ChatLog)
+        if await self._guard_delegated_busy(name, chat):
+            return
         if self.is_refused_while_busy(name):
             await self.refuse_while_busy(f'{name} {args}'.strip(), chat)
             return
@@ -438,19 +476,19 @@ class CommandsMixin:
     async def _service_new_session(self, client: ServiceClient, request: Any, chat: ChatLog) -> None:
         """Creates the session in the service and repaints from what it returned.
 
-        `--worktree` is refused rather than simulated: the route creates a session
-        in the workspace the service already runs in, and a terminal that cut a
-        worktree behind its back would leave the user in a directory the service is
-        not executing in. The honest answer is cheaper than a convincing lie.
+        `--worktree` creates the worktree in the service, then starts the session
+        there: the engine cuts the tree and moves, so the session is created where
+        the service now runs instead of in a directory it has left.
         """
-        if request.worktree is not None:
-            await chat.add_notice(
-                '/new --worktree is not supported from an attached terminal yet: the service '
-                'creates the session in the workspace it is already running in. Create the '
-                'worktree first, then start Sigil there.',
-                style='yellow',
-            )
-            return
+        worktree = (request.worktree or '').strip() if request.worktree is not None else ''
+        label = ''
+        if worktree:
+            try:
+                switch = await client.create_worktree(worktree)
+            except ServiceClientError as exc:
+                await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+                return
+            label = str((switch.get('workspace') or {}).get('label') or '')
         try:
             session = await client.new_session()
         except ServiceClientError as exc:
@@ -462,7 +500,8 @@ class CommandsMixin:
         # The cursor restarts from the state just read: the new session has its own
         # sequence, and keeping the old number would skip whatever it publishes.
         self._service_cursor = self._state_cursor()
-        await chat.add_notice(f'New session {session.get("short_id") or ""}.', style='green')
+        prefix = f'Workspace: {label}. ' if label else ''
+        await chat.add_notice(f'{prefix}New session {session.get("short_id") or ""}.', style='green')
 
     async def _service_load_session(self, client: ServiceClient, chat: ChatLog) -> None:
         """Lists, opens and repaints from the service, never from a local catalog."""
