@@ -234,3 +234,48 @@ def test_persisting_a_session_does_not_copy_the_active_model_into_it(tmp_path, m
 
     assert store.load(first.id).selection.model == 'first/model'
     assert store.load(second.id).selection.model == 'second/model'
+
+
+# --- and opening a workspace opens its conversation's model ------------------
+
+
+def test_switching_workspace_brings_the_opened_conversation_s_model_back(tmp_path, monkeypatch):
+    """A workspace switch opens a conversation, so the model comes back with it.
+
+    The runtime loads the workspace's last session and binds it. Binding is where a
+    conversation's model is restored, in one place, for every client — and it is the
+    same rule `/load` follows. `model=False` here would leave the router on the model
+    of the workspace the user left, so the conversation they just opened would run on
+    someone else's model until they selected one again.
+    """
+    from src.server.events import EventHub
+    from src.server.runtime import ServerRuntime
+
+    other = tmp_path / 'other'
+    other.mkdir()
+    composition, service = _composition(tmp_path, monkeypatch)
+    runtime = ServerRuntime(composition, EventHub(), require_ownership=False)
+
+    # The conversation of the workspace we leave runs on the default, `first/model`.
+    leaving = composition.store.create_session()
+    leaving.agent = 'wizard'
+    composition.bind_session(leaving)
+    composition.store.save(leaving)
+    assert leaving.selection.model == 'first/model'
+
+    # The conversation of the workspace we move to runs on `second/model`.
+    runtime.switch_workspace(str(other))
+    arriving = composition.store.create_session()
+    arriving.agent = 'wizard'
+    composition.bind_session(arriving)
+    service.select('work', 'second/model', 'high')
+    arriving.selection = service.snapshot().selection
+    composition.store.save(arriving)
+    assert service.snapshot().model == 'second/model'
+
+    # Coming back opens the conversation that was left, and its own model with it.
+    runtime.switch_workspace(str(tmp_path))
+
+    assert composition.session.id == leaving.id
+    assert service.snapshot().model == 'first/model'
+    assert composition.session.selection.model == 'first/model'

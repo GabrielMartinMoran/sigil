@@ -1160,10 +1160,11 @@ class ServerRuntime:
         self.composition.root = switch.workspace.root
         store = self.composition.store
         session = store.load_last() or store.draft_session()
-        # The workspace changed, not the user's model choice: resolving here would
-        # let a workspace switch move the router behind the user's back. The next
-        # explicit selection, or the next `/model`, is where a model is decided.
-        self.composition.bind_session(session, model=False)
+        # Opening the workspace's conversation is opening a conversation, so binding
+        # restores the model that belongs to it — the same rule `/load` follows. A
+        # `model=False` here would leave the router on the model of the workspace the
+        # user left, and the session they just opened would run on it.
+        self.composition.bind_session(session)
         self.composition.rebuild_agent()
         self.hub.publish_state('workspace')
         return {'root': str(switch.workspace.root), 'label': switch.workspace.label, 'changed': switch.changed}
