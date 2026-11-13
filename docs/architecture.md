@@ -1034,12 +1034,29 @@ the running service's sequence, and an old number would silently skip everything
 new session publishes. Opening a session can also move the service to another
 workspace; the header follows the projection, not a local guess.
 
-No core command is `not_wired` any more: every command the service serves has a sender
-here. `/provider` is the only `blocked` one — the service exposes no accounts endpoint — so its notice says
-that instead of sending the user to configure a provider they already have. A
-`delegated` row is never asked for a refusal sentence: it has a sender, so reaching
-that code is a dispatcher bug and the table raises instead of printing a sentence
-about a sender that exists.
+No core command is `not_wired` and none is `blocked`: every command the catalogue
+declares has a sender here. The two states stay in the table because the decision has to
+be total — a command the service has no endpoint for, or one this terminal has not wired
+yet, must say so precisely rather than borrow another answer — and both sentences are
+proven on rows built for them.
+
+`/provider` was the last one, and it needed a route rather than a sentence.
+`GET /api/accounts` lists the accounts with `has_credential` as a boolean — the key
+itself never leaves the process that stores it, and no route, log line or error message
+echoes it. `POST /api/accounts` adds an API-key account and makes it active, bounded at
+thirty seconds because it is the one call that reaches the provider with the user's key;
+`POST /api/accounts/{alias}/activate`, `POST /api/accounts/{alias}/rename` and
+`DELETE /api/accounts/{alias}` complete the set, and all four answer `409` while a turn
+runs, before any slow work starts.
+
+Two rules are worth naming because they are refusals, not conveniences. **Deleting is
+refused for the active account**: the engine would promote a successor, but only a person
+at the terminal sees the model change under their feet, so the route insists on
+activating another account first — and with a single account that is also the answer,
+since it is the active one. **Browser sign-in is not offered over HTTP**: the OAuth flow
+needs a browser and the process that owns it, so an OAuth request is refused with that
+reason and the account has to be added from the terminal running the engine. That is a
+real limitation, not a missing wire.
 
 `/model` needed one route the service did not have: `GET /api/models` lists the
 accounts, not the models of each one. `GET /api/models/{alias}` answers that list from
@@ -1055,19 +1072,18 @@ not produce. The picker itself stays in the terminal, built from that projection
 by the rollback, so the route reads it first — `prompt_of_turn` — and carries the text in
 the `rollback` reply. That is the field the in-process terminal used to look up before
 applying; projecting it changes no count and no row, and it means no client needs a
-database of its own. The fork reply already carried its session id, so `/fork` needed
-nothing on the server side. Images attached to a restored prompt do not travel through
-the route yet: the reply reports how many there were and the terminal says so instead of
-restoring a prompt that silently lost its picture.
+database of its own. Images travel with it: `prompt_images` carries each picture as
+base64 plus its media type and identifier, so the composer restores the message with the
+picture its `[Image #1]` marker names. The service re-encodes an image when it stores it,
+so a client receives the stored bytes and not the sent ones; the pixels are what match.
+The fork reply already carried its session id, so `/fork` needed nothing on the server
+side.
 
-Still pending from the attached terminal, and deliberately not faked:
+**Still uncovered.** Three gaps this cut leaves open:
 
-| Pending | Why it waits |
-| --- | --- |
-| `/new --worktree` | the service creates sessions in the workspace it already runs in; there is no route that cuts a worktree, so the command says so instead of simulating one |
-| `/provider` | no accounts endpoint exists at all, which is what its notice says |
-| images on a restored prompt | the rollback reply carries the text and the count, not the bytes; the terminal says so rather than losing them quietly |
-| the click preselection of `/rollback` | a clicked message carries a `seq`, and the projected points carry turn ids; the click still opens the list, without the row highlighted |
+- **OAuth over HTTP.** Browser sign-in needs the process that owns the flow, so the API refuses an OAuth request with that reason instead of faking a key.
+- **`SecretRejectedError`.** The client translates the class, and no test drives that path.
+- **An empty catalogue on `activate`.** Activating an account whose provider returns no models has no test.
 
 A command that cannot act answers in one notice, opens no panel and writes no queue
 row. An unknown command keeps its own answer, because a name the catalogue never
@@ -1220,19 +1236,13 @@ the two disagree.
 
 ### What this cut does not cover
 
-Four gaps, each stated as it is:
+Three gaps, each stated as it is:
 
 - **A rebuilt gap is a repaint, not a splice.** `report_stream_gap` announces the gap,
   re-reads the state and repaints the transcript from the durable rows. The events
   that never arrived are not recovered one by one, and the block being written is
   discarded on purpose: an unknown number of deltas are missing, so continuing that
   block would draw a sentence nobody said.
-- **Rollback from an attached terminal is not wired.** `GET /api/rollback` and
-  `POST /api/rollback` exist with the same behaviour as the in-process command, and
-  the parity tests cover them. The terminal never calls them: `SigilApp` is built
-  without a `Rollback`, so `snapshot_workspace` returns early and the file half of a
-  future rollback is never taken from an attached session. Rollback stays available
-  from a terminal that owns the engine.
 - **A stored tool call keeps exactly what the projection carries.** That is its name,
   its `call_id`, its `args` and the result the service presented, so a stored call and
   a live one paint the same. The exception is a *builtin* call: `views._part_view`
