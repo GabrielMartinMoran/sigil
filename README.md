@@ -576,8 +576,14 @@ model a conversation runs on.
 `/default-models` is the one command that cannot follow that split yet. The
 screen edits the two config files above, and those files belong to the service —
 a terminal that wrote them would be a second writer on one configuration. There
-is no endpoint for them, so in an attached terminal the command answers that
-model defaults are not editable from this client instead of pretending to save.
+is no endpoint for them, so an attached terminal refuses the command with the
+transport's own sentence:
+
+> `/default-models` is a service command, and the service has no endpoint for it
+> yet: the service owns the defaults files, and no endpoint exposes them yet.
+
+Nothing is written and no screen opens. `/help` and the `/` menu mark that row
+`· the service owns it`, so the edit is not promised where it cannot happen.
 Edit `.sigil/config.json` by hand until that route exists.
 
 Selecting a main agent applies its configured model and effort through the same
@@ -1304,9 +1310,14 @@ accounts with `/model`.
 ```
 /provider                 manage accounts: add, rename, remove
 /model                    choose a model across accounts, then its reasoning effort
-/default-models           not editable here: the service owns the defaults files
+/default-models           the model each agent starts on; edit them in the service's config
 /effort [level]           open the effort picker, or set a level directly
 ```
+
+In an attached terminal `/default-models` is marked `· the service owns it` in both
+`/help` and the `/` menu, and typing it prints the transport's sentence: `/default-models
+is a service command, and the service has no endpoint for it yet: the service owns the
+defaults files, and no endpoint exposes them yet.`
 
 | Shortcut | What it opens |
 | --- | --- |

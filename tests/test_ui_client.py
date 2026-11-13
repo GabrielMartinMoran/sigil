@@ -127,6 +127,7 @@ def _composition(
     call_tools: tuple[str, ...] = (),
     mcp_servers: dict[str, Any] | None = None,
     root: Path | None = None,
+    output: str = 'done',
 ) -> Composition:
     """A real composition with one configured account and a scripted model.
 
@@ -154,7 +155,7 @@ def _composition(
     composition = Composition(
         root or tmp_path,
         settings=load_settings(),
-        model=TestModel(custom_output_text='done', call_tools=list(call_tools)),
+        model=TestModel(custom_output_text=output, call_tools=list(call_tools)),
         provider_paths=ProviderPaths(tmp_path / 'providers'),
     )
     composition.meter.set_window(100_000)
@@ -3076,5 +3077,159 @@ def test_the_attached_turn_clock_ticks_while_the_service_runs_one(
 
                 app.set_activity(running=False)
                 assert app._client_activity_clock is None, 'the clock goes when the turn does'
+
+    asyncio.run(inner())
+
+
+# --- the attached coverage the main-features audit found missing -------------
+#
+# Each of these is about a fact only an attached terminal can be wrong about: a row
+# the service painted, the tree the service projected, the mark a session does or
+# does not deserve, and a turn the service started on its own.
+
+
+def _heading_color(app: SigilApp, block: Any) -> Any:
+    """The foreground the block paints its Markdown heading in, as rendered."""
+    segments = list(app.console.render(block._build(), app.console.options.update_width(80)))
+    return next(
+        segment.style.color
+        for segment in segments
+        if 'Heading' in segment.text and segment.style and segment.style.color
+    )
+
+
+def test_a_row_the_service_painted_wears_the_theme_and_follows_a_switch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A row born from the projection is themed like one typed here, and repaints.
+
+    The block is built by `render_items` from the service's text, so it reaches the
+    same `AssistantBlock` a live turn builds — and a theme switch has to reach it the
+    same way `ChatLog.repaint` reaches the rest. A row that kept the old palette after
+    `/theme` would be a second rendering path nobody had checked.
+    """
+    from rich.color import Color
+
+    from src.ui.widgets.chat_log import AssistantBlock
+
+    composition = _composition(tmp_path, monkeypatch, output='## Heading\n\nbody')
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+                await client.send_turn(TurnRequest(text='paint me'))
+                await _until(pilot, lambda: 'Heading' in _transcript(app), what='the painted answer')
+
+                block = app.query_one(ChatLog).query(AssistantBlock)[0]
+                assert _heading_color(app, block) == Color.parse(app.theme_variables['primary'])
+
+                await app.handle_command('/theme', 'synthwave')
+                await _until(pilot, lambda: app.theme == 'synthwave', what='the new theme')
+
+                assert _heading_color(app, block) == Color.parse(app.theme_variables['primary'])
+
+    asyncio.run(inner())
+
+
+def test_the_mark_belongs_to_a_session_the_service_has_not_written_a_word_in(
+    composition: Composition, tmp_path: Path
+) -> None:
+    """Attaching to a stored conversation shows it; attaching to a draft shows the mark.
+
+    The two halves are the same decision seen from both sides, which is why they are
+    one test: `_empty` is what the transcript paints behind its children, and the
+    service's own durable read is the only thing allowed to clear it.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, transport, client):
+            draft = _terminal(client, _session(runtime))
+            async with draft.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: draft._service_state is not None, what='the state')
+                chat = draft.query_one(ChatLog)
+                assert chat._empty is True, 'a draft session is still empty'
+                assert chat.render().plain.strip(), 'and the mark is what it draws'
+
+            await _seed_turn(runtime, client, 'a stored message')
+
+            watcher = ServiceClient(SERVICE, transport=transport)
+            try:
+                stored = _terminal(watcher, _session(runtime))
+                async with stored.run_test(size=(100, 40)) as pilot:
+                    await _until(pilot, lambda: 'a stored message' in _transcript(stored), what='the history')
+                    assert stored.query_one(ChatLog)._empty is False, 'a painted conversation retires the mark'
+            finally:
+                await watcher.aclose()
+
+    asyncio.run(inner())
+
+
+def test_default_models_answers_with_the_transports_reason_and_opens_nothing(
+    composition: Composition, tmp_path: Path
+) -> None:
+    """The real answer, in the real words, with nothing opened and nothing written.
+
+    This is the row the whole cut is about: the sentence is `unavailable_notice`'s,
+    derived from the table, and not a line a handler made up about a mode it cannot
+    run in. `ModelDefaultsScreen` is the panel that must not appear, and the queue and
+    the session are read afterwards because "nothing happened" is only worth asserting
+    against the things that could have.
+    """
+    from src.ui.command_transport import transport_for, unavailable_notice
+    from src.ui.widgets.model_defaults_screen import ModelDefaultsScreen
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+                before = _inputs(runtime)
+                session_before = runtime.session.id
+
+                await app.handle_command('/default-models')
+                await pilot.pause()
+
+                row = transport_for('/default-models')
+                assert row is not None
+                assert unavailable_notice(row) in _transcript(app), 'the transport sentence is the answer'
+                assert not isinstance(app.screen, ModelDefaultsScreen), 'no panel it cannot complete'
+                assert runtime.session.id == session_before, 'the service kept its session'
+                assert _inputs(runtime) == before, 'and nothing reached its queue'
+
+    asyncio.run(inner())
+
+
+def test_a_turn_the_service_wakes_is_painted_once_in_the_terminal(composition: Composition, tmp_path: Path) -> None:
+    """A subagent's report starts a turn on the service; the screen paints it once.
+
+    The wake is the service's own decision — the consumer starts the turn — so what the
+    terminal may not do is paint it twice: once from the queue event and once from the
+    repaint that follows the end of the turn. Counting the report and the answer is how
+    a doubled paint shows up, and each is counted where the reader would see it.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            node = _service_subagent(runtime, mode='async', task='read the tree')
+            # The consumer is what decides a report wakes a turn, and it is started by
+            # a request in every other test. Here the report is the first thing to
+            # happen, so `ensure_workers` is the seam that makes the wake possible at
+            # all — without it the event is set with nobody parked on it.
+            runtime.ensure_workers()
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+
+                node.finish('The tree reads bottom-up.')
+                runtime.composition.summoner._deliver(node, 'The tree reads bottom-up.')
+
+                await _until(pilot, lambda: 'done' in _transcript(app), what='the woken answer')
+                await _until(pilot, lambda: not app._turn_active, what='the end of the woken turn')
+
+                text = _transcript(app)
+                assert text.count('The tree reads bottom-up.') == 1, 'the report was painted twice'
+                assert text.count('done') == 1, 'the answer was painted twice'
 
     asyncio.run(inner())

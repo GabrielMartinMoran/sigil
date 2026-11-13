@@ -223,4 +223,37 @@ def unavailable_notice(row: Transport) -> str:
     raise ValueError(f'{row.name} runs here, so it has nothing to refuse')
 
 
-__all__ = ['TRANSPORT', 'Transport', 'TransportState', 'transport_for', 'unavailable_notice']
+MARK_SERVICE_OWNED = '  · the service owns it'
+"""What a listing adds beside a row whose effect belongs to the service.
+
+Short on purpose: `unavailable_notice` is the answer a typed command gets, and a
+listing is scanned rather than read. Both read the same row, so a menu cannot
+promise what the door would turn away.
+"""
+
+
+def listing_mark(name: str, *, attached: bool) -> str:
+    """The mark a listing shows beside ``name``, or ``''`` when there is nothing to say.
+
+    Empty for a row that runs here or travels from here, for a name the catalogue
+    never declared, and in process — where a command the service owns still runs,
+    because this window *is* the service. Attached, the row whose effect no route
+    carries is marked, and the reason stays in the sentence the command itself gives.
+    """
+    if not attached:
+        return ''
+    row = transport_for(name)
+    if row is None or row.state in {TransportState.CLIENT, TransportState.DELEGATED}:
+        return ''
+    return MARK_SERVICE_OWNED
+
+
+__all__ = [
+    'MARK_SERVICE_OWNED',
+    'TRANSPORT',
+    'Transport',
+    'TransportState',
+    'listing_mark',
+    'transport_for',
+    'unavailable_notice',
+]

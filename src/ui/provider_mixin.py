@@ -251,13 +251,22 @@ class ProviderMixin:
         the destination names. Nothing here changes the model in effect: a default is
         what a *new* conversation starts on, and moving the one in front of the user
         from a screen about defaults is the surprise `/model` exists to avoid.
+
+        This runs only in a terminal that owns the engine, which is the one shape that
+        holds the three collaborators below. An attached terminal never gets here: its
+        transport row is `blocked`, so the dispatcher answers with
+        `unavailable_notice` before any handler is chosen. There used to be a branch
+        here saying "not editable from this client", which was a sentence about a mode
+        that cannot reach this method — the answer lives in the transport table now.
         """
-        service = getattr(self, '_model_service', None)
-        read = getattr(self, '_model_defaults_state', None)
-        save = getattr(self, '_save_model_default', None)
+        service = self._model_service
+        read = self._model_defaults_state
+        save = self._save_model_default
         if service is None or read is None or save is None:
-            await chat.add_notice('Model defaults are not editable from this client.', style='yellow')
-            return
+            # A wiring bug, not a user situation: only the in-process composition
+            # supplies these, and it always supplies all three. Raising keeps it a
+            # loud failure in a test seam instead of a lie printed to a user.
+            raise RuntimeError('show_default_models needs the model collaborators the composition supplies.')
         accounts = service.list_accounts()
         if not accounts:
             await chat.add_notice('Configure a provider first: /provider', style='yellow')

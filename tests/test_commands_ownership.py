@@ -8,6 +8,7 @@ so adding a command forces a decision instead of a default.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
 
@@ -105,6 +106,43 @@ def test_the_help_lists_both_groups_and_loses_nothing():
     assert 'This client' in HELP_TEXT
     for command in COMMANDS:
         assert command.name in HELP_TEXT
+
+
+def test_the_help_never_promises_an_edit_the_service_can_refuse():
+    """The one sentence `/help` prints is true in both modes, so it cannot lie in either.
+
+    The old row said "Set the model each agent starts on, in the project or the user
+    config", which is an edit an attached terminal cannot perform: the dispatcher
+    refuses the command before any handler runs. What a default *is* and where it lives
+    is true whether or not this window can write it, so the row names that instead.
+    """
+
+    from src.ui.help_text import HELP_TEXT
+
+    command = next(command for command in COMMANDS if command.name == '/default-models')
+    assert 'Set the model each agent starts on' not in command.description
+    assert 'config' in command.description, 'the row still says where the defaults live'
+    assert command.description in HELP_TEXT, 'the help prints the catalogue, not a second copy'
+
+
+def test_a_listing_mark_comes_from_the_transport_row():
+    """A listing marks what the table refuses, and invents no sentence of its own.
+
+    One derivation, next to the refusal it shortens: the `/` menu and any future
+    listing read it, so a row cannot be marked here and dispatched there.
+    """
+
+    from src.ui.command_transport import listing_mark
+
+    row = transport_for('/default-models')
+    assert row is not None
+    assert row.state is TransportState.BLOCKED
+    assert listing_mark('/default-models', attached=True), 'a blocked row says so where it is listed'
+    assert listing_mark('/default-models', attached=False) == '', 'in process the command runs here'
+
+    for name in ('/theme', '/model', '/context'):
+        assert listing_mark(name, attached=True) == '', f'{name} runs here or travels from here'
+    assert listing_mark('/nope', attached=True) == '', 'a name the catalogue never declared has no row'
 
 
 # --- the transport table -----------------------------------------------------
@@ -254,3 +292,41 @@ def test_the_transport_table_refuses_two_rows_for_one_command():
     duplicate = Transport('/theme', CommandOwner.CLIENT, TransportState.CLIENT)
     with pytest.raises(ValueError, match='more than once'):
         _covering((*TRANSPORT, duplicate))
+
+
+def test_the_menu_marks_the_row_a_service_owns_and_only_then():
+    """One listing, two windows: the mark is the table's, and it tracks the mode.
+
+    Mounted on its own, so the assertion is about the menu's rule rather than about an
+    app: the flag it is handed is the whole difference between a terminal that runs the
+    command and one that can only say who does. `attached=False` is the in-process
+    shape, where `/default-models` opens its screen, so a mark there would be a lie
+    about a command that works.
+    """
+    from textual.app import App
+
+    from src.ui.widgets.command_menu import CommandMenu
+    from tests.ui_helpers import render_text
+
+    class MenuHost(App[None]):
+        def compose(self):
+            yield CommandMenu()
+
+    def rows(attached: bool) -> list[str]:
+        async def inner() -> list[str]:
+            app = MenuHost()
+            async with app.run_test(size=(120, 40)):
+                menu = app.query_one(CommandMenu)
+                menu.update_matches(match_commands('/default'), attached=attached)
+                return [render_text(option.prompt) for option in menu.options]
+
+        return asyncio.run(inner())
+
+    attached_rows = rows(True)
+    assert len(attached_rows) == 1
+    assert '/default-models' in attached_rows[0]
+    assert 'the service owns it' in attached_rows[0]
+
+    local_rows = rows(False)
+    assert '/default-models' in local_rows[0]
+    assert 'the service owns it' not in local_rows[0], 'in process the command runs here'

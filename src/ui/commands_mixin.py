@@ -15,7 +15,7 @@ from src.engine.workspace.arguments import UsageError, parse_new_args
 from src.engine.workspace.models.workspace_error import WorkspaceError
 from src.engine.workspace.models.worktree import Workspace, Worktree
 from src.ui.command_transport import TransportState, transport_for, unavailable_notice
-from src.ui.help_text import HELP_TEXT, KEYS_TEXT
+from src.ui.help_text import KEYS_TEXT, help_text
 from src.ui.messages import ChatNotice
 from src.ui.service_client import ServiceClient, ServiceClientError
 from src.ui.session_refresh import bind_refreshed_session, render_refreshed_session, session_view
@@ -403,8 +403,15 @@ class CommandsMixin:
         await chat.add_notice(f'Outside-workspace file access is {state} for this session.', style='yellow')
 
     async def show_help(self, chat: ChatLog) -> None:
-        """Commands plus the keys that are not discoverable from the menu."""
-        await chat.add_notice(HELP_TEXT, style='cyan')
+        """Commands plus the keys that are not discoverable from the menu.
+
+        The rows are the catalogue's own words plus, attached, the mark the transport
+        table justifies: a command the service owns and no route carries is marked
+        where it is listed, so `/help` names the one thing this window cannot do
+        instead of promising it. Both lists come from `help_text`; there is no second
+        copy of a command's sentence in this module.
+        """
+        await chat.add_notice(help_text(attached=self._client is not None), style='cyan')
         await chat.add_notice(KEYS_TEXT, style='dim')
 
     async def handle_theme_command(self, args: str, chat: ChatLog) -> None:

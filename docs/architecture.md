@@ -1082,13 +1082,29 @@ One core command is `blocked`: `/default-models`. The screen edits the two confi
 that decide what a profile starts on, and those files belong to the service — a terminal
 that wrote them would be a second writer on one configuration, which is the failure the
 attached terminal exists to remove. No route projects them yet, so the row names no
-endpoint and `show_default_models` answers that model defaults are not editable from
-this client instead of failing somewhere the user cannot read.
+endpoint and the dispatcher answers it at the door with `unavailable_notice`: *"a service
+command, and the service has no endpoint for it yet"*. `show_default_models` is never
+reached attached — its screen and its collaborators belong to a terminal that owns the
+engine — so that handler has nothing to say about a mode it cannot run in.
 
 That row is the single exception, and `test_only_the_documented_gap_is_blocked` pins the
-blocked set to exactly it. `not_wired` stays empty: it would promise a sender that is not
+blocked state to exactly it. `not_wired` stays empty: it would promise a sender that is not
 coming in this cut. The decision has to be total — a command the service has no endpoint
 for must say so precisely rather than borrow another answer.
+
+### The help is derived, never repeated
+
+Every listing of commands reads the same two tables: `src/engine/commands.py` for a
+command's name and sentence, and `src/ui/command_transport.py` for whether this terminal
+can act on it. `src/ui/help_text.py` renders a row as the catalogue's words plus
+`listing_mark`, and `/help` and the `/` menu both call it — the help with
+`attached=self._client is not None`, the menu with the flag its mixin passes down.
+
+Nothing else may state a command's availability in its own words. A second copy of "why
+this cannot run here" is a second thing to keep in step with the table, and the copy that
+drifts is always the one the user reads. So the mark is three words the table justifies,
+the sentence a refused command prints is `unavailable_notice` and only that, and a handler
+in a mode it cannot be reached in says nothing at all rather than answering for it.
 
 `/provider` was the last one, and it needed a route rather than a sentence.
 `GET /api/accounts` lists the accounts with `has_credential` as a boolean — the key

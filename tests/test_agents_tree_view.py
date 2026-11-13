@@ -470,3 +470,114 @@ def test_the_view_speaks_english_from_the_hint_to_the_filter():
     assert 'filter' in hint
     assert 'Filter by' in placeholder
     assert 'subagents' in status and 'running' in status
+
+
+# --- the drawing rules, proven on what the service projects -------------------
+
+
+def _projection() -> dict[str, Any]:
+    """One tree as `/api/state` sends it: JSON, names and numbers, no engine objects.
+
+    A live branch with a grandchild (so the gutter has depth to draw), and one branch
+    that already finished (so there is a history section to separate).
+    """
+    return {
+        'root_id': 'a',
+        'nodes': [
+            {
+                'id': 'a',
+                'name': 'wizard',
+                'role': 'agent',
+                'parent_id': None,
+                'depth': 0,
+                'task': '',
+                'status': 'running',
+                'mode': 'sync',
+                'model': 'test',
+                'elapsed': 2.0,
+                'runs': 1,
+                'delivered': True,
+                'budget_exhausted': False,
+            },
+            {
+                'id': 'b',
+                'name': 'pas_developer',
+                'role': 'subagent',
+                'parent_id': 'a',
+                'depth': 1,
+                'task': 'close the lock',
+                'status': 'running',
+                'mode': 'sync',
+                'model': 'test',
+                'elapsed': 3.0,
+                'runs': 1,
+                'delivered': True,
+                'budget_exhausted': False,
+            },
+            {
+                'id': 'c',
+                'name': 'pas_qa',
+                'role': 'subagent',
+                'parent_id': 'b',
+                'depth': 2,
+                'task': 'qa the lock',
+                'status': 'running',
+                'mode': 'sync',
+                'model': 'test',
+                'elapsed': 1.0,
+                'runs': 1,
+                'delivered': True,
+                'budget_exhausted': False,
+            },
+            {
+                'id': 'd',
+                'name': 'pas_researcher',
+                'role': 'subagent',
+                'parent_id': 'a',
+                'depth': 1,
+                'task': 'read the tree',
+                'status': 'done',
+                'mode': 'async',
+                'model': 'test',
+                'elapsed': 4.5,
+                'runs': 1,
+                'delivered': True,
+                'budget_exhausted': False,
+                'result': 'looks fine',
+            },
+        ],
+    }
+
+
+def test_a_projection_becomes_the_rows_the_screen_draws():
+    """The service's tree paints the rule, the gutter and the spinner, from its JSON.
+
+    `_nodes_from_tree` is the one place the projection becomes the type this screen
+    already knows, so these three rules are proven on its output rather than on a
+    hand-built store: what is running sits above the history rule, the gutter draws
+    ancestry once the tree has depth, and a running row carries the frame the screen
+    is on while the trunk — running for the session's whole life — does not.
+    """
+    from src.ui.tree_mixin import _nodes_from_tree
+
+    nodes = _nodes_from_tree(_projection())
+    screen = AgentTreeScreen(nodes)
+
+    async def body(app: Any, pilot: Any) -> None:
+        options = list(screen.query_one(OptionList).options)
+        raw = [_raw(option) for option in options]
+
+        # The rule between work and history, and it cannot be picked.
+        assert screen._rows[3] is Gap.HISTORY
+        assert options[3].disabled is True
+        assert 'finished' in raw[3]
+
+        # Depth draws a gutter: one level is a branch, two carry the bar as well.
+        assert raw[1].startswith(BRANCH)
+        assert raw[2].startswith(f'{BAR}{LAST}')
+
+        # The live rows spin; the trunk does not, though it reports running.
+        assert any(frame in raw[1] for frame in SPINNER_FRAMES)
+        assert not any(frame in raw[0] for frame in SPINNER_FRAMES)
+
+    _run(screen, body)
