@@ -99,7 +99,7 @@ from src.ui.tree_mixin import _nodes_from_tree
 from src.ui.turn_mixin import failure_notice, pending_request
 from src.ui.widgets.agent_tree_screen import AgentTreeScreen, TreeAction
 from src.ui.widgets.agent_view import AgentView
-from src.ui.widgets.chat_log import ChatLog
+from src.ui.widgets.chat_log import ChatLog, ToolCallBlock, format_tool_args
 from src.ui.widgets.debug_view import AgentDebugView
 from src.ui.widgets.mcp_screen import MCPScreen
 from src.ui.widgets.prompt_input import PromptInput
@@ -171,21 +171,39 @@ def _composition(
 
 
 class _HubStream(httpx.AsyncByteStream):
-    """One `/events` body, written by the hub the application publishes into."""
+    """One `/events` body, written by the hub the application publishes into.
 
-    def __init__(self, hub: EventHub, after: int, *, stop_after_replay: bool = False) -> None:
+    ``drop`` removes whole event types from this connection, which is how a test
+    stands in for the events a screen never received: a terminal cannot tell a
+    stream that never carried a call from one whose buffer forgot it, and both are
+    the same hole in what that screen knows about the turn.
+    """
+
+    def __init__(
+        self,
+        hub: EventHub,
+        after: int,
+        *,
+        stop_after_replay: bool = False,
+        drop: frozenset[str] = frozenset(),
+    ) -> None:
         self._hub = hub
         self._after = after
         self._stop_after_replay = stop_after_replay
+        self._drop = drop
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
         async with self._hub.subscribe() as subscription:
             for event in self._hub.replay(self._after):
+                if event.type in self._drop:
+                    continue
                 yield event.to_sse().encode()
             if self._stop_after_replay:
                 return
             while True:
                 event = await subscription.next()
+                if event.type in self._drop:
+                    continue
                 yield event.to_sse().encode()
 
 
@@ -212,9 +230,14 @@ class _ServiceTransport(httpx.AsyncBaseTransport):
       be cuttable for the "stream broke" case to be testable at all.
     """
 
-    def __init__(self, app: Any, hub: EventHub, *, token: str = TOKEN) -> None:
+    def __init__(self, app: Any, hub: EventHub, *, token: str = TOKEN, drop: frozenset[str] = frozenset()) -> None:
         self._inner = httpx.ASGITransport(app=app, raise_app_exceptions=False)
         self._hub = hub
+        self.app = app
+        """The application, so a test can open another connection to this same service."""
+        self.hub = hub
+        """The hub the `/events` bodies are written from, shared by every connection."""
+        self._drop = drop
         self._token = token
         self.streams = 0
         self.cursors: list[int] = []
@@ -234,6 +257,12 @@ class _ServiceTransport(httpx.AsyncBaseTransport):
         mechanism a test watches: if the watcher painted the message without asking
         the service, the read would not happen and the number would not move.
         """
+        self.transcript_reads = 0
+        """How many transcript pages this connection asked for.
+
+        A rebuild is a page read, so this is how a test proves the screen painted the
+        rows again instead of only what its stream happened to carry.
+        """
         self.defaults_writes: list[dict[str, Any]] = []
         """The bodies of the defaults writes, in the order they were sent.
 
@@ -246,6 +275,8 @@ class _ServiceTransport(httpx.AsyncBaseTransport):
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         if request.url.path == '/api/session/durable':
             self.durable_reads += 1
+        if request.url.path == '/api/session/transcript':
+            self.transcript_reads += 1
         if request.url.path == '/api/model-defaults' and request.method == 'POST':
             self.defaults_writes.append(json.loads(request.content or b'{}'))
         if request.url.path == '/api/answer' and self.answer_failure is not None:
@@ -260,8 +291,18 @@ class _ServiceTransport(httpx.AsyncBaseTransport):
         return httpx.Response(
             200,
             headers={'content-type': 'text/event-stream'},
-            stream=_HubStream(self._hub, _after(request), stop_after_replay=cut),
+            stream=_HubStream(self._hub, _after(request), stop_after_replay=cut, drop=self._drop),
         )
+
+    def fork(self, *, drop: frozenset[str] = frozenset()) -> _ServiceTransport:
+        """Another connection to the same service, missing the events in ``drop``.
+
+        A second terminal differs from the first in its ``ServiceClient``, not in
+        where the service lives: the same application answers it and the same hub
+        writes its stream. What it does not get is the event types named here, which
+        is the shape of a stream that lost them.
+        """
+        return _ServiceTransport(self.app, self.hub, token=self._token, drop=drop)
 
 
 def _after(request: httpx.Request) -> int:
@@ -349,6 +390,16 @@ def _block_text(widget: Any) -> str:
 
 def _transcript(app: SigilApp) -> str:
     return '\n'.join(_block_text(widget) for widget in app.query_one(ChatLog).children)
+
+
+def _tool_rows(app: SigilApp) -> list[tuple[str, str]]:
+    """Every call on screen, as the name and the arguments its header draws.
+
+    A tool row is not a `Static` holding a `Text`: it builds a `Group` from its own
+    state, so reading the transcript would measure a repr instead of the row. These
+    two are the attributes the header is built from, which is what the reader sees.
+    """
+    return [(block.name, format_tool_args(block._args)) for block in app.query_one(ChatLog).query(ToolCallBlock)]
 
 
 def _submit(app: SigilApp, text: str) -> None:
@@ -979,6 +1030,80 @@ def test_two_terminals_on_one_session_see_one_turn_and_never_a_duplicate(
                     assert runtime.busy is False
             finally:
                 await sending_client.aclose()
+
+    asyncio.run(inner())
+
+
+def test_the_end_of_a_turn_paints_the_call_this_screen_never_received(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The end of a turn repaints from the rows, so a missed call is not a lost call.
+
+    The report was a second terminal that did not show some of the calls a turn made,
+    and only saw them after it was closed and reopened. Nothing in the paint after a
+    turn noticed: the only trigger for re-reading the transcript was another client
+    accepting a message *during* the turn, so a screen whose stream lost the events of
+    the turn itself — a gap, a dropped delta, a result with no block to land in — kept
+    the hole until the next manual reload.
+
+    So this terminal's stream never carries the call, its result, or the acceptance
+    announcement that would have asked it to repaint mid-turn: the hole the report
+    describes, and the case in which nothing but the end of the turn can notice it.
+    The tool it never received has to be on screen once ``turn_finished`` is handled,
+    painted from the service's own projection, with the arguments only the rows have.
+    """
+    release = asyncio.Event()
+    started = asyncio.Event()
+    composition = _composition(tmp_path, monkeypatch, call_tools=('lookup',))
+
+    @composition.agent.tool_plain
+    async def lookup() -> str:
+        started.set()
+        await release.wait()
+        return 'found'
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, transport, sending_client):
+            deaf = transport.fork(drop=frozenset({'tool_call', 'tool_result', 'state_changed'}))
+            watching_client = ServiceClient(SERVICE, transport=deaf)
+            try:
+                sender = _terminal(sending_client, _session(runtime))
+                watcher = _terminal(watching_client, _session(runtime))
+                async with (
+                    sender.run_test(size=(100, 40)) as sender_pilot,
+                    watcher.run_test(size=(100, 40)) as watcher_pilot,
+                ):
+                    pilots = (sender_pilot, watcher_pilot)
+                    await _both_until(
+                        pilots,
+                        lambda: sender._service_state is not None and watcher._service_state is not None,
+                        what='the state on both screens',
+                    )
+                    await sender_pilot.press('h', 'i')
+                    await sender_pilot.press('enter')
+
+                    # The call runs in the service; the turn is still open, and the
+                    # screen whose stream lost the events has nothing for it.
+                    await _both_until(pilots, started.is_set, what='the call running in the service')
+                    assert watcher._turn_active is True, 'the watcher is inside the same turn'
+                    assert _tool_rows(watcher) == [], 'the watcher is missing the call, by construction'
+                    reads = deaf.transcript_reads
+
+                    release.set()
+                    await _both_until(pilots, lambda: not watcher._turn_active, what='the end of the turn')
+
+                    # Painted from the rows once the stream stopped: the call the events
+                    # never carried, and once only.
+                    await _both_until(
+                        pilots,
+                        lambda: [name for name, _ in _tool_rows(watcher)] == ['lookup'],
+                        what='the call the rows carry',
+                    )
+                    assert '› hi' in _transcript(watcher), 'the message of the turn is part of the same rebuild'
+                    assert deaf.transcript_reads > reads, 'the end of the turn read the rows again'
+                    assert watcher._service_rebuild_due is False, 'the repair is done, not still owed'
+            finally:
+                await watching_client.aclose()
 
     asyncio.run(inner())
 

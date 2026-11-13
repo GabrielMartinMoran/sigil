@@ -352,3 +352,110 @@ def test_the_service_report_names_the_gap_when_the_route_does_not_answer():
 
     assert 'did not answer' in text
     assert '0 tokens' not in text
+
+
+def test_the_attached_report_prints_the_percentage_the_route_sends():
+    """`/api/context` sends a percentage in 0..100, not a fraction.
+
+    114_273 tokens of a 1_000_000 window is 11% of the window, and the route
+    already sends 11.4273: multiplying it by a hundred again printed 1143%, a
+    number nobody measured. Both surfaces read the same payload, so both are
+    pinned here.
+    """
+    from src.engine.context.budget import ContextBudget
+    from src.engine.context.meter.cost import SessionCost
+    from src.engine.context.meter.snapshot import ContextSnapshot
+    from src.server.views import context_view
+    from src.ui.debug_mixin import (
+        ServiceDebugReport,
+        build_service_debug_body,
+        build_service_debug_header,
+        render_service_debug_report,
+    )
+
+    payload = context_view(
+        ContextSnapshot(
+            measured=None,
+            projected=114_273,
+            window=1_000_000,
+            budget=ContextBudget(window=1_000_000),
+        ),
+        SessionCost(),
+    )
+    assert payload['percent'] == pytest.approx(11.4273), 'the route sends a percentage, not a fraction'
+
+    report = ServiceDebugReport.from_projection(payload, {})
+    surfaces = (
+        render_service_debug_report(report),
+        build_service_debug_body(report).plain,
+        build_service_debug_header(report).plain,
+    )
+    for surface in surfaces:
+        assert '114,273 (11%)' in surface
+        assert '1143%' not in surface
+        assert '114%' not in surface
+
+
+def _style_at(text, needle: str) -> str:
+    """The style of the span that covers the first occurrence of ``needle``."""
+    start = text.plain.index(needle)
+    return next((span.style for span in text.spans if span.start <= start < span.end), '')
+
+
+def test_the_attached_body_keeps_the_sections_and_their_color():
+    """The attached body is the in-process view's kin, not a wall of plain text.
+
+    The service projects fewer measurements, but the report still has the same
+    hierarchy: a coloured section title, labels in that colour, aligned values and
+    an explicit block for what only the process that runs the turn can measure.
+    """
+    from src.ui.debug_mixin import (
+        NOT_MEASURED_SECTIONS,
+        ServiceDebugReport,
+        build_service_debug_body,
+    )
+    from src.ui.widgets.debug_styles import context_style
+
+    report = ServiceDebugReport.from_projection(
+        {
+            'window': 1_000_000,
+            'used': 114_273,
+            'percent': 11.4273,
+            'measured': 30_010,
+            'projected': 114_273,
+            'budget': {'tools': 1_200, 'instructions': 300, 'output_reserve': 8_000, 'safety_reserve': 50_000},
+            'cost': {'total': '0.04', 'approximate': True, 'requests': 2},
+        },
+        {
+            'model': {'label': 'claude-sonnet-4-5', 'thinking': 'high'},
+            'session': {'short_id': 'abcdef12', 'agent': 'work'},
+        },
+    )
+
+    body = build_service_debug_body(report)
+    plain = body.plain
+
+    for title in ('Context (projected by the service)', 'Cost (reported by the service)'):
+        assert title in plain
+    assert 'What this process does not measure' in plain
+    for name, _what in NOT_MEASURED_SECTIONS:
+        assert name in plain
+
+    # A section title and the labels under it are styled, and the sections do not
+    # share one colour: the eye finds the section before it reads a number.
+    context_title = _style_at(body, 'Context (projected by the service)')
+    cost_title = _style_at(body, 'Cost (reported by the service)')
+    not_measured = _style_at(body, 'What this process does not measure')
+    assert context_title and cost_title and not_measured
+    assert len({context_title, cost_title, not_measured}) > 1
+    assert _style_at(body, 'window') == context_title
+    assert _style_at(body, 'prompt cache') == not_measured
+
+    # The usage carries the palette's reading of the ratio, like the in-process cell.
+    assert _style_at(body, '114,273') == context_style(11.4273 / 100)
+
+    # And the values sit in one column instead of trailing each label.
+    lines = plain.splitlines()
+    window_line = next(line for line in lines if 'window' in line)
+    used_line = next(line for line in lines if 'used' in line)
+    assert window_line.index('1,000,000') == used_line.index('114,273')

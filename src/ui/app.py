@@ -820,15 +820,23 @@ class SigilApp(
         self.refresh_diff()
 
     async def _finish_turn(self, data: dict[str, Any], chat: ChatLog) -> None:
-        """The end of a turn: refetch, then repaint what the refetch cannot carry."""
+        """The end of a turn: refetch, then repaint the transcript from the rows.
+
+        The repaint is unconditional and it is the only repair a screen gets. A delta
+        can be lost, an event can arrive for a call this build never opened a block
+        for, and a result can land with no call above it — and a terminal painted from
+        the events alone cannot tell a turn that ran no tool from a turn whose tool it
+        missed. The rows can, and this is the one moment they can be painted without
+        dropping text still streaming in: the turn has stopped.
+
+        It runs after ``_turn_active`` is cleared, because ``repaint_from_rows``
+        defers itself while a turn is running.
+        """
         await self.refresh_service_state()
         self._turn_active = False
         self.set_activity(running=False)
         chat.finalize()
-        if self._service_rebuild_due:
-            # A message another client sent during this turn was deferred, not lost:
-            # the stream has stopped, so the rows can be painted without dropping text.
-            await self.refresh_service_queue()
+        await self.repaint_from_rows()
         status = str(data.get('status') or 'ok')
         if status == 'cancelled':
             await chat.add_notice('Turn cancelled.', style='yellow')

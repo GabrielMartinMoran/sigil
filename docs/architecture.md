@@ -261,6 +261,53 @@ and the boundary is where the thinking is.
 - **How a web client authenticates.** Out of scope until there is one, and it
   should be a decision of its own rather than a side effect of the boundary.
 
+## The two surfaces: `sigil server` and `sigil serve`
+
+The backend and the web client are two commands, not one. `sigil server` is the
+API alone; `sigil serve` is the same process plus `web/dist`. Only `serve` has a
+password, because only `serve` has a browser to type one into, and only `serve`
+checks that the committed bundle is fresh before it opens the socket.
+
+| | `sigil server` | `sigil serve` |
+| --- | --- | --- |
+| `/api/*`, `/events` | yes | yes |
+| `web/dist`, `/static` | not mounted | mounted |
+| `GET /` | a JSON notice, below | `index.html` |
+| `/api/login`, `/api/logout` | absent: `404` | present |
+| Credential | the endpoint token | the cookie, or the token |
+| `--password`, `--rebuild-ui` | not defined | defined |
+| Bundle staleness at startup | not checked | refused when stale |
+
+`GET /` on the backend answers `200` with the sentence that names the command:
+
+```json
+{
+  "service": "sigil backend",
+  "web": false,
+  "message": "This is the Sigil backend; run `sigil serve` for the web client."
+}
+```
+
+A wrong URL and a right one deserve different answers: the API is not a broken web
+server, so it says where the page lives instead of a `404` that says nothing. The
+bundle is not read at all — `create_app` derives the surface from
+`ServerConfig.web` and keeps `assets` as `None`, so a `dist` directory on disk is
+never mounted by accident.
+
+`SIGIL_SERVER_PASSWORD` and the per-run password belong to `serve`. The backend
+ignores that variable rather than defaulting it away: an exported secret must not
+turn an API into a process that prints one or accepts a login. `SIGIL_SERVER_ORIGINS`
+and its CORS middleware stay on both surfaces, because the client served
+*elsewhere* is exactly the case that setting exists for.
+
+The terminal's launcher starts `server` (`default_command`), so attaching a TUI
+publishes no page and invents no credential. The operational consequence is worth
+stating: `serve` while a backend is running fails with the ownership message from
+[part A](#durable-server-consumer-part-a) instead of attaching. This cut has no
+proxy between the two processes; a page that needs the API while a TUI owns the
+store is not supported yet. The lock is released when the owning process ends, and
+idle shutdown is what ends it when there is no work.
+
 ## Durable server consumer (part A)
 
 The web server owns its database through an exclusive OS lock in
@@ -784,6 +831,10 @@ amount of waiting repairs a lock file that is a symlink.
 `spawn_server` uses `subprocess`, and the command is
 `[sys.executable, <checkout>/main.py, 'server']` (`default_command`):
 
+- **`server`, not `serve`.** The child is the API surface: no bundle is mounted and
+  no password is generated, so the credential the launcher reads from the endpoint
+  file is the only one in play. There is no `--password` or `--rebuild-ui` in the
+  argv because neither flag exists on that subcommand.
 - **`sys.executable`, not the `sigil` wrapper.** The wrapper exists so a human can
   call it from any directory; this process already knows where the code it imported
   lives, and resolving `PATH` could start a server from a different installation
@@ -1521,6 +1572,13 @@ from the rows and the deltas that follow open a new block, because an unknown nu
 deltas never arrived: a conversation with a hole in it reads better for a second and
 lies for as long as it is on screen.
 
+The **end of a turn repaints from the rows unconditionally**. A delta can be lost, a
+result can land with no call above it, and a call can arrive with no block to hold it,
+so a screen painted from events alone cannot tell a turn that ran no tool from one
+whose tool it missed — the rows can, and `turn_finished` is the one moment they can be
+painted without dropping text still streaming in. `_finish_turn` therefore rebuilds
+after `_turn_active` is cleared, not only when another client's message deferred it.
+
 ### The chrome comes from the state too
 
 An attached terminal composes no `WorkspaceManager`: the workspace is the service's.
@@ -1685,8 +1743,11 @@ model the service has selected is the same mistake with a question mark.
 report is measured from `_history`, `_meter` and the captured request of the run
 this process is executing. Attached, `debug_report` is not used at all.
 `ServiceDebugReport.from_projection` maps `/api/context` and `/api/state` onto what
-the report prints, and `service_debug_lines` is the single list of lines both
-`/debug --text` and the widget paint, so the two cannot disagree.
+the report prints, and one row model feeds both surfaces: `service_debug_lines`
+renders it as plain text for `/debug --text`, and `build_service_debug_body` paints
+the same rows with a per-section accent, aligned values and a heading of its own for
+what was not measured, so the view the attached terminal shows has the hierarchy of
+the in-process one and the two cannot print different numbers.
 
 The view repaints on the service's own events — `turn_started`, `tool_result`,
 `state_changed` — because there is no run here to react to. `refresh_service_debug`

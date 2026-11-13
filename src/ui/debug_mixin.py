@@ -25,6 +25,7 @@ from src.engine.context.meter.debug import DebugReport, build_debug_report
 from src.engine.context.meter.request import RequestSnapshot
 from src.ui.service_client import ServiceClientError
 from src.ui.widgets.chat_log import ChatLog
+from src.ui.widgets.debug_styles import DYNAMIC_STYLE, USER_STYLE, context_style
 from src.ui.widgets.debug_view import AgentDebugView
 from src.ui.widgets.prompt_input import PromptInput
 
@@ -150,12 +151,16 @@ def _tokens(value: int | None) -> str:
 
 
 def _used(report: ServiceDebugReport) -> str:
-    """The projected usage, with the share only when the service sent both halves."""
+    """The projected usage, with the share only when the service sent both halves.
+
+    ``percent`` arrives from `/api/context` already scaled to 0..100 — the same
+    number the sidebar paints — so it is formatted, not multiplied again.
+    """
     if report.used is None:
         return NOT_REPORTED
     if report.percent is None:
         return f'{report.used:,} tokens'
-    return f'{report.used:,} ({report.percent * 100:.0f}%)'
+    return f'{report.used:,} ({report.percent:.0f}%)'
 
 
 def _budget(budget: Mapping[str, Any]) -> str:
@@ -173,39 +178,115 @@ def _cost(report: ServiceDebugReport) -> str:
     return f'{report.cost_total}{" (at list price)" if report.cost_estimated else ""}'
 
 
+_TITLE = 'Agent debug — attached to the service'
+
+_ACCENT_CONTEXT = USER_STYLE
+"""The context section's accent: the same cyan the terminal gives a user turn."""
+
+_ACCENT_COST = 'green'
+"""What the bill is painted with, once the service has priced it."""
+
+_ACCENT_UNMEASURED = DYNAMIC_STYLE
+"""The amber the in-process view uses for what is estimated or lives elsewhere."""
+
+
+@dataclass(frozen=True, slots=True)
+class _Row:
+    """One line of the report: a label, its value and the style of the value."""
+
+    label: str
+    value: str
+    style: str = ''
+    indent: int = 2
+
+
+@dataclass(frozen=True, slots=True)
+class _Section:
+    """A titled group of rows, with the colour that marks title and labels."""
+
+    title: str
+    accent: str
+    rows: tuple[_Row, ...]
+
+
+def _header_rows(report: ServiceDebugReport) -> tuple[_Row, ...]:
+    """Whose session, on what: the facts the service always projects."""
+    rows = []
+    if report.session:
+        rows.append(_Row('session', report.session))
+    if report.agent:
+        rows.append(_Row('agent', report.agent))
+    rows.append(_Row('model', report.model or NOT_REPORTED))
+    rows.append(_Row('effort', report.effort or NOT_REPORTED))
+    return tuple(rows)
+
+
+def _context_section(report: ServiceDebugReport) -> _Section:
+    title = 'Context (projected by the service)'
+    if not report.context_read:
+        return _Section(
+            title,
+            _ACCENT_CONTEXT,
+            (_Row('', 'the service did not answer /api/context: nothing is measured here', style='dim'),),
+        )
+    rows = [
+        _Row('window', _tokens(report.window)),
+        # The palette reads ratios 0..1; the route sends the percentage already.
+        _Row(
+            'used',
+            _used(report),
+            style=context_style(None if report.percent is None else report.percent / 100),
+        ),
+        _Row('last context (reported input + output)', _tokens(report.measured)),
+        _Row('projected total', _tokens(report.projected)),
+    ]
+    if report.budget:
+        rows.append(_Row('budget per request', _budget(report.budget), style='dim'))
+    return _Section(title, _ACCENT_CONTEXT, tuple(rows))
+
+
+def _cost_section(report: ServiceDebugReport) -> _Section:
+    requests = NOT_REPORTED if report.cost_requests is None else f'{report.cost_requests}'
+    return _Section(
+        'Cost (reported by the service)',
+        _ACCENT_COST,
+        (_Row('total', _cost(report)), _Row('requests', requests)),
+    )
+
+
+def _unmeasured_section() -> _Section:
+    """The block that says, with a heading of its own, what nobody measured here."""
+    rows = [_Row('', NOT_MEASURED, style='dim italic')]
+    rows.extend(_Row(name, what, style='dim', indent=4) for name, what in NOT_MEASURED_SECTIONS)
+    return _Section('What this process does not measure', _ACCENT_UNMEASURED, tuple(rows))
+
+
+def _service_debug_sections(report: ServiceDebugReport) -> tuple[_Section, ...]:
+    sections = [_context_section(report)]
+    if report.context_read:
+        sections.append(_cost_section(report))
+    sections.append(_unmeasured_section())
+    return tuple(sections)
+
+
+def _plain_row(row: _Row) -> str:
+    head = ' ' * row.indent
+    return f'{head}{row.label}: {row.value}' if row.label else f'{head}{row.value}'
+
+
 def service_debug_lines(report: ServiceDebugReport) -> list[str]:
     """The report as lines, shared by `--text` and by the view.
 
     One list for both surfaces so the two cannot drift, and one place that decides
     what a gap reads like: every number is the service's, and every section it does
-    not publish is named as unmeasured instead of painted as zero.
+    not publish is named as unmeasured instead of painted as zero. `--text` renders
+    this list verbatim; the view paints the same rows with `build_service_debug_body`.
     """
-    lines = ['Agent debug — attached to the service']
-    if report.session:
-        lines.append(f'  session: {report.session}')
-    if report.agent:
-        lines.append(f'  agent: {report.agent}')
-    lines.extend([f'  model: {report.model or NOT_REPORTED}  effort: {report.effort or NOT_REPORTED}', ''])
-
-    lines.append('Context (projected by the service)')
-    if not report.context_read:
-        lines.append('  the service did not answer /api/context: nothing is measured here')
-    else:
-        lines.append(f'  window: {_tokens(report.window)}')
-        lines.append(f'  used: {_used(report)}')
-        lines.append(f'  last context (reported input + output): {_tokens(report.measured)}')
-        lines.append(f'  projected total: {_tokens(report.projected)}')
-        if report.budget:
-            lines.append(f'  budget per request: {_budget(report.budget)}')
-        lines.extend(['', 'Cost (reported by the service)'])
-        lines.append(f'  total: {_cost(report)}')
-        requests = NOT_REPORTED if report.cost_requests is None else f'{report.cost_requests}'
-        lines.append(f'  requests: {requests}')
-
-    lines.extend(['', 'What this process does not measure'])
-    lines.append(f'  {NOT_MEASURED}')
-    for name, what in NOT_MEASURED_SECTIONS:
-        lines.append(f'    {name}: {what}')
+    lines = [_TITLE]
+    lines.extend(_plain_row(row) for row in _header_rows(report))
+    for section in _service_debug_sections(report):
+        lines.extend(['', section.title])
+        lines.extend(_plain_row(row) for row in section.rows)
     return lines
 
 
@@ -234,9 +315,34 @@ def build_service_debug_header(report: ServiceDebugReport) -> Text:
     return text
 
 
+def _append_rows(text: Text, rows: Sequence[_Row], accent: str) -> None:
+    """Paints rows with their labels in the section's accent and their values in a column."""
+    width = max((len(row.label) for row in rows), default=0)
+    for row in rows:
+        text.append(' ' * row.indent)
+        if row.label:
+            text.append(row.label, style=f'bold {accent}')
+            text.append('  ' + ' ' * (width - len(row.label)))
+        text.append(row.value, style=row.style)
+        text.append('\n')
+
+
 def build_service_debug_body(report: ServiceDebugReport) -> Text:
-    """The report's own lines: every number from the service, every gap named."""
-    return Text('\n'.join(service_debug_lines(report)))
+    """The report's own lines, with the hierarchy of the in-process view.
+
+    The same rows as `--text`, painted instead of copied: a section title and its
+    labels carry the section's accent, the values line up in a column, and the
+    measurements only the service could make keep a heading that says so. The plain
+    renderer is the copyable twin, so the two cannot print different numbers.
+    """
+    text = Text()
+    text.append(f'{_TITLE}\n', style='bold')
+    _append_rows(text, _header_rows(report), 'white')
+    for section in _service_debug_sections(report):
+        text.append('\n')
+        text.append(f'{section.title}\n', style=f'bold {section.accent}')
+        _append_rows(text, section.rows, section.accent)
+    return text
 
 
 def _whole(value: object) -> int | None:
