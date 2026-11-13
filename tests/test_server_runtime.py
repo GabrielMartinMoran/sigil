@@ -51,6 +51,7 @@ from src.server.runtime import (
     ServerRuntime,
     resolve_question_timeout,
 )
+from src.ui.subagent_reports import WAKE_PROMPT as TERMINAL_WAKE_PROMPT
 
 
 @pytest.fixture
@@ -1407,6 +1408,26 @@ def test_a_failed_subagent_wakes_a_turn(runtime: ServerRuntime) -> None:
     stored = runtime.composition.store.load(runtime.session.id)
     assert stored is not None
     assert any('the tool refused' in text for text in _prompts(stored))
+
+
+def test_the_service_and_the_terminal_say_the_same_wake_sentence() -> None:
+    """The sentence is written twice on purpose, and this is what holds the copies together.
+
+    `server.runtime.WAKE_PROMPT` is a copy of `ui.subagent_reports.WAKE_PROMPT` rather
+    than an import, because the service must not depend on the client: that direction
+    is what keeps the server headless. The terminal compares the stored report against
+    this exact text to tell a finished subagent from a sentence the user typed, so a
+    reword on one side alone would leave a woken turn painted as the user's own
+    message. Nothing else compares the two — the product cannot, so the test does.
+    """
+
+    assert WAKE_PROMPT == TERMINAL_WAKE_PROMPT, (
+        'The service and the terminal no longer say the same thing to a woken turn. The '
+        'two copies exist because the server must not import the client, so this test is '
+        'the only place that sees both: if they diverge, the terminal stops recognizing '
+        'the turn a finished subagent woke and paints it as text the user wrote. Change '
+        'both copies, or neither.'
+    )
 
 
 def test_external_files_is_written_on_the_row(composition: Composition) -> None:

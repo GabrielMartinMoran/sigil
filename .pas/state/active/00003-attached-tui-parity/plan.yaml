@@ -1,0 +1,67 @@
+version: 1
+status: approved
+objective: >-
+  Finish the attached terminal so every visible function reports the service's truth or says
+  it cannot, and so nothing that came from main stays inert or lies in the command help.
+approval_basis: >-
+  The user asked to integrate main, adapt the implementation to the client/service split while
+  keeping main's functionality, and finish everything still missing. Two read-only audits of
+  the attached terminal defined the remaining gaps.
+context:
+  divergence: origin/main is the reference, not the local main ref, which sits at the merge base.
+  merged_commits: bd2694f (merge) and the cuts that followed it through 8584c89.
+  audits: attached-terminal mixin audit and main-features audit, both read-only.
+tasks:
+  - id: attached-truthfulness-v1
+    status: in_progress
+    objective: >-
+      Remove four places where the attached terminal reports local emptiness as if it were a
+      measurement, and one frozen clock.
+    paths:
+      - src/ui/debug_mixin.py
+      - src/ui/app.py
+      - src/ui/commands_mixin.py
+      - src/ui/sidebar_mixin.py
+      - src/ui/widgets/sidebar_panel.py
+      - src/ui/tree_mixin.py
+      - src/ui/rollback_mixin.py
+      - src/ui/activity_mixin.py
+      - src/ui/model_view_mixin.py
+      - tests/test_ui_client.py
+      - tests/test_debug_view.py
+      - tests/test_sidebar_panel.py
+      - docs/architecture.md
+    acceptance:
+      - The debug report and --text read the service projection and name what the service does not measure.
+      - The answered-question set is cleared on /new and /load in attached mode.
+      - The sidebar names the session as its subject while attached, instead of implying per-node data.
+      - A message typed while attached carries no local position, and a click opens no wrong rollback point.
+      - The turn clock ticks while the service runs a turn.
+  - id: main-parity-help-v1
+    status: pending
+    objective: >-
+      Make the command help honest about the one command the service cannot serve, and close the
+      attached coverage gaps the main-features audit found.
+    paths:
+      - src/engine/commands.py
+      - src/ui/help_text.py
+      - src/ui/widgets/command_menu.py
+      - src/ui/command_transport.py
+      - src/ui/commands_mixin.py
+      - src/ui/menu_mixin.py
+      - src/ui/provider_mixin.py
+      - README.md
+      - docs/architecture.md
+      - tests/test_ui_client.py
+      - tests/test_empty_session_logo.py
+      - tests/test_agents_tree_view.py
+      - tests/test_commands_ownership.py
+    acceptance:
+      - /default-models is not described as an edit the attached terminal can perform.
+      - Attached coverage exists for a themed row from the service, the tree layout from the projection, the empty-session mark with and without history, the /default-models notice, and a woken turn painted once.
+agent_decisions:
+  - The PEP 758 form without parentheses is valid on this project's Python floor and stays as written.
+  - The sidebar is labelled as the session while attached rather than inventing per-node measurements.
+  - A typed message carries no position while attached, because the local transcript is not the record.
+limitations:
+  - The experimental clean-python validator reports a large pre-existing baseline and is never treated as a pass.
