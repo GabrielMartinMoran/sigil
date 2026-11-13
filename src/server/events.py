@@ -13,6 +13,10 @@ Three properties matter here:
 - **The buffer is small and bounded.** It exists for a reconnect that took a
   second, not to keep a conversation in memory.
 - **One queue per subscriber.** No locking: the event loop is the only writer.
+
+A subscriber may name a session. That filter is applied before the queue, so an
+event for another session never occupies this subscriber's space and cannot
+make it lag. Ownership is internal metadata: the wire forms below are unchanged.
 """
 
 from __future__ import annotations
@@ -33,11 +37,17 @@ SUBSCRIBER_QUEUE = 2000
 
 @dataclass(frozen=True, slots=True)
 class Event:
-    """One thing that happened, with the sequence number a client catches up from."""
+    """One thing that happened, with the sequence number a client catches up from.
+
+    ``session_id`` is internal ownership, never wire data: ``to_sse`` and
+    ``to_dict`` do not know it exists, and ``data`` may carry its own unrelated
+    ``session_id`` field. ``None`` means the event belongs to the service.
+    """
 
     seq: int
     type: str
     data: dict[str, Any] = field(default_factory=dict)
+    session_id: str | None = None
 
     def to_sse(self) -> str:
         """The wire form: `id` for the browser, `event` for dispatch, `data` for JSON."""
@@ -47,6 +57,25 @@ class Event:
     def to_dict(self) -> dict[str, Any]:
         return {'seq': self.seq, 'type': self.type, **self.data}
 
+    def matches_session(self, session_id: str | None) -> bool:
+        """Whether a consumer scoped to ``session_id`` should receive this event.
+
+        ``None`` on the consumer side is internal all-events access. On the event
+        side it means the event is service-wide, so every scope sees it. Neither
+        side consults ``data``: a payload field never implies ownership.
+        """
+        if session_id is None or self.session_id is None:
+            return True
+        return self.session_id == session_id
+
+
+@dataclass(frozen=True, slots=True)
+class _Subscriber:
+    """A queue together with the internal scope that decides what may enter it."""
+
+    session_id: str | None
+    queue: asyncio.Queue[Event]
+
 
 class EventHub:
     """Publishes events to every live subscriber, remembering the recent ones."""
@@ -54,38 +83,61 @@ class EventHub:
     def __init__(self, *, buffer_size: int = DEFAULT_BUFFER, queue_size: int = SUBSCRIBER_QUEUE) -> None:
         self._buffer: deque[Event] = deque(maxlen=buffer_size)
         self._queue_size = queue_size
-        self._subscribers: dict[int, asyncio.Queue[Event]] = {}
+        self._subscribers: dict[int, _Subscriber] = {}
         self._ids = itertools.count(1)
         self._seq = 0
 
     # --- writing ------------------------------------------------------------
 
-    def publish(self, type: str, **data: Any) -> Event:
-        """Records an event and hands it to every subscriber. Never raises for a slow one."""
+    def publish(self, type: str, *, owner_session_id: str | None = None, **data: Any) -> Event:
+        """Records an event and offers it to every subscriber that matches it.
+
+        Filtering happens here, before a queue is touched: a foreign event cannot
+        consume a subscriber's space or make it lag. The sequence number stays
+        global, so a filtered stream has gaps a client can safely resume from.
+
+        ``owner_session_id`` is deliberately not named ``session_id``: shipped
+        producers send ``session_id`` as payload data and it must stay there.
+        """
         self._seq += 1
-        event = Event(seq=self._seq, type=type, data=data)
+        event = Event(seq=self._seq, type=type, data=data, session_id=owner_session_id)
         self._buffer.append(event)
-        for key, queue in list(self._subscribers.items()):
-            try:
-                queue.put_nowait(event)
-            except asyncio.QueueFull:
-                # The client missed events: drop the oldest and leave a marker so
-                # it refetches the state instead of painting a half conversation.
-                try:
-                    queue.get_nowait()
-                except asyncio.QueueEmpty:  # pragma: no cover - raced with the reader
-                    pass
-                try:
-                    queue.put_nowait(
-                        Event(seq=self._seq, type='lagged', data={'reason': 'the client was too far behind'})
-                    )
-                except asyncio.QueueFull:  # pragma: no cover - still full: the next attempt wins
-                    del key
+        for key, subscriber in list(self._subscribers.items()):
+            if event.matches_session(subscriber.session_id):
+                self._deliver(key, subscriber, event)
         return event
 
-    def publish_state(self, reason: str) -> Event:
+    def publish_state(self, reason: str, *, owner_session_id: str | None = None) -> Event:
         """Asks clients to re-read the state they project from the rows."""
-        return self.publish('state_changed', reason=reason)
+        return self.publish('state_changed', reason=reason, owner_session_id=owner_session_id)
+
+    def _deliver(self, key: int, subscriber: _Subscriber, event: Event) -> None:
+        """Queue one matching event, or trade the oldest for a lag marker when full.
+
+        The marker is written straight into this queue: it asks one client to
+        refetch, so it is not a domain event and never enters the replay buffer.
+        """
+        try:
+            subscriber.queue.put_nowait(event)
+            return
+        except asyncio.QueueFull:
+            pass
+        # The client missed events: drop the oldest and leave a marker so
+        # it refetches the state instead of painting a half conversation.
+        try:
+            subscriber.queue.get_nowait()
+        except asyncio.QueueEmpty:  # pragma: no cover - raced with the reader
+            pass
+        marker = Event(
+            seq=event.seq,
+            type='lagged',
+            data={'reason': 'the client was too far behind'},
+            session_id=subscriber.session_id,
+        )
+        try:
+            subscriber.queue.put_nowait(marker)
+        except asyncio.QueueFull:  # pragma: no cover - still full: the next attempt wins
+            self._unsubscribe(key)
 
     # --- reading ------------------------------------------------------------
 
@@ -97,15 +149,15 @@ class EventHub:
     def subscriber_count(self) -> int:
         return len(self._subscribers)
 
-    def replay(self, after_seq: int = 0) -> list[Event]:
-        """The events a client missed, oldest first."""
-        return [event for event in self._buffer if event.seq > after_seq]
+    def replay(self, after_seq: int = 0, *, session_id: str | None = None) -> list[Event]:
+        """The events a client missed, oldest first, limited to its scope."""
+        return [event for event in self._buffer if event.seq > after_seq and event.matches_session(session_id)]
 
-    def subscribe(self) -> Subscription:
-        """A queue of events from now on, plus whatever a reconnect needs."""
+    def subscribe(self, *, session_id: str | None = None) -> Subscription:
+        """A queue of matching events from now on, plus whatever a reconnect needs."""
         key = next(self._ids)
         queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=self._queue_size)
-        self._subscribers[key] = queue
+        self._subscribers[key] = _Subscriber(session_id=session_id, queue=queue)
         return Subscription(self, key, queue)
 
     def _unsubscribe(self, key: int) -> None:
