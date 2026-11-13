@@ -118,6 +118,11 @@ class RollbackMixin:
         the fork belong to the session's owner. The screen stays here, and the index
         shortcut keeps its meaning because the service lists the points in the same
         order the terminal has always shown them.
+
+        A click that carries no position arrives here as ``preselected_seq=None`` and
+        opens the list at the top, with nothing preselected: a message typed in an
+        attached terminal has no position until the service assigns one, and the
+        first point is not a stand-in for it.
         """
         if self._client is not None:
             await self._service_rollback(self._client, chat, args, preselected_seq=preselected_seq)

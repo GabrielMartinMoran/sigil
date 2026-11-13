@@ -76,9 +76,29 @@ class SidebarMixin:
             return None
 
     def _update_agent_label(self, panel: SidebarPanel) -> None:
+        """In process, the panel describes whoever is on screen: the root or a node."""
         label = getattr(self, 'viewed_agent_label', None)
         if callable(label):
-            panel.update_agent(label())
+            panel.update_subject(label())
+
+    def _service_panel_subject(self) -> str | None:
+        """Who the attached panel describes: the session, never the open node.
+
+        The service projects the model, the context budget, the loaded skills and
+        the plan of the *session*; it projects none of them per node. Reading a
+        subagent therefore leaves these sections measuring the session, and this
+        line says so instead of naming the node: a node's name over the session's
+        numbers is the panel claiming a measurement it does not have. Which node is
+        on screen is answered by the node view and by the window title, which is
+        where a per-conversation fact belongs.
+        """
+        node = getattr(self, 'viewed_node_id', None)
+        if not getattr(self, 'subagent_open', False) or not callable(node) or node() is None:
+            return None
+        state = getattr(self, '_service_state', None)
+        session = state.get('session') if isinstance(state, Mapping) else None
+        agent = str(session.get('agent') or '') if isinstance(session, Mapping) else ''
+        return f'session · {agent}' if agent else 'session'
 
     # --- the projection ----------------------------------------------------
 
@@ -104,7 +124,7 @@ class SidebarMixin:
         target.update_skills(_skills_from_state(state), reported=_skills_reported(state))
         target.update_mcp(_servers_from_state(state), reported=_mcp_reported(state))
         target.update_roadmap(_roadmap_from_state(state))
-        self._update_agent_label(target)
+        target.update_subject(self._service_panel_subject())
 
     def refresh_skills(self) -> None:
         """Repaints the skills section only when the set on screen changed.

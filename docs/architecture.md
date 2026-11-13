@@ -1377,6 +1377,66 @@ The cost mark this mode cannot reproduce is `+`. `/api/context` projects `total`
 total a floor; the panel shows the amount without inventing the mark. Widening the
 route is the fix if that mark is wanted, not guessing it here.
 
+### What this process measures, and what only the service does
+
+An attached terminal holds no history, no meter and no run. Every number it paints
+comes from the service's projection or is named as unmeasured: a local zero is a
+measurement of a conversation this process has never seen, and `model: ?` next to a
+model the service has selected is the same mistake with a question mark.
+
+| Surface | Attached source | What replaces the local value |
+| --- | --- | --- |
+| `alt+d` view and `/debug --text` | `GET /api/context`, `state['model']`, `state['session']` | `not measured in this process — the service owns the turn` |
+| Position (`seq`) of a typed message | the service's rows, re-read after it accepts the message | no position: the line is not clickable until a row exists |
+| Sidebar subject line | the session | `session · <agent>`, never the open node |
+| Turn clock | this terminal's own interval while the turn runs | — the elapsed time is real, because the turn started when the service said so |
+
+**The debug view.** `DebugMixin` keeps its in-process path untouched: there the
+report is measured from `_history`, `_meter` and the captured request of the run
+this process is executing. Attached, `debug_report` is not used at all.
+`ServiceDebugReport.from_projection` maps `/api/context` and `/api/state` onto what
+the report prints, and `service_debug_lines` is the single list of lines both
+`/debug --text` and the widget paint, so the two cannot disagree.
+
+The view repaints on the service's own events — `turn_started`, `tool_result`,
+`state_changed` — because there is no run here to react to. `refresh_service_debug`
+coalesces a burst of them into one read on an exclusive worker (`debug-service`). A
+route that does not answer is reported as `the service did not answer /api/context`,
+never as a session at zero.
+
+The per-request measurements — cache reads and writes, compaction decisions,
+instruction and tool-schema sizes, turn timings — happen inside the turn, which the
+service owns and does not publish. They are listed under *What this process does not
+measure*, not reconstructed from an empty meter. Widening `/api/context` is the fix
+if one of them is wanted.
+
+**`seq` of a typed message.** In process the position is `len(_history)`: the prompt
+is the next message, and knowing it up front is what makes the line clickable before
+the turn ends. Attached, `_history` is empty by construction, so that number was
+always `0` — and `0` is a position, the first rollback point, which preselected the
+first turn on every click. `on_prompt_input_submitted` passes `None` there instead
+and the line stays inert (`UserMessage.on_click` returns early) until the transcript
+is re-read from `/api/session/durable`, where each row's index is its real `seq` and
+the click works again.
+
+**The sidebar's subject.** The service projects the model, the context budget, the
+loaded skills and the plan of the *session*; it projects none of them per node.
+`SidebarPanel.update_subject` names the session — `session · <agent>` — while a
+subagent is open in an attached terminal, and the node on screen is named by the node
+view and by the window title. In process the label still names the subagent, because
+there the panel does read that node's own history, meter and plan.
+
+**The turn clock.** In process `run_turn` schedules a one-second interval that
+repaints the elapsed time and stops it when the turn ends. Attached there is no run,
+so nothing scheduled it and the spinner sat on `0s` for the whole turn.
+`ActivityMixin.set_activity` now schedules `activity_tick` itself while `_client` is
+set, and drops the interval when the turn stops. The in-process path keeps the one
+`run_turn` owns, so the same second is never painted twice.
+
+The tests for these four rules are in `tests/test_debug_view.py` (the report as a
+pure function) and `tests/test_ui_client.py` (the repaint on an event, the cleared
+answered set, the subject line, the missing position, the clock).
+
 ### The test seam, and why it is allowed to exist
 
 `SigilApp` still accepts in-process collaborators — `agent=`, `store=`, `session=`.

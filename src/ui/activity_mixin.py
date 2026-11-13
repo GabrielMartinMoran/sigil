@@ -40,6 +40,8 @@ class ActivityMixin:
     _workspace_manager: Any
     _service_state: dict[str, Any] | None
     _current_run: Any
+    _client: Any
+    _client_activity_clock: Any
 
     # --- activity -----------------------------------------------------------
 
@@ -54,7 +56,29 @@ class ActivityMixin:
             self._turn_started_at = time.monotonic()
         self._activity_running = running
         self._activity_label = label
+        self._follow_attached_clock(running)
         self._paint_activity()
+
+    def _follow_attached_clock(self, running: bool) -> None:
+        """Schedules or drops the clock of an attached turn.
+
+        In process the run schedules the tick that repaints the elapsed time, and it
+        stops it when the turn ends. Attached there is no run here: the turn belongs
+        to the service, so nobody scheduled the tick and the spinner sat frozen on
+        `0s` for minutes while the service worked. The interval is this process's,
+        and it is dropped with the turn — a clock left running is a status bar that
+        keeps counting after the answer.
+
+        Nothing is scheduled in process on purpose: two intervals would repaint the
+        same second twice.
+        """
+        if getattr(self, '_client', None) is None:
+            return
+        if running and self._client_activity_clock is None:
+            self._client_activity_clock = self.set_interval(1.0, self.activity_tick)
+        elif not running and self._client_activity_clock is not None:
+            self._client_activity_clock.stop()
+            self._client_activity_clock = None
 
     def _paint_activity(self) -> None:
         try:

@@ -309,3 +309,46 @@ def test_debug_refresh_uses_live_history_instead_of_stale_session():
                 app._current_run = None
 
     asyncio.run(inner())
+
+
+def test_the_service_report_never_prints_a_local_zero():
+    """An attached terminal reports the projection, not its own empty history.
+
+    `measured: 0`, `log: 0` and `model: ?` are claims about a session this process
+    has never run. The report carries what the service sent and names the gap where
+    it sent nothing.
+    """
+    from src.ui.debug_mixin import ServiceDebugReport, render_service_debug_report
+
+    text = render_service_debug_report(
+        ServiceDebugReport.from_projection(
+            {
+                'window': 100_000,
+                'used': None,
+                'percent': None,
+                'measured': None,
+                'projected': None,
+                'budget': {},
+                'cost': {},
+            },
+            {
+                'model': {'configured': False, 'model': '', 'thinking': 'default'},
+                'session': {'short_id': 'abcdef12', 'agent': 'work'},
+            },
+        )
+    )
+
+    assert 'measured: 0' not in text
+    assert 'log: 0' not in text
+    assert 'model: ?' not in text
+    assert 'not measured in this process — the service owns the turn' in text
+    assert 'not reported by the service' in text
+
+
+def test_the_service_report_names_the_gap_when_the_route_does_not_answer():
+    from src.ui.debug_mixin import ServiceDebugReport, render_service_debug_report
+
+    text = render_service_debug_report(ServiceDebugReport.from_projection(None, {}))
+
+    assert 'did not answer' in text
+    assert '0 tokens' not in text

@@ -92,9 +92,11 @@ from src.ui.turn_mixin import failure_notice, pending_request
 from src.ui.widgets.agent_tree_screen import AgentTreeScreen, TreeAction
 from src.ui.widgets.agent_view import AgentView
 from src.ui.widgets.chat_log import ChatLog
+from src.ui.widgets.debug_view import AgentDebugView
 from src.ui.widgets.mcp_screen import MCPScreen
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.question_panel import QuestionPanel
+from src.ui.widgets.rollback_screen import RollbackScreen
 from src.ui.widgets.sidebar_panel import SidebarPanel
 from src.ui.widgets.status_bar import StatusBar
 from tests.test_agents import write_profile
@@ -2833,5 +2835,246 @@ def test_a_restart_does_not_suppress_a_new_question_that_reuses_the_id(
                     assert 'q1' not in app._service_answered, 'the answered set belongs to the old run'
             finally:
                 await client.aclose()
+
+    asyncio.run(inner())
+
+
+# --- what this process measures, and what only the service does --------------
+#
+# An attached terminal paints a session it does not run. Every number it shows
+# comes from the service's own projection, and what the service does not project
+# is named as unmeasured instead of printed as a zero: a confident `0` about a
+# conversation this process has never seen is the same lie as a stale one.
+
+
+def _debug_body(app: SigilApp) -> str:
+    """The debug view's body, read the way it is painted."""
+    return render_text(app.query_one(AgentDebugView)._body.content)
+
+
+def _measured_response(text: str, input_tokens: int) -> ModelResponse:
+    """One response with reported usage: what `/api/context` measures a session by."""
+    return ModelResponse(
+        parts=[TextPart(text)],
+        usage=RequestUsage(input_tokens=input_tokens, output_tokens=10),
+        model_name='claude-sonnet-4-5',
+    )
+
+
+def test_debug_text_in_an_attached_terminal_reads_the_service(composition: Composition, tmp_path: Path) -> None:
+    """`/debug --text` reports the projection, and says what nobody measures here.
+
+    The report used to be built from this process's meter and history. A terminal
+    that owns neither printed `measured 0`, `projected 0`, `log 0` and `model: ?`
+    about a session the service had been running all along: four confident zeros
+    where the honest answer is "the service owns the turn".
+    """
+
+    async def inner() -> None:
+        composition.session.messages.append(_measured_response('ok', 30_000))
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(120, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+
+                report = await app.show_debug_text()
+                context = await client.context()
+
+                assert context['used'], 'the service measured this session'
+                assert 'measured: 0' not in report, 'a zero this process never measured'
+                assert 'model: ?' not in report, 'the service reports the model it runs'
+                assert 'not measured in this process — the service owns the turn' in report
+                assert 'first/model' in report
+                assert f'{context["used"]:,}' in report
+                assert f'{context["window"]:,}' in report
+
+    asyncio.run(inner())
+
+
+def test_the_attached_debug_view_repaints_on_a_service_event(composition: Composition, tmp_path: Path) -> None:
+    """`alt+d` follows the turn through the service's events, not a local run.
+
+    The in-process view repaints from the run inside this process. An attached
+    terminal has no run, so the events the service publishes are the refresh —
+    otherwise the view freezes on whatever the first read happened to say.
+    """
+
+    async def inner() -> None:
+        composition.session.messages.append(_measured_response('ok', 30_000))
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(120, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+                await pilot.press('alt+d')
+                await _until(
+                    pilot,
+                    lambda: 'the service owns the turn' in _debug_body(app),
+                    what='the report the service feeds',
+                )
+                first = _debug_body(app)
+
+                composition.session.messages.append(_measured_response('more', 50_000))
+                context = await client.context()
+                used = f'{context["used"]:,}'
+                assert used not in first, 'the first paint is the projection as of then'
+
+                runtime.hub.publish_state('test')
+
+                await _until(pilot, lambda: used in _debug_body(app), what='the repaint on the event')
+
+    asyncio.run(inner())
+
+
+def test_new_forgets_the_questions_the_previous_session_answered(composition: Composition, tmp_path: Path) -> None:
+    """The answered set belongs to one session, like the question ids belong to one run.
+
+    A new session numbers its questions from one again. Keeping the answered ids is
+    a screen that never offers `q1` again: the turn waits for an answer nobody will
+    be asked to give.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, transport, _attached):
+            question = {
+                'id': 'q1',
+                'questions': [
+                    {
+                        'question': 'Which way?',
+                        'allow_custom': False,
+                        'options': [
+                            {'label': 'Recommended', 'description': 'the short one', 'recommended': True},
+                            {'label': 'Other way', 'description': None, 'recommended': False},
+                        ],
+                    }
+                ],
+            }
+
+            def with_question(state: dict[str, Any]) -> httpx.Response:
+                state['question'] = question
+                return httpx.Response(200, json=state)
+
+            client = ServiceClient(SERVICE, transport=_StateProjection(transport, with_question))
+            try:
+                app = _terminal(client, _session(runtime))
+                async with app.run_test(size=(100, 40)) as pilot:
+                    await _until(pilot, lambda: app.query_one(QuestionPanel).display, what='the question')
+                    await pilot.press('enter')
+                    await _until(pilot, lambda: 'q1' in app._service_answered, what='the answer recorded')
+                    await _until(pilot, lambda: not app.query_one(QuestionPanel).display, what='the panel closing')
+
+                    await app.handle_command('/new')
+
+                    await _until(pilot, lambda: app.query_one(QuestionPanel).display, what='the new session question')
+                    assert app._service_answered == set(), 'the answered set belonged to the session that ended'
+            finally:
+                await client.aclose()
+
+    asyncio.run(inner())
+
+
+def test_the_attached_panel_names_the_session_as_what_it_describes(composition: Composition, tmp_path: Path) -> None:
+    """The panel's sections are the session's, and the line says so.
+
+    The service projects one model, one context and one skill set per session; it
+    projects none of them per node. Naming the open subagent over those numbers is
+    the panel claiming a per-node measurement it does not have, so the subject line
+    names the session and the window title keeps naming the node.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            runtime.session.messages.extend(_loaded_skill())
+            node = _service_subagent(runtime, task='read the tree')
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(120, 40)) as pilot:
+                await _until(
+                    pilot,
+                    lambda: 'clean-code' in app.query_one(SidebarPanel).text,
+                    what='the skills of the session',
+                )
+
+                await app.goto_node(node.id)
+
+                await _until(pilot, lambda: app.subagent_open, what='the subagent view')
+                await _until(
+                    pilot,
+                    lambda: 'session' in app.query_one(SidebarPanel).text,
+                    what='the subject of the panel',
+                )
+                text = app.query_one(SidebarPanel).text
+                assert f'{node.label} #{node.short_id}' not in text, 'the panel does not name the node'
+                assert 'clean-code' in text, 'the sessions skills stay, now that they say whose they are'
+
+    asyncio.run(inner())
+
+
+def test_a_message_typed_in_an_attached_terminal_carries_no_local_position(
+    composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One message, one position: the service assigns it, this process does not.
+
+    The line used to be painted with `len(_history)`, which is always zero here, so
+    a click on any message preselected the first rollback point. A position nobody
+    can know is no position: the line stays inert until the transcript is re-read
+    from the rows, which is where the real one comes from.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            positions: list[int | None] = []
+            typed: list[Any] = []
+            original = ChatLog.add_user
+
+            async def spy(self: ChatLog, text: str, **kwargs: Any) -> Any:
+                positions.append(kwargs.get('seq'))
+                widget = await original(self, text, **kwargs)
+                typed.append(widget)
+                return widget
+
+            monkeypatch.setattr(ChatLog, 'add_user', spy)
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+                app.query_one(PromptInput).value = 'hello there'
+                await pilot.press('enter')
+                await _until(pilot, lambda: bool(positions), what='the typed line')
+
+                assert positions[0] is None, 'a position this process cannot know is not zero'
+
+                typed[0].on_click()
+                await pilot.pause()
+                assert not isinstance(app.screen, RollbackScreen), 'a line with no position opens nothing'
+
+    asyncio.run(inner())
+
+
+def test_the_attached_turn_clock_ticks_while_the_service_runs_one(
+    composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The elapsed time is the turn's, and the turn is the service's.
+
+    In process the run schedules the tick that repaints the clock. Attached, no run
+    exists here, so the spinner used to sit on `0s` for the whole turn while the
+    service worked.
+    """
+
+    async def inner() -> None:
+        clock = {'now': 1000.0}
+        monkeypatch.setattr('src.ui.activity_mixin.time', SimpleNamespace(monotonic=lambda: clock['now']))
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+                assert app._client_activity_clock is None, 'an idle terminal ticks nothing'
+
+                app.set_activity(running=True, label='Thinking')
+                assert app._client_activity_clock is not None, 'an attached turn needs a clock of its own'
+
+                clock['now'] += 5
+                app.activity_tick()
+                assert '5s' in _status(app)
+
+                app.set_activity(running=False)
+                assert app._client_activity_clock is None, 'the clock goes when the turn does'
 
     asyncio.run(inner())

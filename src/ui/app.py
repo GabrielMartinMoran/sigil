@@ -320,6 +320,10 @@ class SigilApp(
         self.debug_visible = False
         self._debug_timer: Any = None
         self._debug_pending: list[Any] | None = None
+        # What `/api/context` last answered, for the debug view of an attached
+        # terminal: the session's meter lives in the service, so the report is
+        # built from this read and never from a local history this process lacks.
+        self._service_debug_context: dict[str, Any] | None = None
         # Run in progress: `checkpoint` uses it to persist turn progress.
         self._current_run: Any = None
         self._last_checkpoint_at = 0.0
@@ -327,6 +331,9 @@ class SigilApp(
         self._activity_running = False
         self._activity_label = ''
         self._turn_started_at = 0.0
+        # The attached terminal's own tick: the turn runs in the service, so nothing
+        # here schedules the repaint of the elapsed time. In process the turn owns it.
+        self._client_activity_clock: Any = None
         self._last_diff = None
         self._diff_timer: Any = None
         # A turn is accepted the moment the message is submitted, before the
@@ -744,12 +751,16 @@ class SigilApp(
             await chat.add_tool_result(
                 str(data.get('tool_name') or ''), data.get('preview') or '', ok=bool(data.get('ok', True))
             )
+            # The debug view is a projection of the turn, and the turn is this stream:
+            # with no run in this process, its events are the only refresh it gets.
+            self.refresh_debug()
         elif event.type == 'tool_finished':
             await self._paint_tool_end(data, chat)
         elif event.type == 'turn_started':
             self._turn_active = True
             await chat.begin_response()
             self.set_activity(running=True, label='Thinking')
+            self.refresh_debug()
         elif event.type == 'turn_finished':
             await self._finish_turn(data, chat)
         elif event.type == 'notice':
@@ -772,6 +783,9 @@ class SigilApp(
             await self.refresh_service_state()
         elif event.type == 'state_changed':
             await self.refresh_service_state()
+            # The state carries the model and the session the report names, so a
+            # change there is a change in what the debug view has to say.
+            self.refresh_debug()
             if str(data.get('reason') or '') == 'queue':
                 # Another client accepted a message. The event carries no text: the
                 # rows do, so this screen re-reads them instead of being told twice.

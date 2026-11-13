@@ -226,7 +226,14 @@ class CommandsMixin:
         # The prompt lands at the end of the transcript, so its position there is how
         # many messages the session has *now*. Knowing it up front is what makes the
         # line clickable before the turn has finished.
-        seq = len(self._session.messages) if self._session is not None else None
+        #
+        # Attached, nobody here can know it: the service assigns the row, and the
+        # history this process holds is empty by construction. A local
+        # `len(_history)` is always zero, and zero is a position — the first
+        # rollback point — so every click on a typed line landed on the wrong
+        # message. No position is the honest answer, and the click stays inert
+        # until the transcript is re-read from the service's rows.
+        seq = len(self._session.messages) if self._session is not None and self._client is None else None
 
         if self._turn_active:
             # Queued for the run in flight: it lands before the agent decides
@@ -236,7 +243,8 @@ class CommandsMixin:
             return
 
         await self.refresh_active_session(chat)
-        seq = len(self._history)
+        if self._client is None:
+            seq = len(self._history)
         await chat.add_user(text, attachments=attachments, seq=seq)
         self.start_turn(text, attachments=attachments)
 
@@ -532,6 +540,11 @@ class CommandsMixin:
         # The cursor restarts from the state just read: the new session has its own
         # sequence, and keeping the old number would skip whatever it publishes.
         self._service_cursor = self._state_cursor()
+        # The answered questions belong to the session that just ended, exactly as
+        # they belong to the run that ended after a restart: a new session numbers
+        # its questions from one again, and keeping `q1` would suppress a brand-new
+        # question nobody would ever be asked to answer.
+        self._service_answered.clear()
         prefix = f'Workspace: {label}. ' if label else ''
         await chat.add_notice(f'{prefix}New session {session.get("short_id") or ""}.', style='green')
 
@@ -559,6 +572,9 @@ class CommandsMixin:
         await self.refresh_service_state()
         await self.load_service_history(rebuild=True)
         self._service_cursor = self._state_cursor()
+        # Same rule as `/new`: the questions this screen answered were the previous
+        # session's, and their ids do not survive the switch.
+        self._service_answered.clear()
         # Opening a session can move the service to its workspace; the header is
         # repainted from the same state read above rather than from a local guess.
         repaint_badge = getattr(self, 'refresh_workspace_badge', None)

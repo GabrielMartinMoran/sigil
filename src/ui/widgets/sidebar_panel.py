@@ -118,7 +118,7 @@ class SidebarPanel(Vertical):
         self._store = store
         self._shown = True
         self._skills: tuple[str, ...] = ()
-        self._agent: str | None = None
+        self._subject: str | None = None
         self._servers: tuple[MCPServerState, ...] = ()
         self._mcp_known = False
         self._mcp_reported = False
@@ -191,14 +191,21 @@ class SidebarPanel(Vertical):
         self._skills_reported = reported
         self._repaint()
 
-    def update_agent(self, label: str | None) -> None:
-        """Who the panel is describing: the session's agent, or a subagent.
+    def update_subject(self, subject: str | None) -> None:
+        """Who the sections below describe: the session, or the subagent on screen.
 
         It is the first line of the column on purpose. The rest of the panel looks
         the same for a parent and its child — same model, same window shape — so
         without this line a reader cannot tell whose context they are looking at.
+
+        ``None`` is the session on its own screen: the chat and the panel show the
+        same conversation, so a line saying so would only repeat the window title.
+        Attached, the service projects the model, the context, the skills and the
+        plan of the *session* and none of them per node, so reading a subagent says
+        ``session``: naming the node over numbers that are not its own would be the
+        panel claiming a measurement it does not have.
         """
-        self._agent = label
+        self._subject = subject
         self._repaint()
 
     def update_mcp(self, servers: Sequence[MCPServerState], *, reported: bool = True) -> None:
@@ -268,8 +275,8 @@ class SidebarPanel(Vertical):
         text.append(f'{title}\n', style=f'bold {color(self, "sidebar-section")}')
 
     def _append_agent(self, text: Text) -> None:
-        """The agent the rest of the column describes."""
-        label = self._agent
+        """Who the rest of the column describes: the session, or the node on screen."""
+        label = self._subject
         if not label:
             return
         text.append('● ', style='bold yellow')
@@ -282,7 +289,7 @@ class SidebarPanel(Vertical):
         The context line lives here rather than in a section of its own because it
         is the same fact as the model: which window, and how much of it is gone.
         """
-        self._section(text, 'Model', first=not self._agent)
+        self._section(text, 'Model', first=not self._subject)
         state = self._model
         if not self._model_reported:
             text.append(f' unknown — {UNREPORTED}\n', style='dim')
