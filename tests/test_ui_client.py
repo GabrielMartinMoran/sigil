@@ -39,8 +39,16 @@ from typing import Any
 import httpx
 import pytest
 from PIL import Image
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RequestUsage
 from textual.widgets import OptionList
 
 from src.engine.agents.profile.models.agent_role import AgentRole
@@ -50,8 +58,11 @@ from src.engine.bootstrap import Composition
 from src.engine.commands import CommandOwner, owned_by
 from src.engine.interaction.models.question_item import QuestionItem
 from src.engine.interaction.models.question_option import QuestionOption
+from src.engine.mcp.config.loader import load_config
 from src.engine.mcp.deferred import build_manager
+from src.engine.mcp.manager.manager import MCPManager
 from src.engine.providers.bootstrap import ProviderPaths
+from src.engine.roadmap.models.todo_item import TodoItem
 from src.engine.sessions.session_store import Session
 from src.engine.settings import load_settings
 from src.server.app import create_app
@@ -75,6 +86,7 @@ from src.ui.service_client import (
     TurnRequest,
     Unauthorized,
 )
+from src.ui.token_format import compact_tokens
 from src.ui.tree_mixin import _nodes_from_tree
 from src.ui.turn_mixin import failure_notice, pending_request
 from src.ui.widgets.agent_tree_screen import AgentTreeScreen, TreeAction
@@ -2392,6 +2404,185 @@ def test_a_tree_change_on_the_service_repaints_the_open_list(composition: Compos
                     pilot,
                     lambda: any('Reviewer' in row for row in _rows(screen)),
                     what='the new row in the open list',
+                )
+
+    asyncio.run(inner())
+
+
+# --- the sidebar, fed by the service projection ------------------------------
+
+
+def _loaded_skill(name: str = 'clean-code') -> list[ModelRequest | ModelResponse]:
+    """The pair of parts that records one successful `load_skill`."""
+    return [
+        ModelResponse(parts=[ToolCallPart(tool_name='load_skill', args={'name': name}, tool_call_id='load-1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='load_skill', content='ok', tool_call_id='load-1')]),
+    ]
+
+
+class _StateWithoutSections(httpx.AsyncBaseTransport):
+    """The real service, with named sections removed from `/api/state`.
+
+    A service that stops projecting a section is the case the panel has to
+    survive: the key is absent, not empty, and the screen must say so instead of
+    inventing a zero. Removing keys here is the smallest way to produce that
+    reply without teaching the service a test-only mode.
+    """
+
+    def __init__(self, inner: httpx.AsyncBaseTransport, *sections: str) -> None:
+        self._inner = inner
+        self._sections = frozenset(sections)
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        response = await self._inner.handle_async_request(request)
+        if request.url.path != '/api/state' or not self._sections:
+            return response
+        body = json.loads(await response.aread())
+        for section in self._sections:
+            body.pop(section, None)
+        return httpx.Response(200, json=body)
+
+
+def test_the_attached_sidebar_paints_the_context_the_service_measured(composition: Composition, tmp_path: Path) -> None:
+    """`/api/context` is the only measurement of this session; the panel shows it.
+
+    The terminal has no history of its own in attached mode, so a percentage
+    computed here would be a second opinion about a conversation the service owns.
+    """
+
+    async def inner() -> None:
+        composition.session.messages.append(
+            ModelResponse(
+                parts=[TextPart('ok')],
+                usage=RequestUsage(input_tokens=30_000, output_tokens=100),
+                model_name='claude-sonnet-4-5',
+                provider_details={'cost': 0.042},
+            )
+        )
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            payload = await client.context()
+            expected = f'context: {payload["percent"]:.0f}%'
+            pair = f'({compact_tokens(payload["used"])} / {compact_tokens(payload["window"])})'
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(120, 40)) as pilot:
+                await _until(
+                    pilot,
+                    lambda: expected in app.query_one(SidebarPanel).text,
+                    what='the context the service measured',
+                )
+                text = app.query_one(SidebarPanel).text
+                assert pair in text
+                assert 'cost: $0.04' in text
+
+    asyncio.run(inner())
+
+
+def test_the_attached_sidebar_paints_skills_mcp_and_model_from_the_state(
+    composition: Composition, tmp_path: Path
+) -> None:
+    """Three sections, three projections, none of them read locally.
+
+    The session's transcript is the service's, the MCP layer is the service's and
+    the active model is the service's. The panel reads all three from `/api/state`.
+    """
+    config = tmp_path / 'mcp.json'
+    config.write_text(json.dumps({'mcp_servers': {'github': {'command': 'npx'}}}), encoding='utf-8')
+    composition.mcp.install(MCPManager(load_config([config], environ={}).servers))
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            runtime.session.messages.extend(_loaded_skill())
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(120, 40)) as pilot:
+                await _until(
+                    pilot,
+                    lambda: 'clean-code' in app.query_one(SidebarPanel).text,
+                    what='the skill the transcript recorded',
+                )
+                await _until(
+                    pilot,
+                    lambda: 'MCP (1)' in app.query_one(SidebarPanel).text,
+                    what='the MCP server the service projects',
+                )
+                text = app.query_one(SidebarPanel).text
+                assert 'github' in text
+                assert 'work' in text
+                assert 'first/model' in text
+
+    asyncio.run(inner())
+
+
+def test_a_section_the_service_omits_is_painted_as_unknown(composition: Composition, tmp_path: Path) -> None:
+    """An absent section is not an empty one, and not a zero.
+
+    `none yet`, `No tasks yet.` and `not configured` are claims. Without the key
+    the panel cannot make any of them, so it names the gap.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, transport, _client):
+            client = ServiceClient(
+                SERVICE,
+                transport=_StateWithoutSections(transport, 'model', 'skills', 'mcp', 'roadmap'),
+            )
+            try:
+                app = _terminal(client, _session(runtime))
+                async with app.run_test(size=(120, 40)) as pilot:
+                    await _until(pilot, lambda: app._service_state is not None, what='the state')
+                    await _until(
+                        pilot,
+                        lambda: app.query_one(SidebarPanel).text.count('the service did not report it') >= 4,
+                        what='the four sections the service omitted',
+                    )
+                    text = app.query_one(SidebarPanel).text
+                    assert 'none yet' not in text
+                    assert 'No tasks yet.' not in text
+                    assert 'not configured' not in text
+            finally:
+                await client.aclose()
+
+    asyncio.run(inner())
+
+
+def test_the_attached_sidebar_shows_the_roadmap_the_service_kept(composition: Composition, tmp_path: Path) -> None:
+    """The plan is a row of the service's database, not a file this process reads."""
+    composition.roadmap_store.root.set_items([TodoItem(title='Ship the panel', status='in_progress')])
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(120, 40)) as pilot:
+                await _until(
+                    pilot,
+                    lambda: 'Ship the panel' in app.query_one(SidebarPanel).text,
+                    what='the plan the service kept',
+                )
+                text = app.query_one(SidebarPanel).text
+                assert 'Roadmap' in text
+                assert '▶ Ship the panel' in text
+
+    asyncio.run(inner())
+
+
+def test_state_changed_repaints_the_attached_sidebar(composition: Composition, tmp_path: Path) -> None:
+    """The existing event is the refresh: no timer, no polling, no sleep."""
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(120, 40)) as pilot:
+                await _until(
+                    pilot,
+                    lambda: 'No tasks yet.' in app.query_one(SidebarPanel).text,
+                    what='the empty plan at mount',
+                )
+                composition.roadmap_store.root.set_items([TodoItem(title='Repaint on the event', status='pending')])
+                runtime.hub.publish_state('roadmap')
+
+                await _until(
+                    pilot,
+                    lambda: 'Repaint on the event' in app.query_one(SidebarPanel).text,
+                    what='the plan after `state_changed`',
                 )
 
     asyncio.run(inner())

@@ -1222,19 +1222,59 @@ Three things, and none of them can execute a turn:
 - **Preferences and themes** are this client's own: they describe the window, not
   the conversation.
 - **The agent profiles and the roadmap** are files and rows it reads exactly as the
-  service does, for the panels that have not moved. The roadmap is where that goes
-  past reading: the terminal opens its own `RoadmapStore` through `RoadmapStores`
-  and writes to it, so the plan on screen is the file this process owns, not a
-  projection of the service's.
-- **A `_store` stand-in** (`_ServiceOwnedSession`) answers the one question the
-  composer asks before sending — *is anything newer than my copy?* — with the truth
-  for an attached terminal: there is no local copy, and the service is the only
-  writer of the **session and its queue**. It offers nothing else on purpose; a
-  local write to the conversation is the second executor this cut removes.
+  service does, for the panels that have not moved. `src/sigil.py` still builds a
+  `RoadmapStores` for the attached terminal, because other panels and commands keep
+  using it, but the sidebar no longer reads it: the plan on screen is the service's
+  projection. The reason is below, under *Where the sidebar reads each section*.
 
-The model service is **not** among them. Building it is building an engine, so the
-sidebar's model and context sections stay empty in an attached terminal until their
-own cut paints them from the state.
+The model service is **not** among them. Building it is building an engine, so no
+part of the attached terminal constructs one.
+
+### Where the sidebar reads each section
+
+Attached, the sidebar paints the service's projection and measures nothing itself.
+`refresh_sidebar` branches on `self._client is None`: the in-process path below is
+untouched, and the attached path reads `_service_state` plus one meter route.
+
+| Section | Source in attached mode | What is *not* done |
+| --- | --- | --- |
+| Model | `state['model']`: `account.alias`, `account.kind`, `model`, `thinking` | no `ModelService` is built; the route does not project an auth label, so the panel does not show one |
+| Context and cost | `GET /api/context` through `ServiceClient.context()`, after `_apply_service_state` | no local `ContextMeter`; the terminal's history is empty by construction |
+| Loaded skills | `state['skills']`, derived by the service from its own transcript | no `viewed_skills()` over a transcript this process does not have |
+| MCP | `state['mcp']['servers']`, keeping `enabled` entries with `ok = not error` | no probe: connecting here would open a second set of subprocesses |
+| Roadmap | `state['roadmap']`, the root execution's plan | no `RoadmapStore` |
+
+Two rules decide what a gap looks like:
+
+- **Absent is unknown, never zero.** A key the projection does not carry is painted
+  `unknown — the service did not report it`. `none yet`, `No tasks yet.`, `not
+  configured` and `0%` are claims about a session; a missing key supports none of
+  them.
+- **A zero that the service sent is real.** A cold session with a known window
+  answers `percent: 0.0`, and the panel paints `0%`. `mcp.loading: true` is the
+  exception on the other side: the layer has not answered yet, so it is treated as
+  not reported rather than as an empty list.
+
+The plan is read from the projection instead of the terminal's own
+`RoadmapStores` for one reason. `RoadmapStore` loads its rows once, in its
+constructor (`src/engine/roadmap/store.py`), and only `reload()` or `bind()`
+refreshes them; `RoadmapStores.for_node` caches the store per node. The service
+writes the plan through its own store (`src/engine/bootstrap.py`) and projects it in
+`/api/state`, and nothing in the attached terminal subscribes to those writes. The
+local copy is therefore a photograph taken at mount: showing it would be showing
+frozen rows without saying so. The service's copy is the only one that moves.
+
+Repainting needs no timer. `apply_service_event` already routes `state_changed` to
+`refresh_service_state`, which applies the state and calls `refresh_sidebar`, and
+`on_mount` takes the same path through its first `refresh_service_state`. The
+context line is the one asynchronous read, on an exclusive worker
+(`sidebar-context`), so a newer measurement replaces an older one instead of
+queueing behind it.
+
+The cost mark this mode cannot reproduce is `+`. `/api/context` projects `total`,
+`approximate` and `requests`, but not the `unpriced`/`unmeasured` counts that make a
+total a floor; the panel shows the amount without inventing the mark. Widening the
+route is the fix if that mark is wanted, not guessing it here.
 
 ### The test seam, and why it is allowed to exist
 

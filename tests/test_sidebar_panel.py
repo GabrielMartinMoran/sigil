@@ -24,6 +24,7 @@ from src.engine.mcp.config.loader import load_config
 from src.engine.mcp.manager.manager import MCPManager
 from src.engine.roadmap.models.todo_item import TodoItem
 from src.engine.roadmap.store import RoadmapStore
+from src.engine.roadmap.stores import RoadmapStores
 from src.engine.sessions.session_store import SessionStore
 from src.ui.app import SigilApp
 from src.ui.sidebar_mixin import SidebarMixin
@@ -209,6 +210,57 @@ def test_the_roadmap_is_the_last_section_of_the_panel(tmp_path):
 def test_the_panel_without_a_store_does_not_announce_a_roadmap():
     """No store, no plan: the section stays away instead of reading `No roadmap.`"""
     assert 'Roadmap' not in _panel()._build().plain
+
+
+def test_a_section_the_service_did_not_report_says_unknown():
+    """Attached, an absent section is a gap, not an empty one.
+
+    `none yet`, `No tasks yet.` and `not configured` are all claims about the
+    session. A projection that does not carry a section makes none of them, so the
+    panel says the service did not report it instead of painting a zero or an
+    empty list the service never asserted.
+    """
+    panel = _configured()
+    panel.update_model(None, reported=False)
+    panel.update_skills((), reported=False)
+    panel.update_mcp((), reported=False)
+    panel.update_roadmap(None)
+
+    text = panel._build().plain
+    assert text.count('the service did not report it') == 4
+    assert 'none yet' not in text
+    assert 'No tasks yet.' not in text
+    assert 'not configured' not in text
+
+
+def test_the_roadmap_the_service_projects_wins_over_a_local_store(tmp_path):
+    """One plan, and the service owns it.
+
+    The local store reads the same SQLite file once, at construction. The service
+    writes that file through its own store, so the local copy is a snapshot taken
+    at mount and never refreshed: two sources for one plan, and the stale one on
+    screen. The projection is the only copy that moves.
+    """
+    store = RoadmapStore(base_dir=tmp_path)
+    store.set_items([TodoItem(title='Local plan', status='pending')])
+    panel = SidebarPanel(store)
+
+    panel.update_roadmap([TodoItem(title='Service plan', status='in_progress')])
+
+    text = panel._build().plain
+    assert 'Service plan' in text
+    assert 'Local plan' not in text
+
+
+def test_an_empty_projection_is_no_tasks_and_not_unknown():
+    """An empty list is a fact the service asserted: the plan is empty."""
+    panel = _panel()
+    panel.update_roadmap([])
+
+    text = panel._build().plain
+    assert 'Roadmap' in text
+    assert 'No tasks yet.' in text
+    assert 'did not report' not in text
 
 
 def test_the_workspace_is_not_repeated_in_the_panel():
@@ -464,3 +516,32 @@ def test_project_name_appears_at_the_start_of_status_bar():
     assert bar.plain().startswith('sigil  ·  wizard')
     bar.show('Press Esc to cancel')
     assert bar.plain().startswith('sigil  ·  wizard')
+
+
+def test_the_in_process_sidebar_still_reads_its_local_plan(tmp_path):
+    """No client: the panel keeps reading this process's own store, untouched.
+
+    The attached path is additive. An app built with an agent and a store has no
+    service to ask, and its roadmap, its history and its meter are the truth it
+    already has.
+    """
+
+    async def inner():
+        store = SessionStore(cwd=str(tmp_path), base_dir=tmp_path / 'sessions')
+        session = store.create_session()
+        roadmaps = RoadmapStores(session.id, base_dir=tmp_path)
+        roadmaps.root.set_items([TodoItem(title='Local plan', status='in_progress')])
+        app = SigilApp(
+            agent=Agent(TestModel(custom_output_text='ok'), instructions='x'),
+            store=store,
+            session=session,
+            roadmap_store=roadmaps,
+        )
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            panel = app.query_one(SidebarPanel)
+            assert app._client is None
+            assert 'Local plan' in panel.text
+            assert 'the service did not report it' not in panel.text
+
+    asyncio.run(inner())
