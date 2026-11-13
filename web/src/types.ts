@@ -28,6 +28,22 @@ export type TranscriptItem = {
   summary?: { text: string; status: 'good' | 'bad' | 'neutral' } | null;
 };
 
+/**
+ * One window of the transcript: the items, the absolute position the page starts at,
+ * and whether anything older exists. `first_index` doubles as the `before` cursor for
+ * the page above it, and `pending` arrives on the newest page only — a row waiting in
+ * the queue is not history and has no place in a chunk.
+ */
+export type TranscriptPage = {
+  session: SessionView;
+  items: TranscriptItem[];
+  first_index: number;
+  has_more: boolean;
+  total: number;
+  skills: string[];
+  pending: DurableEntry[];
+};
+
 export type SessionView = {
   id: string;
   short_id: string;

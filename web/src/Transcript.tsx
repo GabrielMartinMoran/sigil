@@ -4,6 +4,7 @@ import { MarkdownText } from './Markdown';
 import { Tools } from './Tools';
 import { transcriptBlocks } from './toolPresentation';
 import { durableSections, useStore } from './store';
+import { BOTTOM_REACH, wantsNewestWindow, wantsOlderPage } from './transcriptWindow';
 import type { Attachment, DurableEntry, DurableSession, TranscriptItem } from './types';
 
 /**
@@ -29,16 +30,44 @@ import type { Attachment, DurableEntry, DurableSession, TranscriptItem } from '.
 export function Transcript({ items }: { items: TranscriptItem[] }) {
   const container = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  /**
+   * Where the reader was when an older page was asked for.
+   *
+   * The insertion lands above the viewport, so the scroll has to be moved by exactly
+   * the height it added: `scrollHeight - (height - top)` puts the same row back on the
+   * same screen line. `firstIndex` is part of the record so a request that never
+   * arrived — a failure, or a window that was refetched instead — cannot apply a
+   * stale adjustment later.
+   */
+  const pending = useRef<{ height: number; top: number; firstIndex: number } | null>(null);
+  const reloading = useRef(false);
   const durable = useStore((store) => store.durable);
   const busy = useStore((store) => store.busy);
   const openRecovery = useStore((store) => store.openRecovery);
+  const firstIndex = useStore((store) => store.firstIndex);
 
   useEffect(() => {
     const node = container.current;
     if (node === null) return;
     const onScroll = () => {
       const distance = node.scrollHeight - node.scrollTop - node.clientHeight;
-      stick.current = distance < 80;
+      stick.current = distance < BOTTOM_REACH;
+      const state = useStore.getState();
+      if (wantsOlderPage(node.scrollTop, state.hasMore, state.loadingOlder)) {
+        pending.current = { height: node.scrollHeight, top: node.scrollTop, firstIndex: state.firstIndex };
+        void state.loadOlder();
+      } else if (wantsNewestWindow(distance, state) && !reloading.current) {
+        // A page was let go below this reader and the route pages backwards only, so
+        // the newest window is asked for again. Not a new cursor: the same read the
+        // screen opened with.
+        reloading.current = true;
+        void state
+          .refetchTranscript()
+          .catch(() => undefined)
+          .finally(() => {
+            reloading.current = false;
+          });
+      }
     };
     node.addEventListener('scroll', onScroll, { passive: true });
     return () => node.removeEventListener('scroll', onScroll);
@@ -46,8 +75,18 @@ export function Transcript({ items }: { items: TranscriptItem[] }) {
 
   useEffect(() => {
     const node = container.current;
-    if (node !== null && stick.current) node.scrollTop = node.scrollHeight;
-  }, [items]);
+    if (node === null) return;
+    const held = pending.current;
+    if (held !== null && held.firstIndex !== firstIndex) {
+      // A page arrived above: keep the line the reader was on where it was.
+      pending.current = null;
+      node.scrollTop = node.scrollHeight - (held.height - held.top);
+      return;
+    }
+    if (stick.current) node.scrollTop = node.scrollHeight;
+    // Report where the reader is, so an eviction lets go of the page furthest away.
+    useStore.getState().setReading(readingPosition(node));
+  }, [items, firstIndex]);
 
   return (
     <div ref={container} className="scroll-thin flex-1 overflow-y-auto">
@@ -75,6 +114,23 @@ export function Transcript({ items }: { items: TranscriptItem[] }) {
 
 function entryLine(entry: DurableEntry) {
   return `#${entry.sequence} · ${entry.kind} · ${entry.state} · ${entry.text}`;
+}
+
+/**
+ * Where the reader is, as a position in the mounted items.
+ *
+ * Read from the scroll geometry, because the store cannot see the screen. It is an
+ * estimate between the ends and exact at both of them — which is what the eviction
+ * decision actually needs: a reader at the top drops the newest page, a reader at the
+ * bottom drops the page at the top, and a reader in between keeps whichever page they
+ * are inside. Pages hold the same number of items, so an estimate a page off still
+ * answers with the page furthest away.
+ */
+function readingPosition(node: HTMLDivElement): number {
+  const room = node.scrollHeight - node.clientHeight;
+  if (room <= 0) return 0;
+  const fraction = Math.min(Math.max(node.scrollTop / room, 0), 1);
+  return Math.round(fraction * 1000);
 }
 
 function DurableSections({

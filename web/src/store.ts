@@ -12,6 +12,7 @@ import { create } from 'zustand';
 import { ApiError, api, Unauthorized } from './api';
 import { finishTool } from './toolPresentation';
 import type { ToolView } from './toolPresentation';
+import { TRANSCRIPT_WINDOW, emptyWindow, newestWindow, withOlderPage } from './transcriptWindow';
 import type {
   DurableEntry,
   DurableSession,
@@ -41,7 +42,28 @@ type Store = {
   notice: string;
 
   state: State | null;
+  /** The mounted window of the conversation, newest page first mounted. */
   items: TranscriptItem[];
+  /** Absolute position of `items[0]`: the `before` cursor for the page above it. */
+  firstIndex: number;
+  /** Whether the service says anything older exists. */
+  hasMore: boolean;
+  /** Item count of each mounted page, in screen order. */
+  pages: number[];
+  /** Items in the whole transcript: whether the window still ends at the end. */
+  total: number;
+  /**
+   * Where the reader is, as a position in `items`.
+   *
+   * It decides which page an eviction lets go: the one furthest from here. The
+   * transcript component reports it on scroll, because only the DOM knows what is on
+   * screen — the store cannot and should not guess.
+   */
+  reading: number;
+  /** One older page at a time, so a scroll that fires twice is still one read. */
+  loadingOlder: boolean;
+  /** Reports where the reader is, so an eviction can drop the page furthest away. */
+  setReading: (position: number) => void;
   durable: DurableSession | null;
   pendingSend: { requestId: string; text: string } | null;
   stream: Stream;
@@ -56,6 +78,7 @@ type Store = {
 
   refresh: () => Promise<void>;
   refetchTranscript: () => Promise<void>;
+  loadOlder: () => Promise<void>;
   refreshDurable: () => Promise<void>;
   openRecovery: (id: string) => Promise<void>;
   loadSessions: () => Promise<void>;
@@ -121,7 +144,9 @@ export const useStore = create<Store>((set, get) => ({
   error: '',
   notice: '',
   state: null,
-  items: [],
+  ...emptyWindow(),
+  reading: 0,
+  loadingOlder: false,
   durable: null,
   pendingSend: null,
   stream: emptyStream(),
@@ -163,7 +188,15 @@ export const useStore = create<Store>((set, get) => ({
 
   async logout() {
     await api.logout().catch(() => undefined);
-    set({ phase: 'login', state: null, items: [], stream: emptyStream(), error: '', notice: '' });
+    set({
+      phase: 'login',
+      state: null,
+      ...emptyWindow(),
+      loadingOlder: false,
+      stream: emptyStream(),
+      error: '',
+      notice: '',
+    });
   },
 
   async refresh() {
@@ -172,15 +205,49 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   async refetchTranscript() {
-    const body = await api.transcript();
-    set({ items: body.items, stream: emptyStream() });
+    // One window, not the whole conversation: a session of thousands of messages is
+    // the reason this route pages at all.
+    const page = await api.transcript(TRANSCRIPT_WINDOW);
+    set({ ...newestWindow(page), loadingOlder: false, stream: emptyStream() });
     void get().refreshDurable();
+  },
+
+  async loadOlder() {
+    const { hasMore, loadingOlder, firstIndex, items, total, pages, reading } = get();
+    // `hasMore` is the service's answer, not a guess: at the start of a conversation
+    // it stays false and nothing here asks again.
+    if (!hasMore || loadingOlder || items.length === 0) return;
+    set({ loadingOlder: true });
+    try {
+      const page = await api.transcript(TRANSCRIPT_WINDOW, firstIndex);
+      // `reading` decides which page leaves when the window is over its bound: the one
+      // furthest from where the reader actually is, not always the newest one.
+      set({
+        ...withOlderPage({ items, firstIndex, total, hasMore, pages }, page, reading),
+        loadingOlder: false,
+      });
+    } catch (error) {
+      set({ loadingOlder: false, notice: report(error) });
+    }
+  },
+
+  setReading(position) {
+    if (get().reading === position) return;
+    set({ reading: position });
   },
 
   async refreshDurable() {
     try {
       set({ durable: await api.durable() });
     } catch (error) {
+      // A draft session has no row to project, and the service says so with a typed
+      // 404. That is "nothing yet", a normal state — not a failure to report. What
+      // must not survive it is the overlay: leaving the previous conversation's queue
+      // and recoveries painted over an empty one is a lie about this session.
+      if (error instanceof ApiError && error.status === 404) {
+        set({ durable: null });
+        return;
+      }
       set({ notice: report(error) });
     }
   },
@@ -243,7 +310,7 @@ export const useStore = create<Store>((set, get) => ({
   async newSession() {
     try {
       await api.newSession();
-      set({ items: [], stream: emptyStream() });
+      set({ ...emptyWindow(), loadingOlder: false, stream: emptyStream() });
       await get().refresh();
       await get().loadSessions();
     } catch (error) {
@@ -273,7 +340,7 @@ export const useStore = create<Store>((set, get) => ({
   async switchWorkspace(root) {
     try {
       await api.switchWorkspace(root);
-      set({ items: [], stream: emptyStream() });
+      set({ ...emptyWindow(), loadingOlder: false, stream: emptyStream() });
       await get().refresh();
       await get().refetchTranscript();
       await Promise.all([get().loadSessions(), get().loadWorkspaces()]);

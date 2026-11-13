@@ -365,7 +365,10 @@ Pending means accepted or claimed without a delivery fact; delivered/finished ro
 never reappear there and are read from the transcript. A deleted recovery copy is
 reported unavailable without a broken link, and conflicted entries are kept
 separate from the current transcript. Live deltas are not mixed into this read.
-The web client is unchanged and not part of this slice.
+A session that exists only in memory has no row to project, and the read answers
+that with a typed `404` — "nothing yet", not a failure. The web client treats it
+as the normal state it is: it clears the overlay instead of leaving the previous
+conversation's queue painted over an empty one, and says nothing about it.
 
 ### A turn that is waiting says so
 
@@ -447,9 +450,9 @@ call it: `views.pending_rows` for the newest page and `views.durable_session` fo
 consumer therefore cannot be told different things about one waiting message.
 
 Compatibility is deliberate: without `limit` the answer is the whole transcript
-with `first_index` 0 and `has_more` false, which is what the web client still asks
-for. The window size — 100 items — is the client's decision to send when it
-migrates, not a default the service imposes. An unusable `limit` or `before` is a
+with `first_index` 0 and `has_more` false, which is what a client that has not
+migrated still gets. The window size — 100 items — is the client's decision to
+send, not a default the service imposes. An unusable `limit` or `before` is a
 `400` with a sentence: a limit that is not a positive whole number or is above
 `MAX_TRANSCRIPT_PAGE` (1000), a cursor that is not a non-negative whole number.
 
@@ -478,6 +481,47 @@ only unmounted. See `tests/test_ui_client.py` for the seven cases: the window a 
 session mounts, the cursor a scroll asks for, the row that does not move, the second
 page, the bound, the click that still names its turn, and the end of the
 conversation.
+
+The web client is the second, and it holds the same bound with a different
+mechanism. `web/src/transcriptWindow.ts` is the whole rule, as pure functions over
+plain data: `newestWindow` makes the newest page the window, `withOlderPage`
+prepends the page above with its cursor, `reachesEnd` answers whether the bottom of
+the window is still the end of the conversation, and `wantsOlderPage` and
+`wantsNewestWindow` decide when a scroll event has earned a read. It is pure so the
+rule is testable without a store, a request or a DOM — `web/src/transcriptWindow.test.ts`
+pins both eviction directions and both triggers. The store keeps the window in
+`items` plus the `firstIndex` cursor, the page sizes, the `total` and the reader's
+position, and `web/src/Transcript.tsx` only reports what only the DOM knows: where
+the scroll is, and when it reached an edge. The size is `TRANSCRIPT_WINDOW` (100),
+mirroring `DEFAULT_TRANSCRIPT_WINDOW`, because the web client has no settings
+surface of its own.
+
+The reading position is what an eviction is measured against, and that is the
+difference from a window that simply keeps the newest page. `withOlderPage` computes
+the distance from the reader to the nearest edge of each mounted page and lets go of
+the furthest one — the page held longest when the reader is at the top, and the page
+at the top when they have come back down and kept reading lower. Ties go to the
+front, because the top of the window is the side a cursor can walk back into. The
+streaming block and the queue's waiting rows belong to no page: they are painted
+from the store's `stream` and from the durable read, never from `items`, so a page
+that leaves cannot take either with it.
+
+What leaves the bottom has to come back a different way, because the route pages
+backwards only: there is no `after` cursor. So when the reader reaches the bottom of
+a window that no longer ends at the end of the conversation — `reachesEnd` false —
+the client asks for the newest window again with the same read the screen opened
+with, `refetchTranscript()`, rather than inventing a forward cursor. Between the two
+edges the screen holds at most `MAX_MOUNTED_PAGES` (3) pages: at most 300 items of a
+conversation that may hold thousands, and no read of the whole thing at any point.
+
+An insertion above the viewport moves the scroll by exactly the height it added:
+the component records `scrollHeight` and `scrollTop` before asking and, once the
+window has grown, restores `scrollHeight - (height - top)` — the same row on the
+same screen line. What a reader was reading does not move, and the auto-scroll that
+follows a streaming turn is only applied to a reader who was already at the bottom.
+The scroll wiring itself is not automated: this repository has no DOM test
+environment, so `Transcript.tsx` is covered by the pure predicates it calls and by
+review, and the comparison is made by hand in a browser.
 
 ### The turn command
 

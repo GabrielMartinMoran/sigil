@@ -10,6 +10,8 @@ let calls: Call[] = [];
 let failTurn = false;
 let durableBody: DurableSession = emptyDurable();
 let durableCalls = 0;
+let durableStatus = 200;
+let durableError = 'Session not stored.';
 
 function entry(request_id: string, sequence: number, state: DurableEntry['state'], delivered = false): DurableEntry {
   return {
@@ -44,6 +46,8 @@ function reset(): void {
   durableCalls = 0;
   failTurn = false;
   durableBody = emptyDurable();
+  durableStatus = 200;
+  durableError = 'Session not stored.';
   useStore.setState({
     items: [],
     durable: null,
@@ -66,10 +70,18 @@ function reset(): void {
     }
     if (path === '/api/session/durable') {
       durableCalls++;
+      if (durableStatus !== 200) {
+        return Promise.resolve(new Response(JSON.stringify({ error: durableError }), { status: durableStatus }));
+      }
       return Promise.resolve(new Response(JSON.stringify(durableBody), { status: 200 }));
     }
-    if (path === '/api/session/transcript') {
-      return Promise.resolve(new Response(JSON.stringify({ items: [], skills: [] }), { status: 200 }));
+    if (path.startsWith('/api/session/transcript')) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ items: [], first_index: 0, has_more: false, total: 0, skills: [], pending: [] }),
+          { status: 200 },
+        ),
+      );
     }
     return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
   };
@@ -149,12 +161,25 @@ void test('stopped, interrupted and recovery availability are exposed', async ()
 });
 
 void test('a duplicate acceptance does not make the client busy', async () => {
-  globalThis.fetch = () =>
-    Promise.resolve(
+  globalThis.fetch = (input: RequestInfo | URL) => {
+    const path = typeof input === 'string' ? input : input instanceof URL ? input.pathname : '';
+    if (path.startsWith('/api/session/transcript')) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ items: [], first_index: 0, has_more: false, total: 0, skills: [], pending: [] }),
+          { status: 200 },
+        ),
+      );
+    }
+    if (path === '/api/session/durable') {
+      return Promise.resolve(new Response(JSON.stringify(emptyDurable()), { status: 200 }));
+    }
+    return Promise.resolve(
       new Response(JSON.stringify({ accepted: 'turn', request_id: 'id', duplicate: true, state: 'finished' }), {
         status: 200,
       }),
     );
+  };
   assert.equal(await useStore.getState().send('again'), true);
   assert.equal(useStore.getState().busy, false);
 });
@@ -222,4 +247,36 @@ void test('a delivered interrupted entry is only in the recovery section', () =>
     sections.conflicted.some((item) => item.request_id === 'recovered'),
     true,
   );
+});
+
+void test('a typed 404 from the durable read clears the overlay and reports nothing', async () => {
+  // The session has a row for a while: the overlay is painted.
+  durableBody = { ...emptyDurable(), pending: [entry('pending', 1, 'accepted')] };
+  await useStore.getState().refreshDurable();
+  assert.equal(useStore.getState().durable?.pending.length, 1);
+
+  // Then the conversation becomes a draft with no stored row. That is a normal state,
+  // not a failure: the old overlay must go, and nothing may be painted about it.
+  durableStatus = 404;
+  await useStore.getState().refreshDurable();
+
+  assert.equal(useStore.getState().durable, null);
+  assert.equal(useStore.getState().notice, '');
+  assert.equal(useStore.getState().error, '');
+  assert.equal(durableCalls, 2, 'the 404 was read, not skipped');
+});
+
+void test('any other failure of the durable read is still reported', async () => {
+  durableBody = { ...emptyDurable(), pending: [entry('pending', 1, 'accepted')] };
+  await useStore.getState().refreshDurable();
+  assert.equal(useStore.getState().durable?.pending.length, 1);
+
+  // A broken server is not "nothing yet": it is worth a sentence, and it must not pass
+  // itself off as a draft by quietly clearing what the screen is showing.
+  durableStatus = 500;
+  durableError = 'the database is locked';
+  await useStore.getState().refreshDurable();
+
+  assert.equal(useStore.getState().notice, 'the database is locked');
+  assert.equal(useStore.getState().durable?.pending.length, 1);
 });

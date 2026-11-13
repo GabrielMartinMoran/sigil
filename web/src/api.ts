@@ -15,7 +15,7 @@ import type {
   SessionSummary,
   SessionView,
   State,
-  TranscriptItem,
+  TranscriptPage,
 } from './types';
 
 export class Unauthorized extends Error {
@@ -77,8 +77,13 @@ export const api = {
   login: (password: string) => post<{ ok: true }>('/api/login', { password }),
   logout: () => post<{ ok: true }>('/api/logout'),
 
-  transcript: () =>
-    request<{ session: SessionView; items: TranscriptItem[]; skills: string[] }>('/api/session/transcript'),
+  transcript: (limit?: number, before?: number) => {
+    const query = new URLSearchParams();
+    if (limit !== undefined) query.set('limit', String(limit));
+    if (before !== undefined) query.set('before', String(before));
+    const search = query.toString();
+    return request<TranscriptPage>(`/api/session/transcript${search ? `?${search}` : ''}`);
+  },
   sessions: () => request<{ current: string; sessions: SessionSummary[] }>('/api/sessions'),
   workspaces: () => request<{ repositories: RepositoryGroup[] }>('/api/workspaces'),
 
