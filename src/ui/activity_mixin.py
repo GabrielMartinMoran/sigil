@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 from typing import Any
 
 from textual import work
@@ -30,10 +31,14 @@ DIFF_REFRESH_INTERVAL = 1.5
 class ActivityMixin:
     """Keeps the status bar honest.
 
-    It expects the app to define ``_workspace_manager`` and ``_current_run``.
+    It expects the app to define ``_current_run`` and either ``_workspace_manager``
+    (in-process) or ``_service_state`` (attached). The two are exclusive: the
+    terminal composes no workspace manager when the service owns the workspace, and
+    an attached terminal that read a local manager would paint a place it is not in.
     """
 
     _workspace_manager: Any
+    _service_state: dict[str, Any] | None
     _current_run: Any
 
     # --- activity -----------------------------------------------------------
@@ -73,25 +78,52 @@ class ActivityMixin:
     # --- workspace ----------------------------------------------------------
 
     def workspace_badge(self) -> WorkspaceBadge | None:
-        """The worktree and branch the agent is working on."""
+        """The worktree and branch the agent is working on.
+
+        In-process the manager answers; attached, the service's projection does.
+        No projection yet means no badge: a worktree the terminal invented from a
+        local path would be a second truth about where the conversation runs.
+        """
         manager = getattr(self, '_workspace_manager', None)
-        if manager is None:
+        if manager is not None:
+            workspace = manager.current()
+            return WorkspaceBadge(
+                label=workspace.label,
+                branch=workspace.branch,
+                is_worktree=workspace.is_worktree,
+            )
+        reported = self._reported_workspace()
+        if reported is None:
             return None
-        workspace = manager.current()
+        branch = reported.get('branch')
         return WorkspaceBadge(
-            label=workspace.label,
-            branch=workspace.branch,
-            is_worktree=workspace.is_worktree,
+            label=str(reported.get('label') or ''),
+            branch=str(branch) if isinstance(branch, str) else None,
+            is_worktree=bool(reported.get('is_worktree')),
         )
+
+    def _reported_workspace(self) -> dict[str, Any] | None:
+        """The workspace the service says it is running in, when it has said."""
+        state = getattr(self, '_service_state', None) or {}
+        workspace = state.get('workspace') if isinstance(state, dict) else None
+        return workspace if isinstance(workspace, dict) else None
 
     def refresh_workspace_badge(self) -> None:
         try:
             bar = self.query_one(StatusBar)
         except Exception:  # noqa: BLE001
             return
-        manager = getattr(self, '_workspace_manager', None)
-        bar.set_project(manager.root.name if manager is not None else '')
+        bar.set_project(self._project_name())
         bar.set_workspace(self.workspace_badge())
+
+    def _project_name(self) -> str:
+        """The project the bar names: the manager's root, or the service's own."""
+        manager = getattr(self, '_workspace_manager', None)
+        if manager is not None:
+            return manager.root.name
+        reported = self._reported_workspace()
+        root = (reported or {}).get('root')
+        return Path(str(root)).name if root else ''
 
     # --- diff ---------------------------------------------------------------
 
@@ -124,10 +156,13 @@ class ActivityMixin:
             return
 
     def _workspace_root(self) -> str | None:
+        """The tree to diff: the manager's root, or the one the service reports."""
         manager = getattr(self, '_workspace_manager', None)
-        if manager is None:
-            return None
-        return str(manager.root)
+        if manager is not None:
+            return str(manager.root)
+        reported = self._reported_workspace()
+        root = (reported or {}).get('root')
+        return str(root) if root else None
 
     @property
     def last_diff(self) -> DiffStat | None:

@@ -548,17 +548,24 @@ def _jsonable(value: Any) -> Any:
 
 
 def model_view(snapshot: Any) -> dict[str, Any]:
-    """The active model, its window and the effort levels it accepts."""
+    """The active model, its window and the effort levels it accepts.
+
+    ``images`` is ``None`` while no model is configured: `ModelSnapshot` defaults it
+    to true, which is a harmless default inside the process that owns the model but
+    a false fact once it crosses the boundary. A client that cannot know has to be
+    able to say "unknown" instead of accepting an image the provider will refuse.
+    """
+    configured = bool(getattr(snapshot, 'is_configured', False))
     account = getattr(snapshot, 'account', None)
     return {
-        'configured': bool(getattr(snapshot, 'is_configured', False)),
+        'configured': configured,
         'account': None if account is None else {'id': account.id, 'alias': account.alias, 'kind': str(account.kind)},
         'model': _text(getattr(snapshot, 'model', '')),
         'thinking': _text(getattr(snapshot, 'thinking', 'default')),
         'label': _text(getattr(snapshot, 'label', '')),
         'window': getattr(snapshot, 'window', None),
         'efforts': [str(level) for level in getattr(snapshot, 'efforts', ())],
-        'images': bool(getattr(snapshot, 'images', True)),
+        'images': bool(getattr(snapshot, 'images', False)) if configured else None,
         'notice': getattr(snapshot, 'notice', None),
     }
 

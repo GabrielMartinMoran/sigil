@@ -600,6 +600,18 @@ class ServerRuntime:
         self._stop_pending(self.session.id, keep=frozenset(self._enqueued))
         return True
 
+    def stop_all(self) -> bool:
+        """Stops the turn and everything else the session still runs.
+
+        `abort` is scoped to a turn: with nothing running it answers ``False``, and
+        a subagent working in the background is not a turn — it would keep spending
+        after the screen it reported to was gone. Leaving the terminal means the
+        whole session, so it asks for this. Nothing here kills the process.
+        """
+        stopped = self.abort()
+        self.composition.summoner.cancel_all()
+        return stopped
+
     def _stop_pending(self, session_id: str, *, keep: frozenset[str] = frozenset()) -> None:
         """Finishes confirmed deliveries, stops the rest, then forgets both.
 

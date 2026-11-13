@@ -1363,3 +1363,90 @@ def test_a_failed_mcp_load_answers_the_route_instead_of_blocking(
         runtime.abort()
     # The reason is kept, so the failure is diagnosable rather than an empty list.
     assert any('the layer could not start' in error for error in composition.mcp.errors)
+
+
+# --- stopping everything, and what the model can say about images ------------
+#
+# `abort` is about a turn. A session can still be spending with no turn running,
+# which is what a background subagent does; leaving the terminal means the whole
+# session, so the service needs an explicit operation for it. The image capability
+# is the other projection the client cannot compute: an unconfigured model knows
+# nothing about images, and saying *yes* there is worse than saying *unknown*.
+
+
+def test_stop_all_stops_background_work_with_no_turn_to_abort(
+    runtime: ServerRuntime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The one thing `abort` cannot do while idle is stop what is still running.
+
+    The summoner is the engine object that owns the subagents; `stop_all` has to
+    reach it even when `abort` has nothing to cancel. `cancel_all`'s own effect is
+    proven in `tests/test_agents_tree.py`; here the question is whether the
+    session-level operation asks for it.
+    """
+    calls: list[str] = []
+    summoner = runtime.composition.summoner
+    original = summoner.cancel_all
+
+    def record() -> None:
+        calls.append('subagents')
+        original()
+
+    monkeypatch.setattr(summoner, 'cancel_all', record)
+
+    assert runtime.stop_all() is False, 'nothing was running as a turn'
+    assert calls == ['subagents']
+
+
+def test_stop_all_still_stops_a_running_turn(runtime: ServerRuntime) -> None:
+    """Stopping everything must not lose the turn half of the same request."""
+
+    async def check() -> None:
+        pending = asyncio.Event()
+        runtime._task = asyncio.create_task(pending.wait())
+        try:
+            assert runtime.stop_all() is True
+        finally:
+            runtime._task.cancel()
+            await asyncio.gather(runtime._task, return_exceptions=True)
+
+    asyncio.run(check())
+
+
+def test_the_stop_all_route_answers_and_reaches_the_summoner(
+    runtime: ServerRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The client asks over HTTP, so the route is the contract that has to exist."""
+    calls: list[str] = []
+    summoner = runtime.composition.summoner
+    original = summoner.cancel_all
+
+    def record() -> None:
+        calls.append('subagents')
+        original()
+
+    monkeypatch.setattr(summoner, 'cancel_all', record)
+
+    async def go() -> None:
+        async with _signed_in(runtime, tmp_path) as client:
+            reply = await client.post('/api/stop-all')
+            assert reply.status_code == 200, reply.text
+            assert reply.json() == {'stopped': False}
+
+    asyncio.run(go())
+    assert calls == ['subagents']
+
+
+def test_an_unconfigured_model_projects_an_unknown_image_capability() -> None:
+    """The projection says *unknown*, so no client can turn it into *yes*.
+
+    `ModelSnapshot.images` defaults to true, which is harmless inside the process
+    that knows the model but wrong once it reaches a client as a fact.
+    """
+    from types import SimpleNamespace
+
+    from src.server import views
+
+    assert views.model_view(SimpleNamespace(is_configured=False, images=True))['images'] is None
+    assert views.model_view(SimpleNamespace(is_configured=True, images=False))['images'] is False
+    assert views.model_view(SimpleNamespace(is_configured=True, images=True))['images'] is True

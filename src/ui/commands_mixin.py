@@ -427,12 +427,32 @@ class CommandsMixin:
         The two-press `Esc` guard is skipped on purpose: `Ctrl+Q` is the exit, not
         a mistake, and making the exit conditional would leave a user who lost
         the key stuck in a turn.
+
+        Attached, the whole session is the unit of leaving, not the turn: a
+        subagent in the background has no turn to abort, and abort is a no-op while
+        nothing runs. The stop is awaited on a worker — it is a network call and
+        this method is synchronous — and only then is the window closed. This is
+        the one exit that stops the service's work on purpose; a window that merely
+        disappears leaves the service running until its work ends.
         """
+        if self._client is not None:
+            self.run_worker(self._quit_attached())
+            return
         self._cancel_shell()
         # `abort_turn` also stops the asynchronous subagents, before the save below:
         # they outlive a turn on purpose, but not the process, and a tree on disk
         # with a node saying it is still working would be a lie.
         self.abort_turn()
+        self.persist()
+        self.exit()
+
+    async def _quit_attached(self) -> None:
+        """Stops what the service still runs, then closes this window.
+
+        The order is the point: the request is awaited while the app is still
+        running, so `/quit` does not race the shutdown that would cancel it.
+        """
+        await self.stop_service_work()
         self.persist()
         self.exit()
 

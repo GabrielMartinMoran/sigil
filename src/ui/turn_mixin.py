@@ -611,6 +611,25 @@ class TurnMixin:
             # Nothing was running: the hint goes away instead of sitting there.
             self._paint_status('')
 
+    async def stop_service_work(self) -> None:
+        """Leaving the terminal stops what the service still runs for this session.
+
+        `abort` is about a turn, and a subagent in the background is not a turn:
+        with nothing running, abort answers ``False`` and the node keeps spending
+        after the screen it reported to is gone. The service owns the work, so this
+        asks it to stop everything. Nothing here kills the service's process.
+        """
+        client = self._client
+        if client is None:
+            return
+        try:
+            await client.stop_all()
+        except ServiceClientError as exc:
+            # Leaving must not wait on a service that cannot answer: the request is
+            # best effort, and the failure is a debug line, not a notice the user
+            # will never read.
+            self.log.debug(f'stop-all did not reach the service: {exc}')
+
     @work(exclusive=True)
     async def run_turn(self, text: str, *, attachments: tuple[ImageAttachment, ...] = ()) -> None:
         """Runs a full turn, persisting progress along the way."""

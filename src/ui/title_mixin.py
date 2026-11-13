@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from pathlib import Path
 from typing import Any
 
 from textual import work
@@ -41,14 +42,15 @@ for the rest of the conversation.
 class TitleMixin:
     """Names the session and keeps the terminal window title in sync.
 
-    It expects the app to define ``_session``, ``_store``, ``_agent`` and
-    ``_workspace_manager``.
+    It expects the app to define ``_session``, ``_store``, ``_agent`` and either
+    ``_workspace_manager`` (in-process) or ``_service_state`` (attached).
     """
 
     _session: Any
     _store: Any
     _agent: Any
     _workspace_manager: Any
+    _service_state: dict[str, Any] | None
     _naming_attempts: dict[str, int]
     _naming_workers: dict[str, Worker]
 
@@ -62,17 +64,31 @@ class TitleMixin:
         repository are two different trees and a window title that cannot tell
         them apart is worse than no title. Outside a repository there is nothing
         but the folder, which is what is left to show.
+
+        An attached terminal has no manager — the workspace is the service's — so
+        the same three facts come from its projection. Until the service has
+        reported one there is nothing to name, and nothing is invented.
         """
         manager = getattr(self, '_workspace_manager', None)
-        if manager is None:
+        if manager is not None:
+            repository = manager.repository
+            if repository is None:
+                return manager.root.name
+            workspace = manager.current()
+            if workspace.is_worktree:
+                return f'{repository.name}:{workspace.label}'
+            return repository.name
+        reported = (getattr(self, '_service_state', None) or {}).get('workspace')
+        if not isinstance(reported, dict):
             return ''
-        repository = manager.repository
-        if repository is None:
-            return manager.root.name
-        workspace = manager.current()
-        if workspace.is_worktree:
-            return f'{repository.name}:{workspace.label}'
-        return repository.name
+        repository = reported.get('repository')
+        if repository:
+            label = reported.get('label')
+            if reported.get('is_worktree') and label:
+                return f'{repository}:{label}'
+            return str(repository)
+        root = reported.get('root')
+        return Path(str(root)).name if root else ''
 
     def window_title_text(self) -> str:
         """What the terminal window should say right now.

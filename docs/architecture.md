@@ -983,6 +983,7 @@ own cut instead of half-moving all of them at once.
 | Streaming | `GET /events`, applied by `SigilApp.apply_service_event` | deltas, tool calls and results, turn boundaries, notices |
 | Steering | the same send, with the queued line marked until `steer_delivered` | the run reads it at its next seam, as before |
 | Stopping | `POST /api/abort`, after the same double `Esc` | the service kills the shells and cancels the run |
+| Leaving | `POST /api/stop-all` from `/quit`, awaited before the window closes | the whole session stops, including work with no turn to abort (see [Leaving](#leaving-quit-stops-the-service-a-closed-window-does-not)) |
 | Questions | the same `QuestionPanel`, answered with `POST /api/answer` | the panel's keys and layout are unchanged; a question counts as answered only once the service has taken the answer, and a failed send is offered again (see [the question deadline](#the-question-deadline)) |
 | Images | ordered `OutgoingImage`s with the `[Image #n]` marker | the picture that was attached is the one stored |
 | Reconnection | `events(after=last_event_id)`, then a state read | a gap is announced, never silently painted over |
@@ -1200,6 +1201,12 @@ to zero, reads `/api/state` from the new service and takes the cursor from that
 answer — the same rule the first connection follows — then repaints the transcript
 from the new run's durable rows.
 
+The answered questions go with the old run for the same reason. Question ids are
+per run: a service numbers them `q1`, `q2`, … from one on every start. The recovery
+clears `_service_answered`, because an id kept from the previous run suppresses a
+brand-new question that happens to reuse a number the old run already resolved — and
+the service then waits out its deadline for an answer no screen will ever offer.
+
 In practice the screen ends up following whatever the new run has, which is not
 necessarily the conversation it was showing: the old conversation is durable, but a
 restarted service opens its own session and reattaching the terminal to the previous
@@ -1242,7 +1249,59 @@ from the rows and the deltas that follow open a new block, because an unknown nu
 deltas never arrived: a conversation with a hole in it reads better for a second and
 lies for as long as it is on screen.
 
-### Attention waits for the service's subagents
+### The chrome comes from the state too
+
+An attached terminal composes no `WorkspaceManager`: the workspace is the service's.
+So the other half of the window title and the status bar's project and worktree are
+read from `state['workspace']`, the same projection `views.workspace_view` already
+builds for the web header:
+
+| Painted | From `state['workspace']` | Rule |
+| --- | --- | --- |
+| Window title, repository half | `repository` and `is_worktree` | `sigil` for a checkout, `sigil:better-debug` for a worktree — the label is what tells two trees of one repository apart |
+| Window title, folder fallback | `root` | outside git there is no repository name, so the folder is what is left |
+| Status bar, project | `root` | the directory name, exactly as the in-process bar shows it |
+| Status bar, worktree badge | `label`, `branch`, `is_worktree` | the same `WorkspaceBadge` the manager produces |
+| Diff | `root` | polled off-thread against the service's root, not a local path |
+
+Before this, both halves asked a manager that an attached terminal does not have, and
+painted nothing while the answer sat in the state the client had just read. A
+projection that has not arrived yet paints nothing — an empty title is honest, a
+locally guessed one is not, and the state is the only process that knows where the
+conversation runs.
+
+### The image capability is the projection's answer
+
+`ModelSnapshot.images` defaults to `True`, which is harmless inside the process that
+owns the model and wrong the moment it crosses a boundary as a fact. So
+`views.model_view` projects `images: null` while no model is configured — `configured`
+is the field that says whether the rest of the model projection means anything — and a
+real boolean only when a model is known.
+
+The terminal's `accepts_images()` follows that: attached, it reads `state['model']`
+and answers `None` for *unknown*, never `True` by default. The composer refuses the
+image either way; what changes is the sentence the user reads. It says the capability
+cannot be known and to pick a model with `/model`, instead of accepting the picture and
+letting the provider refuse it after a whole turn was spent. This is a wire contract:
+`null` now means *unknown*, and a client that reads the field as a boolean has to handle
+it.
+
+### Leaving: `/quit` stops the service, a closed window does not
+
+The service outlives a terminal by design: closing the window is not a reason to
+interrupt work, and the service stops itself when that work ends (see
+[idle shutdown](#idle-shutdown)). `/quit` is the explicit exception. It is the one exit
+that says *stop the session*, and it stops the whole session, not only the turn.
+
+`POST /api/stop-all` is the operation, and it is a thin wrapper rather than new engine
+work: `ServerRuntime.stop_all()` calls `abort()` — shells killed by process group, the
+run cancelled, open queue rows stopped — and then `summoner.cancel_all()`. That second
+call is what `abort` cannot cover: with no turn running, `abort` returns `False` and a
+subagent in the background would keep spending after the screen it reported to is gone.
+Nothing in the route kills the service's process. The terminal awaits it on a worker
+before closing, so the request is not raced by the shutdown that would cancel it.
+
+
 
 A turn that ends with something to report asks for attention. The request is held until
 the squad is quiet, and the squad is the service's tree, not this process's:

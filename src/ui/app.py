@@ -558,10 +558,12 @@ class SigilApp(
         """Reads the diff periodically while the app runs.
 
         Polling, not pushing: a tool can change the tree through a shell command
-        the file tools never see, so there is no event to subscribe to. The worker
-        is skipped entirely outside a repository, where the bar shows nothing.
+        the file tools never see, so there is no event to subscribe to. An attached
+        terminal has no manager yet — the service reports the root on the first
+        state — so the timer runs there too and `refresh_diff` skips until a root
+        exists. Outside a repository it stays a no-op either way.
         """
-        if self._workspace_manager is None:
+        if self._workspace_manager is None and self._client is None:
             return
         if self._diff_timer is None:
             from src.ui.activity_mixin import DIFF_REFRESH_INTERVAL
@@ -675,6 +677,10 @@ class SigilApp(
         connection, and the transcript is repainted from the rows of the service that is
         actually running.
 
+        The answered questions go with the old run. A service numbers its questions
+        from one on every start, so keeping the ids would suppress a brand-new
+        question that happens to reuse a number the previous run already resolved.
+
         Quiet on failure on purpose: `report_service_trouble` has already said the
         service is not answering, and repeating it once per retry would fill the
         transcript with the same sentence.
@@ -688,6 +694,7 @@ class SigilApp(
         except ServiceClientError:
             return
         self._service_cursor = 0
+        self._service_answered.clear()
         await self.refresh_service_state()
         self._service_cursor = self._state_cursor()
         await self.repaint_from_rows()
@@ -1020,7 +1027,12 @@ class SigilApp(
             self._session.title = title
         self.refresh_sidebar()
         self.refresh_agent()
+        # The service is the one that knows where the conversation runs: the bar's
+        # project and worktree, the title's repository and the diff all come from
+        # this projection, never from a local manager an attached terminal lacks.
+        self.refresh_workspace_badge()
         self.paint_window_title()
+        self.refresh_diff()
         # The tree travels in the state, so every state applied keeps an open tree
         # window in step — the `tree_changed` event lands here like any other refresh.
         self._refresh_tree_screen()

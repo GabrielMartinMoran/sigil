@@ -1001,7 +1001,7 @@ def test_a_client_command_runs_here_and_writes_nothing(name: str, composition: C
                 args, effect = _client_command_effect(name)
 
                 await app.handle_command(name, args)
-                await pilot.pause()
+                await _until(pilot, lambda: effect(app, before_transcript), what=f'{name} to take effect')
 
                 assert effect(app, before_transcript), f'{name} ran here but left no visible effect'
                 assert len(app.screen_stack) == 1, 'a client command opens no panel it does not need'
@@ -2632,5 +2632,206 @@ def test_state_changed_repaints_the_attached_sidebar(composition: Composition, t
                     lambda: 'Repaint on the event' in app.query_one(SidebarPanel).text,
                     what='the plan after `state_changed`',
                 )
+
+    asyncio.run(inner())
+
+
+# --- the chrome the service paints -------------------------------------------
+#
+# An attached terminal composes no `WorkspaceManager` and no model service, so
+# every fact about *where* it is running and *what* answers has to come from the
+# projection `/api/state` already carries. These tests read those facts from the
+# projection, not from a second source the client would have to keep in step.
+
+
+def test_the_chrome_reads_the_workspace_the_service_reports() -> None:
+    """The title, the bar and the worktree badge are one projection.
+
+    A missing report stays empty. Borrowing a local path to fill the gap would be a
+    second truth, and the terminal is not the process that decides where the
+    conversation runs.
+    """
+
+    async def inner() -> None:
+        client = ServiceClient(SERVICE, transport=httpx.MockTransport(lambda _: httpx.Response(500)))
+        try:
+            app = _terminal(client, Session(id='s', cwd='/repo'))
+            app._service_state = {
+                'workspace': {
+                    'root': '/repo/.sigil/worktrees/better-debug',
+                    'label': 'better-debug',
+                    'branch': 'feat',
+                    'is_worktree': True,
+                    'repository': 'sigil',
+                }
+            }
+            assert app.repository_label() == 'sigil:better-debug'
+            assert app._workspace_root() == '/repo/.sigil/worktrees/better-debug'
+            badge = app.workspace_badge()
+            assert badge is not None
+            assert (badge.label, badge.branch, badge.is_worktree) == ('better-debug', 'feat', True)
+
+            app._service_state = None
+            assert app.repository_label() == '', 'no report paints nothing'
+            assert app.workspace_badge() is None, 'and invents no workspace'
+            assert app._workspace_root() is None
+        finally:
+            await client.aclose()
+
+    asyncio.run(inner())
+
+
+def test_attaching_paints_the_repository_the_service_runs_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, repo: Path
+) -> None:
+    """The window title and the bar are repainted when the state arrives.
+
+    The workspace is the service's, so the first paint cannot know it. What this
+    proves is that applying the state is what fills both halves, instead of a
+    `WorkspaceManager` the attached app does not have.
+    """
+
+    composition = _composition(tmp_path, monkeypatch, root=repo)
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+                await _until(pilot, lambda: repo.name in _status(app), what='the project in the bar')
+
+                workspace = app._service_state['workspace']
+                assert app.repository_label() == workspace['repository'] == repo.name
+                assert app._workspace_root() == str(repo)
+                assert workspace['label'] in _status(app), 'the worktree badge is the service label'
+                assert repo.name in app.window_title_text()
+
+    asyncio.run(inner())
+
+
+def test_an_unreported_image_capability_is_unknown_and_never_yes() -> None:
+    """A service that cannot say answers *unknown*, not *yes*.
+
+    The composer refuses the image either way; the difference is the sentence the
+    user reads. Before this, an attached terminal read an empty local snapshot,
+    treated it as *no model configured* and accepted the image, so the refusal
+    arrived from the provider after the turn had already been spent.
+    """
+
+    async def inner() -> None:
+        client = ServiceClient(SERVICE, transport=httpx.MockTransport(lambda _: httpx.Response(500)))
+        try:
+            app = _terminal(client, Session(id='s', cwd='/repo'))
+
+            app._service_state = None
+            assert app.accepts_images() is None, 'no state is not a yes'
+            assert 'cannot tell' in app.images_refusal()
+
+            app._service_state = {'model': {'configured': False, 'images': True, 'model': ''}}
+            assert app.accepts_images() is None, 'an unconfigured model knows nothing about images'
+            assert 'cannot tell' in app.images_refusal()
+
+            app._service_state = {'model': {'configured': True, 'images': False, 'model': 'text-only'}}
+            assert app.accepts_images() is False
+            assert 'text-only does not accept images' in app.images_refusal()
+
+            app._service_state = {'model': {'configured': True, 'images': True, 'model': 'vision'}}
+            assert app.accepts_images() is True
+        finally:
+            await client.aclose()
+
+    asyncio.run(inner())
+
+
+class _RecordingTransport(httpx.AsyncBaseTransport):
+    """The service's transport, with every path it was asked for kept."""
+
+    def __init__(self, inner: httpx.AsyncBaseTransport) -> None:
+        self._inner = inner
+        self.paths: list[str] = []
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.paths.append(request.url.path)
+        return await self._inner.handle_async_request(request)
+
+
+def test_leaving_an_attached_terminal_stops_everything_the_service_runs(
+    composition: Composition, tmp_path: Path
+) -> None:
+    """`/quit` is the whole session, not only the turn.
+
+    A subagent in the background has no turn to abort, and the abort route is a
+    no-op while nothing is running. The exit path asks the service to stop
+    everything, and never kills the service's process.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, transport, _attached):
+            recorded = _RecordingTransport(transport)
+            client = ServiceClient(SERVICE, transport=recorded)
+            try:
+                app = _terminal(client, _session(runtime))
+                async with app.run_test(size=(100, 40)) as pilot:
+                    await pilot.pause()
+                    await app.handle_command('/quit')
+                    await _until(pilot, lambda: app._exit is True, what='the exit')
+                    assert '/api/stop-all' in recorded.paths, 'leaving asks the service to stop everything'
+            finally:
+                await client.aclose()
+
+    asyncio.run(inner())
+
+
+RESTARTED = Endpoint(host='restarted.test', port=80, pid=0, token=TOKEN, started_at=0.0)
+"""The service that replaced the first run: another address, its own id space."""
+
+
+def test_a_restart_does_not_suppress_a_new_question_that_reuses_the_id(
+    composition: Composition, tmp_path: Path
+) -> None:
+    """Question ids are per run, so the answered set must not outlive one.
+
+    A service that restarts numbers its questions from `q1` again. Keeping the id
+    the old run answered suppresses a brand-new question that happens to share the
+    number, and the turn then waits for an answer no screen will ever offer.
+    """
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, transport, _attached):
+            question = {
+                'id': 'q1',
+                'questions': [
+                    {
+                        'question': 'Which way?',
+                        'allow_custom': False,
+                        'options': [
+                            {'label': 'Recommended', 'description': 'the short one', 'recommended': True},
+                            {'label': 'Other way', 'description': None, 'recommended': False},
+                        ],
+                    }
+                ],
+            }
+
+            def with_question(state: dict[str, Any]) -> httpx.Response:
+                state['question'] = question
+                return httpx.Response(200, json=state)
+
+            scripted = _StateProjection(transport, with_question)
+            client = ServiceClient(SERVICE, transport=scripted, launch=lambda **_: Launch(endpoint=RESTARTED))
+            try:
+                app = _terminal(client, _session(runtime))
+                async with app.run_test(size=(100, 40)) as pilot:
+                    await _until(pilot, lambda: app.query_one(QuestionPanel).display, what='the first question')
+                    await pilot.press('enter')
+                    await _until(pilot, lambda: 'q1' in app._service_answered, what='the answer recorded')
+                    await _until(pilot, lambda: not app.query_one(QuestionPanel).display, what='the panel closing')
+
+                    await app.resume_after_restart()
+
+                    await _until(pilot, lambda: app.query_one(QuestionPanel).display, what='the new question')
+                    assert app._service_question == 'q1', 'the new run names its question from one again'
+                    assert 'q1' not in app._service_answered, 'the answered set belongs to the old run'
+            finally:
+                await client.aclose()
 
     asyncio.run(inner())

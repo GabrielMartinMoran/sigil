@@ -641,6 +641,11 @@ def create_app(
     async def abort() -> dict[str, Any]:
         return {'stopped': runtime.abort()}
 
+    @app.post('/api/stop-all')
+    async def stop_all() -> dict[str, Any]:
+        """Stops the turn and anything else still running: the exit path's request."""
+        return {'stopped': runtime.stop_all()}
+
     @app.post('/api/answer')
     async def answer(body: AnswerBody) -> dict[str, Any]:
         resolved = runtime.answer(body.id, body.answers)
