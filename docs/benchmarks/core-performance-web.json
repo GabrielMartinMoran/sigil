@@ -1,0 +1,44 @@
+[
+  {
+    "tool": "read_url",
+    "sample": 0,
+    "elapsed_ms": 203.92187597462907,
+    "ok": true,
+    "size": 157
+  },
+  {
+    "tool": "read_url",
+    "sample": 1,
+    "elapsed_ms": 89.16586299892515,
+    "ok": true,
+    "size": 157
+  },
+  {
+    "tool": "read_url",
+    "sample": 2,
+    "elapsed_ms": 126.44992000423372,
+    "ok": true,
+    "size": 157
+  },
+  {
+    "tool": "web_search",
+    "sample": 0,
+    "elapsed_ms": 1923.6576769617386,
+    "ok": true,
+    "size": 3
+  },
+  {
+    "tool": "web_search",
+    "sample": 1,
+    "elapsed_ms": 3619.024896994233,
+    "ok": false,
+    "error_type": "DDGSException"
+  },
+  {
+    "tool": "web_search",
+    "sample": 2,
+    "elapsed_ms": 3336.909580975771,
+    "ok": false,
+    "error_type": "DDGSException"
+  }
+]

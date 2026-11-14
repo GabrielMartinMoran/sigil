@@ -175,6 +175,18 @@ def _with_id(attachment: ImageAttachment, identifier: str) -> ImageAttachment:
     )
 
 
+def source_identity(source: str, *, root: Path | None = None) -> str:
+    """Identify a source without fetching pixels; still authorize filesystem paths."""
+    wanted = source.strip()
+    if not wanted:
+        raise FileToolError('An image source is required: an id, a URL or a path.')
+    if is_url(wanted):
+        return image_id_for(wanted)
+    if wanted.startswith(('img_', '[Image #')):
+        return wanted
+    return image_id_for(str(resolve(wanted, root=root)))
+
+
 def register_image_tools(
     agent: Any,
     logger: ToolLogger | None = None,
@@ -199,19 +211,19 @@ def register_image_tools(
                 the conversation, an `http(s)://` URL, or a path to a file inside the
                 workspace.
         """
-        attached = images_in_round(ctx.messages)
-        loaded = await load_source(ctx.messages, source, root=None if root is None else root())
-
-        if loaded.image_id in attached:
+        workspace = None if root is None else root()
+        identifier = source_identity(source, root=workspace)
+        if identifier in images_in_round(ctx.messages):
             # The loop guard: this round already carries it. Saying so is cheaper than
             # sending the same pixels on every step.
             return ToolReturn(
                 return_value=(
-                    f'image {loaded.image_id} is already attached earlier in this round: '
+                    f'image {identifier} is already attached earlier in this round: '
                     'it is in the conversation above, no need to load it again'
                 )
             )
 
+        loaded = await load_source(ctx.messages, source, root=workspace)
         return ToolReturn(
             return_value=(f'image {loaded.image_id} ({loaded.describe()}, ~{loaded.estimated_tokens:,} tokens)'),
             content=[

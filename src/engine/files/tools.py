@@ -21,7 +21,9 @@ from src.engine.files.paths import resolve
 from src.engine.files.text import (
     apply_line_patch,
     apply_string_patch,
+    count_lines,
     decode,
+    line_boundary,
     preview,
     split_lines,
 )
@@ -98,8 +100,7 @@ def _read_line_range(target: Any, path: str, size: int, start_line: int | None, 
     except UnicodeDecodeError as exc:
         raise FileToolError(f'File {path!r} is not UTF-8 text; read it without a line range.') from exc
 
-    lines = split_lines(text)
-    total = len(lines)
+    total = count_lines(text)
     first = max(1, start_line or 1)
     last = min(total, end_line or total)
     if first > last:
@@ -111,7 +112,7 @@ def _read_line_range(target: Any, path: str, size: int, start_line: int | None, 
         truncated=False,
         binary=False,
         encoding='utf-8',
-        content=''.join(lines[first - 1 : last]),
+        content=text[line_boundary(text, first - 1, total) : line_boundary(text, last, total)],
         start_line=first,
         end_line=last,
         total_lines=total,
@@ -120,7 +121,12 @@ def _read_line_range(target: Any, path: str, size: int, start_line: int | None, 
 
 def _read_whole(target: Any, size: int, max_bytes: int) -> FileContent:
     """Reads the whole file, or its first ``max_bytes``."""
-    raw = target.read_bytes()
+    if max_bytes < 0:
+        # Preserve the existing negative-slice semantics for direct callers.
+        raw = target.read_bytes()
+    else:
+        with target.open('rb') as handle:
+            raw = handle.read(max_bytes + 1)
     content, binary, encoding = decode(raw[:max_bytes])
     return FileContent(
         path=str(target),

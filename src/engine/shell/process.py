@@ -108,16 +108,23 @@ def drain(process: subprocess.Popen[bytes], deadline: float) -> DrainResult:
             os.set_blocking(stream.fileno(), False)
             selector.register(stream, selectors.EVENT_READ, stream is process.stdout)
 
-        while selector.get_map() or process.poll() is None:
+        while selector.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 timed_out = True
                 break
             _read_available(selector, buffers)
 
+        if not timed_out:
+            # Closed pipes do not imply exit. Waiting here avoids selecting an
+            # empty descriptor set while preserving the command's own deadline.
+            try:
+                process.wait(timeout=max(0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                timed_out = True
         if timed_out:
             kill_process_group(process)
-        process.wait(timeout=_KILL_GRACE_SECONDS)
+            process.wait(timeout=_KILL_GRACE_SECONDS)
     finally:
         selector.close()
         for stream in (process.stdout, process.stderr):

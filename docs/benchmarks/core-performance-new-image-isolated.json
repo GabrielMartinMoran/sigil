@@ -1,0 +1,26 @@
+{
+  "workload": "new 1920x1080 image, same fixture/wrappers/process, alternate order each round, 6 calls per implementation, warmup each, no coverage",
+  "samples_ms": {
+    "baseline": [
+      402.669794,
+      401.947905,
+      402.26965,
+      419.512186,
+      428.166258,
+      446.105553
+    ],
+    "optimized": [
+      390.657313,
+      396.643591,
+      407.228754,
+      414.013591,
+      429.692659,
+      446.082711
+    ]
+  },
+  "median_ms": {
+    "baseline": 411.09099000000003,
+    "optimized": 410.6211725
+  },
+  "source_hash": "8c2b56f9d523dc9455c9209b66737ed1f7ca1d34a7baaceafcbaed36969efc44"
+}

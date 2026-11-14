@@ -29,13 +29,13 @@ from src.engine.context.compaction.coordinator import (
 )
 from src.engine.context.compaction.events import CompactionEvent, CompactionReason
 from src.engine.context.compaction.maintenance import last_summary_failure
+from src.engine.context.compaction.measurements import ProjectionMeasurements
 from src.engine.context.compaction.policy import DEFAULT_POLICY, CompactionPolicy
 from src.engine.context.compaction.records import last_projection_error
 from src.engine.context.compaction.summary import Summary, SummaryRequest, summary_request
-from src.engine.context.input_estimate import estimate_input
 from src.engine.context.strategy.rewriting import apply_image_removals, image_removals
 from src.engine.context.strategy.view_result import ViewResult
-from src.engine.context.tokens import estimate_messages_tokens, estimate_tokens, part_tokens
+from src.engine.context.tokens import estimate_tokens, part_tokens
 
 
 def prepare(
@@ -49,13 +49,17 @@ def prepare(
     image_percent: int,
     summary: Summary | None = None,
     compact_opportunistically: bool = False,
+    measurements: ProjectionMeasurements | None = None,
 ) -> ViewResult:
     """Project the history, compacting under pressure or at an instruction boundary."""
+    measurements = measurements if measurements is not None else ProjectionMeasurements()
     planned = plan(messages, policy=policy, lookup=lookup, provider=provider)
     working, reduced = _project(messages, planned, lookup, provider)
     working, images = apply_image_removals(working, dict(planned.state.image_removals))
     # The trigger is measured on the request as it would be sent without intervention.
-    pressured = _over(budget, working, policy.trigger_percent) or _exceeds_budget(budget, working)
+    pressured = _over(budget, working, policy.trigger_percent, measurements) or _exceeds_budget(
+        budget, working, measurements
+    )
     if pressured or compact_opportunistically or summary is not None:
         planned = _planned(
             messages, policy, lookup, provider, pressure=pressured or compact_opportunistically, summary=summary
@@ -74,7 +78,7 @@ def prepare(
         )
         working, reduced = _project(messages, planned, lookup, provider)
         working, images = apply_image_removals(working, dict(planned.state.image_removals))
-    if pressured or budget.fits(estimate_messages_tokens(working)) is False:
+    if pressured or budget.fits(measurements.tokens(working)) is False:
         from src.engine.context.strategy.constants import image_token_cap
 
         removals = image_removals(
@@ -96,7 +100,7 @@ def prepare(
             )
 
     request: SummaryRequest | None = None
-    if pressured and summary is None and _over(budget, working, policy.target_percent):
+    if pressured and summary is None and _over(budget, working, policy.target_percent, measurements):
         request = summary_request(
             messages,
             boundary=planned.state.summary_boundary,
@@ -113,7 +117,7 @@ def prepare(
             planned = replace(planned, exceptions=(*planned.exceptions, 'summary_boundary_unavailable'))
     return ViewResult(
         working,
-        estimate_messages_tokens(working),
+        measurements.tokens(working),
         compacted_parts=reduced,
         dropped_images=images,
         events=planned.events,
@@ -132,8 +136,10 @@ def finish(
     *,
     policy: CompactionPolicy = DEFAULT_POLICY,
     lookup: PolicyLookup | None = None,
+    measurements: ProjectionMeasurements | None = None,
 ) -> ViewResult:
     """Record the decision and report honestly when the projection does not fit."""
+    measurements = measurements if measurements is not None else ProjectionMeasurements()
     planned = prepared.plan
     if planned is None:
         raise ValueError('Shared projection requires a compaction plan')
@@ -142,11 +148,11 @@ def finish(
     reasons = {*planned.exceptions, *exceptions(original, planned, lookup)}
     if prepared.summary_request is not None:
         reasons.add('summary_pending')
-    elif planned.state.summary and _over(budget, working, policy.target_percent):
+    elif planned.state.summary and _over(budget, working, policy.target_percent, measurements):
         reasons.add('summary_insufficient')
     if budget.window is None:
         reasons.add('window_unknown')
-    exceeded = _exceeds_budget(budget, working)
+    exceeded = _exceeds_budget(budget, working, measurements)
     if exceeded:
         reasons.add('window')
         events.append(_event(original, working, planned, CompactionReason.EMERGENCY))
@@ -157,11 +163,11 @@ def finish(
     ]
     events = [*events[: planned.recorded_events], *_coalesce(projected)]
     planned = replace(planned, state=state, events=tuple(events), exceptions=tuple(sorted(reasons)))
-    diagnostics = metrics(original, working, planned, policy, budget)
+    diagnostics = metrics(original, working, planned, policy, budget, measurements=measurements)
     return replace(
         prepared,
         messages=working,
-        estimated_tokens=estimate_messages_tokens(working),
+        estimated_tokens=measurements.tokens(working),
         dropped_thinking=_thinking_count(original) - _thinking_count(working),
         events=tuple(events),
         plan=planned,
@@ -197,15 +203,19 @@ def _project(
     return apply(list(messages), planned, lookup=lookup, provider=provider)
 
 
-def _over(budget: ContextBudget, working: Sequence[ModelMessage], percent: int) -> bool:
+def _over(
+    budget: ContextBudget, working: Sequence[ModelMessage], percent: int, measurements: ProjectionMeasurements
+) -> bool:
     """Whether instructions, schemas and history together cross a share of the window."""
     if budget.window is None:
         return False
-    return estimate_input(working, budget).total * 100 > budget.window * percent
+    return measurements.input(working, budget).total * 100 > budget.window * percent
 
 
-def _exceeds_budget(budget: ContextBudget, working: Sequence[ModelMessage]) -> bool:
-    return budget.fits(max(0, estimate_input(working, budget).total - budget.fixed)) is False
+def _exceeds_budget(
+    budget: ContextBudget, working: Sequence[ModelMessage], measurements: ProjectionMeasurements
+) -> bool:
+    return budget.fits(max(0, measurements.input(working, budget).total - budget.fixed)) is False
 
 
 def _thinking_count(messages: Sequence[ModelMessage]) -> int:
@@ -240,11 +250,14 @@ def metrics(
     planned: CompactionPlan,
     policy: CompactionPolicy,
     budget: ContextBudget,
+    *,
+    measurements: ProjectionMeasurements | None = None,
 ) -> dict[str, object]:
     """No argument values, tool names, ids or conversation text enter diagnostics."""
+    measurements = measurements if measurements is not None else ProjectionMeasurements()
     reasoning = [p for m in working for p in m.parts if isinstance(p, ThinkingPart)]
     unknown = sum(bool(p.signature) and not p.content for p in reasoning)
-    estimate = estimate_input(working, budget)
+    estimate = measurements.input(working, budget)
     before_args = sum(part_tokens(p) for m in original for p in m.parts if isinstance(p, ToolCallPart))
     after_args = sum(part_tokens(p) for m in working for p in m.parts if isinstance(p, ToolCallPart))
     before_output = sum(part_tokens(p) for m in original for p in m.parts if isinstance(p, ToolReturnPart))
