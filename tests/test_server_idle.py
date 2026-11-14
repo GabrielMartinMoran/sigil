@@ -661,3 +661,21 @@ def test_should_close_streams_even_when_the_stop_event_is_skipped(connected: boo
         assert hub.subscriber_count == 0
 
     asyncio.run(go())
+
+
+def test_background_agents_keep_service_alive(runtime: ServerRuntime, monkeypatch: pytest.MonkeyPatch) -> None:
+    running = 1
+    monkeypatch.setattr(runtime.composition.summoner, 'running', lambda: running)
+    clock = Clock()
+    idle = IdleShutdown(runtime.has_active_work, grace=30, clock=clock)
+    assert not runtime.busy
+    assert not runtime._accepted.has_open()
+    assert runtime.has_active_work()
+    assert not idle.expired()
+    clock.advance(1800)
+    assert not idle.expired(), 'An unfinished background agent is not an idle service'
+    running = 0
+    assert not runtime.has_active_work()
+    assert not idle.expired(), 'The grace window starts only after the worker finishes'
+    clock.advance(30)
+    assert idle.expired()

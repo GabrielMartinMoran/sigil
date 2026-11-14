@@ -64,6 +64,7 @@ from urllib.parse import quote
 import httpx
 
 from src.engine.storage.database import database_path
+from src.server.diagnostics import record
 from src.server.endpoint import Endpoint
 from src.server.launch import DEFAULT_READY_TIMEOUT, Launch, LaunchError, ensure_service
 
@@ -368,6 +369,7 @@ class ServiceClient:
         self._host = endpoint.host
         self._port = endpoint.port
         self._token = endpoint.token
+        self._server_pid = endpoint.pid
 
     def _build(self) -> httpx.AsyncClient:
         """A connection pool for the current address, over the transport this client holds.
@@ -427,8 +429,15 @@ class ServiceClient:
             ServiceUnavailable: the launcher gave up, or nothing answered. A caller
                 with a retry loop keeps retrying; there is nothing else to do here.
         """
+        record('client_recovery_attempt', port=self._port, server_pid=self._server_pid)
         started = await _start_service(
             self._launch, database=self._database, endpoint_path=self._endpoint_path, wait=self._wait
+        )
+        record(
+            'client_recovery_endpoint',
+            server_pid=started.endpoint.pid,
+            port=started.endpoint.port,
+            launched=started.launched,
         )
         endpoint = started.endpoint
         if (endpoint.host, endpoint.port, endpoint.token) == (self._host, self._port, self._token):
