@@ -6,6 +6,7 @@ They need no network and no LLM: they only run finite system commands.
 import asyncio
 import os
 import time
+from pathlib import Path
 
 import pytest
 
@@ -251,3 +252,20 @@ def test_cancelled_admission_does_not_start_a_late_process() -> None:
     assert result.stderr is not None
     assert 'cancelled' in result.stderr.lower()
     assert execute_command('echo next', owner=owner).stdout.strip() == 'next'
+
+
+def test_the_run_tool_uses_the_execution_root_without_moving_the_process(tmp_path, monkeypatch):
+    from src.engine.files.paths import execution_workspace, workspace_root
+
+    bound, outside = tmp_path / 'bound', tmp_path / 'outside'
+    bound.mkdir()
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    agent = _DummyAgent()
+    register_shell_tools(agent, root=workspace_root)
+
+    with execution_workspace(bound):
+        result = asyncio.run(agent.registered['run'](['pwd']))
+
+    assert Path(result[0].stdout.strip()).resolve() == bound.resolve()
+    assert Path.cwd() == outside

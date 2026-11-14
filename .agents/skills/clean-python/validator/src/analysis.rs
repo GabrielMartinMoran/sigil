@@ -3,8 +3,8 @@ use crate::{
     naming::{normalized, snake, special},
     signatures::Signatures,
 };
-use rustpython_ast::{self as ast, Visitor};
-use rustpython_parser::Parse;
+use ruff_python_ast::{self as ast, visitor::Visitor};
+use ruff_python_parser::{Mode, ParseOptions};
 use std::{fs, path::Path};
 
 pub(crate) fn analyze(path: &Path, root: &Path) -> Vec<Diagnostic> {
@@ -21,19 +21,32 @@ pub(crate) fn analyze(path: &Path, root: &Path) -> Vec<Diagnostic> {
             return out;
         }
     };
-    let module = match ast::Suite::parse(&source, &display) {
-        Ok(m) => m,
-        Err(e) => {
-            emit(
-                &mut out,
-                &display,
-                line(&source, e.offset.into()),
-                "parse-error",
-                e.error.to_string(),
-            );
-            return out;
-        }
+    let options = ParseOptions::from(Mode::Module).with_target_version(ast::PythonVersion::PY314);
+    let parsed = ruff_python_parser::parse_unchecked(&source, options);
+    if let Some(e) = parsed.errors().first() {
+        emit(
+            &mut out,
+            &display,
+            line(&source, e.location.start().into()),
+            "parse-error",
+            e.error.to_string(),
+        );
+        return out;
+    }
+    if let Some(e) = parsed.unsupported_syntax_errors().first() {
+        emit(
+            &mut out,
+            &display,
+            line(&source, e.range.start().into()),
+            "parse-error",
+            e.to_string(),
+        );
+        return out;
+    }
+    let ast::Mod::Module(module) = parsed.syntax() else {
+        unreachable!()
     };
+    let module = &module.body;
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     if !special(stem) && !snake(stem) {
         emit(
@@ -46,13 +59,10 @@ pub(crate) fn analyze(path: &Path, root: &Path) -> Vec<Diagnostic> {
     }
     let mut classes = Vec::new();
     let mut functions = Vec::new();
-    for stmt in &module {
+    for stmt in module {
         match stmt {
             ast::Stmt::ClassDef(c) if !c.name.as_str().starts_with('_') => classes.push(c),
             ast::Stmt::FunctionDef(f) if !f.name.as_str().starts_with('_') => {
-                functions.push(f.name.as_str())
-            }
-            ast::Stmt::AsyncFunctionDef(f) if !f.name.as_str().starts_with('_') => {
                 functions.push(f.name.as_str())
             }
             _ => (),
@@ -62,7 +72,12 @@ pub(crate) fn analyze(path: &Path, root: &Path) -> Vec<Diagnostic> {
         emit(
             &mut out,
             &display,
-            line(&source, classes[1].range.start().into()),
+            definition_line(
+                &source,
+                parsed.tokens(),
+                &classes[1].name,
+                ast::token::TokenKind::Class,
+            ),
             "multiple-public-classes",
             "multiple public classes at module level",
         );
@@ -71,7 +86,12 @@ pub(crate) fn analyze(path: &Path, root: &Path) -> Vec<Diagnostic> {
         emit(
             &mut out,
             &display,
-            line(&source, classes[0].range.start().into()),
+            definition_line(
+                &source,
+                parsed.tokens(),
+                &classes[0].name,
+                ast::token::TokenKind::Class,
+            ),
             "class-function-mix",
             "public classes and functions coexist at module level",
         );
@@ -81,7 +101,12 @@ pub(crate) fn analyze(path: &Path, root: &Path) -> Vec<Diagnostic> {
             emit(
                 &mut out,
                 &display,
-                line(&source, class.range.start().into()),
+                definition_line(
+                    &source,
+                    parsed.tokens(),
+                    &class.name,
+                    ast::token::TokenKind::Class,
+                ),
                 "class-file-name",
                 format!("class '{}' does not match module name", class.name),
             );
@@ -90,12 +115,28 @@ pub(crate) fn analyze(path: &Path, root: &Path) -> Vec<Diagnostic> {
     let mut visitor = Signatures {
         path: &display,
         source: &source,
+        tokens: parsed.tokens(),
         out: &mut out,
     };
     for stmt in module {
         visitor.visit_stmt(stmt);
     }
     out
+}
+
+pub(crate) fn definition_line(
+    source: &str,
+    tokens: &ast::token::Tokens,
+    name: &ast::Identifier,
+    keyword: ast::token::TokenKind,
+) -> usize {
+    let token = tokens
+        .before(name.range.start())
+        .iter()
+        .rev()
+        .find(|token| token.kind() == keyword)
+        .expect("parsed definition has its keyword");
+    line(source, token.as_tuple().1.start().into())
 }
 
 pub(crate) fn line(source: &str, offset: usize) -> usize {
@@ -109,6 +150,32 @@ pub(crate) fn line(source: &str, offset: usize) -> usize {
 mod tests {
     use super::*;
     use crate::naming::{normalized, snake, special};
+    #[test]
+    fn definition_line_uses_keyword_not_decorator_or_split_name() {
+        let source =
+            "@decorator(\n    'class def async',\n)\nasync \\\n    def \\\n    example(): pass\n";
+        let parsed = ruff_python_parser::parse_unchecked(
+            source,
+            ParseOptions::from(Mode::Module).with_target_version(ast::PythonVersion::PY314),
+        );
+        assert!(parsed.has_no_syntax_errors());
+        let ast::Mod::Module(module) = parsed.syntax() else {
+            panic!("expected module")
+        };
+        let ast::Stmt::FunctionDef(function) = &module.body[0] else {
+            panic!("expected function")
+        };
+        assert_eq!(
+            definition_line(
+                source,
+                parsed.tokens(),
+                &function.name,
+                ast::token::TokenKind::Async
+            ),
+            4
+        );
+    }
+
     #[test]
     fn name_normalization_preserves_edge_underscores() {
         assert_eq!(normalized("My_Class"), normalized("my_class"));
@@ -150,6 +217,38 @@ mod tests {
         fs::write(&special, "def run() -> None: pass\n").unwrap();
         assert!(analyze(&special, temp.path()).is_empty());
     }
+    #[test]
+    fn parses_python_314_multiple_exception_handlers() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("modern.py");
+        fs::write(&path, "try:\n    pass\nexcept ValueError, TypeError:\n    pass\ntry:\n    pass\nexcept* ValueError, TypeError:\n    pass\n").unwrap();
+        assert!(analyze(&path, temp.path()).is_empty());
+    }
+
+    #[test]
+    fn rejects_invalid_multiple_exception_alias_without_other_findings() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("BadName.py");
+        fs::write(&path, "class First: pass\nclass Second: pass\ntry:\n    pass\nexcept ValueError, TypeError as error:\n    pass\n").unwrap();
+        let findings = analyze(&path, temp.path());
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule, "parse-error");
+    }
+
+    #[test]
+    fn rejects_syntax_newer_than_target_without_other_findings() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("BadName.py");
+        fs::write(
+            &path,
+            "class First: pass\nclass Second: pass\nvalues = [*x for x in items]\n",
+        )
+        .unwrap();
+        let findings = analyze(&path, temp.path());
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule, "parse-error");
+    }
+
     #[test]
     fn parses_python_312_generic_type_syntax() {
         let temp = tempfile::tempdir().unwrap();

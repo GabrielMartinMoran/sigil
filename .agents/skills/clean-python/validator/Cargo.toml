@@ -6,8 +6,8 @@ edition = "2021"
 [dependencies]
 ignore = "0.4"
 rayon = "1"
-rustpython-parser = "0.4"
-rustpython-ast = { version = "0.4", features = ["visitor"] }
+ruff_python_parser = "=0.0.21"
+ruff_python_ast = "=0.0.21"
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,0 +1,107 @@
+version: 1
+status: approved
+approval_basis: User replied dale to the presented two-file EventHub implementation plan.
+contract: session-event-hub-v1
+parent_slice: session-events-v1
+scope: Internal event ownership and filtered live/replay queues only.
+implementation_authorized: true
+research_gate:
+  full_slice: blocked
+  bounded_hub_foundation: passed
+  evidence: Researcher b02ae7c5 reports identify EventHub as independent seam; runtime ownership and client transition gaps excluded.
+user_decisions:
+  - The delivered /events contract must require a session selector.
+  - TUI and web subscriptions and reconnects must migrate with that route change.
+  - No-selector HTTP compatibility is not retained in the delivered slice.
+agent_decisions:
+  - Stage the independent hub foundation first; do not break HTTP clients with a premature route requirement.
+  - Event.session_id is optional internal metadata, appended with a default to preserve existing positional construction.
+  - None denotes genuinely service-wide event ownership, never an inferred session payload value.
+  - EventHub.publish and publish_state accept keyword-only session_id with a None default until runtime producers migrate.
+  - subscribe and replay accept keyword-only session_id; omitted/None means internal diagnostic all-events access for existing callers, not a future HTTP default.
+  - An explicit session filter matches its owner plus service-wide events with one shared predicate.
+  - Event.to_sse and to_dict retain exact existing bytes/keys/order and payload session_id fields; no new ownership metadata serialized.
+  - Global sequence numbers and replay buffer remain global; gaps in a filtered stream are valid cursors.
+  - Filter before queue insertion; foreign events do not cause subscriber queue pressure.
+  - Overflow lagged is delivered only to the affected subscription, scoped to its filter, retaining existing sequence/payload behavior; it is not broadcast or added as a global domain event.
+  - No dependency, toolchain, web, docs or runtime extraction changes in this task.
+worker: pas_developer
+verifier: pas_qa
+selection_rationale: Developer implements one bounded approved TDD task; separate read-only QA verifies objective evidence before any following task.
+paths:
+  - src/server/events.py
+  - tests/test_server_events.py
+read_only_context:
+  - src/server/runtime.py
+  - src/server/app.py
+  - tests/test_server_runtime.py
+  - tests/test_ui_client.py
+  - tests/test_ui_service_client.py
+  - tests/test_attention_client_ui.py
+  - .pas/state/active/00006-multi-session-service/event-hub.feature
+skill_assignment:
+  available_skills: [archify, clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer, documentation-lookup, figma-generate-library, figma-use, find-skills, frontend-design, mind-management, prompt-optimizer, skill-creator, vanya]
+  required_by_role:
+    researcher: [clean-code, clean-python, clean-architecture, cognitive-writing, docs-writer]
+    developer: [clean-code, clean-python, clean-architecture]
+    qa: [clean-code, clean-python, clean-architecture]
+  missing_skills: [clean-backend-architecture]
+  critical_missing: []
+acceptance:
+  - behavior: Internal ownership never changes wire data.
+    tag: '@unit'
+    cheapest_sufficient: unit
+    rationale: Direct serialization and object assertions prove byte/key compatibility without transport.
+  - behavior: Filtered live delivery and replay include own and service-wide events only.
+    tag: '@unit'
+    cheapest_sufficient: unit
+    rationale: Exercise real in-memory hub and queues with deterministic publication, no IO or runtime wiring.
+  - behavior: Foreign sessions do not consume queue space and overflow markers remain local.
+    tag: '@unit'
+    cheapest_sufficient: unit
+    rationale: Real bounded queues expose isolation and overflow directly.
+  - behavior: Internal unfiltered consumers and cleanup retain previous behavior.
+    tag: '@unit'
+    cheapest_sufficient: unit
+    rationale: Existing hub API exercised directly; production endpoints unchanged.
+red:
+  - Write regressions before implementation for ownership metadata, byte-exact to_sse/to_dict, interleaved live/replay filtering, global cursor gaps, service-wide events, overflow and unsubscribe cleanup.
+  - Record actual focused failures caused by absent metadata/filter functionality.
+green:
+  - Implement only the two allowlisted files with explicit typed parameters and shared matching semantics.
+  - Cover both filtered and existing internal unfiltered callers; no async sleeps or external dependencies.
+refactor:
+  - Keep matching logic centralized, preserve existing ordering and bounds, inspect actual diff for unrelated modifications.
+checks:
+  focused: uv run pytest -q -p no:sugar tests/test_server_events.py
+  integration_regression: uv run pytest -q -p no:sugar tests/test_server_runtime.py tests/test_ui_service_client.py tests/test_ui_client.py tests/test_attention_client_ui.py
+  full: uv run pytest -q -p no:sugar -n 8
+  lint: uv run ruff check src tests
+  format: uv run ruff format --check src tests
+  diff: git diff --check
+  validator: Run clean-python validator pilot if available; report findings/errors without silently expanding scope.
+  frequency: Focused Red/Green first, full suite once stable; no performance improvement claim.
+qa_contract:
+  - Verify exact assigned skills were applied and reported.
+  - Inspect actual source diff preserving every pre-existing user change.
+  - Re-run affected verification on final tree; obtain raw output or report BLOCKED.
+  - Confirm full-suite command uses eight workers; tests do not weaken existing contracts.
+  - Return exactly one objective PASS, FAIL, or BLOCKED with recommendation and memory_writes.
+escalation:
+  - Stop before changing any other file, API behavior, producer ownership, fixture or dependency.
+  - Report incompatible existing construction/callers rather than expanding paths silently.
+  - Report unhandled baseline failures; do not weaken or delete tests to pass.
+risks_and_limits:
+  - No concurrent session execution or per-client API isolation delivered here.
+  - Runtime producers remain unclassified until next contract; this task alone cannot claim session event isolation end to end.
+  - HTTP /events still unchanged in this intermediate foundation; required selector and simultaneous client migration remain mandatory follow-up.
+  - Global replay buffer can evict a session's history due to other traffic; no per-session retention guarantee is introduced.
+  - Broad working tree contains user edits and completed profile work; never reset/stash/overwrite them.
+follow_up_blockers:
+  - Explicit ownership capture for root tools, extension notices, MCP loader, tree and question callbacks across rebind.
+  - Atomic web subscription readiness after state/history load plus generation guards for old callbacks/results.
+  - Required HTTP session validation including active unpersisted drafts and explicit refusal for unheld sessions.
+gherkin:
+  draft: .pas/state/active/00006-multi-session-service/event-hub.feature
+  publish_on_done: specs/features/application/session_events.feature
+  existing_feature_paths_preserved: true

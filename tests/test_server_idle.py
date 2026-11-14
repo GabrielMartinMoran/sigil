@@ -26,8 +26,10 @@ import subprocess
 import sys
 import time
 import uuid
+from contextlib import ExitStack
 from pathlib import Path
 
+import httpx
 import pytest
 from pydantic_ai.models.test import TestModel
 
@@ -562,7 +564,8 @@ def _may_serve(database: Path) -> str:
     return result.stdout.strip()
 
 
-def test_a_service_with_no_work_stops_after_the_window_and_releases_the_store(tmp_path: Path) -> None:
+@pytest.mark.parametrize('connected', [False, True])
+def test_a_service_with_no_work_stops_after_the_window_and_releases_the_store(tmp_path: Path, connected: bool) -> None:
     """The whole exit: the loop ends by itself, the file goes, the lock is free.
 
     This is the one behaviour of the cut that is a fact about a process, so it is
@@ -581,7 +584,7 @@ def test_a_service_with_no_work_stops_after_the_window_and_releases_the_store(tm
             workspace=str(workspace),
             dist=str(tmp_path / 'missing-dist'),
             endpoint=str(endpoint),
-            grace=0.1,
+            grace=1.0 if connected else 0.1,
             poll=0.02,
         ),
         encoding='utf-8',
@@ -597,7 +600,22 @@ def test_a_service_with_no_work_stops_after_the_window_and_releases_the_store(tm
     )
     try:
         _wait_for_publication(endpoint, process)
-        output, _ = process.communicate(timeout=EXIT_DEADLINE)
+        with ExitStack() as stack:
+            if connected:
+                published = read_endpoint(endpoint)
+                assert published is not None
+                client = stack.enter_context(httpx.Client(timeout=5))
+                response = stack.enter_context(
+                    client.stream(
+                        'GET',
+                        f'http://{published.host}:{published.port}/events',
+                        headers={'authorization': f'Bearer {published.token}'},
+                    )
+                )
+                assert response.status_code == 200
+            # Keep the SSE connection open while waiting: uvicorn must not need the
+            # terminal to disconnect before it can release the ownership lock.
+            output, _ = process.communicate(timeout=5 if connected else EXIT_DEADLINE)
     finally:
         if process.poll() is None:  # pragma: no cover - only on a failure above
             process.kill()
@@ -607,3 +625,39 @@ def test_a_service_with_no_work_stops_after_the_window_and_releases_the_store(tm
     assert 'LEFT THE LOOP' in output
     assert read_endpoint(endpoint) is None, 'the endpoint of a stopped service must not survive it'
     assert _may_serve(database_path(home)) == 'ACQUIRED', 'the service kept the store after leaving'
+
+
+@pytest.mark.parametrize('connected', [False, True])
+def test_should_close_streams_even_when_the_stop_event_is_skipped(connected: bool) -> None:
+    from fastapi import FastAPI, Request
+
+    from src.server.app import _stream
+
+    async def go() -> None:
+        app = FastAPI()
+        app.state.stopping = not connected
+        hub = EventHub(queue_size=1)
+        hub.publish('notice')
+        if not connected:
+            hub.publish('service_stopping')
+
+        async def receive() -> dict[str, object]:
+            await asyncio.Event().wait()
+            return {'type': 'http.disconnect'}
+
+        request = Request({'type': 'http', 'app': app}, receive=receive)
+        stream = _stream(hub, request, after=0 if connected else hub.last_seq)
+        try:
+            if connected:
+                await asyncio.wait_for(anext(stream), timeout=0.5)
+                app.state.stopping = True
+                hub.publish('service_stopping')
+                # A full queue may replace the stop event with a lag marker.
+                hub.publish('notice')
+            with pytest.raises(StopAsyncIteration):
+                await asyncio.wait_for(anext(stream), timeout=0.5)
+        finally:
+            await stream.aclose()
+        assert hub.subscriber_count == 0
+
+    asyncio.run(go())

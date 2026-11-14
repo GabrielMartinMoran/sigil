@@ -904,6 +904,7 @@ def agent_view(profile: Any, *, active: bool) -> dict[str, Any]:
         'source': getattr(profile, 'source', ''),
         'max_steps': getattr(profile, 'max_steps', None),
         'active': active,
+        'permissions': profile.permissions.describe(),
     }
 
 

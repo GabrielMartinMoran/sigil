@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import base64
 import time
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -50,6 +51,7 @@ from textual.widgets import Static
 from src.engine.agents.step_budget import StepBudget
 from src.engine.attachments.content import user_content
 from src.engine.attachments.image_attachment import ImageAttachment
+from src.engine.files.paths import execution_workspace
 from src.engine.providers.domain.thinking import settings_value as thinking_settings
 from src.engine.sessions.recovery import recover_history
 from src.ui.desktop_notifications import Attention
@@ -616,6 +618,17 @@ class TurnMixin:
             # Nothing was running: the hint goes away instead of sitting there.
             self._paint_status('')
 
+    def _execution_workspace(self) -> AbstractContextManager[Any]:
+        """Binds this turn's workspace for the whole run, or nothing when attached.
+
+        The root is read once, when the turn starts: a `/new` accepted while the
+        agent works changes the selection for the next turn, not for the tools
+        already running. An attached client has no local workspace manager — the
+        service resolves the root — so there is nothing to bind here.
+        """
+        root = self._workspace_root()
+        return nullcontext() if root is None else execution_workspace(root)
+
     @work(exclusive=True)
     async def run_turn(self, text: str, *, attachments: tuple[ImageAttachment, ...] = ()) -> None:
         """Runs a full turn, persisting progress along the way."""
@@ -696,23 +709,24 @@ class TurnMixin:
                     self._history = history
                 self._store.save_progress(session)
                 await chat.add_notice(recovery.notice, style='yellow')
-            async with self._agent.iter(
-                user_content(text, attachments),
-                message_history=history,
-                capabilities=[ProcessEventStream(handler=handler), budget],
-                model_settings=self.model_settings(),
-                usage_limits=UsageLimits(request_limit=None),
-            ) as run:
-                self._current_run = run
-                # A message typed while the run was being built has no id yet.
-                self._flush_steering(run)
-                async for _node in timings.trace(run):
-                    if Agent.is_model_request_node(_node):
-                        self.set_activity_label('Waiting for model')
-                    # Checkpoint per iteration: every completed node (model
-                    # response, tool batch) gets persisted.
-                    self.checkpoint()
-            history = run.all_messages()
+            with self._execution_workspace():
+                async with self._agent.iter(
+                    user_content(text, attachments),
+                    message_history=history,
+                    capabilities=[ProcessEventStream(handler=handler), budget],
+                    model_settings=self.model_settings(),
+                    usage_limits=UsageLimits(request_limit=None),
+                ) as run:
+                    self._current_run = run
+                    # A message typed while the run was being built has no id yet.
+                    self._flush_steering(run)
+                    async for _node in timings.trace(run):
+                        if Agent.is_model_request_node(_node):
+                            self.set_activity_label('Waiting for model')
+                        # Checkpoint per iteration: every completed node (model
+                        # response, tool batch) gets persisted.
+                        self.checkpoint()
+                history = run.all_messages()
         except RunCancelled:
             attention = None
             # The user stopped the turn: cancelling an `ask_user` panel, or `Esc`

@@ -89,7 +89,8 @@ def test_compositions_use_own_roots_after_another_switch(tmp_path: Path, monkeyp
         b_tools.tools['write_file'](path='after.txt', content='second')
         assert (destination / 'after.txt').read_text() == 'destination'
         assert (second / 'after.txt').read_text() == 'second'
-        assert Path.cwd() == destination
+        assert Path.cwd() == outside
+        assert a.workspace_manager.root == destination
     finally:
         a.close()
         b.close()
@@ -400,3 +401,312 @@ def test_shell_cancel_stops_child_group_without_stopping_other_composition(
         os.close(ready_fd)
         a.close()
         b.close()
+
+
+def test_binding_restores_profile_prompt_and_persisted_fallback(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
+    _profile(tmp_path, 'reviewer', 'Review with care.')
+    _profile(tmp_path, 'worker', 'Only delegated tasks.', subagent=True)
+    composition = _composition(tmp_path, tmp_path / 'providers')
+    try:
+        session = composition.store.create_session()
+        session.agent = 'reviewer'
+        composition.store.save(session)
+        composition.bind_session(session, model=False)
+        assert composition.agent_registry.active_name == 'reviewer'
+        assert 'Review with care.' in composition.agent_registry.active_body()
+        assert composition.agent_trees.active.root.name == 'reviewer'
+        for invalid in ('removed-profile', 'worker'):
+            session.agent = invalid
+            composition.store.save(session)
+            composition.agent_registry.activate('reviewer')
+            composition.bind_session(session, model=False)
+            assert composition.agent_registry.active_name == 'wizard'
+            assert session.agent == 'wizard'
+            assert composition.agent_trees.active.root.name == 'wizard'
+            assert composition.store.load(session.id).agent == 'wizard'
+    finally:
+        composition.close()
+
+
+def test_binding_restricted_profile_denies_real_patch_calls(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
+    _profile(tmp_path, 'limited', 'Change only authorized files.')
+    (tmp_path / '.sigil/agents/limited.md').write_text(
+        '---\nname: limited\ndescription: restricted\npermissions:\n'
+        "  write:\n    allow: ['allowed/*']\n---\nChange only authorized files.\n"
+    )
+    for directory in ('src', 'allowed'):
+        (tmp_path / directory).mkdir()
+        (tmp_path / directory / 'note.txt').write_text('before')
+    composition = _composition(tmp_path, tmp_path / 'providers')
+    try:
+        target = ['src/note.txt']
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        'patch_file',
+                        {
+                            'path': target[0],
+                            'old_string': 'before',
+                            'new_string': 'after',
+                        },
+                    )
+                ]
+            )
+
+        composition._model_override = FunctionModel(model)
+        agent = composition.rebuild_agent()
+        session = composition.store.create_session()
+        session.agent = 'limited'
+        composition.store.save(session)
+        composition.bind_session(session, model=False)
+        composition.meter.set_window(100_000)
+
+        def outcome() -> str:
+            result = asyncio.run(agent.run('patch'))
+            return next(
+                part.outcome
+                for message in result.all_messages()
+                for part in message.parts
+                if isinstance(part, ToolReturnPart)
+            )
+
+        assert outcome() == 'failed'
+        assert (tmp_path / 'src/note.txt').read_text() == 'before'
+        target[0] = 'allowed/note.txt'
+        assert outcome() == 'success'
+        assert (tmp_path / 'allowed/note.txt').read_text() == 'after'
+    finally:
+        composition.close()
+
+
+def test_profile_selection_is_persisted_before_another_turn(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
+    _profile(tmp_path, 'reviewer', 'Review.')
+    composition = _composition(tmp_path, tmp_path / 'providers')
+    try:
+        session = composition.store.create_session()
+        session.agent = 'wizard'
+        composition.store.save(session)
+        composition.bind_session(session, model=False)
+        composition.apply_agent('reviewer')
+        assert composition.store.load(session.id).agent == 'reviewer'
+    finally:
+        composition.close()
+
+
+def test_global_profiles_survive_binding_sessions_in_different_projects(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    home = tmp_path / 'home'
+    global_profiles = home / 'agents'
+    global_profiles.mkdir(parents=True)
+    (global_profiles / 'shared.md').write_text(
+        '---\nname: shared\ndescription: Global profile.\n---\nGlobal instructions.'
+    )
+    monkeypatch.setenv('SIGIL_HOME', str(home))
+    first, second, outside = (tmp_path / name for name in ('first', 'second', 'outside'))
+    for root in (first, second, outside):
+        root.mkdir()
+    _profile(first, 'shared', 'Project override.')
+    _profile(second, 'second-only', 'Second project.')
+    monkeypatch.chdir(outside)
+    composition = _composition(first, tmp_path / 'providers')
+    try:
+        assert composition.agent_registry.get('shared').source == 'project'
+        composition.workspace_manager.switch(second)
+        session = composition.store.create_session()
+        session.agent = 'shared'
+        composition.store.save(session)
+        composition.bind_session(session, model=False)
+        assert composition.agent_registry.active_name == 'shared'
+        assert composition.agent_registry.active.source == 'global'
+        assert composition.agent_registry.active_body() == 'Global instructions.'
+        assert composition.agent_registry.get('second-only') is not None
+        assert composition.agent_trees.active.root.name == 'shared'
+    finally:
+        composition.close()
+
+
+def _write_skill(root: Path, name: str) -> None:
+    directory = root / '.agents' / 'skills' / name
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / 'SKILL.md').write_text(f'---\nname: {name}\ndescription: test skill\n---\nBody\n')
+
+
+def test_two_executions_resolve_their_own_roots_without_moving_the_process(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    from src.engine.files.paths import execution_workspace
+
+    first, second, outside = (tmp_path / name for name in ('first', 'second', 'outside'))
+    for root in (first, second, outside):
+        root.mkdir()
+    monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
+    monkeypatch.chdir(outside)
+    a = _composition(first, tmp_path / 'providers')
+    b = _composition(second, tmp_path / 'providers')
+    try:
+        a_tools, b_tools = _Recorder(), _Recorder()
+        a.install_tools(a_tools)
+        b.install_tools(b_tools)
+        # Outside any run the composition's own workspace is the fallback.
+        assert a.execution_root() == first
+        assert b.execution_root() == second
+
+        def write(root: Path, tools: _Recorder) -> None:
+            with execution_workspace(root):
+                tools.tools['write_file'](path='note.txt', content=root.name)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(lambda pair: write(*pair), ((first, a_tools), (second, b_tools))))
+
+        assert (first / 'note.txt').read_text() == 'first'
+        assert (second / 'note.txt').read_text() == 'second'
+        assert Path.cwd() == outside
+    finally:
+        a.close()
+        b.close()
+
+
+def test_child_tasks_and_threads_keep_the_spawning_root_after_the_parent_leaves(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    from src.engine.files.paths import execution_workspace, workspace_root
+
+    first, second, outside = (tmp_path / name for name in ('first', 'second', 'outside'))
+    for root in (first, second, outside):
+        root.mkdir()
+    monkeypatch.chdir(outside)
+
+    async def scenario() -> tuple[Path, Path]:
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def child() -> Path:
+            started.set()
+            await release.wait()
+            return workspace_root()
+
+        with execution_workspace(first):
+            task = asyncio.get_running_loop().create_task(child())
+            await started.wait()
+            threaded = await asyncio.to_thread(workspace_root)
+        with execution_workspace(second):
+            release.set()
+            return await task, threaded
+
+    child_root, threaded_root = asyncio.run(scenario())
+
+    assert child_root == first.resolve()
+    assert threaded_root == first.resolve()
+    assert Path.cwd() == outside
+
+
+def test_a_cancelled_execution_restores_the_previous_root(tmp_path: Path) -> None:
+    from src.engine.files.paths import execution_workspace, workspace_root
+
+    outer, bound = tmp_path / 'outer', tmp_path / 'bound'
+    outer.mkdir()
+    bound.mkdir()
+
+    async def scenario() -> Path:
+        with execution_workspace(outer):
+
+            async def child() -> None:
+                with execution_workspace(bound):
+                    await asyncio.sleep(10)
+
+            task = asyncio.get_running_loop().create_task(child())
+            await asyncio.sleep(0)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            return workspace_root()
+
+    assert asyncio.run(scenario()) == outer.resolve()
+
+
+def test_registered_tool_callbacks_follow_the_bound_root(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    """File, conflict, shell and image boundaries resolve the run's root."""
+    import asyncio
+    import io
+
+    from PIL import Image
+    from pydantic_ai import RunContext
+    from pydantic_ai.models.test import TestModel
+
+    from src.engine.files.conflicts import same_file_conflict
+    from src.engine.files.paths import execution_workspace
+    from src.engine.tooling.concurrency import ConcurrencyContext, SiblingCall
+
+    composed, bound, outside = (tmp_path / name for name in ('composed', 'bound', 'outside'))
+    for root in (composed, bound, outside):
+        root.mkdir()
+    buffer = io.BytesIO()
+    Image.new('RGB', (12, 12)).save(buffer, format='PNG')
+    (bound / 'image.png').write_bytes(buffer.getvalue())
+    monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
+    monkeypatch.chdir(outside)
+    composition = _composition(composed, tmp_path / 'providers')
+    try:
+        tools = _Recorder()
+        composition.install_tools(tools)
+        ctx = RunContext(deps=None, model=TestModel(), usage=None)
+
+        with execution_workspace(bound):
+            tools.tools['write_file'](path='note.txt', content='bound')
+            assert tools.tools['read_file'](path='note.txt').content == 'bound'
+            assert (bound / 'note.txt').read_text() == 'bound'
+            conflict = ConcurrencyContext(
+                'write_file',
+                {'path': 'note.txt'},
+                None,
+                (SiblingCall('patch_file', {'path': str(bound / 'note.txt')}, None),),
+            )
+            assert same_file_conflict(conflict, composition.execution_root()) is not None
+            assert Path(asyncio.run(tools.tools['run'](['pwd']))[0].stdout.strip()).resolve() == bound.resolve()
+            viewed = asyncio.run(tools.tools['view_image'](ctx, source='image.png'))
+            size = Image.open(io.BytesIO(next(iter(viewed.content)).data)).size
+
+        assert size == (12, 12)
+        assert Path.cwd() == outside
+        assert not (composed / 'note.txt').exists()
+    finally:
+        composition.close()
+
+
+def test_default_skill_discovery_uses_the_composition_root(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    first, outside, custom = (tmp_path / name for name in ('first', 'outside', 'custom'))
+    for root in (first, outside, custom):
+        root.mkdir()
+    _write_skill(first, 'project-skill')
+    _write_skill(custom, 'custom-skill')
+    monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
+    monkeypatch.chdir(outside)
+    composition = _composition(first, tmp_path / 'providers')
+    try:
+        names = [skill.name for skill in composition.skill_registry.list()]
+        assert 'project-skill' in names
+        assert composition.skill_registry.roots[0][1] == first / '.agents' / 'skills'
+    finally:
+        composition.close()
+
+    monkeypatch.setenv('SIGIL_SKILLS_DIRS', str(custom / '.agents' / 'skills'))
+    explicit = _composition(first, tmp_path / 'providers')
+    try:
+        names = [skill.name for skill in explicit.skill_registry.list()]
+        assert 'custom-skill' in names
+        assert 'project-skill' not in names
+    finally:
+        explicit.close()

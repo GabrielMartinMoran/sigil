@@ -870,7 +870,7 @@ def test_a_pending_input_is_painted_once_and_leaves_when_confirmed(composition: 
             # loop running makes the test race a timer, and it loses under load with
             # the waiting line gone before the first read can paint it. Stopping the
             # consumer turns "still queued" into a state the test sets.
-            consumer = runtime._consumer
+            consumer = runtime.session_runtime._consumer
             assert consumer is not None, 'the seed above starts the consumer'
             consumer.cancel()
             await asyncio.gather(consumer, return_exceptions=True)
@@ -1299,54 +1299,35 @@ def test_a_client_command_is_not_refused_whole_sale_in_an_attached_terminal(
     asyncio.run(inner())
 
 
-SIDE_DOORS = (('ctrl+a', '/agent'),)
-"""The keys that used to open a picker without passing the dispatcher.
-
-`ctrl+l` and `ctrl+m` left this list when their commands were delegated: `/effort`
-and `/model` open a picker that is the client's, fed by the service, so a panel is
-the correct answer and not a bypass. What this test still proves is the part that
-was the bug — a key and its typed command reaching the same decision.
-
-The prompt handled them itself and called `open_models`, `open_effort` and
-`open_agent` directly, so an attached terminal bypassed whichever decision the
-typed command made. Now they go through the same choke point, and this is the
-proof: the key and the command produce the same sentence, character for
-character.
-
-The model picker is `ctrl+m`, not `alt+m`: `tests/test_shortcuts_and_efforts.py`
-locks that, because a global `alt+m` binding is what the pickers moved away from.
-
-`ctrl+l` is deliberately absent: `/effort` is delegated now, so its door opens the
-picker fed by the service instead of answering a refusal. Its own test is below.
-"""
-
-
-@pytest.mark.parametrize(('key', 'name'), SIDE_DOORS)
-def test_a_side_door_answers_exactly_like_the_typed_command(
-    key: str, name: str, composition: Composition, tmp_path: Path
+@pytest.mark.parametrize('entry', ('keyboard', 'command'))
+def test_agent_picker_uses_service_catalog_from_both_entry_points(
+    entry: str, composition: Composition, tmp_path: Path
 ) -> None:
+    from src.ui.widgets.agent_picker_screen import AgentPickerScreen
+
     async def inner() -> None:
         async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
             app = _terminal(client, _session(runtime))
             async with app.run_test(size=(100, 40)) as pilot:
-                await pilot.pause()
-                chat = app.query_one(ChatLog)
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
                 before = _inputs(runtime)
-
-                blocks_before = len(chat.children)
-                await pilot.press(key)
-                await _until(pilot, lambda: len(chat.children) > blocks_before, what=f'the {key} notice')
-                from_key = '\n'.join(_block_text(widget) for widget in list(chat.children)[blocks_before:])
-
-                blocks_before = len(chat.children)
-                await app.handle_command(name)
-                await pilot.pause()
-                from_command = '\n'.join(_block_text(widget) for widget in list(chat.children)[blocks_before:])
-
-                assert name in from_key, f'{key} answers for {name}'
-                assert from_key == from_command, 'the key and the typed command answer the same'
-                assert len(app.screen_stack) == 1, 'a side door opens no panel in an attached terminal'
-                assert _inputs(runtime) == before, 'a side door writes nothing'
+                if entry == 'keyboard':
+                    await pilot.press('ctrl+a')
+                else:
+                    app.run_worker(app.handle_command('/agent'))
+                await _until(pilot, lambda: isinstance(app.screen, AgentPickerScreen), what='the agent picker')
+                screen = app.screen
+                assert {row.name for row in screen._profiles} == {
+                    profile.name for profile in runtime.composition.agent_registry.agents()
+                }
+                options = screen.query_one(OptionList)
+                names = [row.name for row in screen._visible]
+                options.highlighted = names.index('reviewer')
+                await pilot.press('enter')
+                await _until(pilot, lambda: runtime.session.agent == 'reviewer', what='the chosen profile')
+                await _until(pilot, lambda: len(app.screen_stack) == 1, what='the picker closing')
+                assert runtime.composition.agent_registry.active_name == 'reviewer'
+                assert _inputs(runtime) == before
 
     asyncio.run(inner())
 

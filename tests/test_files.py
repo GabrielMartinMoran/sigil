@@ -460,3 +460,45 @@ def test_external_access_follows_current_session_for_all_file_tools(tmp_path, mo
     allowed = False
     with pytest.raises(FileToolError):
         tools['read_file'](path=str(external))
+
+
+# --- execution workspace ------------------------------------------------------
+
+
+def test_unbound_root_is_the_process_directory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert paths.workspace_root() == tmp_path.resolve()
+
+
+def test_a_composition_fallback_is_used_when_nothing_is_bound(tmp_path, monkeypatch):
+    fallback = tmp_path / 'composed'
+    fallback.mkdir()
+    monkeypatch.chdir(tmp_path)
+    assert paths.workspace_root(fallback) == fallback
+
+
+def test_nested_bindings_restore_the_previous_root(tmp_path):
+    outer, inner = tmp_path / 'outer', tmp_path / 'inner'
+    outer.mkdir()
+    inner.mkdir()
+
+    with paths.execution_workspace(outer) as bound:
+        assert bound == outer.resolve()
+        assert paths.workspace_root() == bound
+        with pytest.raises(RuntimeError), paths.execution_workspace(inner):
+            assert paths.workspace_root() == inner.resolve()
+            raise RuntimeError('the inner execution failed')
+        assert paths.workspace_root() == bound
+
+    assert paths.workspace_root() == Path.cwd().resolve()
+
+
+def test_an_explicit_root_is_not_reinterpreted_as_a_fallback(tmp_path):
+    bound, explicit = tmp_path / 'bound', tmp_path / 'explicit'
+    bound.mkdir()
+    explicit.mkdir()
+    (explicit / 'note.txt').write_text('x')
+
+    with paths.execution_workspace(bound):
+        assert paths.resolve('note.txt', root=explicit) == (explicit / 'note.txt').resolve()
+        assert paths.resolve('note.txt') == (bound / 'note.txt').resolve()

@@ -165,8 +165,13 @@ def run(argv: list[str] | None = None, *, web: bool = True) -> int:
     # live there, and reading it after the config would make it invisible.
     load_dotenv()
 
+    # `--password` exists only on `serve`: on the backend the attribute is absent, not
+    # empty, so it is read conditionally rather than with a default. The surface, not
+    # the presence of a flag, is what says whether a password is part of this process.
+    password = args.password if web else None
+
     try:
-        config = resolve_config(host=args.host, port=args.port, password=args.password, web=web)
+        config = resolve_config(host=args.host, port=args.port, password=password, web=web)
     except ServerConfigError as exc:
         print(f'{program}: {exc}', file=sys.stderr)
         return 2

@@ -290,15 +290,15 @@ def test_no_confirmation_without_the_delivery_in_the_snapshot(runtime: ServerRun
     store.accept_input(session, request, 'ghost', [], 'turn')
     queue = AcceptedInputs(store.database)
     queue.transition(session.id, request, 'claimed', attempt_id='attempt')
-    runtime._attempts[request] = 'attempt'
-    runtime._pending[request] = queue.list(session.id)[0]
-    runtime._event_seen.add(request)
+    runtime.session_runtime._attempts[request] = 'attempt'
+    runtime.session_runtime._pending[request] = queue.list(session.id)[0]
+    runtime.session_runtime._event_seen.add(request)
 
     class EmptyRun:
         def all_messages(self):
             return []
 
-    assert runtime._confirmations(EmptyRun()) == []
+    assert runtime.session_runtime._confirmations(EmptyRun()) == []
     assert queue.list(session.id)[0].state == 'claimed'
 
 
@@ -441,10 +441,10 @@ def test_abort_finishes_an_already_confirmed_delivery(runtime: ServerRuntime) ->
             [DeliveryConfirmation(session.id, request, 'attempt', 'turn-id')],
             destination_id=session.id,
         )
-    runtime._pending[request] = queue.list(session.id)[0]
-    runtime._confirmed.add(request)
+    runtime.session_runtime._pending[request] = queue.list(session.id)[0]
+    runtime.session_runtime._confirmed.add(request)
 
-    runtime._stop_pending(session.id)
+    runtime.session_runtime._stop_pending(session.id)
 
     assert queue.list(session.id)[0].state == 'finished'
 
@@ -453,7 +453,7 @@ def test_send_fails_when_the_consumer_is_dead(runtime: ServerRuntime) -> None:
     async def go():
         runtime.start()
         runtime.ensure_workers()
-        runtime._consumer_error = RuntimeError('consumer died')
+        runtime.session_runtime._consumer_error = RuntimeError('consumer died')
         with pytest.raises(RuntimeError, match='consumer stopped'):
             await runtime.send('nobody home')
 
@@ -528,7 +528,7 @@ def test_consumer_death_interrupts_accepted_rows(runtime: ServerRuntime) -> None
             raise RuntimeError('consumer died')
 
         runtime._accepted.claim_next = boom
-        runtime._settled.clear()
+        runtime.session_runtime._settled.clear()
         runtime.ensure_workers()
         with pytest.raises(RuntimeError, match='consumer died'):
             await asyncio.wait_for(runtime.wait(), 5)

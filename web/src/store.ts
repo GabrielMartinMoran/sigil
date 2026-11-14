@@ -106,6 +106,8 @@ type Store = {
   answer: (id: string, answers: { question: string; answer: string; custom?: boolean }[] | null) => Promise<void>;
   newSession: () => Promise<void>;
   openSession: (id: string) => Promise<void>;
+  selectingAgent: boolean;
+  selectAgent: (name: string) => Promise<boolean>;
   switchWorkspace: (root: string) => Promise<void>;
 
   applyEvent: (type: string, data: Record<string, unknown>) => void;
@@ -168,6 +170,7 @@ export const useStore = create<Store>((set, get) => ({
   pendingSend: null,
   stream: emptyStream(),
   busy: false,
+  selectingAgent: false,
   sessions: [],
   repositories: [],
 
@@ -366,6 +369,21 @@ export const useStore = create<Store>((set, get) => ({
       return;
     }
     await get().openSession(id);
+  },
+
+  async selectAgent(name) {
+    if (get().busy || get().selectingAgent) return false;
+    set({ selectingAgent: true, error: '' });
+    try {
+      await api.selectAgent(name);
+      await get().refresh();
+      return true;
+    } catch (error) {
+      set({ error: report(error) });
+      return false;
+    } finally {
+      set({ selectingAgent: false });
+    }
   },
 
   async switchWorkspace(root) {

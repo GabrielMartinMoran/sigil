@@ -41,6 +41,9 @@ from src.engine.agents.tree.store import AgentTreeStore
 from src.engine.agents.tree.summoner import SigilDeps, SubagentSummoner
 from src.engine.agents.tree.tools import register_tree_tools
 from src.engine.agents.tree.tree import AgentTree
+from src.engine.context.capability import ContextViewCapability
+from src.engine.context.meter.context_meter import ContextMeter
+from src.engine.context.strategy.append_only import AppendOnlyStrategy
 from src.engine.sessions.session_store import SessionStore
 
 FRONTMATTER = '---\nname: {name}\ndescription: {description}\n{extra}---\n{body}'
@@ -102,6 +105,8 @@ def make_env(
     max_steps: int = 0,
     max_depth: int = 3,
     root_run: Callable[[], Any | None] | None = None,
+    capabilities: list[Any] | None = None,
+    agent_model: Callable[[str], Any | None] | None = None,
 ) -> Env:
     """Builds the session: ``profiles`` is name -> (frontmatter extra, model)."""
     write_profile(tmp_path, 'wizard')
@@ -122,6 +127,7 @@ def make_env(
             model=models[profile.name],
             agent_registry=registry,
             profile=ProfileSource.fixed(profile),
+            extra_capabilities=capabilities,
         )
         register_tree_tools(agent, env.summoner)
 
@@ -143,8 +149,16 @@ def make_env(
         max_steps=max_steps,
         max_depth=max_depth,
         root_run=root_run,
+        agent_model=agent_model,
     )
-    env.factory = AgentFactory(AgentSpec(model=_model(root), agent_registry=registry, tool_registrars=[install]))
+    env.factory = AgentFactory(
+        AgentSpec(
+            model=_model(root),
+            agent_registry=registry,
+            tool_registrars=[install],
+            extra_capabilities=capabilities or (),
+        )
+    )
     session = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'sessions').create_session()
     trees.bind(session, root_name='wizard')
     return env
@@ -812,3 +826,113 @@ def test_an_unknown_id_says_what_an_id_is(tmp_path):
 
     with pytest.raises(SummonError, match='not the name of the profile'):
         env.summoner.kill(None, 'nope')
+
+
+# --- context -----------------------------------------------------------------
+
+
+def test_a_subagent_on_the_session_model_keeps_the_known_window(tmp_path):
+    """A node that inherits the model must not lose the window the meter holds.
+
+    A subagent whose profile configures no model sends to the model the session is on,
+    so the window the meter already has *is* its window. Replacing it with an unknown
+    value refused every one of those requests with "Context window is unknown", which
+    is the error a user gets the moment a subagent is summoned on a model the
+    catalogue did not describe.
+    """
+    capability = ContextViewCapability(strategy=AppendOnlyStrategy(), meter=ContextMeter(window=100_000))
+    env = make_env(
+        tmp_path,
+        root=_root_calling('summon', {'agent': 'worker', 'task': 'read it'}),
+        profiles={'worker': {'extra': 'role: subagent\n'}},
+        scripts={'worker': lambda messages, info: ModelResponse(parts=[TextPart('read half the tree.')])},
+        capabilities=[capability],
+    )
+
+    messages = run_root(env)
+
+    node = env.tree().nodes()[1]
+    assert node.error is None, node.error
+    assert node.status is NodeStatus.DONE
+    assert 'read half the tree.' in str(_tool_returns(messages)[0].content)
+
+
+def test_a_subagent_on_its_own_unknown_window_is_still_refused(tmp_path):
+    """The guard is not weakened: a different model with no window cannot be budgeted.
+
+    Keeping the session's window is only honest for a node that sends to the session's
+    model. A profile that overrides the model is measured against that model, and when
+    nothing knows its window the request is refused instead of sent blind.
+    """
+    from src.engine.agents.tree.summoner import AgentRunModel
+
+    capability = ContextViewCapability(strategy=AppendOnlyStrategy(), meter=ContextMeter(window=100_000))
+    other = _model(lambda messages, info: ModelResponse(parts=[TextPart('should not be sent')]))
+    env = make_env(
+        tmp_path,
+        root=_root_calling('summon', {'agent': 'worker', 'task': 'read it'}),
+        profiles={'worker': {'extra': 'role: subagent\n'}},
+        scripts={'worker': lambda messages, info: ModelResponse(parts=[TextPart('never used')])},
+        capabilities=[capability],
+        agent_model=lambda name: AgentRunModel(other, None, 'other:model', window=None),
+    )
+
+    run_root(env)
+
+    node = env.tree().nodes()[1]
+    assert node.status is NodeStatus.FAILED
+    assert 'Context window is unknown' in (node.error or '')
+
+
+@pytest.mark.parametrize('mode', ['sync', 'async'])
+def test_should_await_model_resolution_on_spawn_and_resume(tmp_path: Path, mode: str) -> None:
+    from src.engine.agents.tree.summoner import AgentRunModel
+
+    resolutions: list[str] = []
+    worker = _model(lambda messages, info: ModelResponse(parts=[TextPart('finished')]))
+
+    async def resolve(name: str) -> AgentRunModel:
+        resolutions.append(name)
+        return AgentRunModel(worker, None, 'Personal:deepseek-v4.1-flash', window=1_000_000)
+
+    capability = ContextViewCapability(strategy=AppendOnlyStrategy(), meter=ContextMeter())
+    env = make_env(
+        tmp_path,
+        root=lambda messages, info: ModelResponse(parts=[TextPart('root')]),
+        profiles={'worker': {'extra': 'role: subagent\n'}},
+        scripts={'worker': lambda messages, info: ModelResponse(parts=[TextPart('unused')])},
+        capabilities=[capability],
+        agent_model=resolve,
+    )
+    env.tree().ensure_root('wizard')
+
+    async def exercise() -> None:
+        await env.summoner.summon(parent_id=None, name='worker', task='read it', mode=mode)
+        await asyncio.wait_for(asyncio.gather(*env.summoner._tasks.values()), timeout=5)
+        node = env.tree().nodes()[1]
+        assert node.status is NodeStatus.DONE, node.error
+        assert node.model == 'Personal:deepseek-v4.1-flash'
+        await env.summoner.summon(parent_id=None, agent_id=node.id, task='continue', mode=mode)
+        await asyncio.wait_for(asyncio.gather(*env.summoner._tasks.values()), timeout=5)
+        assert node.status is NodeStatus.DONE, node.error
+
+    asyncio.run(exercise())
+    assert resolutions == ['worker', 'worker']
+
+
+def test_should_preserve_cancellation_during_model_resolution(tmp_path: Path) -> None:
+    from src.engine.agents.tree.summoner import AgentRunModel
+
+    async def resolve(name: str) -> AgentRunModel:
+        raise asyncio.CancelledError()
+
+    env = make_env(
+        tmp_path,
+        root=lambda messages, info: ModelResponse(parts=[TextPart('root')]),
+        profiles={'worker': {'extra': 'role: subagent\n'}},
+        agent_model=resolve,
+    )
+    env.tree().ensure_root('wizard')
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(env.summoner.summon(parent_id=None, name='worker', task='read it'))
+    assert len(env.tree().nodes()) == 1

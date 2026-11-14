@@ -851,6 +851,36 @@ def test_sigil_server_refuses_a_taken_store_before_building_the_engine(
     assert f'{tmp_path / "sigil.db"}.server.lock' in capsys.readouterr().err
 
 
+def test_the_backend_surface_resolves_its_config_without_a_password(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`sigil server` has no `--password` flag, so `run` must not read one.
+
+    The parser leaves the flag off the backend on purpose. Reading ``args.password``
+    there anyway is an ``AttributeError`` raised before the socket opens, so the
+    process dies without publishing an endpoint and the client that started it can
+    only report "the service exited before publishing one".
+    """
+
+    from src.server import cli
+    from src.server.config import ServerConfigError
+
+    seen: dict[str, object] = {}
+
+    def _stop_here(**kwargs: object) -> None:
+        seen.update(kwargs)
+        raise ServerConfigError('stop here, before any engine is built')
+
+    monkeypatch.setenv('SIGIL_HOME', str(tmp_path))
+    monkeypatch.setattr(cli, 'resolve_config', _stop_here)
+
+    assert cli.run(['--port', '8761'], web=False) == 2
+    assert seen['web'] is False
+    # Not a missing keyword and not an empty string: the backend has no password at
+    # all, so it passes nothing and `resolve_config` invents none.
+    assert seen['password'] is None
+
+
 def test_a_broken_lock_path_is_an_error_and_not_a_race(tmp_path: Path) -> None:
     """An unsafe lock path can never be published by anybody, so it is not waited on."""
 

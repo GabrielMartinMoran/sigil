@@ -1,0 +1,132 @@
+version: 1
+status: approved
+approval_basis: User replied Dale to the workspace-isolation plan, chose the original workspace, then requested continua.
+contract: session-scoped-workspace-v1
+parent: .pas/state/active/00006-multi-session-service/plan.yaml
+implementation_authorized: true
+objective: Isolate execution workspace resolution without changing process cwd.
+research_gate: Passed for this bounded slice after researcher6762f284 mapping and exact local-turn/callback/skills follow-up.
+user_constraints:
+  - Background work must remain possible while clients switch sessions; do not introduce a switch prohibition.
+  - HTTP events must require a session when the route and clients migrate together in a later slice.
+  - Continue feature00006; preserve unrelated work and the committed EventHub046badd foundation.
+agent_decisions:
+  - Add execution_workspace(root) context manager and a private ContextVar in src/engine/files/paths.py; capture an absolute resolved root on entry and reset token in finally.
+  - Extend workspace_root with an optional composition fallback; bound execution root wins, then supplied fallback, then Path.cwd().resolve(). Preserve existing no-argument callers.
+  - Keep resolve(path, root=...) and other explicit root parameters authoritative; do not globally reinterpret explicit root as a fallback.
+  - Add Composition.execution_root() delegating to workspace_root(self.workspace_manager.root). Route existing AgentSpec permissions, shell, file/conflict and image root callbacks through this method.
+  - Bind execution_workspace to a snapshot of the selected workspace around the full agent.iter lifetime on server _turn and standalone local TUI run_turn, including iteration and tool execution; never consult a mutable current session after starting the run.
+  - Child asyncio tasks and synchronous tool execution inherit the bound root; prove with real production execution seams and deterministic known-window streamed models, not private scheduler patches.
+  - Remove os.chdir from WorkspaceManager.switch while retaining target validation, rebind, persistence, callbacks and existing error handling. Workspace selection becomes component state, never process state.
+  - Initialize default Composition skill registry against self.root before first use, respecting existing explicit skill-directory overrides; retain later registry rebind lifecycle.
+  - Skill subprocesses keep cwd=metadata.path; MCP/repository/shell child processes retain their intentional explicit cwd values. No sweeping Path.cwd replacements.
+  - ScopeTracker and WorkspaceInstructions remain composition-owned explicit-root rebindables; this slice does not claim immutable full prompt/model/tree state across rebinding.
+  - No budget policy changes, model guard bypass, report-routing patches, EventHub migration, HTTP/client contract changes or concurrent runtime creation.
+  - Apply to subsequent turns and workspace switches after updated code is loaded; no new setting or restart-only preference is introduced. Already running processes are not restarted by this task.
+skill_assignment:
+  available_skills: [archify, clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer, documentation-lookup, figma-generate-library, figma-use, find-skills, frontend-design, mind-management, prompt-optimizer, skill-creator, vanya]
+  required_by_role:
+    researcher: [clean-code, clean-python, clean-architecture, cognitive-writing, docs-writer]
+    developer_core: [clean-code, clean-python, clean-architecture]
+    qa_core: [clean-code, clean-python, clean-architecture]
+    developer_docs: [cognitive-writing, docs-writer]
+    qa_docs: [cognitive-writing, docs-writer]
+  missing_skills: [clean-backend-architecture]
+  critical_missing: []
+tasks:
+  - versioned_contract: execution-root-core-v1
+    worker: pas_developer
+    verifier: pas_qa
+    objective: Resolve tool execution against an immutable selected root and stop process-wide cwd mutation.
+    paths:
+      - src/engine/files/paths.py
+      - src/engine/workspace/manager.py
+      - src/engine/bootstrap.py
+      - src/server/runtime.py
+      - src/ui/turn_mixin.py
+      - tests/test_files.py
+      - tests/test_workspace.py
+      - tests/test_session_isolation_foundation.py
+      - tests/test_workspace_ui.py
+      - tests/test_workspace_rebind.py
+      - tests/test_turn_cancel.py
+      - tests/test_server_runtime.py
+      - tests/test_agent_permissions.py
+      - tests/test_shell.py
+    assigned_skills: [clean-code, clean-python, clean-architecture]
+    qa_skills: [clean-code, clean-python, clean-architecture]
+    acceptance_tags: ['@unit', '@integration']
+    red:
+      - Prove unbound fallback, nested binding/reset, explicit resolver root precedence and two concurrent contexts while process cwd remains constant.
+      - Reproduce current workspace-switch cwd mutation and explicit-root Composition initial project-skill discovery mismatch.
+      - Assert server and local turn bindings with real tool execution, including a synchronous threaded path and inherited async child task root after parent scope exits.
+      - Prove cancellation/exception cleanup restores previous/unbound root without patching private idle machinery.
+    green:
+      - Implement all listed agent decisions through existing callbacks and execution boundaries without changing tools APIs or subprocess cwd policies.
+      - Amend existing cwd-movement assertions to component-root-plus-unchanged-process-cwd assertions, retaining model restoration, rejected workspace changes, file/image/permission/conflict and shell behavior checks.
+      - Keep direct tests using monkeypatch.chdir for standalone fallback where behavior is unchanged; do not rewrite unrelated test setup.
+    refactor:
+      - Centralize context resolution and Composition callback method; keep guards and root authority explicit, annotations complete, reset token in finally.
+      - Preserve all user changes inside bootstrap.py and neighboring tests; only targeted additions/replacements.
+    focused: uv run pytest -q -p no:sugar tests/test_files.py tests/test_workspace.py tests/test_workspace_rebind.py tests/test_session_isolation_foundation.py tests/test_agent_permissions.py tests/test_shell.py
+    ui_runtime_regression: uv run pytest -q -p no:sugar tests/test_server_runtime.py tests/test_turn_cancel.py tests/test_workspace_ui.py tests/test_session_file_access.py
+    full_checks:
+      - uv run pytest -q -p no:sugar -n 8
+      - uv run ruff check src tests
+      - uv run ruff format --check src tests
+      - git diff --check
+    additional_check: Run clean-python validator pilot if available; report findings honestly without out-of-scope layout changes.
+    escalation: Stop before any extra path, dependency, changed root-authority rule, scope expansion or unrelated baseline failure. Return converging progress at soft50steps; do not broaden to runtime extraction.
+  - versioned_contract: execution-workspace-docs-v1
+    worker: pas_developer
+    verifier: pas_qa
+    objective: Record current execution-workspace authority without presenting future concurrent runtimes as delivered.
+    paths: [docs/domain.md]
+    assigned_skills: [cognitive-writing, docs-writer]
+    qa_skills: [cognitive-writing, docs-writer]
+    acceptance_tags: ['@contract']
+    red: Identify current Workspace section lacking explicit process-cwd versus execution-root boundary.
+    green: Update only Workspace explanation with selection versus execution snapshot, no chdir, unbound fallback, explicit subprocess/skill cwd exceptions and references to source and feature. Add scoped owner/update note using repository conventions; avoid rewriting history or unrelated document sections.
+    refactor: Keep concise map rather than duplicate API manual; preserve headings/deep links.
+    full_checks: [Content-source consistency, relative-link targets, diff whitespace and actual scope]
+    escalation: Stop before any extra doc/source path, new user-visible semantics or claim of concurrent sessions already delivered.
+verification_levels:
+  - behavior: Resolver fallback, nested cleanup and explicit-root precedence.
+    tag: '@unit'
+    cheapest_sufficient: unit
+    rationale: Pure path/context decisions need no app, network or IO fixtures beyond temporary paths.
+  - behavior: Concurrent execution contexts, thread and child-task inheritance, tool root callbacks and shell subprocess cwd.
+    tag: '@integration'
+    cheapest_sufficient: integration
+    rationale: Real task/thread/tool/process boundaries cannot be established by resolver mocks.
+  - behavior: Server and local TUI execution binding and cancellation cleanup.
+    tag: '@integration'
+    cheapest_sufficient: integration
+    rationale: Existing runtime and focused local-turn harnesses prove run wiring; no complete browser workflow or real LLM required.
+  - behavior: Workspace component rebind and skills discovery without cwd mutation.
+    tag: '@integration'
+    cheapest_sufficient: integration
+    rationale: Exercise real manager, registry and selected workspace with isolated roots.
+  - behavior: Current execution-workspace contract is documented accurately.
+    tag: '@contract'
+    cheapest_sufficient: contract
+    rationale: Source/link/content review suffices for documentation; no unrelated full suite after text-only task.
+qa_contract:
+  - Read actual diffs and inspect pre-existing user edits before judging attribution; verify only the allowlisted paths were changed by worker.
+  - Verify exact skill assignment and application against worker report.
+  - Repeat affected checks on final source tree and require full Python suite eight workers once stable; report raw commands/results.
+  - Never equate context-root isolation with model/profile/tree/report isolation or claim feature00006 complete.
+  - Return exactly one objective PASS, FAIL or BLOCKED plus recommendation and memory_writes suggestions only.
+sequence: core developer then core QA/adjudication, then docs developer and docs QA/adjudication; no overlapping workers.
+risks:
+  - Bootstrap currently contains user changes; preserve them, do not overwrite module.
+  - Removing chdir changes the intentional internal contract of workspace selection; cwd-dependent tests must retain their other behavior assertions.
+  - A detached child may inherit its execution root while still referencing a rebound tree or other composition state; later session-runtime extraction is mandatory.
+  - Unexpected ambient cwd dependencies outside inventoried paths must be escalated, not patched outside scope.
+  - Initial project skills must preserve explicit SIGIL_SKILLS_DIRS/custom roots rather than override all registries indiscriminately.
+  - Experimental validator layout findings may persist; report them, do not claim validator PASS without evidence.
+gherkin:
+  draft: .pas/state/active/00006-multi-session-service/execution-workspace.feature
+  merge_on_done: specs/features/application/session_isolation_foundation.feature
+  policy: Lead preserves existing path and all prior scenarios, publishes merged spec only after acceptance.
+planning_gate: Closed paths and decisions for two sequential tasks; no unresolved product choices. Approval required before source writes.

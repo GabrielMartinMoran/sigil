@@ -24,7 +24,7 @@ from src.engine.providers.domain.provider_error import ProviderError
 from src.ui.messages import ChatNotice
 from src.ui.service_client import ServiceClient, ServiceClientError
 from src.ui.turn_mixin import failure_notice
-from src.ui.widgets.agent_picker_screen import AgentChoice, AgentPickerScreen
+from src.ui.widgets.agent_picker_screen import AgentChoice, AgentPickerRow, AgentPickerScreen
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.status_bar import StatusBar
 
@@ -108,15 +108,10 @@ class AgentMixin:
         except ServiceClientError as exc:
             await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
             return
-        selectable = [
-            str(row.get('name') or '')
-            for row in state.get('agents') or []
-            if str(row.get('role') or AgentRole.AGENT) == str(AgentRole.AGENT)
-        ]
-        active = str((state.get('session') or {}).get('agent') or '')
+        active = str((state.get('agent') or {}).get('name') or '')
         name = argument.strip().lower()
         if not name:
-            offered = self._offered_agents(selectable)
+            offered = self._offered_agents(state.get('agents') or [])
             if not offered:
                 await chat.add_notice(NO_PROFILES_NOTICE, style='yellow')
                 return
@@ -133,22 +128,18 @@ class AgentMixin:
         selected = str((payload.get('agent') or {}).get('name') or name)
         await chat.add_notice(f'Agent: {selected.replace("-", " ").title()}', style='green')
 
-    def _offered_agents(self, names: list[str]) -> list[AgentProfile]:
-        """The service's selectable names, as rows this picker can paint.
-
-        The permission line comes from the profile file: it is on disk in the
-        workspace the service runs in, and the projection carries no permissions,
-        so reading it from the file is the only way to show the truth instead of
-        a guessed default. A name the service knows and this process cannot read
-        is left out of the list rather than rendered with invented permissions;
-        `/agent <name>` still reaches the service with it.
-        """
-        registry = getattr(self, '_agent_registry', None)
-        if registry is None:
-            return []
-        registry.refresh()
-        wanted = set(names)
-        return [profile for profile in registry.agents() if profile.name in wanted]
+    def _offered_agents(self, rows: list[dict[str, Any]]) -> list[AgentPickerRow]:
+        """Paint server-owned metadata without consulting the client's filesystem."""
+        return [
+            AgentPickerRow(
+                name=str(row.get('name') or ''),
+                description=str(row.get('description') or ''),
+                source=str(row.get('source') or ''),
+                permissions=str(row.get('permissions') or ''),
+            )
+            for row in rows
+            if row.get('role') == str(AgentRole.AGENT)
+        ]
 
     # --- applying the choice -----------------------------------------------
 
@@ -179,11 +170,7 @@ class AgentMixin:
         registry = getattr(self, '_agent_registry', None)
         if registry is None:
             return
-        if name:
-            try:
-                registry.activate(name)
-            except AgentNotFound:
-                pass
+        registry.restore(name)
         self.remember_agent(registry.active)
 
     def remember_agent(self, profile: AgentProfile | None) -> None:
@@ -217,7 +204,7 @@ class AgentMixin:
         if self._client is not None and isinstance(service, dict):
             # The projection is the authority while attached: the local registry
             # is a catalogue of files, not a statement about this session.
-            name = str((service.get('session') or {}).get('agent') or '')
+            name = str((service.get('agent') or {}).get('name') or '')
             label = name.replace('-', ' ').title() if name else ''
         try:
             bar = self.query_one(StatusBar)

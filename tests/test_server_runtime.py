@@ -612,14 +612,14 @@ def test_abort_cancels_only_the_runtime_composition(runtime: ServerRuntime) -> N
 
     async def check() -> None:
         pending = asyncio.Event()
-        runtime._task = asyncio.create_task(pending.wait())
+        runtime.session_runtime._task = asyncio.create_task(pending.wait())
         try:
             assert runtime.abort()
             assert owner.generation() == own_generation + 1
             assert other.generation() == other_generation
         finally:
-            runtime._task.cancel()
-            await asyncio.gather(runtime._task, return_exceptions=True)
+            runtime.session_runtime._task.cancel()
+            await asyncio.gather(runtime.session_runtime._task, return_exceptions=True)
 
     asyncio.run(check())
 
@@ -1580,9 +1580,9 @@ def test_a_closing_service_does_not_wake_a_turn(runtime: ServerRuntime) -> None:
         await runtime.send('dispatch the researcher')
         await asyncio.wait_for(runtime.wait(), WAKE_DEADLINE)
         after = runtime.hub.last_seq
-        runtime._closing = True
+        runtime.session_runtime._closing = True
         closed = _finished(runtime.composition, 'Too late.')
-        assert await runtime._wake_from_subagents() is False
+        assert await runtime.session_runtime._wake_from_subagents() is False
         return closed, after
 
     node, after = asyncio.run(go())
@@ -1606,7 +1606,7 @@ def test_a_cancelled_subagent_does_not_wake_a_turn(runtime: ServerRuntime) -> No
         # and keeps `delivered` false, which is the state a wake must refuse.
         node.delivered = False
         node.cancel()
-        assert await runtime._wake_from_subagents() is False
+        assert await runtime.session_runtime._wake_from_subagents() is False
         return node
 
     node = asyncio.run(go())
@@ -1627,7 +1627,7 @@ def test_a_failed_subagent_wakes_a_turn(runtime: ServerRuntime) -> None:
         node = _node(runtime.composition, mode='async')
         node.fail('SummonError: the tool refused')
         node.delivered = False
-        assert await runtime._wake_from_subagents() is True
+        assert await runtime.session_runtime._wake_from_subagents() is True
         await asyncio.wait_for(runtime.wait(), WAKE_DEADLINE)
         return node
 
@@ -1815,12 +1815,12 @@ def test_stop_all_still_stops_a_running_turn(runtime: ServerRuntime) -> None:
 
     async def check() -> None:
         pending = asyncio.Event()
-        runtime._task = asyncio.create_task(pending.wait())
+        runtime.session_runtime._task = asyncio.create_task(pending.wait())
         try:
             assert runtime.stop_all() is True
         finally:
-            runtime._task.cancel()
-            await asyncio.gather(runtime._task, return_exceptions=True)
+            runtime.session_runtime._task.cancel()
+            await asyncio.gather(runtime.session_runtime._task, return_exceptions=True)
 
     asyncio.run(check())
 
@@ -1984,9 +1984,11 @@ def test_a_turn_that_says_nothing_says_once_that_it_is_still_waiting(
     from pydantic_ai.messages import ModelMessage
     from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-    from src.server import runtime as runtime_module
+    # The threshold belongs to the implementation module now: the watcher reads
+    # it there, so a patch on the facade's re-export would change nothing.
+    from src.server import session_runtime as session_runtime_module
 
-    monkeypatch.setattr(runtime_module, 'SLOW_TURN_NOTICE_SECONDS', 0.01)
+    monkeypatch.setattr(session_runtime_module, 'SLOW_TURN_NOTICE_SECONDS', 0.01)
     release = asyncio.Event()
 
     async def answer(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
@@ -2225,15 +2227,15 @@ def test_writing_a_default_is_refused_while_a_turn_runs(tmp_path: Path, monkeypa
 
     async def go() -> None:
         pending = asyncio.Event()
-        runtime._task = asyncio.create_task(pending.wait())
+        runtime.session_runtime._task = asyncio.create_task(pending.wait())
         try:
             with pytest.raises(RuntimeError, match='turn is running'):
                 runtime.save_model_default('scout', AgentModelConfig('work', 'm', 'high'), ConfigScope.PROJECT)
         finally:
-            task = runtime._task
+            task = runtime.session_runtime._task
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-            runtime._task = None
+            runtime.session_runtime._task = None
 
     asyncio.run(go())
 
@@ -2451,3 +2453,33 @@ def test_a_window_can_start_and_end_inside_one_message() -> None:
     assert [item['index'] for item in window.items] == [1, 1]
     assert window.first_index == 1
     assert window.has_more is True
+
+
+def test_a_turn_binds_the_selected_workspace_for_its_tools(runtime: ServerRuntime) -> None:
+    from pydantic_ai import Agent
+
+    from src.engine.files.paths import workspace_root
+
+    seen: list[Path] = []
+
+    def record_root() -> str:
+        seen.append(workspace_root())
+        return 'root recorded'
+
+    # `TestModel` calls the named tool once and then answers, so the tool runs
+    # inside the turn's own execution context — the thing under test.
+    agent = Agent(TestModel(call_tools=['record_root'], custom_output_text='done'), instructions='x')
+    agent.tool_plain(record_root)
+    runtime.composition.agent = agent
+
+    async def go() -> None:
+        await runtime.send('where am I')
+        await runtime.wait()
+
+    asyncio.run(go())
+
+    # The tool saw the turn's selected workspace, and the composition is back on
+    # its own fallback once the run is over.
+    assert seen == [runtime.composition.workspace_manager.root]
+    assert runtime.composition.execution_root() == runtime.composition.workspace_manager.root
+    assert Path.cwd() != runtime.composition.workspace_manager.root

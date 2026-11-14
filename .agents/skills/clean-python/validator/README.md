@@ -7,7 +7,7 @@ violations; it does not check semantic type correctness.
 ## Run the validator
 
 Run the POSIX entry point using its installed skill path, from any working
-directory. It requires `realpath`, Cargo and a Rust toolchain, available Cargo
+directory. It requires `realpath`, Cargo and Rust 1.97 or newer, available Cargo
 dependencies, and a writable temporary directory. The build output is placed
 outside the skill and removed afterwards. The script does not install Rust.
 
@@ -51,12 +51,11 @@ The pilot checks these rules:
   or `cls` are exempt. An `__init__` return annotation must be the literal
   `None`.
 
-The parser is `rustpython-parser` 0.4. Python syntax not supported by that
-parser is reported as a parse error; the pilot doesn't claim compatibility with
-all Python releases. A focused test covers Python 3.12 generic type syntax,
-but it does not establish complete Python 3.12 grammar support. The parser project's README identifies it as superseded
-by Ruff's parser. Review parser support before using the pilot as a quality
-gate for newer Python syntax.
+The validator uses Ruff's internal `ruff_python_parser` and `ruff_python_ast`
+crates, pinned to 0.0.21, with Python 3.14 as the target. These internal APIs
+are unstable. Syntax and target-version errors stop analysis of the affected
+file. Focused tests cover Python 3.12 generic types and Python 3.14 multiple
+exception handlers; they don't establish complete grammar compatibility.
 
 ## Verify and measure
 
@@ -70,8 +69,8 @@ cargo test --manifest-path skills/clean-python/validator/Cargo.toml --test valid
 For a small local smoke measurement, a debug build scanned 300 generated,
 clean one-function modules in 0.02 seconds with one worker and less than 0.01
 seconds with four workers. These are observations on one machine, not a
-performance guarantee. Parser version: 0.4.0; Rust compiler: 1.99.1. The test
-contains no network access.
+performance guarantee. This historical measurement used RustPython parser
+0.4.0 and Rust 1.99.1, not the current parser. The test used no network access.
 
 To package the skill without its local Cargo artifacts, run
 `/path/to/clean-python/scripts/package.sh /path/to/clean-python.tar.gz`.

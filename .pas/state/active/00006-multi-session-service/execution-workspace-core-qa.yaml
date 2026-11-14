@@ -1,0 +1,27 @@
+version: 1
+contract: execution-root-core-v1
+worker: f207b9df
+verdict: FAIL
+category: test_insufficiency
+recommendation: NEEDS_REWORK
+lead_adjudication: Bounded automatic retry 1; same approved paths and behavior, no scope amendment.
+required_fix:
+  - Real standalone TUI run_turn tool observes selected workspace_root distinct from process cwd.
+  - A real Escape cancellation proves binding cleanup on the same executing worker path, not merely the context primitive or an unrelated task's unbound context.
+  - Regression must fail if local execution binding is removed.
+allowed_retry_paths: [tests/test_turn_cancel.py, tests/test_workspace_ui.py]
+source_changes: No required implementation fix identified; escalate if test exposes behavior outside the original core contract.
+mechanical_checks_reproduced:
+  focused: 183 passed in 7.19s
+  ui_runtime: 128 passed in 53.09s
+  full: 2793 passed, 1 skipped, 1 warning in 109.51s; eight workers
+  lint: passed
+  format: passed; 530 files
+  diff: passed
+  validator: Non-passing pilot; 486 existing layout/naming findings, none in paths.py.
+nonblocking_notes:
+  - Local helper docstring describes attached branch inaccurately; no behavior change authorized by this retry.
+  - Fallback root returned as given while bound root resolved; current composition fallback already absolute.
+  - Explicit root recorder adjustment is legitimate no-chdir contract update, not a product defect.
+source_scope: 12 changed worker-attributable files within 14 approved paths; no scope creep found.
+docs_task: Pending, must not start before core QA acceptance.

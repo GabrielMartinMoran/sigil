@@ -42,7 +42,8 @@ the prompt says so: the receiver decides whether it deserves an answer.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+import inspect
+from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
@@ -97,6 +98,13 @@ class AgentRunModel:
     settings: dict[str, Any] | None
     label: str
     window: int | None = None
+    """Context window of the model this execution sends to, when anything knows it.
+
+    Read from the built model first and from the catalogue second, because the
+    catalogue is a network resource and a cold or offline start describes nothing.
+    ``None`` means no source knew it: a run that overrides the model is then refused
+    rather than sent blind, and one that does not keeps the window the meter holds.
+    """
     images: bool = True
     provider: str | None = None
 
@@ -161,7 +169,7 @@ class SubagentSummoner:
         max_steps: int = 0,
         model: Callable[[], str] | None = None,
         model_settings: Callable[[], dict[str, Any] | None] | None = None,
-        agent_model: Callable[[str], AgentRunModel | None] | None = None,
+        agent_model: Callable[[str], AgentRunModel | None | Awaitable[AgentRunModel | None]] | None = None,
         base_model: Callable[[], AgentRunModel] | None = None,
         on_change: OnChange | None = None,
         root_run: RootRun | None = None,
@@ -312,7 +320,7 @@ class SubagentSummoner:
                 f'would run at level {caller.depth + 1}. Do this part yourself, or have the '
                 'current agent report back to its parent and let the chain close.'
             )
-        selected = self._model_for(profile)
+        selected = await self._model_for(profile)
         node = tree.add(
             parent_id=caller.id,
             name=profile.name,
@@ -343,7 +351,7 @@ class SubagentSummoner:
                 'to stop it before resuming with something else.'
             )
         profile = self._profile(node.name)
-        selected = self._model_for(profile)
+        selected = await self._model_for(profile)
         node.model = selected.label
         # A node that was killed or cancelled mid-tool leaves a call with no
         # answer; a prompt on top of that is refused for good. The tail is closed
@@ -356,9 +364,11 @@ class SubagentSummoner:
 
     # --- running one node --------------------------------------------------
 
-    def _model_for(self, profile: AgentProfile) -> AgentRunModel:
+    async def _model_for(self, profile: AgentProfile) -> AgentRunModel:
         try:
             configured = self._agent_model(profile.name) if self._agent_model is not None else None
+            if inspect.isawaitable(configured):
+                configured = await configured
         except Exception as exc:
             raise SummonError(f'Cannot use the configured model for {profile.name}: {exc}') from exc
         if configured is not None:

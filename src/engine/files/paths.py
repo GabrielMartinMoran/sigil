@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import os
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 from src.engine.files.models.file_tool_error import FileToolError
@@ -26,9 +29,44 @@ allowance only holds while nobody exports ``TMPDIR``.
 """
 
 
-def workspace_root() -> Path:
-    """Workspace root: the process working directory."""
-    return Path.cwd().resolve()
+_execution_workspace: ContextVar[Path | None] = ContextVar('execution_workspace', default=None)
+"""Workspace of the execution bound on this task, if there is one.
+
+A `ContextVar` because an execution is a task, not a process: two turns running
+at once each resolve their own root, and a task created inside a binding keeps
+the root it was born with after the parent leaves (see `execution_workspace`).
+"""
+
+
+@contextmanager
+def execution_workspace(root: str | os.PathLike[str]) -> Iterator[Path]:
+    """Binds ``root`` as the workspace of this task for the duration of the block.
+
+    The snapshot is absolute and resolved once, on entry: work started with a
+    root keeps it, and a workspace selection that happens while the run is in
+    flight cannot move the path resolution under a tool that already began. The
+    token is reset in ``finally``, so a cancelled or failed execution restores
+    the previous binding instead of leaking it to whatever runs next.
+    """
+    snapshot = Path(os.path.realpath(str(root)))
+    token = _execution_workspace.set(snapshot)
+    try:
+        yield snapshot
+    finally:
+        _execution_workspace.reset(token)
+
+
+def workspace_root(fallback: Path | None = None) -> Path:
+    """Workspace root of the execution reading it.
+
+    The bound execution wins, then the supplied fallback — the composition's own
+    workspace — and only a caller with neither keeps the process working
+    directory, which is what a standalone tool outside any composition has.
+    """
+    selected = _execution_workspace.get()
+    if selected is not None:
+        return selected
+    return Path.cwd().resolve() if fallback is None else fallback
 
 
 def temp_dirs() -> tuple[Path, ...]:

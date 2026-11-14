@@ -303,26 +303,26 @@ def test_abort_reports_whether_a_turn_was_stopped(runtime: ServerRuntime, tmp_pa
             assert await client.abort() is False
 
             pending = asyncio.Event()
-            runtime._task = asyncio.create_task(pending.wait())
+            runtime.session_runtime._task = asyncio.create_task(pending.wait())
             try:
                 assert await client.abort() is True
             finally:
-                task = runtime._task
+                task = runtime.session_runtime._task
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
-                runtime._task = None
+                runtime.session_runtime._task = None
 
     asyncio.run(go())
 
 
 def test_answer_resolves_the_question_the_service_is_holding(runtime: ServerRuntime, tmp_path: Path) -> None:
     async def go() -> None:
-        runtime._pending_question = PendingQuestion(id='q-1', questions=[])
+        runtime.session_runtime._pending_question = PendingQuestion(id='q-1', questions=[])
         async with _served(runtime, tmp_path) as client:
             resolved = await client.answer('q-1', [{'question': 'ok?', 'answer': 'yes', 'custom': False}])
 
             assert resolved is True
-            assert runtime._pending_question is None
+            assert runtime.session_runtime._pending_question is None
             assert await client.answer('q-1') is False
 
     asyncio.run(go())

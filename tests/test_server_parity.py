@@ -124,15 +124,15 @@ async def _busy(runtime: ServerRuntime) -> AsyncIterator[None]:
     finishes: no sleeps, no dependency on how fast `TestModel` answers.
     """
     pending = asyncio.Event()
-    runtime._task = asyncio.create_task(pending.wait())
+    runtime.session_runtime._task = asyncio.create_task(pending.wait())
     try:
         yield
     finally:
-        task = runtime._task
+        task = runtime.session_runtime._task
         assert task is not None
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
-        runtime._task = None
+        runtime.session_runtime._task = None
 
 
 async def _one_turn(runtime: ServerRuntime, client: httpx.AsyncClient, text: str = 'first') -> None:
@@ -294,6 +294,7 @@ def test_the_agent_command_switches_the_profile_and_the_session(runtime: ServerR
             registry = runtime.composition.agent_registry
             assert response.json()['agent'] == views.agent_view(registry.active, active=True)
             assert response.json()['agent']['name'] == 'reviewer'
+            assert response.json()['agent']['permissions'] == registry.active.permissions.describe()
 
             state = (await client.get('/api/state')).json()
             assert state['agent'] == views.agent_view(registry.active, active=True)

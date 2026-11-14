@@ -342,7 +342,7 @@ progress into a recovery copy and binds the UI to it, while the running turn kee
 its local session reference. The final save reconciles again and binds the winning
 session. A second conflicting write in that window can therefore leave more than
 one recovery copy; no transcript or delivery fact is merged across them. See
-`ServerRuntime._checkpoint` and `ServerRuntime._turn`.
+`SessionRuntime._checkpoint` and `SessionRuntime._turn`.
 
 Abort and consumer death: abort sets `_aborting` so `_pump_steering` stops claiming
 new work and `stop_open(keep=...)` does not stop requests already handed to
@@ -350,6 +350,39 @@ new work and `stop_open(keep=...)` does not stop requests already handed to
 `finished`; the rest become `stopped`. A consumer that dies calls the
 database-wide `interrupt_open`, so accepted rows become `interrupted` and `send`
 refuses new work instead of accepting rows nobody will consume.
+
+### Process ownership and session ownership
+
+**Scope:** server runtime ownership. **Owner:** server. **Last update:** 2026-11-13.
+
+The service has two lifetimes, and the code names them. `ServerRuntime` in
+`src/server/runtime.py` is the process: it owns the database lock
+(`src/server/ownership.py`), the shared accepted-inputs handle, the `EventHub` it
+publishes on, the reconciliation `start` performs and the service-wide idle
+decision. `SessionRuntime` in `src/server/session_runtime.py` is one session: the
+turn loop, the consumer that claims its rows, the questions it waits on, and the
+callbacks the engine calls — tool log, model retry, question hub and tree.
+
+The facade passes what a session needs — the composition, the hub, the shared
+accepted inputs, the resolved question deadline and a typed worker-ownership guard
+— and takes no way back: `session_runtime.py` never imports `src/server/runtime.py`.
+The constants, `PendingQuestion`, `IncomingImage`, `decode_images` and
+`resolve_question_timeout` live in `src/server/runtime_support.py`, which both
+sides import; `runtime.py` re-exports them, so the routes, the CLI and the tests
+that already name them there need no change.
+
+Closing is asymmetric on purpose. `SessionRuntime.close` resolves its question,
+cancels its consumer and detaches its callbacks; it never releases the process
+lock and never closes the shared cached database. `ServerRuntime.close` runs that
+cleanup, then releases ownership and closes the composition in a `finally`, so
+closing twice is a no-op and an orderly shutdown still leaves unexecuted rows as
+they were (see [idle shutdown](#idle-shutdown)).
+
+What this does not deliver: the facade still drives exactly one session. Rows carry
+no producing-session tag, no HTTP route selects a session, a session-changing
+command still rebinds the one composition in place, and a report stranded by that
+rebinding is not addressed here. Concurrent consumers, a session registry and
+session-addressed requests are the next cut, not a claim of this one.
 
 ### Idle shutdown
 
@@ -438,7 +471,7 @@ new is asked of a client: the web store and the attached terminal already paint 
 reason to fail the retry it describes.
 
 Silence gets a sentence too, and never a deadline. `SLOW_TURN_NOTICE_SECONDS` (60)
-is how long a turn may publish nothing before `ServerRuntime._watch_turn_silence`
+is how long a turn may publish nothing before `SessionRuntime._watch_turn_silence`
 says it is still waiting. The watcher is a task of the turn, cancelled with it,
 which waits on an event every published event sets: a turn that is streaming, or
 retrying, never reaches the notice, and a turn that ends before the window passes
@@ -449,7 +482,7 @@ and only an explicit stop, the question deadline, or the step budget ends a turn
 early.
 
 A turn that ends in error closes its rows, exactly as a cancelled one does.
-`ServerRuntime._turn` calls `_stop_pending` when the status is `error`, so the
+`SessionRuntime._turn` calls `_stop_pending` when the status is `error`, so the
 accepted input cannot stay `claimed` until the next start interrupts it — which is
 what used to happen, and what made a failed turn look like a lost one. The terminal
 state is `stopped`, not a new one: `_TRANSITIONS` in
@@ -687,7 +720,8 @@ and is refused as a conflict, not recognized as a duplicate. The ids and
 timestamps the server assigns are excluded from the fingerprint. See
 `src/engine/storage/accepted_inputs.py`.
 
-Validation happens in `ServerRuntime.decode_images` before the queue is touched,
+Validation happens in `decode_images` (`src/server/runtime_support.py`) before the
+queue is touched,
 so a refusal writes nothing:
 
 | Refused | Limit |
@@ -1298,7 +1332,7 @@ from one table, read once, at the choke point every path goes through.
 ### The question deadline
 
 A question is the one place the service waits on a person, and the wait is bounded.
-`src/server/runtime.py` holds the deadline as `QUESTION_TIMEOUT_SECONDS` (900 s, the
+`src/server/runtime_support.py` holds the deadline as `QUESTION_TIMEOUT_SECONDS` (900 s, the
 same "someone will come back" as the idle window); `SIGIL_QUESTION_TIMEOUT` overrides
 it, and the `question_timeout=` argument of `ServerRuntime` is the seam tests use. A
 value that is not a positive number of seconds raises, naming the variable: a typo
@@ -1837,7 +1871,7 @@ That is a seam, not a fallback, and it is fenced three ways:
 `TurnMixin.run_turn` — the in-process turn loop, with its checkpoints, steering and
 abort — still exists behind that seam, because the ~40 widget tests that mount
 `SigilApp` assert on it directly. It is a real duplication of the turn loop that
-`src/server/runtime.py` already owns, and it is scheduled for deletion: when those
+`src/server/session_runtime.py` already owns, and it is scheduled for deletion: when those
 tests mount a client (a fixture that starts a runtime, like
 `tests/test_ui_client.py`), `run_turn` goes with them. Until then, nothing may grow
 in it that both paths need — the moment a decision is written twice is the moment
@@ -1968,7 +2002,7 @@ reads its answer, and the subagent's report arrives afterwards. The terminal
 answers that with a turn of its own; the service has no timer to do it with, so
 the wake is a durable input the service gives itself.
 
-The seam is `ServerRuntime._consume`, the one place that starts turns. When the
+The seam is `SessionRuntime._consume`, the one place that starts turns. When the
 queue has nothing to claim, the consumer asks whether a report is owed and, if one
 is, accepts it as an ordinary `turn` row before claiming it. Nothing outside
 `_consume` starts a turn, so a wake cannot compete with a user's message.

@@ -530,6 +530,15 @@ def create_app(
     # mounted by accident.
     assets = (dist if dist is not None else dist_root()) if config.web else None
 
+    def stop_service() -> None:
+        # Uvicorn drains open requests before entering lifespan shutdown. Wake and
+        # close SSE streams now, or they keep the database lock held indefinitely
+        # after the listener has stopped accepting the terminal's next request.
+        app.state.stopping = True
+        hub.publish('service_stopping')
+        if request_shutdown is not None:
+            request_shutdown()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         runtime.start()
@@ -543,7 +552,7 @@ def create_app(
             None
             if request_shutdown is None
             else asyncio.get_running_loop().create_task(
-                runtime.stop_when_idle(request_shutdown, grace=idle_grace, poll=idle_poll)
+                runtime.stop_when_idle(stop_service, grace=idle_grace, poll=idle_poll)
             )
         )
         try:
@@ -1449,12 +1458,16 @@ def _resume_from(request: Request) -> int:
 
 
 async def _stream(hub: EventHub, request: Request, after: int) -> AsyncIterator[bytes]:
-    """Server-sent events: replay, then live, with a heartbeat on idle."""
+    """Replay and follow until disconnected or the service starts draining."""
+    if getattr(request.app.state, 'stopping', False):
+        return
     async with hub.subscribe() as subscription:
         # Replay inside the subscription, so nothing published between the two is lost.
         for event in hub.replay(after):
             yield event.to_sse().encode()
-        while True:
+            if event.type == 'service_stopping':
+                return
+        while not getattr(request.app.state, 'stopping', False):
             if await request.is_disconnected():
                 return
             event = await subscription.next(timeout=HEARTBEAT_SECONDS)
@@ -1462,6 +1475,8 @@ async def _stream(hub: EventHub, request: Request, after: int) -> AsyncIterator[
                 yield b': keep-alive\n\n'
                 continue
             yield event.to_sse().encode()
+            if event.type == 'service_stopping':
+                return
 
 
 def encode(event: Any) -> str:

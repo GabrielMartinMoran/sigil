@@ -129,6 +129,7 @@ export type ModelView = {
 };
 
 export type AgentView = {
+  permissions: string;
   name: string;
   description: string;
   role: string;

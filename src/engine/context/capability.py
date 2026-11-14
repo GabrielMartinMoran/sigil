@@ -184,7 +184,14 @@ class ContextViewCapability(AbstractCapability[Any]):
 
             selected = current_agent_model()
             if selected is not None:
-                budget = replace(budget, window=selected.window)
+                # The window belongs to the model this request goes to. A run that does
+                # not override the model sends to the session's own, so the window the
+                # meter holds is exactly right: an unknown value here must not discard
+                # it and refuse a request that fits.
+                window = selected.window
+                if window is None and selected.model is None:
+                    window = budget.window
+                budget = replace(budget, window=window)
         if is_root:
             self.meter.set_overhead(instructions=instructions, tools=tools)
 

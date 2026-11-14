@@ -52,13 +52,13 @@ slices:
   - id: session-scoped-workspace-v1
     objective: A tool resolves paths against the session's workspace, not the process cwd.
     acceptance:
-      - `workspace_root` answers the root of the session being executed, and the process cwd when nothing is executing.
+      - '`workspace_root` answers the root of the session being executed, and the process cwd when nothing is executing.'
       - Two executions with different roots in the same process resolve their own files and cannot read each other's.
       - Nothing calls `os.chdir` to make a session's paths work.
   - id: session-runtime-extraction-v1
     objective: Everything session-scoped moves out of `ServiceRuntime` into a `SessionRuntime`, with one session and identical behaviour.
     acceptance:
-      - `ServiceRuntime` holds the process-scoped things only (store, lock, hub, config, catalog) and a registry of session runtimes.
+      - '`ServiceRuntime` holds the process-scoped things only (store, lock, hub, config, catalog) and a registry of session runtimes.'
       - The existing suite passes unchanged: same events, same queue, same turn semantics.
       - A session runtime owns its composition, consumer, turn state, questions, pending rows and wake.
   - id: concurrent-sessions-v1

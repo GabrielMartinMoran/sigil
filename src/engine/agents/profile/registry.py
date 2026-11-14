@@ -46,19 +46,17 @@ class AgentRegistry:
         self.errors: list[str] = []
         self._active = ''
         self._discover()
-        # A remembered profile that no longer exists must not leave the session
-        # without a prompt: it falls back to the default, then to whatever is
-        # installed, and only then to "no profile".
-        for candidate in (active, DEFAULT_PROFILE_NAME):
+        self.restore(active or '')
+
+    def restore(self, name: str) -> AgentProfile | None:
+        """Restore a session choice, falling back to a selectable default, never the previous agent."""
+        for candidate in (name, DEFAULT_PROFILE_NAME):
             if candidate and (profile := self.get(candidate)) is not None and profile.role.selectable:
                 self._active = profile.name
-                break
-        else:
-            # Only an agent can be the session's: a directory with nothing but
-            # subagents leaves the session without a profile, which is the same
-            # state as an empty one and is painted the same way.
-            selectable = self.agents()
-            self._active = selectable[0].name if selectable else ''
+                return profile
+        selectable = self.agents()
+        self._active = selectable[0].name if selectable else ''
+        return self.active
 
     # --- discovery ---------------------------------------------------------
 

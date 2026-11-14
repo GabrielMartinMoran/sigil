@@ -55,6 +55,7 @@ from src.engine.context.strategy.append_only import AppendOnlyStrategy
 from src.engine.context.strategy.passthrough import PassthroughStrategy
 from src.engine.context.strategy.protocol import ContextStrategy
 from src.engine.extensions.toolset import ExtensionToolset
+from src.engine.files.paths import workspace_root
 from src.engine.files.tools import register_file_tools
 from src.engine.interaction.hub import QuestionHub
 from src.engine.interaction.models.question_item import QuestionItem
@@ -137,6 +138,20 @@ def model_settings(model_service: Any) -> dict[str, Any] | None:
     return None if value is None else {'thinking': value}
 
 
+def _known_window(model: object, fallback: int | None) -> int | None:
+    """The window the model itself reports, or ``fallback`` when it reports none.
+
+    The built model carries the profile it was given, and pydantic-ai's bundled
+    profiles know models no catalogue of ours has described — a cold start, an
+    offline machine, a model released after the last fetch. The meter and the panel
+    already read the window from there (`load_model_window`), so a run is captured
+    with the same source; reading only the catalogue left a subagent with ``None``
+    and every one of its requests was refused as unbudgetable.
+    """
+    window = getattr(model, 'context_window', None)
+    return window if window else fallback
+
+
 class Composition:
     """The engine of one workspace, wired and ready for a client to drive.
 
@@ -166,8 +181,12 @@ class Composition:
         self._agent_config_root = self.root
 
         # A single skill registry shared by the agent instructions
-        # (metadata) and by the tools (load, resources and scripts).
+        # (metadata) and by the tools (load, resources and scripts). It discovers
+        # against the composition's workspace: the launch directory may be
+        # somewhere else, and the project skills belong to the root the session
+        # works in. An explicit `SIGIL_SKILLS_DIRS` is left alone by `rebind`.
         self.skill_registry = SkillRegistry()
+        self.skill_registry.rebind(self.root)
 
         # Tool logging hub: the engine emits, the client adds its sink.
         self.tool_logger = tool_logger if tool_logger is not None else ToolLoggerHub()
@@ -386,13 +405,17 @@ class Composition:
             return None
         return self.model_service.select(config.account, config.model, config.effort, preserve_thinking=True)
 
-    def subagent_model(self, name: str) -> AgentRunModel | None:
-        """Build a profile's model independently of the session's router."""
+    async def subagent_model(self, name: str) -> AgentRunModel | None:
+        """Resolve the profile's catalogue before building its independent model."""
         if name in self.mcp_config.invalid_agents:
             raise ProviderError(f'Invalid model configuration for agent {name!r}; check the config errors.')
         config = self.mcp_config.agents.get(name)
         if config is None:
             return None
+        # The cache is per process and account; opening a picker in another client
+        # does not populate it here. Fetch before building so the wire profile also
+        # receives the provider's window, image support and API dialect.
+        await self.model_service.catalog_for(config.account)
         model = self.model_service.build_agent_model(config.account, config.model)
         value = thinking_settings(config.effort)
         settings = None if value is None else {'thinking': value}
@@ -401,7 +424,7 @@ class Composition:
             model,
             settings,
             f'{config.account}:{config.model}',
-            capability.context_window,
+            _known_window(model, capability.context_window),
             capability.supports_images,
             getattr(model, 'system', None),
         )
@@ -414,7 +437,7 @@ class Composition:
             model,
             model_settings(self.model_service),
             snapshot.label,
-            snapshot.window,
+            _known_window(model, snapshot.window),
             snapshot.images,
             getattr(model, 'system', None),
         )
@@ -446,7 +469,7 @@ class Composition:
                 node_blocks=self.node_blocks,
                 available_features=self.available_features,
                 allow_external_files=lambda: self.session.allow_external_files,
-                root=lambda: self.workspace_manager.root,
+                root=self.execution_root,
             )
         )
 
@@ -519,7 +542,8 @@ class Composition:
         self.agent_trees.rename_root(profile.name)
         if snapshot is not None:
             self.apply_model_change(snapshot)
-        return profile, snapshot
+        self._persist_idle()
+        return self.agent_registry.active or profile, snapshot
 
     # --- tree actions -------------------------------------------------------
 
@@ -661,12 +685,22 @@ class Composition:
             if block
         )
 
+    def execution_root(self) -> Path:
+        """The root the tools resolve against for the execution in flight.
+
+        A turn binds the workspace it selected (see
+        `src.engine.files.paths.execution_workspace`), so tools, permissions and
+        shell commands follow that turn. Outside a run — a command typed between
+        turns — the composition's own workspace is the fallback.
+        """
+        return workspace_root(self.workspace_manager.root)
+
     def install_tools(self, target: Any) -> None:
         """Every tool every agent of the session gets. The root included."""
         logger = self.tool_logger
         catalog = self.tool_catalog
         register_shell_tools(
-            target, logger=logger, catalog=catalog, root=lambda: self.workspace_manager.root, owner=self.shell_commands
+            target, logger=logger, catalog=catalog, root=self.execution_root, owner=self.shell_commands
         )
         register_skill_tools(target, self.skill_registry, logger=logger, catalog=catalog)
         register_mcp_tools(target, self.mcp, logger=logger, catalog=catalog)
@@ -676,9 +710,9 @@ class Composition:
             logger=logger,
             catalog=catalog,
             allow_external=lambda: self.session.allow_external_files,
-            root=lambda: self.workspace_manager.root,
+            root=self.execution_root,
         )
-        register_image_tools(target, logger=logger, catalog=catalog, root=lambda: self.workspace_manager.root)
+        register_image_tools(target, logger=logger, catalog=catalog, root=self.execution_root)
         register_interaction_tools(target, self.question_hub, logger=logger, catalog=catalog)
         register_roadmap_tools(target, self.roadmap_store, logger=logger, catalog=catalog)
         register_tree_tools(target, self.summoner, logger=logger, catalog=catalog)
@@ -713,6 +747,9 @@ class Composition:
         changing it here changes it for this session and for no other — so binding is
         also where it is restored, in one place, for every client.
         """
+        self.agent_registry.restore(session.agent)
+        replaced_profile = session.agent != self.agent_registry.active_name
+        session.agent = self.agent_registry.active_name
         self.session = session
         self.mcp.set_overrides(session.mcp_overrides)
         # The measured half of the context travels on the session, because the
@@ -726,6 +763,8 @@ class Composition:
         self.roadmap_store.bind_session(session.id)
         if model:
             self.apply_session_model(session)
+        if replaced_profile:
+            self.store.save(session)
         return session
 
     def apply_session_model(self, session: Session) -> ModelSnapshot | None:

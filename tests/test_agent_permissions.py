@@ -540,3 +540,19 @@ def test_summon_resume_permissions_use_resolved_node_identity(tmp_path):
             await check({'agent': 'worker', 'agent_id': 'missing'})
 
     asyncio.run(inner())
+
+
+def test_permission_path_matching_follows_the_bound_execution_root(tmp_path, monkeypatch):
+    from src.engine.agents.profile.permissions import parse_permissions
+    from src.engine.files.paths import execution_workspace
+
+    bound = tmp_path / 'bound'
+    bound.mkdir()
+    monkeypatch.chdir(tmp_path)
+    permissions = parse_permissions({'read': {'deny': ['private/*']}})
+    target = str(bound / 'private' / 'notes.txt')
+
+    # Unbound, the pattern is read against the process directory and does not cover it.
+    assert permissions.permits('read_file', ('read',), (target,), kind='path')
+    with execution_workspace(bound):
+        assert not permissions.permits('read_file', ('read',), (target,), kind='path')

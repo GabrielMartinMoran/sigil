@@ -1,29 +1,33 @@
 use crate::diagnostic::{emit, Diagnostic};
-use rustpython_ast::{self as ast, Visitor};
+use ruff_python_ast::{
+    self as ast,
+    visitor::{walk_stmt, Visitor},
+};
 
 pub(crate) struct Signatures<'a> {
     pub(crate) path: &'a str,
     pub(crate) source: &'a str,
+    pub(crate) tokens: &'a ast::token::Tokens,
     pub(crate) out: &'a mut Vec<Diagnostic>,
 }
 impl Signatures<'_> {
     fn check(
         &mut self,
         name: &str,
-        args: &ast::Arguments,
+        args: &ast::Parameters,
         returns: &Option<Box<ast::Expr>>,
-        offset: usize,
+        definition_line: usize,
     ) {
         let args = args
             .posonlyargs
             .iter()
             .chain(&args.args)
             .chain(&args.kwonlyargs)
-            .map(|a| &a.def)
+            .map(|a| &a.parameter)
             .chain(args.vararg.iter().map(|a| a.as_ref()))
             .chain(args.kwarg.iter().map(|a| a.as_ref()));
         for arg in args {
-            let name = arg.arg.as_str();
+            let name = arg.name.as_str();
             if name != "self" && name != "cls" && arg.annotation.is_none() {
                 emit(
                     self.out,
@@ -36,7 +40,7 @@ impl Signatures<'_> {
         }
         let missing = match (name, returns.as_deref()) {
             (_, None) => true,
-            ("__init__", Some(ast::Expr::Constant(c))) => !matches!(c.value, ast::Constant::None),
+            ("__init__", Some(ast::Expr::NoneLiteral(_))) => false,
             ("__init__", Some(_)) => true,
             _ => false,
         };
@@ -44,7 +48,7 @@ impl Signatures<'_> {
             emit(
                 self.out,
                 self.path,
-                crate::analysis::line(self.source, offset),
+                definition_line,
                 "return-annotation",
                 format!(
                     "function '{name}' requires {}",
@@ -58,23 +62,25 @@ impl Signatures<'_> {
         }
     }
 }
-impl Visitor for Signatures<'_> {
-    fn visit_stmt_function_def(&mut self, node: ast::StmtFunctionDef) {
-        self.check(
-            node.name.as_str(),
-            &node.args,
-            &node.returns,
-            node.range.start().into(),
-        );
-        self.generic_visit_stmt_function_def(node);
-    }
-    fn visit_stmt_async_function_def(&mut self, node: ast::StmtAsyncFunctionDef) {
-        self.check(
-            node.name.as_str(),
-            &node.args,
-            &node.returns,
-            node.range.start().into(),
-        );
-        self.generic_visit_stmt_async_function_def(node);
+impl<'a> Visitor<'a> for Signatures<'_> {
+    fn visit_stmt(&mut self, stmt: &'a ast::Stmt) {
+        if let ast::Stmt::FunctionDef(node) = stmt {
+            self.check(
+                node.name.as_str(),
+                &node.parameters,
+                &node.returns,
+                crate::analysis::definition_line(
+                    self.source,
+                    self.tokens,
+                    &node.name,
+                    if node.is_async {
+                        ast::token::TokenKind::Async
+                    } else {
+                        ast::token::TokenKind::Def
+                    },
+                ),
+            );
+        }
+        walk_stmt(self, stmt);
     }
 }

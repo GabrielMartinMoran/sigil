@@ -15,6 +15,80 @@ fn run(root: &Path, workers: &str) -> std::process::Output {
         .unwrap()
 }
 #[test]
+fn pep758_preserves_structural_findings_and_status() {
+    let t = TempDir::new().unwrap();
+    put(t.path(), "example.py", "# café\nclass Example: pass\nclass Other: pass\nasync def public() -> None: pass\ntry:\n    pass\nexcept ValueError, TypeError:\n    pass\n");
+    let out = run(t.path(), "1");
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(
+        text.contains("example.py:3: multiple-public-classes:"),
+        "{text}"
+    );
+    assert!(text.contains("example.py:2: class-function-mix:"), "{text}");
+}
+
+#[test]
+fn pep758_preserves_nested_async_signature_locations() {
+    let t = TempDir::new().unwrap();
+    put(t.path(), "example.py", "# café\ntry:\n    pass\nexcept* ValueError, TypeError:\n    async def outer(arg):\n        def nested(value): pass\n");
+    let out = run(t.path(), "1");
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    for needle in [
+        "example.py:5: parameter-annotation:",
+        "example.py:5: return-annotation:",
+        "example.py:6: parameter-annotation:",
+        "example.py:6: return-annotation:",
+    ] {
+        assert!(text.contains(needle), "{needle}: {text}");
+    }
+}
+
+#[test]
+fn decorated_definitions_keep_definition_lines_and_sorted_output() {
+    let t = TempDir::new().unwrap();
+    put(t.path(), "example.py", "# café\n@outer(\n    1,\n)\n@other\nclass First: pass\n@other\nclass Second: pass\n@other\ndef public(value):\n    @other\n    async def nested(missing): pass\n@other\nasync def asynchronous(value): pass\n");
+    let out = run(t.path(), "1");
+    assert_eq!(out.status.code(), Some(1));
+    let text = String::from_utf8(out.stdout).unwrap();
+    let entries: Vec<_> = text
+        .lines()
+        .map(|line| line.rsplit_once(": ").unwrap().0)
+        .collect();
+    assert_eq!(
+        entries,
+        vec![
+            "example.py:6: class-file-name",
+            "example.py:6: class-function-mix",
+            "example.py:8: class-file-name",
+            "example.py:8: multiple-public-classes",
+            "example.py:10: parameter-annotation",
+            "example.py:10: return-annotation",
+            "example.py:12: parameter-annotation",
+            "example.py:12: return-annotation",
+            "example.py:14: parameter-annotation",
+            "example.py:14: return-annotation",
+        ],
+        "{text}"
+    );
+}
+
+#[test]
+fn decorated_nested_sync_and_split_header_keep_keyword_line() {
+    let t = TempDir::new().unwrap();
+    put(t.path(), "example.py", "@mark\nasync def outer() -> None:\n    @mark(\n        1,\n    )\n    def \\\n        nested(value): pass\n");
+    let out = run(t.path(), "1");
+    assert_eq!(out.status.code(), Some(1));
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(text.contains("example.py:6: return-annotation:"), "{text}");
+    assert!(
+        text.contains("example.py:7: parameter-annotation:"),
+        "{text}"
+    );
+}
+
+#[test]
 fn definitions_and_signatures() {
     let t = TempDir::new().unwrap();
     put(t.path(), "badName.py", "from elsewhere import Imported\nclass First:\n    def __init__(self, value): pass\n    async def method(cls, *, option):\n        def nested(arg): pass\nclass Second: pass\ndef public(x): pass\ndef _private() -> None: pass\n");

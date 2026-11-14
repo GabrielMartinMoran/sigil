@@ -187,7 +187,9 @@ def test_create_and_switch_moves_the_process_and_the_components(repo, tmp_path, 
     assert switch.created is not None
     assert switch.workspace.label == 'fix-login'
     assert switch.workspace.is_worktree is True
-    assert Path.cwd() == switch.workspace.root
+    # Selection is component state: the process keeps its launch directory.
+    assert manager.root == switch.workspace.root
+    assert Path.cwd() == repo
     # The session store followed the switch instead of staying in the old workspace.
     assert sessions.cwd == str(switch.workspace.root)
     assert sessions.database.value('SELECT path FROM workspaces WHERE id = ?', (sessions.workspace_id,)) == str(
@@ -203,7 +205,8 @@ def test_switching_to_another_worktree_does_not_create_anything(repo, tmp_path, 
 
     switch = manager.switch_to_worktree(created)
     assert switch.created is None
-    assert Path.cwd() == created.path
+    assert manager.root == created.path
+    assert Path.cwd() == repo
     assert switch.previous.label == 'main'
 
 

@@ -107,7 +107,8 @@ def test_new_with_worktree_creates_it_and_works_there(monkeypatch, tmp_path, rep
             assert app.query_one(StatusBar).plain().startswith('fix-login')
 
             expected = tmp_path / 'worktrees' / 'project' / 'fix-login'
-            assert Path.cwd() == expected
+            assert app._workspace_manager.root == expected
+            assert Path.cwd() == repo
             assert app.current_workspace_label() == 'fix-login'
             assert app._session.cwd == str(expected)
             # The session is persisted under the new workspace, not the old one.
@@ -202,13 +203,13 @@ def test_tools_operate_on_the_new_worktree_after_the_switch(monkeypatch, tmp_pat
                     return self._register(func, kwargs)
 
             recorder = Recorder()
-            register_file_tools(recorder)
+            register_file_tools(recorder, root=lambda: app._workspace_manager.root)
             written = recorder.tools['write_file'](path='only-here.txt', content='x')
 
             assert Path(written.path) == tmp_path / 'worktrees' / 'project' / 'isolated' / 'only-here.txt'
             assert not (repo / 'only-here.txt').exists()
 
-            pwd = await execute_commands(['pwd'])
+            pwd = await execute_commands(['pwd'], cwd=app._workspace_manager.root)
             assert pwd[0].stdout.strip() == str(tmp_path / 'worktrees' / 'project' / 'isolated')
 
             # The parent tree is out of reach for the file tools. The sandbox of
@@ -287,7 +288,8 @@ def test_load_switches_to_the_workspace_of_the_session(monkeypatch, tmp_path, re
 
             assert app._session.id == worktree_session
             assert app.current_workspace_label() == 'fix-login'
-            assert Path.cwd() == tmp_path / 'worktrees' / 'project' / 'fix-login'
+            assert app._workspace_manager.root == tmp_path / 'worktrees' / 'project' / 'fix-login'
+            assert Path.cwd() == repo
 
     asyncio.run(inner())
 
@@ -401,7 +403,8 @@ def test_load_across_worktrees_restores_the_workspace_and_the_model(monkeypatch,
 
             # Both halves of the load happened, and in the right order.
             assert app.current_workspace_label() == 'composed'
-            assert Path.cwd() == tmp_path / 'worktrees' / 'project' / 'composed'
+            assert app._workspace_manager.root == tmp_path / 'worktrees' / 'project' / 'composed'
+            assert Path.cwd() == repo
             assert service.applied == [selection]
 
     asyncio.run(inner())
@@ -420,7 +423,8 @@ def test_worktrees_dir_follows_the_environment(monkeypatch, tmp_path, repo):
             await app.handle_command('/new', '--worktree configured')
             await pilot.pause()
 
-            assert Path.cwd() == tmp_path / 'configured' / 'project' / 'configured'
+            assert app._workspace_manager.root == tmp_path / 'configured' / 'project' / 'configured'
+            assert Path.cwd() == repo
 
     asyncio.run(inner())
 

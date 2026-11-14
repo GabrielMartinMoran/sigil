@@ -7,8 +7,9 @@ not rebuilding them: the agent closes over the same instances, so their identity
 must survive the switch.
 
 The order matters. The repository work happens first (`git worktree add`) and the
-process only moves (`chdir`) once that succeeded, so a failure leaves the session
-and the repository exactly as they were.
+selection only moves once that succeeded, so a failure leaves the session and the
+repository exactly as they were. Selection is component state, never process
+state: the process keeps the directory it was launched in.
 """
 
 from __future__ import annotations
@@ -128,20 +129,19 @@ class WorkspaceManager:
     # --- switching ---------------------------------------------------------
 
     def switch(self, root: str | os.PathLike[str], *, created: Worktree | None = None) -> WorkspaceSwitch:
-        """Moves the process and every bound component to ``root``."""
+        """Selects ``root`` and re-points every bound component to it.
+
+        The process working directory is left alone: execution resolves against
+        the selected root (see `src.engine.files.paths.execution_workspace`), so
+        a switch cannot move work that is already running elsewhere.
+        """
         target = Path(os.path.realpath(str(root)))
         if not target.is_dir():
             raise WorkspaceError(f'Workspace directory does not exist: {target}')
 
         previous = self.current()
         if target != self._root:
-            # `chdir` first: the tools resolve relative paths against the process
-            # cwd, so the rebind below must describe the directory we are already in.
             previous_root = self._root
-            try:
-                os.chdir(target)
-            except OSError as exc:
-                raise WorkspaceError(f'Cannot switch to {target}: {exc}') from exc
             self._root = target
             self._rebind(previous_root)
 

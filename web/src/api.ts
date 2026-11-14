@@ -9,6 +9,7 @@
  */
 
 import type {
+  AgentView,
   DurableSession,
   LoginState,
   RepositoryGroup,
@@ -102,6 +103,8 @@ export const api = {
   abort: () => post<{ stopped: boolean }>('/api/abort'),
   answer: (id: string, answers: { question: string; answer: string; custom?: boolean }[] | null) =>
     post<{ resolved: boolean }>('/api/answer', { id, answers }),
+
+  selectAgent: (name: string) => post<{ agent: AgentView; agents: AgentView[] }>('/api/agent', { name }),
 
   newSession: () => post<{ session: SessionView }>('/api/session/new'),
   openSession: (id: string) => post<{ session: SessionView }>('/api/session/open', { id }),

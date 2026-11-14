@@ -135,10 +135,10 @@ def test_should_publish_formatted_live_output_not_the_raw_logging_preview() -> N
     from src.engine.tooling.events import ToolCallEvent
     from src.engine.tooling.presentation import ToolSummary
     from src.server.events import EventHub
-    from src.server.runtime import ServerRuntime
+    from src.server.session_runtime import SessionRuntime
 
     runtime = SimpleNamespace(hub=EventHub())
-    ServerRuntime._on_tool_event(
+    SessionRuntime._on_tool_event(
         runtime,
         ToolCallEvent(
             'run',

@@ -375,3 +375,39 @@ def test_new_session_binds_the_inherited_agent_so_its_model_resolves(tmp_path):
             assert [agent for agent, _ in bound] == ['wizard']
 
     asyncio.run(run())
+
+
+def test_service_picker_uses_server_rows_without_local_profiles() -> None:
+    from src.ui.agent_mixin import AgentMixin
+    from src.ui.widgets.agent_picker_screen import _row
+
+    rows = [
+        {
+            'name': 'server-only',
+            'description': 'Remote profile',
+            'source': 'global',
+            'role': 'agent',
+            'permissions': 'only read',
+        },
+        {
+            'name': 'worker',
+            'description': 'Worker',
+            'source': 'project',
+            'role': 'subagent',
+            'permissions': 'all tools',
+        },
+    ]
+    offered = AgentMixin._offered_agents(object(), rows)
+    assert [profile.name for profile in offered] == ['server-only']
+    rendered = _row(offered[0], current='server-only')
+    assert 'only read' in rendered
+    assert 'Remote profile' in rendered
+    assert '●' in rendered
+
+
+def test_agent_projection_includes_authoritative_permissions(tmp_path: Path) -> None:
+    from src.server.views import agent_view
+
+    _write(tmp_path, 'restricted', extra='permissions:\n  write: deny\n')
+    profile = AgentRegistry([('project', tmp_path)]).require('restricted')
+    assert agent_view(profile, active=True)['permissions'] == profile.permissions.describe()

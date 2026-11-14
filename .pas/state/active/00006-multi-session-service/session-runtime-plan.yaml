@@ -1,0 +1,118 @@
+version: 1
+status: approved
+contract: session-runtime-extraction-v1
+implementation_authorized: true
+authorization: User approved the presented extraction plan with 'Avanza hasta terminar toda la feature... me voy a dormir'. Approval covers this exact contract; later changed scopes retain their approval boundary.
+objective: Extract one session execution owner while preserving the ServerRuntime facade and current single-session behavior.
+research_gate: Passed after researcher5524780c full-field/method inventory and exact constructor, lifecycle and fixture seam follow-up.
+user_constraints:
+  - Continue feature00006 and preserve all existing user work and accepted workspace/EventHub changes.
+  - Background work and switching remain required; no new switching prohibition.
+  - Required HTTP session selector and client migration remain later, together.
+agent_decisions:
+  - Keep src.server.runtime.ServerRuntime import, constructor signature and all existing public methods/properties and composition/hub access stable.
+  - Add src/server/session_runtime.py with SessionRuntime owning the composition and all turn, queue consumer, question, checkpoint, wake, steering, retry/tree/tool and MCP/title callback execution state.
+  - Keep process ownership and require_ownership gate, start reconciliation, service idle monitor, shared EventHub and store/database references on ServerRuntime.
+  - Pass Composition, EventHub, shared AcceptedInputs handle, resolved question timeout and a typed worker-ownership validation callback explicitly into SessionRuntime. SessionRuntime never acquires/releases ServerOwnership or closes Database.
+  - Leave Composition construction of store/config/catalog intact in this mechanical stage; the service retains shared-resource references, not a new parallel database connection or engine dependency-injection redesign.
+  - ServerRuntime owns one SessionRuntime for now, exposed by an explicit read-only session_runtime property. Do not introduce concurrent consumers or a multi-session registry until the following concurrency contract.
+  - Implement explicit typed facade methods/properties with the existing signatures; no broad __getattr__, __setattr__, dynamic proxy registry or inheritance pretending separate state owners.
+  - SessionRuntime.ensure_workers invokes the supplied ownership guard before starting its consumer or MCP loader, preserving the guard even for internal send paths.
+  - ServerRuntime.start acquires/adopts the existing process lock and reconciles accepted rows exactly once. Service-wide has_active_work still checks busy plus nonterminal rows in any session, and stop_when_idle uses the facade method so instance monkeypatches remain effective.
+  - SessionRuntime.close resolves its question, marks session closing, cancels consumer and detaches existing question/tool sinks and composition cleanup; it does not release the service lock or close cached DB. ServerRuntime.close performs session cleanup and releases ownership in a finally, preserving idempotency and graceful queue semantics.
+  - Move shared constants, PendingQuestion, IncomingImage, decode_images, resolve_question_timeout and related existing value/helpers unchanged into src/server/runtime_support.py. Keep IdleShutdown on the service boundary. Import dependencies remain acyclic; re-export existing runtime module imports explicitly as a compatibility API.
+  - Preserve all public facade methods listed below. Session-changing methods still rebind the sole composition in this intermediate refactor; do not claim the observed stranded-report issue is fixed yet.
+  - Mechanically adapt only test accesses to private execution state through runtime.session_runtime; keep assertions and scenarios unchanged. Public lock/idle checks remain facade-based.
+  - Move the existing slow-turn monkeypatch to the actual implementation module and the unbound tool-event test to SessionRuntime._on_tool_event with its same fake and assertions; do not leave patches ineffective.
+  - Preserve callback semantics, event payloads/order, model-window guard, accepted queue transitions, steering, question deadlines and cancel behavior. No new producer ownership tagging in this refactor.
+public_facade:
+  properties: [session, busy, pending_question, composition, hub, session_runtime]
+  methods: [has_active_work, stop_when_idle, start, ensure_workers, send, abort, stop_all, wait, answer, node, stop_node, background_node, set_external_files, toggle_mcp, set_model, set_effort, select_agent, rollback_points, rollback, fork, create_worktree, refuse_while_busy, adopt_model, model_defaults, save_model_default, switch_workspace, new_session, open_session, close]
+skill_assignment:
+  available_skills: [archify, clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer, documentation-lookup, figma-generate-library, figma-use, find-skills, frontend-design, mind-management, prompt-optimizer, skill-creator, vanya]
+  required_by_role:
+    researcher: [clean-code, clean-python, clean-architecture, cognitive-writing, docs-writer]
+    developer: [clean-code, clean-python, clean-architecture, cognitive-writing, docs-writer]
+    qa: [clean-code, clean-python, clean-architecture, cognitive-writing, docs-writer]
+  missing_skills: [clean-backend-architecture]
+  critical_missing: []
+task:
+  worker: pas_developer
+  verifier: pas_qa
+  objective: Perform the one-session extraction, compatibility fixture adjustments and scoped architecture note as one behavior-preserving change.
+  paths:
+    - src/server/runtime.py
+    - src/server/session_runtime.py
+    - src/server/runtime_support.py
+    - tests/test_server_session_runtime.py
+    - tests/test_server_runtime.py
+    - tests/test_server_queue.py
+    - tests/test_server_parity.py
+    - tests/test_ui_client.py
+    - tests/test_ui_service_client.py
+    - tests/test_tool_outputs.py
+    - docs/architecture.md
+  read_only_regression_paths:
+    - src/server/app.py
+    - src/server/cli.py
+    - src/server/views.py
+    - src/engine/bootstrap.py
+    - tests/test_server_idle.py
+    - tests/test_server_launch.py
+  acceptance_tags: ['@integration', '@contract']
+  red:
+    - Add tests proving the facade owns one distinct SessionRuntime and delegates composition/session/turn/question behavior to it, while process ownership remains on the service.
+    - Add lifecycle regression showing session cleanup cannot release the service lock or close the shared cached database, and facade close releases ownership idempotently without interrupting never-executed rows.
+    - Establish public import and signature compatibility through existing callers plus focused contract assertions; fail for missing SessionRuntime before implementation.
+  green:
+    - Move existing execution methods and state with minimal semantic edits; wire callbacks to the session runtime rather than leaving them bound to the facade.
+    - Keep old helpers/types importable from runtime.py while actual implementations use runtime_support.py directly, never importing facade back from session_runtime.
+    - Adjust private-state fixture references and the two module/class patch seams only; preserve all behavioral assertions, tests and event bytes.
+    - Add a concise current-runtime ownership note with source references in docs/architecture.md without rewriting accepted historical proposals, other sections or headings.
+  refactor:
+    - Remove only now-unused imports from touched modules, keep explicit typed facade delegation, avoid moving unrelated engine code or test assertions.
+    - Preserve the accepted execution_workspace binding in the extracted turn loop and all existing callback registration/cleanup semantics.
+  focused: uv run pytest -q -p no:sugar tests/test_server_session_runtime.py tests/test_server_runtime.py tests/test_server_queue.py tests/test_server_idle.py tests/test_tool_outputs.py
+  integration_regression: uv run pytest -q -p no:sugar tests/test_server_parity.py tests/test_ui_client.py tests/test_ui_service_client.py tests/test_server_launch.py
+  full_checks:
+    - uv run pytest -q -p no:sugar -n 8
+    - uv run ruff check src tests
+    - uv run ruff format --check src tests
+    - git diff --check
+  docs_checks: Source/content consistency, relative link targets, preserved headings and scope.
+  validator: Run experimental clean-python pilot if available and report non-passing findings, no out-of-scope layout fixes.
+  escalation: Stop before any other path, changed public behavior, new concurrency/routing/state policy, unrelated baseline failure or need to modify app/CLI/bootstrap construction. Return converging progress at soft50steps; do not rush full verification.
+verification_levels:
+  - behavior: Facade delegates to a distinct session owner while stable public imports and signatures remain usable.
+    tag: '@contract'
+    cheapest_sufficient: contract
+    rationale: Direct API/type/signature assertions establish this compatibility boundary without mounting a UI.
+  - behavior: One session retains queue, turn, steering, retry, wake, question and workspace semantics after extraction.
+    tag: '@integration'
+    cheapest_sufficient: integration
+    rationale: Existing real runtime and client tests are the oracle; isolated delegates cannot establish callback wiring.
+  - behavior: Session cleanup does not close process-owned resources and facade cleanup releases the lock safely.
+    tag: '@integration'
+    cheapest_sufficient: integration
+    rationale: Real temporary DB/ownership lock and lifecycle are the contract, not mocks of resource closure.
+  - behavior: Ownership documentation describes current code without claiming concurrent sessions.
+    tag: '@contract'
+    cheapest_sufficient: contract
+    rationale: Scoped source and link review is sufficient for prose.
+qa_contract:
+  - Verify all worker skill assignments were applied and exact allowlist honored, preserving mixed pre-existing user edits.
+  - Audit every migrated callback and shared resource; test fixtures may move private access but may not weaken or delete assertions.
+  - Verify slow-turn and unbound tool-event tests still exercise actual implementation, and direct app/CLI public accesses require no source change.
+  - Repeat focused/regression checks and full suite with eight workers on final source tree; inspect actual diff and docs.
+  - Return one objective PASS, FAIL or BLOCKED with evidence and memory_writes suggestions only.
+risks:
+  - Existing runtime.py has accepted uncommitted workspace changes and other ongoing user work; no reset, stash or whole-file overwrite from HEAD.
+  - Shared cached DB must not acquire session-owned close behavior; no second process lock acquisition.
+  - Explicit facade is verbose but makes ownership inspectable; do not compress it into dynamic magic.
+  - Fixture references legitimately change where private state lives; behavior assertions and rejection/deadline tests must remain intact.
+  - This extraction intentionally retains the single-session facade and rebinding behavior; report-routing and concurrent-session behavior are not delivered here.
+  - The single shared Mind checkpoint was updated by an unrelated core-performance task; use local PAS state and feature-specific memory records, do not overwrite that task's checkpoint.
+gherkin:
+  draft: .pas/state/active/00006-multi-session-service/session-runtime.feature
+  publish_on_done: specs/features/application/session_runtime.feature
+planning_gate: All architecture decisions and paths are explicit; no unresolved user choices for this one-session refactor. Approval needed before implementation.
