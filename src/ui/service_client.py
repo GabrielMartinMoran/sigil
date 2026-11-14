@@ -62,7 +62,9 @@ from typing import Any, Self
 from urllib.parse import quote
 
 import httpx
+from pydantic import ValidationError
 
+from src.engine.context.meter.debug_wire import DEBUG_SNAPSHOT_ADAPTER, DebugSnapshot
 from src.engine.storage.database import database_path
 from src.server.diagnostics import record
 from src.server.endpoint import Endpoint
@@ -496,6 +498,14 @@ class ServiceClient:
     async def state(self) -> dict[str, Any]:
         """Everything the screen paints from: session, workspace, model, tree, question."""
         return await self._get('/api/state')
+
+    async def debug(self) -> DebugSnapshot:
+        """Full diagnostics measured by the service, never by the attached TUI."""
+        payload = await self._get('/api/debug')
+        try:
+            return DEBUG_SNAPSHOT_ADAPTER.validate_python(payload)
+        except ValidationError:
+            raise UnexpectedResponse('The service returned an invalid debug report.') from None
 
     async def context(self) -> dict[str, Any]:
         """The meter's projection: how full the window is, what it costs.

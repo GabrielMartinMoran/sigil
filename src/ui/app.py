@@ -336,10 +336,6 @@ class SigilApp(
         self.debug_visible = False
         self._debug_timer: Any = None
         self._debug_pending: list[Any] | None = None
-        # What `/api/context` last answered, for the debug view of an attached
-        # terminal: the session's meter lives in the service, so the report is
-        # built from this read and never from a local history this process lacks.
-        self._service_debug_context: dict[str, Any] | None = None
         # Run in progress: `checkpoint` uses it to persist turn progress.
         self._current_run: Any = None
         self._last_checkpoint_at = 0.0
@@ -791,6 +787,9 @@ class SigilApp(
         types by adding them, and a terminal that failed on a newer one would break a
         working conversation for no reason.
         """
+        if event.type == 'debug_changed':
+            self.refresh_debug()
+            return
         chat = self.query_one(ChatLog)
         data = event.data
         if event.type == 'text_delta':

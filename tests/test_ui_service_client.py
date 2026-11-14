@@ -62,6 +62,7 @@ from src.ui.service_client import (
     StreamInterrupted,
     TurnRequest,
     Unauthorized,
+    UnexpectedResponse,
 )
 from tests.test_server_parity import _busy, _composition
 
@@ -1421,3 +1422,15 @@ def test_a_finished_node_refuses_the_background(runtime: ServerRuntime, tmp_path
         assert node.mode == 'sync'
 
     asyncio.run(go())
+
+
+@pytest.mark.parametrize('payload', [{}, {'session_id': 's', 'report': {}}, {'report': 'invalid'}])
+def test_should_translate_malformed_debug_contract_to_safe_client_error(payload: dict[str, Any]) -> None:
+    async def scenario() -> None:
+        async with ServiceClient(
+            _endpoint(), transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
+        ) as client:
+            with pytest.raises(UnexpectedResponse, match='invalid debug report'):
+                await client.debug()
+
+    asyncio.run(scenario())

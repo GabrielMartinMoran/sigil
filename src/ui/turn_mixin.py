@@ -49,6 +49,7 @@ from textual.css.query import NoMatches
 from textual.widgets import Static
 
 from src.engine.agents.step_budget import StepBudget
+from src.engine.agents.turn_timing import TurnTimings
 from src.engine.attachments.content import user_content
 from src.engine.attachments.image_attachment import ImageAttachment
 from src.engine.files.paths import execution_workspace
@@ -69,7 +70,6 @@ from src.ui.service_client import (
     UnexpectedResponse,
 )
 from src.ui.session_refresh import render_refreshed_session, session_view
-from src.ui.turn_timing import TurnTimings
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.status_bar import StatusBar

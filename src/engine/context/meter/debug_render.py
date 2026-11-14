@@ -175,7 +175,7 @@ def maintenance_lines(report: DebugReport) -> list[str]:
             ),
         ]
     )
-    recorded = view.plan.recorded_events if view.plan is not None else 0
+    recorded = view.recorded_events
     for index, event in enumerate(view.events[-2:], start=max(0, len(view.events) - 2)):
         origin = 'recorded' if index < recorded else 'projected/reconstructed'
         lines.append(

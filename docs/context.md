@@ -247,6 +247,16 @@ count, the checkpoint size, the thresholds in effect, and any exception the
 compactors raised. It never contains argument values, tool names, ids or
 conversation text.
 
+When the terminal is attached to a service, `alt+d` and `/debug --text` read
+`GET /api/debug`. The service measures the active run and sends a content-free
+report; the terminal renders the same tables as a local run. The report includes
+cache reads and writes, request costs, prompt composition, and maintenance
+decisions. Turn timings are included in the text report. Missing measurements
+remain unknown. Debug reads are on demand and coalesced, and expensive projection
+runs off the service event loop. See the
+[debug service boundary](architecture.md#what-this-process-measures-and-what-only-the-service-does)
+for the contract and caching behavior.
+
 ## Where the pieces live
 
 Planning, provider I/O, and accounting have separate responsibilities:

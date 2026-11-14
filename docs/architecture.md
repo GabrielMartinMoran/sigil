@@ -1039,16 +1039,16 @@ The terminal migration, its five mixins, and removing the duplicate selection
 logic are `tui-attach-v1`. The transport that cut consumes is
 [part F](#the-terminals-transport-part-f). Tree actions, subagent transcripts, the
 MCP toggle, external files and context are `parity-extra-v1`, in the next section;
-debug and themes stay in the terminal, because they are about a client, not a
-session.
+themes stay in the terminal. Debug rendering also stays in the terminal, but
+its measurements come from `GET /api/debug`, described below.
 
 ## Parity commands (part E)
 
 Part D gave a client the commands that change what the next turn runs on. What it
 left out is what the terminal draws around the chat: the tree of agents, the
 transcript of one subagent, the two session toggles, and the context meter. This
-part adds those six routes. Theme selection and the `/debug` report are still
-client work, so they are in no route here.
+part adds those six routes. Theme selection remains client work. The debug
+report now has its own read-only route, `GET /api/debug`.
 
 ### One decision, two transports
 
@@ -1083,6 +1083,7 @@ The commands are thin for the same reason as part D's: a route calls a
 | `POST /api/mcp` | Enables or disables one server for the session | `views.session_view` plus the shell's MCP state |
 | `POST /api/external-files` | Allows or denies reads outside the workspace | `views.session_view` |
 | `GET /api/context` | Window usage and the session's bill | `views.context_view` |
+| `GET /api/debug` | Full content-free diagnostic snapshot | `DebugDiagnostics.read` |
 
 `/context` in an attached terminal paints that projection and the workspace from
 `/api/state`. It shows no scope section — the active directories and the instruction
@@ -1162,11 +1163,11 @@ Two honest limits travel with it:
   the stream is painting. The route says `measured` and `projected` as they are
   rather than projecting a history the server does not have yet.
 
-The `/debug` report is not here and does not need to be: it describes the request
-the client is inspecting, with its cache and compaction decisions, and those are
-per-request objects rather than session facts. Themes are presentation. `goto` is
-navigation inside a tree the client already has; none of the three changes what
-the next turn runs on.
+`GET /api/debug` exposes per-request measurements from the service that runs
+the turn: cache usage, compaction decisions, request shape, and timings. The
+terminal renders those measurements without owning a run or context meter.
+Themes remain presentation. `goto` remains navigation inside a tree the client
+already has; neither needs a service mutation.
 
 ### What is still duplicated
 
@@ -1803,32 +1804,41 @@ model the service has selected is the same mistake with a question mark.
 
 | Surface | Attached source | What replaces the local value |
 | --- | --- | --- |
-| `alt+d` view and `/debug --text` | `GET /api/context`, `state['model']`, `state['session']` | `not measured in this process — the service owns the turn` |
+| `alt+d` view and `/debug --text` | `GET /api/debug` | Full report measured by the service; unavailable values remain unknown |
 | Position (`seq`) of a typed message | the service's rows, re-read after it accepts the message | no position: the line is not clickable until a row exists |
 | Sidebar subject line | the session | `session · <agent>`, never the open node |
 | Turn clock | this terminal's own interval while the turn runs | — the elapsed time is real, because the turn started when the service said so |
 
-**The debug view.** `DebugMixin` keeps its in-process path untouched: there the
-report is measured from `_history`, `_meter` and the captured request of the run
-this process is executing. Attached, `debug_report` is not used at all.
-`ServiceDebugReport.from_projection` maps `/api/context` and `/api/state` onto what
-the report prints, and one row model feeds both surfaces: `service_debug_lines`
-renders it as plain text for `/debug --text`, and `build_service_debug_body` paints
-the same rows with a per-section accent, aligned values and a heading of its own for
-what was not measured, so the view the attached terminal shows has the hierarchy of
-the in-process one and the two cannot print different numbers.
+**The debug view.** `DebugMixin` keeps its in-process path for local runs.
+Attached, it reads `GET /api/debug` through `ServiceClient.debug()`. The typed
+`DebugSnapshot` carries a session ID, a `DebugReport`, and optional turn timing
+text. Both modes use the same styled tables and plain-text renderer. The report
+restores the request timeline, per-request cache and costs, prompt stack,
+per-turn context, history composition, instruction and tool overhead, and
+maintenance diagnostics.
 
-The view repaints on the service's own events — `turn_started`, `tool_result`,
-`state_changed` — because there is no run here to react to. `refresh_service_debug`
-coalesces a burst of them into one read on an exclusive worker (`debug-service`). A
-route that does not answer is reported as `the service did not answer /api/context`,
-never as a session at zero.
+`DebugDiagnostics` reads the active run's messages when a turn is in flight,
+not just the last persisted checkpoint. It snapshots mutable message envelopes
+and parts on the owner loop, then projects and serializes the report in a
+worker thread. Projection is read-only: it never generates a summary or calls
+a provider. Messages, argument values, instruction bodies, tool schemas, and
+summary text do not cross the wire. `DebugProjection` retains only metadata;
+immutable compaction events have an explicit JSON serializer.
 
-The per-request measurements — cache reads and writes, compaction decisions,
-instruction and tool-schema sizes, turn timings — happen inside the turn, which the
-service owns and does not publish. They are listed under *What this process does not
-measure*, not reconstructed from an empty meter. Widening `/api/context` is the fix
-if one of them is wanted.
+Reads are on demand, with no debug polling while the view is closed. A burst of
+service events is coalesced for 150 ms; the exclusive `debug-service` worker
+rejects responses for another session. Unchanged reports don't rebuild the
+Rich tables. The service shares a single in-flight calculation and caches the
+last report by session, event revision, request capture, model, and budget.
+Cancelling one reader doesn't cancel shared work. Timing text is refreshed
+separately from the cached report. `debug_changed` events at agent-node
+boundaries also refresh requests that produced no visible output.
+
+A failed or invalid read clears stale measurements and shows an explicit
+`Debug unavailable` message, never a fabricated zero. Closing the view stops
+its coalescing timer and cancels its client worker. Turn timing is measured in
+`src/engine/agents/turn_timing.py` and is included in `/debug --text`, as it was
+for local runs; the service does not import the TUI.
 
 **`seq` of a typed message.** In process the position is `len(_history)`: the prompt
 is the next message, and knowing it up front is what makes the line clickable before

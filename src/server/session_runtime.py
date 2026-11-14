@@ -57,6 +57,7 @@ from src.engine.agents.tree.models.agent_node import AgentNode
 from src.engine.agents.tree.models.node_status import NodeStatus
 from src.engine.agents.tree.models.summon_error import SummonError
 from src.engine.agents.turn_map import library_run_id
+from src.engine.agents.turn_timing import TurnTimings
 from src.engine.attachments.content import stored_content, stored_parts, user_content
 from src.engine.bootstrap import Composition, model_settings
 from src.engine.files.paths import execution_workspace
@@ -117,6 +118,8 @@ class SessionRuntime:
         self._question_timeout = question_timeout
         self._task: asyncio.Task[None] | None = None
         self._run: Any = None
+        self._turn_timings: TurnTimings | None = None
+        self._timing_session_id: str | None = None
         self._pending_question: PendingQuestion | None = None
         self._question_ids = 0
         self._last_checkpoint_at = 0.0
@@ -500,6 +503,8 @@ class SessionRuntime:
             # The turn's own prompt is the delivery: it is passed to agent.iter, so
             # its presence in the snapshot is the proof, just like a steer's event.
             self._event_seen.add(accepted.request_id)
+        timings = self._turn_timings = TurnTimings()
+        self._timing_session_id = session.id
         self.hub.publish('turn_started', session_id=session.id)
         self._name_session(session, text)
 
@@ -540,9 +545,10 @@ class SessionRuntime:
                 ) as run:
                     self._run = run
                     self._pump_steering()
-                    async for _node in run:
+                    async for _node in timings.trace(run):
                         self._pump_steering()
                         self._checkpoint()
+                        self.hub.publish('debug_changed', owner_session_id=session.id)
                 history = run.all_messages()
         except RunCancelled:
             status = 'cancelled'
@@ -554,6 +560,7 @@ class SessionRuntime:
             if self._run is not None:
                 history = self._run.all_messages()
         finally:
+            timings.finish()
             run_for_final = self._run
             self._run = None
             self._turn_session = None
@@ -639,6 +646,8 @@ class SessionRuntime:
     async def _stream(self, _ctx: Any, events: Any) -> None:
         """Turns a pydantic-ai stream into events a browser can apply."""
         async for event in events:
+            if self._turn_timings is not None:
+                self._turn_timings.stream_event()
             self._note_activity()
             self._pump_steering()
             self._checkpoint()

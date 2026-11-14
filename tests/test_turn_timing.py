@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 
-from src.ui.turn_timing import TurnTimings
+from src.engine.agents.turn_timing import TurnTimings
 
 
 class ModelRequestNode:
@@ -94,7 +94,7 @@ def test_should_show_active_node_without_counting_it_as_outside_work() -> None:
 
 
 def test_should_bound_retained_nodes_without_losing_total_time() -> None:
-    from src.ui.turn_timing import MAX_TIMING_STEPS
+    from src.engine.agents.turn_timing import MAX_TIMING_STEPS
 
     now = [0.0]
     timing = TurnTimings(clock=lambda: now[0])

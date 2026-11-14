@@ -58,6 +58,8 @@ from src.engine.agents.tree.models.node_status import NodeStatus
 from src.engine.attachments.images import prepare_image
 from src.engine.bootstrap import Composition
 from src.engine.commands import CommandOwner, owned_by
+from src.engine.context.meter.debug import DebugReport
+from src.engine.context.meter.debug_wire import DebugSnapshot
 from src.engine.interaction.models.question_item import QuestionItem
 from src.engine.interaction.models.question_option import QuestionOption
 from src.engine.mcp.config.loader import load_config
@@ -3271,9 +3273,12 @@ def test_debug_text_in_an_attached_terminal_reads_the_service(composition: Compo
                 context = await client.context()
 
                 assert context['used'], 'the service measured this session'
-                assert 'measured: 0' not in report, 'a zero this process never measured'
+                assert f'last context (reported input + output): {context["measured"]:,} tokens' in report
                 assert 'model: ?' not in report, 'the service reports the model it runs'
-                assert 'not measured in this process — the service owns the turn' in report
+                assert 'History composition' in report
+                assert 'Prompt cache' in report
+                assert 'Maintenance' in report
+                assert 'not measured in this process' not in report
                 assert 'first/model' in report
                 assert f'{context["used"]:,}' in report
                 assert f'{context["window"]:,}' in report
@@ -3298,7 +3303,7 @@ def test_the_attached_debug_view_repaints_on_a_service_event(composition: Compos
                 await pilot.press('alt+d')
                 await _until(
                     pilot,
-                    lambda: 'the service owns the turn' in _debug_body(app),
+                    lambda: app.query_one(AgentDebugView).last_report is not None,
                     what='the report the service feeds',
                 )
                 first = _debug_body(app)
@@ -3310,7 +3315,12 @@ def test_the_attached_debug_view_repaints_on_a_service_event(composition: Compos
 
                 runtime.hub.publish_state('test')
 
-                await _until(pilot, lambda: used in _debug_body(app), what='the repaint on the event')
+                await _until(
+                    pilot,
+                    lambda: app.query_one(AgentDebugView).last_report.snapshot.projected == context['used'],
+                    what='the repaint on the event',
+                )
+                assert _debug_body(app) != first
 
     asyncio.run(inner())
 
@@ -4280,3 +4290,72 @@ def test_restart_on_same_port_refreshes_token_instead_of_stopping_following(
                 await client.aclose()
 
     asyncio.run(inner())
+
+
+def test_should_coalesce_service_debug_reads_skip_unchanged_paints_and_stop_when_hidden(
+    composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(120, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+                await pilot.press('alt+d')
+                view = app.query_one(AgentDebugView)
+                await _until(pilot, lambda: view.last_report is not None, what='the initial debug report')
+                reads, paints = 0, 0
+                completed = asyncio.Event()
+                original = client.debug
+
+                async def counted() -> DebugSnapshot:
+                    nonlocal reads
+                    reads += 1
+                    result = await original()
+                    completed.set()
+                    return result
+
+                def paint(_report: DebugReport) -> None:
+                    nonlocal paints
+                    paints += 1
+
+                monkeypatch.setattr(client, 'debug', counted)
+                monkeypatch.setattr(view, 'update_report', paint)
+                for _ in range(100):
+                    app.refresh_debug()
+                await asyncio.wait_for(completed.wait(), timeout=3)
+                await pilot.pause()
+                assert reads == 1
+                assert paints == 0, 'an identical report must not rebuild Rich tables'
+                await pilot.press('alt+d')
+                for _ in range(100):
+                    app.refresh_debug()
+                assert app._debug_timer is None
+                assert reads == 1
+
+    asyncio.run(scenario())
+
+
+def test_should_clear_stale_service_debug_after_a_read_failure(
+    composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.ui.service_client import UnexpectedResponse
+
+    async def scenario() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(120, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+                await pilot.press('alt+d')
+                view = app.query_one(AgentDebugView)
+                await _until(pilot, lambda: view.last_report is not None, what='the initial debug report')
+
+                async def failed() -> DebugSnapshot:
+                    raise UnexpectedResponse('invalid debug report')
+
+                monkeypatch.setattr(client, 'debug', failed)
+                app.refresh_debug(immediate=True)
+                await _until(pilot, lambda: view.last_report is None, what='a cleared stale report')
+                assert 'Debug unavailable' in _debug_body(app)
+                assert 'Fixed cost per request' not in _debug_body(app)
+
+    asyncio.run(scenario())
