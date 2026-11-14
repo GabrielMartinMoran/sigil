@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import io
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -203,3 +204,54 @@ def test_a_path_outside_the_workspace_is_refused():
     with pytest.raises(FileToolError) as error:
         _call([], '/etc/hosts')
     assert 'outside the workspace' in str(error.value)
+
+
+@pytest.mark.parametrize('source', ['img_aaaaaaaa', '[Image #1]', 'https://example.com/image.png'])
+def test_should_skip_loading_and_decoding_an_attached_source(source: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.engine.attachments import tools
+
+    identifier = image_id_for(source) if is_url(source) else source
+    history = _carrying(identifier)
+
+    def no_prepare(raw: bytes) -> Any:
+        pytest.fail('An attached source must not be decoded again')
+
+    async def no_download(*args: Any, **kwargs: Any) -> bytes:
+        pytest.fail('An attached source must not be downloaded again')
+
+    monkeypatch.setattr(tools, 'prepare_image', no_prepare)
+    monkeypatch.setattr(tools, 'download_image', no_download)
+    result = _call(history, f' {source} ')
+    assert 'already attached' in result.return_value
+    assert not result.content
+
+
+def test_should_skip_path_io_for_an_attached_image(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = tmp_path / 'shot.png'
+    target.write_bytes(_png())
+    history = _carrying(image_id_for(str(target.resolve())))
+
+    def no_read(path: Path) -> bytes:
+        pytest.fail('An attached image must not be read again')
+
+    monkeypatch.setattr(Path, 'read_bytes', no_read)
+    result = _call(history, str(target))
+    assert 'already attached' in result.return_value
+
+
+def test_should_check_path_authorization_even_for_an_attached_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.engine.files import paths
+
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    external = tmp_path / 'external.png'
+    external.write_bytes(_png())
+    link = workspace / 'shot.png'
+    link.symlink_to(external)
+    monkeypatch.chdir(workspace)
+    monkeypatch.setattr(paths, 'temp_dirs', lambda: ())
+    history = _carrying(image_id_for(str(external.resolve())))
+    with pytest.raises(FileToolError, match='outside the workspace'):
+        _call(history, str(link))

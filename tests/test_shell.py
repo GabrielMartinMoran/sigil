@@ -5,6 +5,7 @@ They need no network and no LLM: they only run finite system commands.
 
 import asyncio
 import os
+import selectors
 import time
 
 import pytest
@@ -251,3 +252,34 @@ def test_cancelled_admission_does_not_start_a_late_process() -> None:
     assert result.stderr is not None
     assert 'cancelled' in result.stderr.lower()
     assert execute_command('echo next', owner=owner).stdout.strip() == 'next'
+
+
+def test_should_wait_for_exit_without_selecting_closed_streams(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.engine.shell import process as processes
+
+    process = processes.spawn('printf done', cwd=None, extra_env=None)
+    read_available = processes._read_available
+
+    def read_open_streams(selector: selectors.BaseSelector, buffers: processes._Buffers) -> None:
+        assert selector.get_map(), 'Must wait for exit, not select on closed streams'
+        read_available(selector, buffers)
+
+    # Force the pipe-close/process-exit race deterministically, without timing guesses.
+    monkeypatch.setattr(process, 'poll', lambda: None)
+    monkeypatch.setattr(processes, '_read_available', read_open_streams)
+    try:
+        result = processes.drain(process, time.monotonic() + 3)
+        assert result.stdout == b'done'
+        assert result.returncode == 0
+        assert not result.timed_out
+    finally:
+        process.wait(timeout=3)
+
+
+def test_should_apply_deadline_when_child_closes_streams(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.engine.shell import runner
+
+    monkeypatch.setattr(runner, '_clamp_timeout', lambda _: 0.05)
+    result = execute_command('exec 1>&- 2>&-; sleep 10')
+    assert result.timed_out
+    assert result.returncode == 124

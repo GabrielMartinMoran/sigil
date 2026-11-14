@@ -1,0 +1,861 @@
+{
+  "environment": {
+    "python": "3.14.6 (main, Jun 23 2026, 15:18:23) [Clang 22.1.3 ]",
+    "platform": "Linux-7.0.0-42-generic-x86_64-with-glibc2.39",
+    "cpu": "x86_64",
+    "logical_cpus": 16,
+    "rounds": 3,
+    "git_commit": "046badd77e7884ca9f2d04d64e255a5da9900f6d",
+    "mcp_cold_single_sample_ms": 969.5069810259156,
+    "notes": "Warm page cache; GC enabled; sequential checks; ms are per-call round means, not individual latency quantiles. No live LLM, UI, or production config. Shell environment capture bypassed."
+  },
+  "results": [
+    {
+      "label": "read_file/9KiB",
+      "median_ms": 0.21299579999999999,
+      "min_ms": 0.19250973333333335,
+      "max_ms": 0.23920913333333332,
+      "round_means_ms": [
+        0.23920913333333332,
+        0.19250973333333335,
+        0.21299579999999999
+      ],
+      "calls_per_round": 15
+    },
+    {
+      "label": "read_file/32MiB_cap4KiB",
+      "median_ms": 17.289475333333332,
+      "min_ms": 15.491829333333333,
+      "max_ms": 18.291322333333333,
+      "round_means_ms": [
+        18.291322333333333,
+        17.289475333333332,
+        15.491829333333333
+      ],
+      "calls_per_round": 3
+    },
+    {
+      "label": "read_file/32MiB_lines1-40",
+      "median_ms": 598.2972243333334,
+      "min_ms": 564.5195523333334,
+      "max_ms": 600.1735453333333,
+      "round_means_ms": [
+        564.5195523333334,
+        598.2972243333334,
+        600.1735453333333
+      ],
+      "calls_per_round": 3
+    },
+    {
+      "label": "write_file/7KiB",
+      "median_ms": 0.3216788,
+      "min_ms": 0.21566546666666667,
+      "max_ms": 0.7144480666666666,
+      "round_means_ms": [
+        0.7144480666666666,
+        0.3216788,
+        0.21566546666666667
+      ],
+      "calls_per_round": 15
+    },
+    {
+      "label": "patch_file/string7KiB",
+      "median_ms": 0.4769168,
+      "min_ms": 0.34654453333333335,
+      "max_ms": 0.8306475333333333,
+      "round_means_ms": [
+        0.34654453333333335,
+        0.8306475333333333,
+        0.4769168
+      ],
+      "calls_per_round": 15
+    },
+    {
+      "label": "patch_file/lines7KiB",
+      "median_ms": 0.489675,
+      "min_ms": 0.4562175333333333,
+      "max_ms": 0.5773967333333333,
+      "round_means_ms": [
+        0.489675,
+        0.4562175333333333,
+        0.5773967333333333
+      ],
+      "calls_per_round": 15
+    },
+    {
+      "label": "list_skills/30",
+      "median_ms": 9.736728533333332,
+      "min_ms": 9.393657333333334,
+      "max_ms": 10.4968852,
+      "round_means_ms": [
+        9.736728533333332,
+        10.4968852,
+        9.393657333333334
+      ],
+      "calls_per_round": 15
+    },
+    {
+      "label": "load_skill/21resources",
+      "median_ms": 1.1758144666666666,
+      "min_ms": 1.0758982666666665,
+      "max_ms": 1.8137184666666666,
+      "round_means_ms": [
+        1.8137184666666666,
+        1.1758144666666666,
+        1.0758982666666665
+      ],
+      "calls_per_round": 15
+    },
+    {
+      "label": "read_skill_resource/1.8KiB",
+      "median_ms": 0.1780174,
+      "min_ms": 0.17484873333333334,
+      "max_ms": 0.19025413333333333,
+      "round_means_ms": [
+        0.19025413333333333,
+        0.1780174,
+        0.17484873333333334
+      ],
+      "calls_per_round": 15
+    },
+    {
+      "label": "update_roadmap/10items_SQLite_FULL",
+      "median_ms": 1.909803,
+      "min_ms": 1.083274,
+      "max_ms": 2.2255674,
+      "round_means_ms": [
+        1.909803,
+        2.2255674,
+        1.083274
+      ],
+      "calls_per_round": 15
+    },
+    {
+      "label": "ask_user/instant_answer_noUI",
+      "median_ms": 0.053063933333333334,
+      "min_ms": 0.04877673333333333,
+      "max_ms": 0.058092866666666666,
+      "round_means_ms": [
+        0.058092866666666666,
+        0.053063933333333334,
+        0.04877673333333333
+      ],
+      "calls_per_round": 15
+    },
+    {
+      "label": "run/printf",
+      "median_ms": 1.5214450666666666,
+      "min_ms": 1.4165283333333332,
+      "max_ms": 2.17354,
+      "round_means_ms": [
+        1.5214450666666666,
+        1.4165283333333332,
+        2.17354
+      ],
+      "calls_per_round": 15
+    },
+    {
+      "label": "run/8printf",
+      "median_ms": 21.529390066666668,
+      "min_ms": 9.235655,
+      "max_ms": 22.505995066666667,
+      "round_means_ms": [
+        9.235655,
+        21.529390066666668,
+        22.505995066666667
+      ],
+      "calls_per_round": 15
+    },
+    {
+      "label": "run/output1MiB",
+      "median_ms": 191.88990486666668,
+      "min_ms": 178.21987686666668,
+      "max_ms": 205.2799782666667,
+      "round_means_ms": [
+        178.21987686666668,
+        191.88990486666668,
+        205.2799782666667
+      ],
+      "calls_per_round": 15
+    },
+    {
+      "label": "run_skill_script/bash",
+      "median_ms": 2.421194133333333,
+      "min_ms": 2.3368576666666665,
+      "max_ms": 2.768440733333333,
+      "round_means_ms": [
+        2.768440733333333,
+        2.421194133333333,
+        2.3368576666666665
+      ],
+      "calls_per_round": 15
+    },
+    {
+      "label": "shell/raw_printf",
+      "median_ms": 1.1145648666666668,
+      "min_ms": 1.0358910666666667,
+      "max_ms": 1.1526184666666666,
+      "round_means_ms": [
+        1.0358910666666667,
+        1.1145648666666668,
+        1.1526184666666666
+      ],
+      "calls_per_round": 15
+    },
+    {
+      "label": "shell/raw_output1MiB",
+      "median_ms": 203.05114606666666,
+      "min_ms": 203.03681366666666,
+      "max_ms": 203.39562766666666,
+      "round_means_ms": [
+        203.05114606666666,
+        203.03681366666666,
+        203.39562766666666
+      ],
+      "calls_per_round": 15
+    },
+    {
+      "label": "candidate/shell_communicate_printf",
+      "median_ms": 1.191434,
+      "min_ms": 0.9697346666666666,
+      "max_ms": 1.3188102,
+      "round_means_ms": [
+        1.3188102,
+        1.191434,
+        0.9697346666666666
+      ],
+      "calls_per_round": 15
+    },
+    {
+      "label": "candidate/shell_communicate_1MiB",
+      "median_ms": 2.888939533333333,
+      "min_ms": 2.839442533333333,
+      "max_ms": 2.9736372,
+      "round_means_ms": [
+        2.9736372,
+        2.888939533333333,
+        2.839442533333333
+      ],
+      "calls_per_round": 15
+    },
+    {
+      "label": "candidate/shell_bounded_wait_printf",
+      "median_ms": 1.1696787333333334,
+      "min_ms": 1.121024,
+      "max_ms": 1.3229954666666666,
+      "round_means_ms": [
+        1.121024,
+        1.1696787333333334,
+        1.3229954666666666
+      ],
+      "calls_per_round": 15
+    },
+    {
+      "label": "candidate/shell_bounded_wait_output1MiB",
+      "median_ms": 3.0750297333333334,
+      "min_ms": 2.963720466666667,
+      "max_ms": 3.1423648666666666,
+      "round_means_ms": [
+        3.1423648666666666,
+        2.963720466666667,
+        3.0750297333333334
+      ],
+      "calls_per_round": 15
+    },
+    {
+      "label": "wrapper/thread_noop_sync",
+      "median_ms": 0.35977709999999996,
+      "min_ms": 0.2486596,
+      "max_ms": 0.4006167666666667,
+      "round_means_ms": [
+        0.2486596,
+        0.4006167666666667,
+        0.35977709999999996
+      ],
+      "calls_per_round": 30
+    },
+    {
+      "label": "wrapper/thread_noop_hub",
+      "median_ms": 0.7391647666666668,
+      "min_ms": 0.7282754333333333,
+      "max_ms": 0.7696683000000001,
+      "round_means_ms": [
+        0.7391647666666668,
+        0.7696683000000001,
+        0.7282754333333333
+      ],
+      "calls_per_round": 30
+    },
+    {
+      "label": "candidate/read_cap4KiB_IOonly",
+      "median_ms": 0.00700642,
+      "min_ms": 0.00694814,
+      "max_ms": 0.00772995,
+      "round_means_ms": [
+        0.00772995,
+        0.00694814,
+        0.00700642
+      ],
+      "calls_per_round": 100
+    },
+    {
+      "label": "candidate/read_cap4KiB_FULLtool",
+      "median_ms": 0.19262116666666665,
+      "min_ms": 0.1922518,
+      "max_ms": 0.21204943333333331,
+      "round_means_ms": [
+        0.19262116666666665,
+        0.21204943333333331,
+        0.1922518
+      ],
+      "calls_per_round": 30
+    },
+    {
+      "label": "candidate/range32MiB_count+find",
+      "median_ms": 49.87913833333334,
+      "min_ms": 48.646166,
+      "max_ms": 51.492862,
+      "round_means_ms": [
+        49.87913833333334,
+        48.646166,
+        51.492862
+      ],
+      "calls_per_round": 3
+    },
+    {
+      "label": "wrapper/read9KiB_raw",
+      "median_ms": 0.07647093333333334,
+      "min_ms": 0.06838346666666666,
+      "max_ms": 0.0787061,
+      "round_means_ms": [
+        0.06838346666666666,
+        0.0787061,
+        0.07647093333333334
+      ],
+      "calls_per_round": 30
+    },
+    {
+      "label": "wrapper/read9KiB_wrapped",
+      "median_ms": 0.28643640000000004,
+      "min_ms": 0.24002553333333332,
+      "max_ms": 0.2903695,
+      "round_means_ms": [
+        0.24002553333333332,
+        0.2903695,
+        0.28643640000000004
+      ],
+      "calls_per_round": 30
+    },
+    {
+      "label": "output/preview9KiB",
+      "median_ms": 0.033017300000000006,
+      "min_ms": 0.03179013333333334,
+      "max_ms": 0.03327936666666667,
+      "round_means_ms": [
+        0.03327936666666667,
+        0.033017300000000006,
+        0.03179013333333334
+      ],
+      "calls_per_round": 30
+    },
+    {
+      "label": "output/present9KiB",
+      "median_ms": 0.0057785,
+      "min_ms": 0.005493333333333333,
+      "max_ms": 0.006143633333333333,
+      "round_means_ms": [
+        0.006143633333333333,
+        0.0057785,
+        0.005493333333333333
+      ],
+      "calls_per_round": 30
+    },
+    {
+      "label": "skills/render10_loaded",
+      "median_ms": 6.5949450333333335,
+      "min_ms": 6.561356866666666,
+      "max_ms": 6.837372366666666,
+      "round_means_ms": [
+        6.837372366666666,
+        6.5949450333333335,
+        6.561356866666666
+      ],
+      "calls_per_round": 30
+    },
+    {
+      "label": "yaml/SafeLoader",
+      "median_ms": 0.1892013,
+      "min_ms": 0.15555286666666668,
+      "max_ms": 0.19839216666666665,
+      "round_means_ms": [
+        0.15555286666666668,
+        0.19839216666666665,
+        0.1892013
+      ],
+      "calls_per_round": 30
+    },
+    {
+      "label": "yaml/CSafeLoader",
+      "median_ms": 0.020553166666666668,
+      "min_ms": 0.01957316666666667,
+      "max_ms": 0.022294133333333334,
+      "round_means_ms": [
+        0.022294133333333334,
+        0.020553166666666668,
+        0.01957316666666667
+      ],
+      "calls_per_round": 30
+    },
+    {
+      "label": "patch/ambiguous_50k_matches",
+      "median_ms": 1020.312879,
+      "min_ms": 1019.59446,
+      "max_ms": 1059.680505,
+      "round_means_ms": [
+        1019.59446,
+        1020.312879,
+        1059.680505
+      ],
+      "calls_per_round": 1
+    },
+    {
+      "label": "patch/replace_all_50k_matches",
+      "median_ms": 3.6815246666666663,
+      "min_ms": 3.514115,
+      "max_ms": 4.378173333333333,
+      "round_means_ms": [
+        4.378173333333333,
+        3.514115,
+        3.6815246666666663
+      ],
+      "calls_per_round": 3
+    },
+    {
+      "label": "candidate/replace_count_native",
+      "median_ms": 0.08599305,
+      "min_ms": 0.08456285000000001,
+      "max_ms": 0.09035405,
+      "round_means_ms": [
+        0.09035405,
+        0.08599305,
+        0.08456285000000001
+      ],
+      "calls_per_round": 20
+    },
+    {
+      "label": "view_image/1920x1080_new",
+      "median_ms": 502.3522325,
+      "min_ms": 491.7447695,
+      "max_ms": 509.3914865,
+      "round_means_ms": [
+        491.7447695,
+        502.3522325,
+        509.3914865
+      ],
+      "calls_per_round": 2
+    },
+    {
+      "label": "view_image/1920x1080_duplicate",
+      "median_ms": 474.169343,
+      "min_ms": 457.071436,
+      "max_ms": 475.130291,
+      "round_means_ms": [
+        474.169343,
+        457.071436,
+        475.130291
+      ],
+      "calls_per_round": 2
+    },
+    {
+      "label": "png/encode_optimizeTrue",
+      "median_ms": 590.9777795,
+      "min_ms": 588.237573,
+      "max_ms": 593.4234665,
+      "round_means_ms": [
+        588.237573,
+        590.9777795,
+        593.4234665
+      ],
+      "calls_per_round": 2,
+      "bytes": 5297420
+    },
+    {
+      "label": "png/encode_optimizeFalse",
+      "median_ms": 532.7090235,
+      "min_ms": 530.280413,
+      "max_ms": 543.077078,
+      "round_means_ms": [
+        530.280413,
+        532.7090235,
+        543.077078
+      ],
+      "calls_per_round": 2,
+      "bytes": 5297680
+    },
+    {
+      "label": "context/view_21messages",
+      "median_ms": 3.9500545,
+      "min_ms": 3.256366,
+      "max_ms": 4.890382,
+      "round_means_ms": [
+        3.256366,
+        4.890382,
+        3.9500545
+      ],
+      "calls_per_round": 2
+    },
+    {
+      "label": "context/fingerprint_21messages",
+      "median_ms": 0.44925133333333334,
+      "min_ms": 0.42467166666666667,
+      "max_ms": 0.499081,
+      "round_means_ms": [
+        0.499081,
+        0.44925133333333334,
+        0.42467166666666667
+      ],
+      "calls_per_round": 3
+    },
+    {
+      "label": "storage/save_unchanged_21messages",
+      "median_ms": 2.2939205,
+      "min_ms": 2.081437,
+      "max_ms": 2.6031695,
+      "round_means_ms": [
+        2.6031695,
+        2.081437,
+        2.2939205
+      ],
+      "calls_per_round": 2
+    },
+    {
+      "label": "loop/read_roundtrip_21messages_contextFalse",
+      "median_ms": 3.809901,
+      "min_ms": 3.739306,
+      "max_ms": 3.9859615,
+      "round_means_ms": [
+        3.739306,
+        3.809901,
+        3.9859615
+      ],
+      "calls_per_round": 2
+    },
+    {
+      "label": "loop/read_roundtrip_21messages_contextTrue",
+      "median_ms": 9.830166,
+      "min_ms": 7.645735,
+      "max_ms": 10.087838,
+      "round_means_ms": [
+        7.645735,
+        9.830166,
+        10.087838
+      ],
+      "calls_per_round": 2
+    },
+    {
+      "label": "context/view_201messages",
+      "median_ms": 37.2263795,
+      "min_ms": 34.4707375,
+      "max_ms": 37.3778495,
+      "round_means_ms": [
+        37.2263795,
+        34.4707375,
+        37.3778495
+      ],
+      "calls_per_round": 2
+    },
+    {
+      "label": "context/fingerprint_201messages",
+      "median_ms": 4.857023333333333,
+      "min_ms": 4.827145333333333,
+      "max_ms": 4.968104333333333,
+      "round_means_ms": [
+        4.827145333333333,
+        4.857023333333333,
+        4.968104333333333
+      ],
+      "calls_per_round": 3
+    },
+    {
+      "label": "storage/save_unchanged_201messages",
+      "median_ms": 5.9505705,
+      "min_ms": 5.8527065,
+      "max_ms": 6.622843,
+      "round_means_ms": [
+        6.622843,
+        5.8527065,
+        5.9505705
+      ],
+      "calls_per_round": 2
+    },
+    {
+      "label": "loop/read_roundtrip_201messages_contextFalse",
+      "median_ms": 17.709775,
+      "min_ms": 17.1021735,
+      "max_ms": 17.8992605,
+      "round_means_ms": [
+        17.709775,
+        17.1021735,
+        17.8992605
+      ],
+      "calls_per_round": 2
+    },
+    {
+      "label": "loop/read_roundtrip_201messages_contextTrue",
+      "median_ms": 59.2149085,
+      "min_ms": 54.940865,
+      "max_ms": 64.38873,
+      "round_means_ms": [
+        64.38873,
+        59.2149085,
+        54.940865
+      ],
+      "calls_per_round": 2
+    },
+    {
+      "label": "context/view_1001messages",
+      "median_ms": 153.104699,
+      "min_ms": 151.397636,
+      "max_ms": 158.054784,
+      "round_means_ms": [
+        153.104699,
+        151.397636,
+        158.054784
+      ],
+      "calls_per_round": 2
+    },
+    {
+      "label": "context/fingerprint_1001messages",
+      "median_ms": 22.68016233333333,
+      "min_ms": 22.520828,
+      "max_ms": 22.697502333333333,
+      "round_means_ms": [
+        22.697502333333333,
+        22.520828,
+        22.68016233333333
+      ],
+      "calls_per_round": 3
+    },
+    {
+      "label": "candidate/context_request_local_memo_1001",
+      "median_ms": 56.062251,
+      "min_ms": 55.395294,
+      "max_ms": 58.6764035,
+      "round_means_ms": [
+        55.395294,
+        58.6764035,
+        56.062251
+      ],
+      "calls_per_round": 2
+    },
+    {
+      "label": "storage/save_unchanged_1001messages",
+      "median_ms": 26.3235345,
+      "min_ms": 25.3204775,
+      "max_ms": 46.5655655,
+      "round_means_ms": [
+        26.3235345,
+        25.3204775,
+        46.5655655
+      ],
+      "calls_per_round": 2
+    },
+    {
+      "label": "loop/read_roundtrip_1001messages_contextFalse",
+      "median_ms": 42.768596,
+      "min_ms": 38.4731255,
+      "max_ms": 43.2588895,
+      "round_means_ms": [
+        38.4731255,
+        42.768596,
+        43.2588895
+      ],
+      "calls_per_round": 2
+    },
+    {
+      "label": "loop/read_roundtrip_1001messages_contextTrue",
+      "median_ms": 295.539654,
+      "min_ms": 281.023323,
+      "max_ms": 311.3610685,
+      "round_means_ms": [
+        311.3610685,
+        281.023323,
+        295.539654
+      ],
+      "calls_per_round": 2
+    },
+    {
+      "label": "list_mcp_servers/local_stdio_warm",
+      "median_ms": 0.055919199999999995,
+      "min_ms": 0.050074,
+      "max_ms": 0.062553,
+      "round_means_ms": [
+        0.062553,
+        0.055919199999999995,
+        0.050074
+      ],
+      "calls_per_round": 5
+    },
+    {
+      "label": "list_mcp_resources/local_stdio_warm",
+      "median_ms": 0.9987486,
+      "min_ms": 0.976475,
+      "max_ms": 1.041605,
+      "round_means_ms": [
+        1.041605,
+        0.976475,
+        0.9987486
+      ],
+      "calls_per_round": 5
+    },
+    {
+      "label": "read_mcp_resource/local_stdio_warm",
+      "median_ms": 1.1909812,
+      "min_ms": 1.1546322,
+      "max_ms": 1.204242,
+      "round_means_ms": [
+        1.1546322,
+        1.204242,
+        1.1909812
+      ],
+      "calls_per_round": 5
+    },
+    {
+      "label": "list_mcp_prompts/local_stdio_warm",
+      "median_ms": 1.1023774,
+      "min_ms": 0.9241224,
+      "max_ms": 1.1433533999999999,
+      "round_means_ms": [
+        0.9241224,
+        1.1023774,
+        1.1433533999999999
+      ],
+      "calls_per_round": 5
+    },
+    {
+      "label": "get_mcp_prompt/local_stdio_warm",
+      "median_ms": 3.4658037999999998,
+      "min_ms": 2.1705417999999996,
+      "max_ms": 3.5120776,
+      "round_means_ms": [
+        2.1705417999999996,
+        3.4658037999999998,
+        3.5120776
+      ],
+      "calls_per_round": 5
+    },
+    {
+      "label": "web_search/adapter_only_STUB",
+      "median_ms": 0.5625450500000001,
+      "min_ms": 0.357202,
+      "max_ms": 0.67619345,
+      "round_means_ms": [
+        0.67619345,
+        0.5625450500000001,
+        0.357202
+      ],
+      "calls_per_round": 20
+    },
+    {
+      "label": "read_url/adapter_only_STUB",
+      "median_ms": 0.78302465,
+      "min_ms": 0.39308129999999997,
+      "max_ms": 0.94858185,
+      "round_means_ms": [
+        0.39308129999999997,
+        0.78302465,
+        0.94858185
+      ],
+      "calls_per_round": 20
+    },
+    {
+      "label": "list_agents/render_root_only",
+      "median_ms": 0.00176384,
+      "min_ms": 0.00137675,
+      "max_ms": 0.00607341,
+      "round_means_ms": [
+        0.00137675,
+        0.00607341,
+        0.00176384
+      ],
+      "calls_per_round": 100
+    },
+    {
+      "label": "list_agents/render_100synthetic_nodes",
+      "median_ms": 0.423093,
+      "min_ms": 0.412119,
+      "max_ms": 0.431758,
+      "round_means_ms": [
+        0.431758,
+        0.412119,
+        0.423093
+      ],
+      "calls_per_round": 3
+    },
+    {
+      "label": "list_agents/render_1000synthetic_nodes",
+      "median_ms": 28.48011166666667,
+      "min_ms": 27.798446,
+      "max_ms": 29.496124666666667,
+      "round_means_ms": [
+        27.798446,
+        28.48011166666667,
+        29.496124666666667
+      ],
+      "calls_per_round": 3
+    },
+    {
+      "label": "send_message/synthetic_steering_no_task",
+      "median_ms": 0.05793503333333333,
+      "min_ms": 0.05636773333333333,
+      "max_ms": 0.0663429,
+      "round_means_ms": [
+        0.0663429,
+        0.05793503333333333,
+        0.05636773333333333
+      ],
+      "calls_per_round": 30
+    },
+    {
+      "label": "ack_notifications/idempotent_no_persistence",
+      "median_ms": 0.0447997,
+      "min_ms": 0.0431916,
+      "max_ms": 0.04653736666666667,
+      "round_means_ms": [
+        0.04653736666666667,
+        0.0447997,
+        0.0431916
+      ],
+      "calls_per_round": 30
+    },
+    {
+      "label": "kill_subagent/synthetic_state_no_task",
+      "median_ms": 0.05538823333333333,
+      "min_ms": 0.052639,
+      "max_ms": 0.06936386666666666,
+      "round_means_ms": [
+        0.05538823333333333,
+        0.06936386666666666,
+        0.052639
+      ],
+      "calls_per_round": 30
+    },
+    {
+      "label": "list_agents/wrapped_2nodes",
+      "median_ms": 0.050502566666666665,
+      "min_ms": 0.04945603333333333,
+      "max_ms": 0.051145666666666666,
+      "round_means_ms": [
+        0.051145666666666666,
+        0.04945603333333333,
+        0.050502566666666665
+      ],
+      "calls_per_round": 30
+    }
+  ],
+  "profiles": {
+    "shell_printf": "         2087 function calls in 0.002 seconds\n\n   Ordered by: cumulative time\n   List reduced from 147 to 16 due to restriction <16>\n\n   ncalls  tottime  percall  cumtime  percall filename:lineno(function)\n        1    0.000    0.000    0.002    0.002 benchmark_core.py:405(<lambda>)\n        1    0.000    0.000    0.002    0.002 runner.py:64(execute_command)\n        1    0.000    0.000    0.001    0.001 running.py:24(spawn)\n        1    0.000    0.000    0.001    0.001 runner.py:99(<lambda>)\n        1    0.000    0.000    0.001    0.001 process.py:57(spawn)\n        1    0.000    0.000    0.001    0.001 process.py:97(drain)\n        2    0.000    0.000    0.001    0.000 process.py:81(_read_available)\n        1    0.000    0.000    0.001    0.001 subprocess.py:817(__init__)\n        2    0.000    0.000    0.001    0.000 selectors.py:435(select)\n        2    0.001    0.000    0.001    0.000 {method 'poll' of 'select.epoll' objects}\n        1    0.000    0.000    0.001    0.001 subprocess.py:1826(_execute_child)\n        1    0.000    0.000    0.000    0.000 environment.py:101(child_environment)\n        1    0.000    0.000    0.000    0.000 {built-in method _posixsubprocess.fork_exec}\n      189    0.000    0.000    0.000    0.000 <frozen os>:851(fsencode)\n       94    0.000    0.000    0.000    0.000 <frozen os>:704(__getitem__)\n        1    0.000    0.000    0.000    0.000 guard.py:41(is_self_invocation)\n\n\n",
+    "context_1001messages": "         598479 function calls (589468 primitive calls) in 0.347 seconds\n\n   Ordered by: cumulative time\n   List reduced from 118 to 16 due to restriction <16>\n\n   ncalls  tottime  percall  cumtime  percall filename:lineno(function)\n        1    0.000    0.000    0.348    0.348 benchmark_core.py:536(<lambda>)\n        1    0.000    0.000    0.348    0.348 append_only.py:54(view)\n        4    0.002    0.000    0.246    0.062 input_estimate.py:39(estimate_input)\n        1    0.000    0.000    0.179    0.179 projection.py:128(finish)\n  7039/28    0.006    0.000    0.178    0.006 {built-in method builtins.sum}\n        1    0.000    0.000    0.170    0.170 projection.py:41(prepare)\n        4    0.002    0.000    0.160    0.040 input_estimate.py:30(history_fingerprint)\n     9015    0.012    0.000    0.153    0.000 tokens.py:101(part_tokens)\n       11    0.000    0.000    0.140    0.013 tokens.py:158(estimate_messages_tokens)\n     7022    0.003    0.000    0.138    0.000 tokens.py:159(<genexpr>)\n     7015    0.005    0.000    0.136    0.000 tokens.py:141(estimate_message_tokens)\n    14030    0.004    0.000    0.126    0.000 tokens.py:155(<genexpr>)\n        2    0.000    0.000    0.123    0.061 projection.py:207(_exceeds_budget)\n     9015    0.019    0.000    0.123    0.000 tokens.py:78(part_text)\n        1    0.000    0.000    0.096    0.096 projection.py:237(metrics)\n        4    0.000    0.000    0.092    0.023 type_adapter.py:535(dump_python)\n\n\n",
+    "save_1001messages": "         29671 function calls (29167 primitive calls) in 0.035 seconds\n\n   Ordered by: cumulative time\n   List reduced from 66 to 16 due to restriction <16>\n\n   ncalls  tottime  percall  cumtime  percall filename:lineno(function)\n        1    0.000    0.000    0.035    0.035 benchmark_core.py:561(<lambda>)\n        1    0.000    0.000    0.035    0.035 session_store.py:242(save)\n        1    0.000    0.000    0.032    0.032 session_store.py:386(_fingerprint)\n        1    0.000    0.000    0.032    0.032 synchronization.py:16(fingerprint)\n        2    0.000    0.000    0.023    0.011 type_adapter.py:535(dump_python)\n    506/2    0.007    0.000    0.023    0.011 {method 'to_python' of 'pydantic_core._pydantic_core.SchemaSerializer' objects}\n     1513    0.005    0.000    0.011    0.000 _serializers.py:34(serialize_sequence_via_list)\n       11    0.000    0.000    0.009    0.001 __init__.py:185(dumps)\n       11    0.000    0.000    0.008    0.001 encoder.py:185(encode)\n       11    0.008    0.001    0.008    0.001 encoder.py:207(iterencode)\n     1008    0.001    0.000    0.005    0.000 usage.py:209(serialize)\n     1008    0.004    0.000    0.005    0.000 usage.py:53(_serialize_usage)\n     1008    0.002    0.000    0.003    0.000 messages.py:4475(_model_response_part_discriminator)\n       18    0.002    0.000    0.002    0.000 {method 'execute' of 'sqlite3.Connection' objects}\n        2    0.000    0.000    0.002    0.001 {built-in method builtins.next}\n        2    0.000    0.000    0.002    0.001 database.py:142(transaction)\n\n\n"
+  }
+}

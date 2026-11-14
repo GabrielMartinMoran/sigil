@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import base64
 import codecs
+from collections.abc import Iterator, Sequence
 
 from src.engine.files.models.file_tool_error import FileToolError
+
+MATCH_LOCATION_LIMIT = 10
+"""Maximum locations included in an ambiguous patch diagnostic."""
 
 PREVIEW_LIMIT = 300
 """Characters kept in a patch preview."""
@@ -52,6 +56,28 @@ def split_lines(text: str) -> list[str]:
     return lines
 
 
+def count_lines(text: str) -> int:
+    """Count editor lines without allocating a string per line."""
+    return text.count('\n') + int(bool(text) and not text.endswith('\n'))
+
+
+def line_boundary(text: str, lines_before: int, total: int) -> int:
+    """Offset after ``lines_before`` lines, scanning from the nearer end."""
+    if lines_before <= 0:
+        return 0
+    if lines_before >= total:
+        return len(text)
+    if lines_before <= total - lines_before:
+        offset = 0
+        for _ in range(lines_before):
+            offset = text.index('\n', offset) + 1
+        return offset
+    offset = len(text) - int(text.endswith('\n'))
+    for _ in range(total - lines_before):
+        offset = text.rfind('\n', 0, offset)
+    return offset + 1
+
+
 def strip_eol(value: str) -> str:
     """Removes a single line ending, so ``'a'`` and ``'a\\n'`` compare equal."""
     if value.endswith('\r\n'):
@@ -66,14 +92,26 @@ def detect_newline(text: str) -> str:
     return '\r\n' if '\r\n' in text else '\n'
 
 
-def find_occurrences(text: str, needle: str) -> list[int]:
-    """Positions of every occurrence of ``needle``."""
-    starts: list[int] = []
+def find_occurrences(text: str, needle: str) -> Iterator[int]:
+    """Positions of every occurrence, including overlapping matches."""
     index = text.find(needle)
     while index != -1:
-        starts.append(index)
+        yield index
         index = text.find(needle, index + 1)
-    return starts
+
+
+def match_locations(text: str, positions: Sequence[int], count: int) -> str:
+    """A bounded preview, counting newlines only in consecutive disjoint spans."""
+    lines: list[str] = []
+    previous = 0
+    line = 1
+    for position in positions:
+        line += text.count('\n', previous, position)
+        lines.append(str(line))
+        previous = position
+    if count > len(positions):
+        lines.append(f'… {count - len(positions)} more')
+    return ', '.join(lines)
 
 
 def line_of(text: str, index: int) -> int:
@@ -93,19 +131,26 @@ def apply_string_patch(text: str, old: str, new: str, replace_all: bool) -> tupl
         raise FileToolError('`old_string` cannot be empty.')
 
     starts = find_occurrences(text, old)
-    if not starts:
+    first = next(starts, None)
+    if first is None:
         raise FileToolError('`old_string` was not found in the file. Read the file again and copy the exact text.')
-    if len(starts) > 1 and not replace_all:
-        lines = ', '.join(str(line_of(text, start)) for start in starts)
+    if replace_all:
+        # If the first character never recurs, the needle cannot overlap itself.
+        count = text.count(old) if old.find(old[0], 1) == -1 else 1 + sum(1 for _ in starts)
+        return text.replace(old, new), count
+
+    positions = [first]
+    count = 1
+    for count, start in enumerate(starts, start=2):
+        if len(positions) < MATCH_LOCATION_LIMIT:
+            positions.append(start)
+    if count > 1:
+        lines = match_locations(text, positions, count)
         raise FileToolError(
-            f'`old_string` appears {len(starts)} times (lines {lines}). '
+            f'`old_string` appears {count} times (lines {lines}). '
             'Include more surrounding context to make it unique, or set `replace_all` to true.'
         )
-    if replace_all:
-        return text.replace(old, new), len(starts)
-
-    start = starts[0]
-    return text[:start] + new + text[start + len(old) :], 1
+    return text[:first] + new + text[first + len(old) :], 1
 
 
 def apply_line_patch(

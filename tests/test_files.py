@@ -460,3 +460,103 @@ def test_external_access_follows_current_session_for_all_file_tools(tmp_path, mo
     allowed = False
     with pytest.raises(FileToolError):
         tools['read_file'](path=str(external))
+
+
+@pytest.mark.parametrize('limit', [0, 1, 4, 100])
+def test_should_read_only_requested_bytes_plus_truncation_probe(limit: int) -> None:
+    import io
+
+    from src.engine.files.tools import _read_whole
+
+    requests: list[int] = []
+
+    class BoundedStream(io.BytesIO):
+        def read(self, size: int = -1) -> bytes:
+            requests.append(size)
+            return super().read(size)
+
+    class Target:
+        def open(self, mode: str) -> BoundedStream:
+            assert mode == 'rb'
+            return BoundedStream(b'abcdefgh')
+
+        def __str__(self) -> str:
+            return 'input.txt'
+
+    result = _read_whole(Target(), 8, limit)
+    assert requests == [limit + 1]
+    assert result.content == 'abcdefgh'[:limit]
+    assert result.size == 8
+    assert result.truncated == (8 > limit)
+
+
+def test_should_slice_range_without_allocating_all_lines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.engine.files import tools
+
+    target = tmp_path / 'lines.txt'
+    target.write_bytes(b'one\r\ntwo\r\nthree\r\n')
+
+    def no_split(text: str) -> list[str]:
+        pytest.fail('Range reads must not split the whole file into line strings')
+
+    monkeypatch.setattr(tools, 'split_lines', no_split)
+    result = tools._read_line_range(target, str(target), target.stat().st_size, 2, 2)
+    assert result.content == 'two\r\n'
+    assert result.total_lines == 3
+
+
+@pytest.mark.parametrize('text', ['', 'one', 'one\n', '\n\n', 'a\vb\nc\rd\n', 'ñ\r\nx\nlast'])
+@pytest.mark.parametrize('first,last', [(None, 1), (1, None), (2, 2), (0, 0), (-1, 99), (99, 100), (1, -1)])
+def test_should_preserve_legacy_range_normalization(
+    tmp_path: Path, text: str, first: int | None, last: int | None
+) -> None:
+    from src.engine.files.text import split_lines
+    from src.engine.files.tools import _read_line_range
+
+    target = tmp_path / 'lines.txt'
+    target.write_bytes(text.encode())
+    lines = split_lines(text)
+    start = max(1, first or 1)
+    end = min(len(lines), last or len(lines))
+    if start > end:
+        with pytest.raises(FileToolError, match='Invalid line range'):
+            _read_line_range(target, str(target), len(text.encode()), first, last)
+    else:
+        result = _read_line_range(target, str(target), len(text.encode()), first, last)
+        assert result.content == ''.join(lines[start - 1 : end])
+        assert (result.start_line, result.end_line, result.total_lines) == (start, end, len(lines))
+
+
+def test_should_match_split_line_boundaries_for_small_documents() -> None:
+    from itertools import product
+
+    from src.engine.files.text import count_lines, line_boundary, split_lines
+
+    for length in range(6):
+        for characters in product('a\n\r', repeat=length):
+            text = ''.join(characters)
+            lines = split_lines(text)
+            assert count_lines(text) == len(lines)
+            for boundary in range(len(lines) + 1):
+                assert line_boundary(text, boundary, len(lines)) == len(''.join(lines[:boundary]))
+
+
+@pytest.mark.parametrize('limit', [-100, -1, 8])
+def test_should_preserve_legacy_byte_slice_for_negative_and_exact_limits(tmp_path: Path, limit: int) -> None:
+    from src.engine.files.tools import _read_whole
+
+    target = tmp_path / 'input'
+    raw = b'abcdefgh'
+    target.write_bytes(raw)
+    result = _read_whole(target, len(raw), limit)
+    assert result.content == raw[:limit].decode()
+    assert result.truncated == (len(raw) > limit)
+
+
+def test_should_reject_invalid_utf8_even_outside_the_selected_lines(tmp_path: Path) -> None:
+    from src.engine.files.tools import _read_line_range
+
+    target = tmp_path / 'input'
+    target.write_bytes(b'first\n\xff\n')
+    with pytest.raises(FileToolError, match='not UTF-8'):
+        _read_line_range(target, str(target), target.stat().st_size, 1, 1)
