@@ -53,6 +53,7 @@ from src.engine.workspace.repository import GitRepository
 from src.server import views
 from src.server.auth import Auth, AuthMiddleware, LoginThrottle, cleared_cookie, client_key, session_cookie
 from src.server.config import ServerConfig
+from src.server.debug import DebugDiagnostics
 from src.server.diagnostics import record
 from src.server.endpoint import EndpointPublisher
 from src.server.events import EventHub
@@ -1204,6 +1205,13 @@ def create_app(
         except RuntimeError as exc:
             return _conflict(exc)  # type: ignore[return-value]
         return {'session': views.session_view(session)}
+
+    debug_diagnostics = DebugDiagnostics()
+
+    @app.get('/api/debug')
+    async def debug() -> dict[str, Any]:
+        """Content-free context, cache, request shape and turn measurements."""
+        return await debug_diagnostics.read(runtime)
 
     @app.get('/api/context')
     async def context() -> dict[str, Any]:

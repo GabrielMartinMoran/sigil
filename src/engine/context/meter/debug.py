@@ -19,7 +19,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
+from typing import Annotated
 
+from pydantic import PlainSerializer
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -42,6 +44,9 @@ from src.engine.context.meter.request import RequestSnapshot
 from src.engine.context.meter.snapshot import ContextSnapshot
 from src.engine.context.strategy.view_result import ViewResult
 from src.engine.context.tokens import estimate_message_tokens, estimate_tokens, part_text, part_tokens, tool_return_text
+
+# The immutable maps inside an event have an explicit content-free wire shape.
+DebugEvent = Annotated[CompactionEvent, PlainSerializer(CompactionEvent.as_row)]
 
 DEFAULT_PART_CHARS = 700
 """How many characters of each part are shown. The real cost goes separately, in tokens."""
@@ -100,11 +105,11 @@ class DebugTurn:
     unmeasured: int
     measured: int
     cache_ratio: float | None
-    events: tuple[CompactionEvent, ...] = ()
+    events: tuple[DebugEvent, ...] = ()
     """The compaction boundaries that fell inside this turn."""
     steps: tuple[RequestCacheRow | None, ...] = ()
     steps_before: int = 0
-    step_events: tuple[tuple[CompactionEvent, ...], ...] = ()
+    step_events: tuple[tuple[DebugEvent, ...], ...] = ()
     step_costs: tuple[Decimal | None, ...] = ()
     """Available charges, with estimated values identified separately."""
     step_cost_estimated: tuple[bool, ...] = ()
@@ -221,6 +226,17 @@ def debug_turns(
 
 
 @dataclass(frozen=True, slots=True)
+class DebugProjection:
+    """Content-free projection metadata; never retain messages or summary text."""
+
+    diagnostics: dict[str, object] | None = None
+    budget_exceeded: bool = False
+    summary_error: str | None = None
+    events: tuple[DebugEvent, ...] = ()
+    recorded_events: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class DebugReport:
     """Everything the debug view paints."""
 
@@ -230,7 +246,7 @@ class DebugReport:
     turns: tuple[DebugTurn, ...] = ()
     log: tuple[DebugMessage, ...] = ()
     view: tuple[DebugMessage, ...] = ()
-    view_result: ViewResult | None = None
+    view_result: DebugProjection | None = None
     log_tokens: int = 0
     view_tokens: int = 0
     window: int | None = None
@@ -406,7 +422,15 @@ def build_debug_report(
         turns=debug_turns(messages, events or ()),
         log=tuple(log),
         view=tuple(view),
-        view_result=view_result,
+        view_result=DebugProjection(
+            diagnostics=view_result.diagnostics,
+            budget_exceeded=view_result.budget_exceeded,
+            summary_error=view_result.summary_error,
+            events=view_result.events,
+            recorded_events=view_result.plan.recorded_events if view_result.plan is not None else 0,
+        )
+        if view_result is not None
+        else None,
         log_tokens=log_tokens,
         view_tokens=view_tokens,
         window=snapshot.window,

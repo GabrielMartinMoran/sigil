@@ -1,4 +1,4 @@
-"""Bounded, content-free wall-clock diagnostics for the most recent TUI turn."""
+"""Bounded, content-free wall-clock diagnostics for the most recent agent turn."""
 
 from __future__ import annotations
 
@@ -79,7 +79,7 @@ class TurnTimings:
         outside = max(0.0, self.elapsed - self._node_seconds - active)
         lines = [
             f'Turn timing: total {self.elapsed:.2f}s · outside nodes {outside:.2f}s',
-            'ModelRequestNode includes preparation, retries and stream/UI consumption; not pure provider latency.',
+            'ModelRequestNode includes preparation, retries and stream consumption; not pure provider latency.',
             f'Last {len(self.steps)} nodes (up to {MAX_TIMING_STEPS} retained):',
         ]
         if self._phase and self._phase != 'End':
