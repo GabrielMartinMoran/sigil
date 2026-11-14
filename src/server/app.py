@@ -53,6 +53,7 @@ from src.engine.workspace.repository import GitRepository
 from src.server import views
 from src.server.auth import Auth, AuthMiddleware, LoginThrottle, cleared_cookie, client_key, session_cookie
 from src.server.config import ServerConfig
+from src.server.diagnostics import record
 from src.server.endpoint import EndpointPublisher
 from src.server.events import EventHub
 from src.server.runtime import DEFAULT_IDLE_GRACE, IDLE_POLL_INTERVAL, IncomingImage, ServerRuntime
@@ -516,9 +517,9 @@ def create_app(
     service": a test that mounts the app in-process publishes nothing.
 
     ``request_shutdown`` is how the service stops itself when there is no work left:
-    it is called once, ``idle_grace`` seconds after the last turn ended and the last
-    non-terminal queue row in the database was resolved, and it must end the serving
-    loop gracefully rather than exit the process. ``None`` means nobody can stop this
+    it is called once, ``idle_grace`` seconds after the last turn and background
+    agent ended and the last non-terminal queue row in the database was resolved.
+    It must end the serving loop gracefully rather than exit the process. ``None`` means nobody can stop this
     app — an in-process mount, or a runner that owns its own lifetime — and no watch
     is started at all, so a test never loses its server to a timer.
     """
@@ -532,39 +533,46 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        runtime.start()
-        runtime.ensure_workers()
-        # The port is bound and listening before this app is started: `src/server/cli.py`
-        # binds the socket and hands it to uvicorn, so a client that reads the file is
-        # never told about a port that is not there yet.
-        if publisher is not None:
-            publisher.publish(host=config.host, port=config.port)
-        watch = (
-            None
-            if request_shutdown is None
-            else asyncio.get_running_loop().create_task(
-                runtime.stop_when_idle(request_shutdown, grace=idle_grace, poll=idle_poll)
-            )
-        )
         try:
-            yield
-        finally:
-            # The watch stops first: a request to leave *while* the loop is already
-            # leaving is at best noise, and at worst a second attempt on a runtime
-            # that is unwinding.
-            if watch is not None:
-                watch.cancel()
-                with suppress(asyncio.CancelledError):
-                    await watch
-            # Unpublish first: a client that finds the file while the server is closing
-            # should fail to connect rather than attach to a runtime that is unwinding.
+            runtime.start()
+            runtime.ensure_workers()
+            # The port is bound and listening before this app is started: `src/server/cli.py`
+            # binds the socket and hands it to uvicorn, so a client that reads the file is
+            # never told about a port that is not there yet.
             if publisher is not None:
-                publisher.clear()
-            runtime.abort()
-            await runtime.wait()
-            runtime.composition.summoner.cancel_all()
-            await runtime.composition.extensions.close()
-            runtime.close()
+                publisher.publish(host=config.host, port=config.port)
+            record('server_lifespan_ready', port=config.port)
+            watch = (
+                None
+                if request_shutdown is None
+                else asyncio.get_running_loop().create_task(
+                    runtime.stop_when_idle(request_shutdown, grace=idle_grace, poll=idle_poll)
+                )
+            )
+            try:
+                yield
+            finally:
+                record('server_lifespan_shutdown_started')
+                # The watch stops first: a request to leave *while* the loop is already
+                # leaving is at best noise, and at worst a second attempt on a runtime
+                # that is unwinding.
+                if watch is not None:
+                    watch.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await watch
+                # Unpublish first: a client that finds the file while the server is closing
+                # should fail to connect rather than attach to a runtime that is unwinding.
+                if publisher is not None:
+                    publisher.clear()
+                runtime.abort()
+                await runtime.wait()
+                runtime.composition.summoner.cancel_all()
+                await runtime.composition.extensions.close()
+                runtime.close()
+                record('server_lifespan_shutdown_finished')
+        except BaseException as error:
+            record('server_lifespan_failed', error=error)
+            raise
 
     app = FastAPI(
         lifespan=lifespan,

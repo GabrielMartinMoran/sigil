@@ -67,6 +67,7 @@ from src.engine.interaction.models.question_item import QuestionItem
 from src.engine.sessions.recovery import recover_history
 from src.engine.storage.accepted_inputs import AcceptedInput, AcceptedInputs, DeliveryConfirmation, ImageInput
 from src.engine.tooling.outputs import present_output
+from src.server.diagnostics import record
 from src.server.events import EventHub
 from src.server.ownership import OwnershipError, ServerOwnership
 
@@ -386,12 +387,12 @@ class ServerRuntime:
     def has_active_work(self) -> bool:
         """Whether stopping now would cut something short.
 
-        A running turn is work in this process; a non-terminal row is work the
-        database says exists, including rows another session accepted, because the
+        A running turn or background agent is work in this process. A non-terminal
+        row is work the database says exists, including rows another session accepted, because the
         service serves the whole database. A connected event subscriber is not work:
         it reconnects to whatever service is there.
         """
-        return self.busy or self._accepted.has_open()
+        return self.busy or self.composition.summoner.running() > 0 or self._accepted.has_open()
 
     async def stop_when_idle(
         self,
@@ -425,11 +426,15 @@ class ServerRuntime:
             except Exception as exc:  # noqa: BLE001 - a failed question is not a stop
                 if not complaining:
                     complaining = True
+                    record('server_idle_check_failed', error=exc)
                     self.hub.publish('notice', text=f'Idle check: {exc}', tone='warn')
                 await asyncio.sleep(interval)
                 continue
             complaining = False
             if idle:
+                record(
+                    'server_idle_shutdown', grace_seconds=grace, background_agents=self.composition.summoner.running()
+                )
                 request_shutdown()
                 return
             await asyncio.sleep(interval)

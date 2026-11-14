@@ -35,6 +35,7 @@ import argparse
 import math
 import socket
 import sys
+from types import FrameType
 
 from dotenv import load_dotenv
 
@@ -42,6 +43,7 @@ from src.engine.bootstrap import Composition
 from src.server import webbuild
 from src.server.app import GracefulStop, create_app
 from src.server.config import PASSWORD_ENV, ServerConfig, ServerConfigError, banner, resolve_config
+from src.server.diagnostics import diagnose_server, record
 from src.server.endpoint import EndpointPublisher
 from src.server.events import EventHub
 from src.server.ownership import OwnershipError, ServerOwnership
@@ -153,17 +155,23 @@ def build_parser(web: bool = True) -> argparse.ArgumentParser:
 
 
 def run(argv: list[str] | None = None, *, web: bool = True) -> int:
+    """Run the server with persistent lifecycle and failure diagnostics."""
+    args = build_parser(web).parse_args(argv)
+    # Configure paths before opening diagnostic files; preserve process overrides.
+    load_dotenv()
+    with diagnose_server():
+        code = _run(args, web=web)
+        record('server_command_finished', exit_code=code)
+        return code
+
+
+def _run(args: argparse.Namespace, *, web: bool = True) -> int:
     """Starts the server. Returns the process exit code.
 
     ``web`` selects the surface: ``False`` is the API alone (`sigil server`), ``True``
     adds the bundle, the login route and the password (`sigil serve`).
     """
-    args = build_parser(web).parse_args(argv)
     program = 'sigil serve' if web else 'sigil server'
-
-    # `.env` first, for the same reason the terminal client does it: the password can
-    # live there, and reading it after the config would make it invisible.
-    load_dotenv()
 
     try:
         config = resolve_config(host=args.host, port=args.port, password=args.password, web=web)
@@ -187,6 +195,11 @@ def run(argv: list[str] | None = None, *, web: bool = True) -> int:
 
     # Imported here: uvicorn pulls in a lot, and `--help` should not pay for it.
     import uvicorn
+
+    class LoggedServer(uvicorn.Server):
+        def handle_exit(self, sig: int, frame: FrameType | None) -> None:
+            record('server_signal_received', signal=sig)
+            super().handle_exit(sig, frame)
 
     from src.engine.settings import load_settings
     from src.engine.storage.database import database_path
@@ -242,7 +255,7 @@ def run(argv: list[str] | None = None, *, web: bool = True) -> int:
         print(banner(config), flush=True)
         print(flush=True)
 
-        server = uvicorn.Server(
+        server = LoggedServer(
             uvicorn.Config(
                 app,
                 host=config.host,
@@ -260,6 +273,7 @@ def run(argv: list[str] | None = None, *, web: bool = True) -> int:
         # is set with `setattr` rather than by calling `server.shutdown()`, which is
         # private and would skip the orderly unwinding this whole path depends on.
         stop.bind(lambda: setattr(server, 'should_exit', True))
+        record('server_listening', port=int(sock.getsockname()[1]), idle_grace=args.idle_grace)
         try:
             server.run(sockets=[sock])
         except KeyboardInterrupt:  # pragma: no cover - the normal way to stop it

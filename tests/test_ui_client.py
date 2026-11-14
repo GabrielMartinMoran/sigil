@@ -4224,3 +4224,78 @@ def test_the_transcript_window_preference_falls_back_and_clamps(tmp_path: Path) 
 
     path.write_text(json.dumps({'transcript_window': 10_000}), encoding='utf-8')
     assert store.load().transcript_window == MAX_TRANSCRIPT_WINDOW, 'a window the service would refuse is pulled down'
+
+
+def test_cut_stream_relaunches_service_and_reports_one_outage(composition: Composition, tmp_path: Path) -> None:
+    from src.server.launch import ServiceDied
+
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, transport, _attached):
+
+            class Unavailable(httpx.AsyncBaseTransport):
+                online = False
+                cuts = 0
+
+                async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+                    if self.online:
+                        return await transport.handle_async_request(request)
+                    if request.url.path == '/events':
+                        self.cuts += 1
+                        return httpx.Response(200, content=b'')
+                    raise httpx.ConnectError('Connection refused', request=request)
+
+            outage = Unavailable()
+            attempts = 0
+
+            def launch(**kwargs: Any) -> Launch:
+                nonlocal attempts
+                attempts += 1
+                if attempts < 3:
+                    raise ServiceDied('The candidate exited before publishing')
+                outage.online = True
+                return Launch(endpoint=SERVICE)
+
+            client = ServiceClient(SERVICE, transport=outage, launch=launch)
+            try:
+                app = _terminal(client, _session(runtime))
+                async with app.run_test(size=(100, 40)) as pilot:
+                    await _until(pilot, lambda: attempts >= 3 and app._service_state is not None, what='relaunch')
+                    text = _transcript(app)
+                    assert text.count('No Sigil service answered') == 1
+                    assert text.count('may be missing') <= 1
+                    assert 'What you typed is back' not in text
+                    assert outage.cuts >= 2, 'More than one failed retry is exercised'
+                    await pilot.press('h', 'i', 'enter')
+                    await _until(pilot, lambda: 'done' in _transcript(app), what='a working service after recovery')
+            finally:
+                await client.aclose()
+
+    asyncio.run(inner())
+
+
+def test_restart_on_same_port_refreshes_token_instead_of_stopping_following(
+    composition: Composition, tmp_path: Path
+) -> None:
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, transport, _attached):
+            stale = Endpoint(host=SERVICE.host, port=SERVICE.port, pid=0, token='previous-run', started_at=0)
+            attempts = 0
+
+            def launch(**kwargs: Any) -> Launch:
+                nonlocal attempts
+                attempts += 1
+                return Launch(endpoint=SERVICE)
+
+            client = ServiceClient(stale, transport=transport, launch=launch)
+            try:
+                app = _terminal(client, _session(runtime))
+                async with app.run_test(size=(100, 40)) as pilot:
+                    await _until(pilot, lambda: app._service_state is not None, what='the new run token')
+                    assert attempts == 1
+                    assert app._service_following
+                    await pilot.press('h', 'i', 'enter')
+                    await _until(pilot, lambda: 'done' in _transcript(app), what='answer after token rotation')
+            finally:
+                await client.aclose()
+
+    asyncio.run(inner())

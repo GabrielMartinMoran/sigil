@@ -53,6 +53,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
 
+from src.server.diagnostics import record
 from src.server.endpoint import Endpoint, read_endpoint
 from src.server.ownership import ServerOwnership
 
@@ -319,6 +320,7 @@ def spawn_server(command: LaunchCommand) -> Child:
     except BaseException:
         output.close()
         raise
+    record('server_child_spawned', child_pid=process.pid)
     return Child(process, output)
 
 
@@ -487,6 +489,7 @@ def _death_message(child: Child) -> str:
     """The failure, with the child's own words when it had any."""
 
     code = child.exit_code()
+    record('server_child_died', child_pid=child.pid, exit_code=code)
     tail = child.output_tail()
     message = f'The Sigil server exited before publishing an endpoint (exit code {code})'
     return f'{message}:\n{tail}' if tail else f'{message}.'

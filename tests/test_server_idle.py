@@ -607,3 +607,21 @@ def test_a_service_with_no_work_stops_after_the_window_and_releases_the_store(tm
     assert 'LEFT THE LOOP' in output
     assert read_endpoint(endpoint) is None, 'the endpoint of a stopped service must not survive it'
     assert _may_serve(database_path(home)) == 'ACQUIRED', 'the service kept the store after leaving'
+
+
+def test_background_agents_keep_service_alive(runtime: ServerRuntime, monkeypatch: pytest.MonkeyPatch) -> None:
+    running = 1
+    monkeypatch.setattr(runtime.composition.summoner, 'running', lambda: running)
+    clock = Clock()
+    idle = IdleShutdown(runtime.has_active_work, grace=30, clock=clock)
+    assert not runtime.busy
+    assert not runtime._accepted.has_open()
+    assert runtime.has_active_work()
+    assert not idle.expired()
+    clock.advance(1800)
+    assert not idle.expired(), 'An unfinished background agent is not an idle service'
+    running = 0
+    assert not runtime.has_active_work()
+    assert not idle.expired(), 'The grace window starts only after the worker finishes'
+    clock.advance(30)
+    assert idle.expired()

@@ -56,6 +56,7 @@ from src.engine.themes import ThemeRegistry
 from src.engine.tooling.logging import ToolLoggerHub
 from src.engine.tooling.presentation import ToolSummary
 from src.engine.workspace.manager import WorkspaceManager
+from src.server.diagnostics import record
 from src.ui.activity_mixin import ActivityMixin
 from src.ui.agent_mixin import AgentMixin
 from src.ui.commands_mixin import CommandsMixin
@@ -73,6 +74,7 @@ from src.ui.service_client import (
     ServiceEvent,
     ServiceUnavailable,
     StreamInterrupted,
+    Unauthorized,
 )
 from src.ui.sidebar_mixin import SidebarMixin
 from src.ui.title_mixin import TitleMixin
@@ -257,6 +259,7 @@ class SigilApp(
         self._service_state: dict[str, Any] | None = None
         self._service_cursor = 0
         self._service_following = False
+        self._service_reported_errors: set[str] = set()
         self._service_question: str | None = None
         self._service_answered: set[str] = set()
         # The session the answered set and the open question belong to. A different
@@ -664,6 +667,9 @@ class SigilApp(
                         if event.id is not None:
                             self._service_cursor = event.id
                         delay = self._service_reconnect_delay
+                        if self._service_reported_errors:
+                            record('client_stream_recovered', cursor=self._service_cursor)
+                            self._service_reported_errors.clear()
                         await self.apply_service_event(event)
                     # The stream ended because this client closed it: nothing to do.
                     return
@@ -672,6 +678,8 @@ class SigilApp(
                         self._service_cursor = exc.last_event_id
                     await self.report_stream_gap()
                 except ServiceClientError as exc:
+                    if isinstance(exc, Unauthorized) and await self.resume_after_restart():
+                        continue
                     await self.report_service_trouble(exc)
                     if isinstance(exc, ServiceUnavailable) and self._service_following:
                         # Nothing answered. The likeliest cause is a service that
@@ -682,10 +690,13 @@ class SigilApp(
                     return
                 await asyncio.sleep(delay)
                 delay = min(max(delay * 2, SERVICE_RECONNECT_DELAY), SERVICE_RECONNECT_CEILING)
+        except Exception as exc:
+            record('client_follow_failed', error=exc)
+            raise
         finally:
             self._service_following = False
 
-    async def resume_after_restart(self) -> None:
+    async def resume_after_restart(self) -> bool:
         """Finds the service again, and restarts the cursor from its state.
 
         A restarted service is a different run: another port, another token, and — the
@@ -707,17 +718,27 @@ class SigilApp(
         """
         client = self._client
         if client is None:
-            return
+            return False
         try:
-            if not await client.refresh_endpoint():
-                return
-        except ServiceClientError:
-            return
-        self._service_cursor = 0
-        self._service_answered.clear()
-        await self.refresh_service_state()
-        self._service_cursor = self._state_cursor()
+            changed = await client.refresh_endpoint()
+        except ServiceClientError as exc:
+            record(
+                'client_recovery_failed',
+                error=exc,
+                code=exc.code,
+                launch_code=exc.launch_code if isinstance(exc, ServiceUnavailable) else None,
+            )
+            return False
+        reset_cursor = changed or self._service_state is None
+        if changed:
+            self._service_cursor = 0
+            self._service_answered.clear()
+        if not await self.refresh_service_state():
+            return False
+        if reset_cursor:
+            self._service_cursor = self._state_cursor()
         await self.repaint_from_rows()
+        return True
 
     async def report_stream_gap(self) -> None:
         """One sentence about a stream that broke, then the state, which cannot be wrong.
@@ -727,17 +748,38 @@ class SigilApp(
         that is missing one tool result and does not say so is worse than one that was
         painted again from the truth.
         """
-        await self.query_one(ChatLog).add_notice(
-            'The event stream from the service broke, so events may be missing. '
-            'Reconnecting from the last one and re-reading the state.',
-            style='yellow',
-        )
-        await self.refresh_service_state()
+        if 'stream_gap' not in self._service_reported_errors:
+            self._service_reported_errors.add('stream_gap')
+            record('client_stream_interrupted', cursor=self._service_cursor)
+            await self.query_one(ChatLog).add_notice(
+                'The event stream from the service broke, so events may be missing. '
+                'Reconnecting from the last one and re-reading the state.',
+                style='yellow',
+            )
+        client = self._client
+        if client is None:
+            return
+        try:
+            state = await client.state()
+        except ServiceClientError as exc:
+            if isinstance(exc, (ServiceUnavailable, Unauthorized)) and await self.resume_after_restart():
+                return
+            await self.report_service_trouble(exc)
+            return
+        self._apply_service_state(state)
         await self.load_service_history(rebuild=True)
 
     async def report_service_trouble(self, exc: ServiceClientError) -> None:
         """The service is not answering: say what to do, and keep trying quietly."""
-        await self.query_one(ChatLog).add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+        if exc.code not in self._service_reported_errors:
+            self._service_reported_errors.add(exc.code)
+            record('client_service_unavailable', error=exc, code=exc.code)
+            notice = (
+                f'{exc} Trying to restart or reconnect automatically.'
+                if isinstance(exc, ServiceUnavailable)
+                else failure_notice(exc)
+            )
+            await self.query_one(ChatLog).add_notice(f'✖ {notice}', style='bold red')
         if not isinstance(exc, ServiceUnavailable):
             # An unauthorized or unreadable reply will not improve by waiting.
             self._service_following = False
@@ -1083,7 +1125,7 @@ class SigilApp(
         self._service_rebuild_due = False
         await self.load_service_history(rebuild=True)
 
-    async def refresh_service_state(self) -> None:
+    async def refresh_service_state(self) -> bool:
         """Re-reads everything the screen paints from the service's rows.
 
         A delta is never the only copy of a fact: a lagged client, a reconnection and
@@ -1093,13 +1135,14 @@ class SigilApp(
         """
         client = self._client
         if client is None:
-            return
+            return False
         try:
             state = await client.state()
         except ServiceClientError as exc:
-            await self.query_one(ChatLog).add_notice(f'✖ {failure_notice(exc)}', style='bold red')
-            return
+            await self.report_service_trouble(exc)
+            return False
         self._apply_service_state(state)
+        return True
 
     async def load_service_history(self, *, rebuild: bool = False) -> None:
         """Paints the newest page of the conversation, and nothing older.
@@ -1128,7 +1171,7 @@ class SigilApp(
         try:
             page = await client.transcript(limit=self._preferences.transcript_window)
         except ServiceClientError as exc:
-            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            await self.report_service_trouble(exc)
             return
         pending = page.get('pending') or ()
         items = page.get('items') or ()
