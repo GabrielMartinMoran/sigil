@@ -1,4 +1,4 @@
-"""Agent debug view: `alt+d` replaces the chat with what the agent sees."""
+"""Debug rendering: the service measures; the attached terminal only paints."""
 
 from __future__ import annotations
 
@@ -6,34 +6,38 @@ from collections.abc import Sequence
 from typing import Any
 
 from pydantic_ai.messages import ModelMessage
+from textual import work
 from textual.css.query import NoMatches
 
 from src.engine.context.meter.debug import DebugReport, build_debug_report
+from src.engine.context.meter.debug_render import render_debug_report
+from src.engine.context.meter.debug_wire import DebugSnapshot
+from src.engine.context.meter.node_debug import node_debug_report
 from src.engine.context.meter.request import RequestSnapshot
+from src.ui.service_client import ServiceClientError
+from src.ui.widgets.agent_view import AgentView
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.debug_view import AgentDebugView
 from src.ui.widgets.prompt_input import PromptInput
 
 _EMPTY_REQUEST = RequestSnapshot()
-"""Snapshot when no request has run in the session yet."""
-
 _REFRESH_DELAY = 0.15
-"""Coalescing seconds. During a turn the stream events arrive in
-bursts and re-projecting the history on each one is wasted work: the body is
-repainted once per window and no state is lost, because everything is derived
-from the history."""
+SERVICE_DEBUG = 'debug-service'
 
 
 class DebugMixin:
     """Toggles between the chat and the agent debug view.
 
-    It expects the app to define ``_history``, ``_meter``, ``_context_capability``
-    and ``debug_visible``.
+    In process it expects the app to define ``_history``, ``_meter`` and
+    ``_context_capability``; attached, ``_client`` and ``_service_state``, and it
+    reads the service instead of measuring a run this process does not have.
     """
 
     _history: list[ModelMessage]
     _meter: Any
     _context_capability: Any
+    _client: Any
+    _service_state: dict[str, Any] | None
     debug_visible: bool
     _debug_timer: Any
     _debug_pending: list[ModelMessage] | None
@@ -51,24 +55,83 @@ class DebugMixin:
             view = self.query_one(AgentDebugView)
             chat = self.query_one(ChatLog)
             prompt = self.query_one(PromptInput)
+            agent_view = self.query_one(AgentView)
         except NoMatches:
             return
         view.display = visible
         # It replaces, it does not coexist: the space is the same and the view is the same
-        # conversation told from the other side. The input stays active and
-        # focused, on purpose: the view refreshes on every step of the turn, so
-        # you can send a prompt and watch live what context and cache it costs.
-        chat.display = not visible
+        # conversation told from the other side. Only the root composer stays
+        # active; inspecting a subagent must not send prompts to its parent.
+        node_id = self.viewed_node_id()
+        agent_view.display = not visible and node_id is not None
+        chat.display = not visible and node_id is None
+        prompt.disabled = node_id is not None
         if visible:
+            if self.debug_from_service():
+                view.show_unavailable('Loading agent debug…')
             self.refresh_debug(immediate=True)
         else:
             self._cancel_debug_refresh()
-        prompt.focus()
+        if node_id is None:
+            prompt.focus()
+        else:
+            self._release_prompt_focus()
 
     # --- reporte ---------------------------------------------------------
 
+    def debug_from_service(self) -> bool:
+        """Whether the report comes from the service instead of from this process."""
+        return getattr(self, '_client', None) is not None
+
+    async def read_service_debug_report(self) -> DebugSnapshot:
+        """Read the server's full report; never measure local empty history."""
+        node_id = self.viewed_node_id()
+        return await self._client.debug(node_id=node_id) if node_id else await self._client.debug()
+
+    @work(exclusive=True, group=SERVICE_DEBUG)
+    async def refresh_service_debug(self) -> None:
+        """Fetch once per coalesced burst and reject responses for another session."""
+        if not self.debug_visible:
+            return
+        node_id = self.viewed_node_id()
+        try:
+            snapshot = await self.read_service_debug_report()
+        except ServiceClientError:
+            if node_id == self.viewed_node_id():
+                self._debug_unavailable()
+            return
+        state = self._service_state or {}
+        session_id = (state.get('session') or {}).get('id')
+        if (
+            not self.debug_visible
+            or node_id != self.viewed_node_id()
+            or snapshot.node_id != node_id
+            or (session_id and snapshot.session_id != session_id)
+        ):
+            return
+        try:
+            view = self.query_one(AgentDebugView)
+        except NoMatches:
+            return
+        if view.last_report != snapshot.report:
+            view.update_report(snapshot.report)
+
+    def _debug_unavailable(self) -> None:
+        """A failed read is not a zero measurement or a silently current old report."""
+        if not self.debug_visible:
+            return
+        try:
+            self.query_one(AgentDebugView).show_unavailable(
+                'Debug unavailable — could not read /api/debug. Toggle to retry.'
+            )
+        except NoMatches:
+            pass
+
     def debug_report(self, messages: Sequence[ModelMessage] | None = None) -> DebugReport:
         """Builds the debug report with the current log and the next request projection."""
+        node = self.node(self.viewed_node_id())
+        if node is not None and not node.is_root:
+            return node_debug_report(node, self._context_capability)
         history = list(self._history if messages is None else messages)
         capability = self._context_capability
         request: RequestSnapshot | None = None
@@ -94,13 +157,18 @@ class DebugMixin:
         """Requests a repaint of the debug view. It does nothing if it is closed.
 
         Without ``immediate`` the repaint is coalesced: a single one is scheduled per
-        window and the latest history wins.
+        window and the latest history wins. Attached there is no history to hand
+        over — the read of the service's meter is the repaint — so the pending
+        history is cleared and the worker does the rest.
         """
         if not self.debug_visible:
             return
-        run = getattr(self, '_current_run', None)
-        current = run.all_messages() if messages is None and run is not None else self._history
-        self._debug_pending = list(current if messages is None else messages)
+        if self.debug_from_service() or self.viewed_node_id() is not None:
+            self._debug_pending = None
+        else:
+            run = getattr(self, '_current_run', None)
+            current = run.all_messages() if messages is None and run is not None else self._history
+            self._debug_pending = list(current if messages is None else messages)
         if immediate:
             self._flush_debug()
         elif self._debug_timer is None:
@@ -112,6 +180,8 @@ class DebugMixin:
             self._debug_timer.stop()
             self._debug_timer = None
         self._debug_pending = None
+        if self.debug_from_service():
+            self.workers.cancel_group(self, SERVICE_DEBUG)
 
     def _flush_debug(self) -> None:
         """Paints the pending report. It is the coalescing timer callback."""
@@ -119,6 +189,9 @@ class DebugMixin:
         pending = self._debug_pending
         self._debug_pending = None
         if not self.debug_visible:
+            return
+        if self.debug_from_service():
+            self.refresh_service_debug()
             return
         try:
             view = self.query_one(AgentDebugView)
@@ -134,8 +207,14 @@ class DebugMixin:
 
     async def show_debug_text(self) -> str:
         """Plain-text report, for `/debug --text` and for copying."""
-        from src.engine.context.meter.debug_render import render_debug_report
+        if self.debug_from_service():
+            try:
+                snapshot = await self.read_service_debug_report()
+            except ServiceClientError:
+                return 'Debug unavailable — could not read /api/debug.'
+            text = render_debug_report(snapshot.report)
+            return f'{text}\n\n{snapshot.timing}' if snapshot.timing else text
 
         report = render_debug_report(self.debug_report())
-        timings = getattr(self, '_turn_timings', None)
+        timings = getattr(self, '_turn_timings', None) if self.viewed_node_id() is None else None
         return report if timings is None else f'{report}\n\n{timings.render()}'

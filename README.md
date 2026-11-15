@@ -42,6 +42,30 @@ and `scout`, and dropping a `wizard.md` there takes over the name.
 > projects, export them in your shell, or put them in a `.env` on the path upward
 > from the Sigil directory (`~/.env`, for example, when Sigil lives under your home).
 
+### The web client, when you ask for it
+
+`sigil` on its own runs the terminal client. The HTTP API is a subcommand, and the
+page is a second one:
+
+```bash
+sigil server           # the API alone, for local clients with the endpoint token
+sigil serve            # the same API plus web/dist, behind a password
+```
+
+`sigil server` mounts no bundle, has no `/api/login` and invents no password: a
+browser that opens it gets one JSON sentence naming `sigil serve`. It is the
+surface the terminal launches when it needs a backend, so a TUI run never
+publishes a page with a password nobody sees.
+
+`sigil serve` serves `/`, `/static` and the login form, prints the password it
+generated (or reads `SIGIL_SERVER_PASSWORD`), and refuses to start when the
+committed bundle is stale.
+
+Both take the same database lock, so only one can own a workspace at a time.
+`sigil serve` next to a running backend fails with the lock message instead of
+attaching: the process that owns the store has to end first, and idle shutdown is
+what ends it when there is no work left.
+
 ## Working with agents
 
 Sigil's behaviour is set by an **agent profile**: a Markdown file whose
@@ -400,10 +424,13 @@ A project profile with the same name as a global one shadows it, and either of
 them shadows a built-in. Profiles are flat `*.md` files; a name starting with
 `_` or `.` is skipped, so a notes file next to them is not parsed as one.
 
-Sigil ships with two profiles: `wizard`, the general-purpose agent in effect when
-nothing else is chosen or remembered, and `scout`, a read-only subagent built to
-be summoned. `wizard` is the smallest complete example: copy it, rename it,
-rewrite the body.
+Sigil ships with two profiles: `wizard`, the default general-purpose lead that
+investigates and waits for plan approval before implementation, and `scout`, a
+research subagent that can investigate in parallel with other Scouts. Scout has
+shell and research tools; its read-only shell use is enforced by instructions,
+not a command sandbox. See the [built-in working agreements](docs/agent-profiles.md#built-in-working-agreements)
+for approval, delegation, and permission boundaries. Copy and adapt a built-in
+profile when creating your own.
 
 Create the directories yourself; Sigil reads them and does not create them. A
 profile added while the session is open shows up on the next `/agent`, without a
@@ -555,15 +582,10 @@ account alias, a model ID, and a reasoning effort:
 }
 ```
 
-`/default-models` writes these entries from the TUI, so the file does not have to
-be edited by hand. The list holds the default for new conversations, then the
-installed agents, then the installed subagents — `agents.<name>` decides what a
-profile runs on whether a person picks it or a `summon` starts it, so both roles
-have a default here. `Enter` picks the model and the effort with the same screens
-`/model` uses, `d` clears an entry, and `Tab` chooses the file the write goes to —
-the project's or yours. The destination starts on the file that already sets the
-row you are on, and the list says which one that is. With `SIGIL_CONFIG` there is
-one file and nothing to switch.
+`agents.<name>` decides what a profile runs on whether a person picks it or a
+`summon` starts it, so agents and subagents both have a default here. A
+configured subagent always uses its own selection; an unconfigured one inherits
+the model and effort of the agent that summoned it, including when nested.
 
 The project entry replaces the global entry for the same agent. `SIGIL_CONFIG`
 selects a single config file instead of both. Accepted efforts are `default`,
@@ -571,18 +593,35 @@ selects a single config file instead of both. Accepted efforts are `default`,
 be a custom ID, but the account and provider must support it and the chosen
 effort.
 
-Selecting a main agent or starting a new session applies its configured model
-and effort. You can still change either afterward with `/model` and `/effort`.
-Loading a saved session restores its selection rather than reapplying the
-profile default. A configured
-subagent always uses its own selection; an unconfigured subagent inherits the
-model and effort of the agent that summoned it, including when nested.
+**The service owns the model; the terminal paints it.** The process that runs
+the turn resolves the selection, records it on the session, and publishes it to
+every attached client. The terminal paints what the service reports and sends
+the changes back: `/model` and `/effort` travel to the service, which owns the
+accounts, the catalogues and the switch. Nothing in the terminal decides which
+model a conversation runs on.
+
+`/default-models` follows the same split. The screen edits the two config files
+above, and those files belong to the service, so an attached terminal reads and
+writes them through two routes. `GET /api/model-defaults` projects both files,
+the entry each target resolves to, and the accounts those entries name. `POST
+/api/model-defaults` sets one entry in the file you pick, or clears it. The
+terminal opens the same screen in either mode: attached, the rows come from the
+service, and the precedence between the two files stays the service's answer
+instead of becoming a second copy of the rule in the client. A write the service
+refuses — one issued while a turn runs, or one aimed at a destination, an agent
+or an effort it does not know — answers with the service's own sentence and
+changes nothing.
+
+Selecting a main agent applies its configured model and effort through the same
+path `/model` takes. You can still change either afterward with `/model` and
+`/effort`. Loading a saved session restores its selection rather than
+reapplying the profile default.
 
 ### The default model
 
 Not every profile needs to name a model. `default_model` sets the one a
 conversation starts on when the agent has no preference of its own, in the same
-shape as an `agents` entry — the first row of `/default-models` writes it:
+shape as an `agents` entry:
 
 ```json
 {
@@ -903,7 +942,7 @@ duration and its arguments.
 The group is what a profile's `permissions` rules on, together with the tool
 name: `permissions: {write: deny}` closes `write_file` and `patch_file` in one
 line. A tool declares its group once, next to its definition, and
-`tests/test_tool_groups.py` fails if the declaration and the documented table
+`tests/core/test_tool_groups.py` fails if the declaration and the documented table
 drift apart.
 
 A tool error does not cut the turn: it goes back to the model as a failed result
@@ -1297,9 +1336,14 @@ accounts with `/model`.
 ```
 /provider                 manage accounts: add, rename, remove
 /model                    choose a model across accounts, then its reasoning effort
-/default-models           set the model each agent starts on, project or global
+/default-models           the model each agent starts on; edit them in the service's config
 /effort [level]           open the effort picker, or set a level directly
 ```
+
+`/default-models` acts in both modes. Attached, the terminal opens the screen from
+the service's projection (`GET /api/model-defaults`) and writes through the
+service (`POST /api/model-defaults`), so the two config files have one writer.
+`/help` and the `/` menu list it unmarked, because the command works.
 
 | Shortcut | What it opens |
 | --- | --- |
@@ -1744,11 +1788,11 @@ A tool call and its result are one row, and the row is the summary:
 
 ```
   │ 4 tools · 610ms
-  │ ✓ patch tests/test_roadmap.py  3 replacements · 24ms
-  │ ✓ run ['pytest tests/test_roadmap.py -q']  9 passed in 0.45s · 450ms
+  │ ✓ patch tests/core/test_roadmap.py  3 replacements · 24ms
+  │ ✓ run ['pytest tests/core/test_roadmap.py -q']  9 passed in 0.45s · 450ms
   │ ✓ run ['pytest tests/test_per_…  1 failed, 8 passed in 0.61s · 610ms
   │ ↳ 1 failed
-  │ ✓ read tests/test_roadmap.py  2 of 30 lines · 3ms
+  │ ✓ read tests/core/test_roadmap.py  2 of 30 lines · 3ms
 ```
 
 The gutter is what groups them: a run of calls reads as one column hanging under
@@ -1975,10 +2019,22 @@ layer plan is in [`proposals/model-providers.md`](proposals/model-providers.md).
 
 ```bash
 ./sigil              # run Sigil from here, with this directory as the workspace
-uv run pytest        # tests
+uv run pytest -q -p no:sugar -n 8  # complete Python suite
+uv run pytest -q -p no:sugar -n 8 tests/core    # engine and repository tooling
+uv run pytest -q -p no:sugar -n 8 tests/tui     # terminal UI and service client
+uv run pytest -q -p no:sugar -n 8 tests/server  # HTTP, runtime, and web delivery
 uv run ruff check .  # lint
 uv run ruff format   # format
 ```
+
+Use eight workers for full suites or entire components. For a small selection,
+run without workers to avoid startup overhead. Run independent checks
+concurrently when resources permit, but don't launch multiple eight-worker
+suites at once. Keep optimization benchmarks sequential to measure less work,
+not just parallel speedup.
+
+See [the test guide](tests/README.md) for component boundaries, shared test
+helpers, isolation rules, and independent web-client checks.
 
 `./sigil` and `uv run ./main.py` are the same program; the launcher is the one that
 works from another project's directory (see [Running it](#running-it)).
@@ -2003,7 +2059,7 @@ The bundle carries the hash of the sources that produced it (`web/dist/build.jso
 committed bundle no longer matches `web/src`, which is the only failure mode that
 committing `dist/` introduces. The recipe exists twice on purpose — Python in
 `src/server/webbuild.py`, Node in `web/scripts/source-hash.mjs` — because the server
-must answer without Node; `tests/test_web_dist.py` compares both so they cannot drift.
+must answer without Node; `tests/server/test_web_dist.py` compares both so they cannot drift.
 
 ### The pre-commit hook
 

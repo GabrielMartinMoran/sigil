@@ -1,0 +1,24 @@
+version: 1
+worker: 69ae799a
+result: DIAGNOSED
+scope: Temporary-only diagnostics, no repository implementation changes.
+confirmed:
+  - The earlier child probe received an asynchronous ACK but failed before any model request because its selected AgentRunModel had unknown context window.
+  - Supplying a known window at the actual per-profile resolver seam allowed a deterministic child model request and completion.
+  - Builder-level model injection alone does not select the child's model when agent.iter receives selected.model explicitly.
+  - Normal new_session accepts switching when root busy is false and an actual child is still running.
+  - After switching, the released child completed with delivered false, no report-reading turn started, and neither session message history contained the report in the observed interval.
+unknown:
+  - Whether reopening the original session can recover the detached persisted tree or report; not tested.
+evidence:
+  baseline: Existing streamed runtime turn test passed before and after diagnostic, 1 passed in 2.09s.
+  scripts: [/tmp/sigil-diag-00006/diag_a2.py, /tmp/sigil-diag-00006/diag_c.py]
+  raw_markers: [REPO_STATUS_UNCHANGED, WORKING_DIFF_UNCHANGED]
+  preservation: All 48 repository status entries and working diff remained identical.
+lead_decisions:
+  - Preserve guarded behavior for unknown context windows; do not broaden this feature into model-budget policy changes.
+  - Test fixtures must provide a known window through the model-selection seam and streamed deterministic responses.
+  - Preserve approved background-working and client-switching product behavior; do not add a switching prohibition.
+  - Prefer the parent plan's session-owned composition/tree/runtime over patching a shared mutable active-session pointer.
+  - Stage execution-workspace isolation and session-runtime extraction before end-to-end publisher/filter migration where necessary; EventHub foundation remains complete.
+next_evidence_scope: Exact execution workspace dependencies and construction/run boundary needed for the already-planned session-scoped-workspace slice, not another child lifecycle probe.

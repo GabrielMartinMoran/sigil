@@ -1,0 +1,110 @@
+version: 1
+status: approved
+objective: >-
+  Fix the execution bugs the user hit in real multi-terminal use: a turn that runs but
+  publishes nothing while the model retries, a client exit that aborts another client's
+  turn, a claimed row left behind when a turn errors, and the last-session autoload that
+  came back through the workspace switch.
+approval_basis: >-
+  The user reported these as regressions against main's behaviour and against the
+  background-execution requirement, and asked for the defaults endpoint afterwards.
+  A real-process diagnosis proved the causes; no user-visible choice is open except the
+  absence of a hard turn deadline, which is disclosed as an agent decision.
+context:
+  diagnosis:
+    consumer: Healthy. A real subprocess service shows accepted -> claimed -> turn_started.
+    silence: >-
+      The service never subscribes to composition.model_retry.on_retry, so the five
+      backoff attempts of a transient model error publish nothing at all.
+    client_exit: >-
+      action_quit calls POST /api/stop-all and abort is global to the service, so one
+      client leaving cancels every client's turn. The session is saved at cancellation,
+      which is why the prompt only then appeared in the transcript.
+    stuck_row: >-
+      _stop_pending runs only for cancelled or aborting, so an errored turn leaves its
+      accepted row claimed until the next start interrupts it.
+    autoload: >-
+      switch_workspace ends in store.load_last() or store.draft_session(), so opening a
+      workspace reopens its last conversation instead of starting empty.
+tasks:
+  - id: turn-signal-v1
+    status: in_progress
+    objective: Publish the model retries and close the row of a turn that errors.
+    paths:
+      - src/server/runtime.py
+      - tests/test_server_runtime.py
+      - docs/architecture.md
+    acceptance:
+      - A transient model error publishes a retry event the clients can paint, once per attempt.
+      - A turn that ends in error leaves its accepted row terminal, never claimed.
+  - id: detach-on-exit-v1
+    status: pending
+    objective: Leaving a terminal detaches it instead of stopping the service's work.
+    paths:
+      - src/ui/app.py
+      - src/ui/commands_mixin.py
+      - src/ui/turn_mixin.py
+      - tests/test_ui_client.py
+      - docs/architecture.md
+    acceptance:
+      - Closing the window or running /quit never posts stop-all and never aborts a running turn.
+      - A message accepted by one client appears in the queue overlay of another.
+      - Nothing calls abort on a client's exit; the idle shutdown is what ends the service.
+  - id: no-autoload-v1
+    status: pending
+    objective: Opening a workspace starts an empty conversation again.
+    paths:
+      - src/server/runtime.py
+      - tests/test_session_model_scope.py
+      - tests/test_server_runtime.py
+    acceptance:
+      - A workspace switch opens a draft, and no stored conversation is reopened implicitly.
+      - The model of a conversation opened explicitly is still restored.
+  - id: model-defaults-service-v1
+    status: in_progress
+    objective: >-
+      Give the service the routes that read and write the model defaults, so the one command
+      the attached terminal cannot serve becomes serveable.
+    paths:
+      - src/server/runtime.py
+      - src/server/app.py
+      - src/server/views.py
+      - tests/test_server_runtime.py
+      - tests/test_server_parity.py
+      - docs/architecture.md
+    acceptance:
+      - The service projects both defaults files and the accounts they name.
+      - Writing a default is refused with the engine's own sentence when it cannot be done.
+      - The projection names the files that exist and the values each one holds.
+  - id: model-defaults-client-v1
+    status: pending
+    objective: Make /default-models work in the attached terminal through those routes.
+    paths:
+      - src/ui/command_transport.py
+      - src/ui/provider_mixin.py
+      - src/ui/service_client.py
+      - src/ui/widgets/model_defaults_screen.py
+      - tests/test_ui_client.py
+      - tests/test_commands_ownership.py
+      - README.md
+    acceptance:
+      - /default-models is no longer blocked while attached, and it writes through the service.
+      - A refused write says the engine's reason and changes nothing locally.
+  - id: stale-durable-overlay-v1
+    status: pending
+    objective: A draft session must not keep painting the previous conversation's overlay.
+    paths:
+      - web/src/store.ts
+      - web/dist
+      - tests/test_web_dist.py
+    acceptance:
+      - A typed 404 from the durable read clears the overlay instead of leaving the old one behind.
+agent_decisions:
+  - No hard deadline on a running turn. A slow model is legitimate; the missing piece was
+    signal, not a limit. Retries and a slow-turn notice replace a clock.
+  - A client exit detaches. Stopping work is an explicit command, not a side effect of
+    closing a window.
+  - The defaults routes are thin wrappers over the engine's existing decisions, never a
+    second copy of them.
+limitations:
+  - A turn can still wait indefinitely on a model that never answers, by design.

@@ -68,6 +68,8 @@ def execute_command(
     cwd: str | os.PathLike[str] | None = None,
     extra_env: dict[str, str] | None = None,
     check_self_invocation: bool = True,
+    owner: running.RunningCommands | None = None,
+    generation: int | None = None,
 ) -> RunToolOutput:
     """Runs a non-interactive Bash command and returns its output.
 
@@ -91,16 +93,16 @@ def execute_command(
     if cwd_error is not None:
         return cwd_error
 
+    registry = owner if owner is not None else running._default
+    admitted_generation = generation if generation is not None else registry.generation()
     try:
-        process = spawn(cmd, cwd=cwd_path, extra_env=extra_env)
+        process = registry.spawn(admitted_generation, lambda: spawn(cmd, cwd=cwd_path, extra_env=extra_env))
     except OSError as exc:
         return RunToolOutput(returncode=_NOT_FOUND_RETURNCODE, stderr=str(exc))
+    if process is None:
+        return RunToolOutput(returncode=1, stderr='Command cancelled before starting.')
 
     deadline = time.monotonic() + _clamp_timeout(timeout_seconds)
-
-    # Registered while it runs, so an aborted turn can kill it instead of
-    # leaving it working until its own timeout.
-    running.track(process)
     try:
         return _from_drain(drain(process, deadline))
     except Exception as exc:  # noqa: BLE001 - a drain failure must not bring the turn down
@@ -111,12 +113,15 @@ def execute_command(
             pass
         return RunToolOutput(returncode=1, stderr=str(exc))
     finally:
-        running.forget(process)
+        registry.forget(process)
 
 
 async def execute_commands(
     cmds: list[str],
     timeout_seconds: int = DEFAULT_TIMEOUT,
+    *,
+    cwd: str | os.PathLike[str] | None = None,
+    owner: running.RunningCommands | None = None,
 ) -> list[RunToolOutput]:
     """Runs several Bash commands in parallel and returns their results.
 
@@ -133,8 +138,17 @@ async def execute_commands(
     if not cmds:
         return []
 
+    options = (
+        {}
+        if owner is None and cwd is None
+        else {
+            'cwd': cwd,
+            'owner': owner,
+            'generation': owner.generation() if owner is not None else None,
+        }
+    )
     results = await asyncio.gather(
-        *(asyncio.to_thread(execute_command, cmd, timeout_seconds) for cmd in cmds),
+        *(asyncio.to_thread(execute_command, cmd, timeout_seconds, **options) for cmd in cmds),
         return_exceptions=True,
     )
 

@@ -1,0 +1,47 @@
+version: 1
+status: approved
+approval_basis: User replied continua to the presented two-file compatibility amendment.
+contract: session-event-hub-v2
+supersedes: session-event-hub-v1
+base: .pas/state/active/00006-multi-session-service/event-hub-plan.yaml
+reason: The v1 publish session_id keyword intercepts existing turn_started/turn_finished payload session_id, violating byte compatibility.
+implementation_authorized: true
+worker: pas_developer
+verifier: pas_qa
+paths: [src/server/events.py, tests/test_server_events.py]
+assigned_skills:
+  developer: [clean-code, clean-python, clean-architecture]
+  qa: [clean-code, clean-python, clean-architecture]
+unchanged:
+  - All scope limits, filters, metadata, queue semantics, escalation, checks and acceptance of the base plan apply.
+  - Event.session_id remains optional internal metadata appended with default None.
+  - subscribe and replay retain session_id as the explicit filter keyword.
+  - No runtime publisher, HTTP, UI, dependency, docs or fixture changes.
+  - The delivered HTTP /events selector remains required in a later joint client migration, as already decided by the user.
+agent_decision:
+  - Rename ONLY the publication ownership parameter to owner_session_id on publish and publish_state.
+  - Forward owner_session_id to Event.session_id; never infer it from payload session_id.
+  - Existing publish calls with session_id remain payload-only and unowned until explicit runtime migration.
+  - No backward alias for v1 internal publish session_id, since that would repeat the collision.
+  - Preserve existing producer payloads rather than accepting a wire compatibility variance.
+red:
+  - Add tests through actual EventHub.publish calls for existing turn_started and turn_finished payload session_id and assert byte-exact SSE and dictionary output.
+  - Prove explicit owner_session_id and payload session_id can coexist independently, with filtering driven only by the former.
+  - Prove publish_state forwards explicit ownership while preserving any payload fields.
+green:
+  - Rename publish/publish_state ownership keyword, adapt only new foundation tests and forwarding code, preserve unrelated code and existing callers.
+refactor:
+  - Maintain one matching predicate and filter-before-queue with local scoped lag markers.
+verification:
+  unit: New regressions plus all existing EventHub unit tests; no IO needed for payload binding or filtering semantics.
+  regression: uv run pytest -q -p no:sugar tests/test_server_runtime.py tests/test_ui_service_client.py tests/test_ui_client.py tests/test_attention_client_ui.py
+  full: uv run pytest -q -p no:sugar -n 8
+  lint: uv run ruff check src tests
+  format: uv run ruff format --check src tests
+  diff: git diff --check
+  independent_qa: Required after developer completes; inspect actual publisher-call regressions, final diff and rerun checks.
+risks:
+  - The v1 current work tree drops a shipped payload field; do not claim completion or deploy it before amendment and QA.
+  - Prior green suite does not validate amended code or the missing publish-call regression.
+  - Internal producer tagging and full concurrency remain pending.
+escalation: Stop on any additional path, behavior change, repeated failure, or contract ambiguity; no automatic scope expansion.

@@ -14,6 +14,7 @@ from pydantic_ai.messages import ModelMessage
 
 from src.engine.context.budget import ContextBudget
 from src.engine.context.compaction.coordinator import PolicyLookup
+from src.engine.context.compaction.measurements import ProjectionMeasurements
 from src.engine.context.compaction.policy import DEFAULT_POLICY, CompactionPolicy
 from src.engine.context.compaction.projection import finish, prepare
 from src.engine.context.compaction.summary import Summary
@@ -59,6 +60,7 @@ class AppendOnlyStrategy:
         summary: Summary | None = None,
         compact_opportunistically: bool = False,
     ) -> ViewResult:
+        measurements = ProjectionMeasurements()
         prepared = prepare(
             messages,
             budget,
@@ -69,11 +71,13 @@ class AppendOnlyStrategy:
             image_percent=self.image_max_percent,
             summary=summary,
             compact_opportunistically=compact_opportunistically,
+            measurements=measurements,
         )
         return finish(
             messages,
             prepared,
             budget,
+            measurements=measurements,
             policy=self.policy,
             lookup=self.lookup,
         )

@@ -201,7 +201,79 @@ CREATE TABLE IF NOT EXISTS app_state (
 ) STRICT, WITHOUT ROWID;
 """
 
-USER_VERSION = 5
+V6_SCHEMA = """
+CREATE TABLE IF NOT EXISTS accepted_inputs (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    request_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL CHECK (sequence > 0),
+    payload TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('turn', 'steer')),
+    state TEXT NOT NULL CHECK (state IN ('accepted', 'claimed', 'delivered', 'finished', 'stopped', 'interrupted')),
+    attempt_id TEXT,
+    library_run_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (session_id, request_id),
+    UNIQUE (session_id, sequence)
+) STRICT, WITHOUT ROWID;
+"""
+"""The durable input queue: one row per accepted message, append-only in practice.
+
+It lives in its own step because a file written before it existed has no table at
+all, and step 8 indexes exactly this table: a migration may not assume a structure
+that only the base schema creates.
+"""
+
+SCHEMA += V6_SCHEMA
+
+V7_SCHEMA = """
+CREATE TABLE IF NOT EXISTS roadmap_revisions (
+    execution_id TEXT PRIMARY KEY REFERENCES agent_executions(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL CHECK (revision >= 0)
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS input_deliveries (
+    session_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    checkpointed INTEGER NOT NULL CHECK (checkpointed IN (0, 1)),
+    destination_id TEXT,
+    destination_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    PRIMARY KEY (session_id, request_id),
+    FOREIGN KEY (session_id, request_id) REFERENCES accepted_inputs(session_id, request_id) ON DELETE CASCADE,
+    CHECK (destination_session_id IS NULL OR destination_session_id = destination_id),
+    CHECK ((checkpointed = 1 AND destination_id IS NOT NULL) OR
+           (checkpointed = 0 AND destination_id IS NULL AND destination_session_id IS NULL))
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS recovery_links (
+    original_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    destination_id TEXT NOT NULL,
+    destination_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    PRIMARY KEY (original_session_id, destination_id),
+    CHECK (destination_session_id IS NULL OR destination_session_id = destination_id)
+) STRICT, WITHOUT ROWID;
+"""
+
+SCHEMA += V7_SCHEMA
+
+V8_SCHEMA = """
+CREATE INDEX IF NOT EXISTS accepted_inputs_open
+    ON accepted_inputs(state)
+    WHERE state IN ('accepted', 'claimed', 'delivered');
+"""
+"""The queue's ``is anything still open`` question, answered without a scan.
+
+``accepted_inputs`` is append-only and ``AcceptedInputs.has_open`` runs on a timer for
+the life of the service, so the question is asked thousands of times against a table
+that never shrinks. The predicate repeats the query's own, which is what lets SQLite
+use the index at all; the three states are the non-terminal ones, so the index stays
+small however long the history gets.
+"""
+
+SCHEMA += V8_SCHEMA
+
+USER_VERSION = 8
 """The version `SCHEMA` describes.
 
 Steps start above the empty file: a database created today is written whole and its
@@ -210,6 +282,9 @@ written by an older Sigil.
 """
 
 MIGRATIONS: dict[int, str] = {
+    8: V8_SCHEMA,
+    6: V6_SCHEMA,
+    7: V7_SCHEMA,
     5: "ALTER TABLE sessions ADD COLUMN mcp_overrides TEXT NOT NULL DEFAULT '{}';",
     4: 'ALTER TABLE sessions ADD COLUMN allow_external_files INTEGER NOT NULL DEFAULT 0;',
     2: (

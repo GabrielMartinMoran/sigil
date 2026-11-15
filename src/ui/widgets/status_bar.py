@@ -76,6 +76,7 @@ class StatusBar(Static):
         self._workspace: WorkspaceBadge | None = None
         self._diff: DiffStat | None = None
         self._message: Text | None = None
+        self._subagents = 0
         self._frame = 0
         self._timer: Any = None
 
@@ -107,11 +108,22 @@ class StatusBar(Static):
 
     def set_activity(self, state: ActivityState) -> None:
         """Starts or stops the spinner. The timer only exists while it spins."""
-        was_running = self._activity.running
+        was_running = self._activity.running or self._subagents > 0
         self._activity = state
-        if state.running and not was_running:
+        running = state.running or self._subagents > 0
+        if running and not was_running:
             self._start_spinner()
-        elif not state.running and was_running:
+        elif not running and was_running:
+            self._stop_spinner()
+        self.refresh()
+
+    def set_subagents(self, count: int) -> None:
+        was_running = self._activity.running or self._subagents > 0
+        self._subagents = max(0, count)
+        running = self._activity.running or self._subagents > 0
+        if running and not was_running:
+            self._start_spinner()
+        elif was_running and not running:
             self._stop_spinner()
         self.refresh()
 
@@ -208,6 +220,11 @@ class StatusBar(Static):
             return text
         text.append(f'{IDLE_MARK} ', style=color(self, 'muted'))
         text.append(state.label or 'Ready', style=color(self, 'muted'))
+        if self._subagents:
+            noun = 'subagent' if self._subagents == 1 else 'subagents'
+            text.append(
+                f' ({SPINNER_FRAMES[self._frame]} {self._subagents} {noun} running)', style=color(self, 'accent')
+            )
         return text
 
     def _right(self) -> Text:

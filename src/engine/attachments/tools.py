@@ -22,7 +22,8 @@ Two rules keep it from becoming a way to burn the context:
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -123,8 +124,8 @@ async def _from_url(url: str) -> ImageAttachment:
     return _prepared(raw, f'the image at {url}')
 
 
-def _from_path(path: str) -> ImageAttachment:
-    target = resolve(path)
+def _from_path(path: str, root: Path | None = None) -> ImageAttachment:
+    target = resolve(path, root=root)
     try:
         raw = target.read_bytes()
     except OSError as exc:
@@ -139,7 +140,7 @@ def _prepared(raw: bytes, label: str) -> ImageAttachment:
         raise FileToolError(f'{label} is not an image the model can read: {exc}') from exc
 
 
-async def load_source(messages: Sequence[ModelMessage], source: str) -> ImageAttachment:
+async def load_source(messages: Sequence[ModelMessage], source: str, *, root: Path | None = None) -> ImageAttachment:
     """The picture ``source`` names, and the id it will be known by.
 
     The field takes whatever the model has at hand: an `img_...` id from the history,
@@ -158,8 +159,8 @@ async def load_source(messages: Sequence[ModelMessage], source: str) -> ImageAtt
         return _with_id(loaded, image_id_for(wanted))
     if wanted.startswith(('img_', '[Image #')):
         return _from_session(messages, wanted)
-    loaded = _from_path(wanted)
-    return _with_id(loaded, image_id_for(str(resolve(wanted))))
+    loaded = _from_path(wanted, root)
+    return _with_id(loaded, image_id_for(str(resolve(wanted, root=root))))
 
 
 def _with_id(attachment: ImageAttachment, identifier: str) -> ImageAttachment:
@@ -174,7 +175,25 @@ def _with_id(attachment: ImageAttachment, identifier: str) -> ImageAttachment:
     )
 
 
-def register_image_tools(agent: Any, logger: ToolLogger | None = None, catalog: ToolCatalog | None = None) -> None:
+def source_identity(source: str, *, root: Path | None = None) -> str:
+    """Identify a source without fetching pixels; still authorize filesystem paths."""
+    wanted = source.strip()
+    if not wanted:
+        raise FileToolError('An image source is required: an id, a URL or a path.')
+    if is_url(wanted):
+        return image_id_for(wanted)
+    if wanted.startswith(('img_', '[Image #')):
+        return wanted
+    return image_id_for(str(resolve(wanted, root=root)))
+
+
+def register_image_tools(
+    agent: Any,
+    logger: ToolLogger | None = None,
+    catalog: ToolCatalog | None = None,
+    *,
+    root: Callable[[], Path] | None = None,
+) -> None:
     """Registers the image tool on a pydantic-ai agent."""
     tools = ToolRegistrar(agent, logger, catalog)
 
@@ -192,19 +211,19 @@ def register_image_tools(agent: Any, logger: ToolLogger | None = None, catalog: 
                 the conversation, an `http(s)://` URL, or a path to a file inside the
                 workspace.
         """
-        attached = images_in_round(ctx.messages)
-        loaded = await load_source(ctx.messages, source)
-
-        if loaded.image_id in attached:
+        workspace = None if root is None else root()
+        identifier = source_identity(source, root=workspace)
+        if identifier in images_in_round(ctx.messages):
             # The loop guard: this round already carries it. Saying so is cheaper than
             # sending the same pixels on every step.
             return ToolReturn(
                 return_value=(
-                    f'image {loaded.image_id} is already attached earlier in this round: '
+                    f'image {identifier} is already attached earlier in this round: '
                     'it is in the conversation above, no need to load it again'
                 )
             )
 
+        loaded = await load_source(ctx.messages, source, root=workspace)
         return ToolReturn(
             return_value=(f'image {loaded.image_id} ({loaded.describe()}, ~{loaded.estimated_tokens:,} tokens)'),
             content=[

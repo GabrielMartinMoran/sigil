@@ -1,0 +1,102 @@
+version: 1
+status: approved
+supersedes: queue-runtime-v1 and queue-web-text-v1 implementation details in durable-queue-plan.yaml; retains all other approved requirements and exclusions
+objective: Implement durable server queue consumption and the web text path using pending queue overlay, persisted transcript and explicit recovery, without permanent per-part correlation.
+user_decisions:
+  - SQLite session queue, durable ACK, distinct UUIDv4 per deliberate send, stable retry, no replay after stop or crash; inherited from durable-queue-plan.yaml.
+  - Display accepted pending messages in the conversation, injecting queue work at Sigil's existing steering seams.
+  - On conflict preserve acceptance in original session and provide notice and access to recovery, without merging divergent histories.
+  - In exceptional conflicting histories display affected accepted messages separately in the recovery notice, even if text also appears in transcript.
+agent_decisions:
+  - Preserve real agent.iter path and associate request IDs with enqueue IDs in memory; prove the events and snapshot correspond before committing delivery; no durable per-part identity required.
+  - Use an explicit v7 migration for independent delivery-checkpoint fact and actual delivery session plus durable original-to-recovery links; v6 unknown facts stay unknown, not inferred. This avoids overloading run and payload fields.
+  - Persist transcript, delivery facts and recovery links in the same transaction; only publish durable progress after commit. Recovery links can represent multiple recoveries and survive destination deletion as unavailable; deleting original removes its queue and links.
+  - Normal view uses a coherent durable read of transcript and queue; overlay messages without confirmed delivery, remove overlay only after delivery checkpointed in that same session. Live deltas are provisional. Conflict notice displays affected acceptance separately regardless of whether similar text is in transcript.
+  - Order queue messages by durable per-session sequence; timestamp can be shown but does not guarantee ordering against all transcript events.
+  - Fork, rollback and undo retain current transcript semantics; never reactivate or copy executable queue commands implicitly. No permanent per-message fork provenance.
+  - Event-to-snapshot atomic coupling is an implementation gate; if no reliable seam exists, stop rather than claim delivery or replay work.
+verification_portfolio:
+  - '@integration SQLite migration v6 to v7, unknown legacy state, rollback and reopen, concurrent migration, deletion and multiple recovery links: actual storage boundary.'
+  - '@integration initial prompt and steering event snapshot transaction, duplicate text/images, rollback on failures, live/durable consistency, no implicit replay and real ownership processes: module and SQLite boundary.'
+  - '@integration web retry and display, exceptional recovery notice/navigation, busy and deleted recovery handling: client and API boundary.'
+  - No E2E: this increment excludes shared TUI and complete synchronized replay; real process ownership and real app integration cover the relevant boundaries.
+roadmap_amendment:
+  authorization: User explicitly approved additional paths necessary to resolve roadmap flush and requested implementation; no new product semantics.
+  approach: Persist execution ancestry metadata and roadmap together without writing transcript. Capture stable execution descriptors before launch; do not hold roadmap lock across database work or callbacks; serialize/revise writes so older snapshots cannot overwrite newer. Preserve dirty state and visible errors on failure.
+  conflict: Never write local roadmap into a conflicting winning session. Map live execution IDs to actual recovery IDs, preserve plans across recovery and reconflict, and detect or exclude cooperative concurrent plan writers; session updated_at alone is insufficient. Stop if these invariants cannot be achieved without further product decisions.
+  additional_edit_paths: [src/engine/storage/executions.py, src/engine/storage/roadmap.py, src/engine/roadmap/store.py, src/engine/roadmap/stores.py, src/engine/bootstrap.py, src/engine/agents/tree/summoner.py, src/engine/sessions/synchronization.py, tests/test_per_agent_state.py, tests/test_roadmap.py]
+  regression_paths: [tests/test_agents_tree.py, tests/test_rollback.py, tests/test_fork.py, tests/test_roadmap_ui.py, tests/test_session_titles.py]
+  integration_gate: Real tool, child and nested child materialization, concurrent revisions, rollback on error, conflict and recovery remapping, title and roadmap interleavings, no deadlocks, normal TUI sessions, event-to-snapshot confirmation and actual server owner all require independent QA. Storage-only pass cannot establish runtime guarantees.
+web_contract_seam:
+  authorization: Lead decision inside already-approved queue-runtime-v2 paths; user asked to finish the planned work.
+  detail: Add optional request_id to the /api/turn body and pass it to ServerRuntime.send, using the client value when present and generating one only when absent. Existing callers keep working. This unblocks the web slice's stable UUID and retry semantics.
+narrowed_retry:
+  authorization: User requested retry and completion; Lead narrowed the slice to remove self-imposed lock restructuring that caused repeated blocks.
+  id: queue-v7-roadmap-cas-minimal-v1
+  worker: pas_developer
+  objective: Make concurrent stale roadmap writes fail loudly instead of silently overwriting, using the durable revision already present in v7.
+  edit_paths: [src/engine/storage/roadmap.py, src/engine/roadmap/store.py, src/engine/agents/rollback.py, docs/storage.md, tests/test_roadmap.py, tests/test_rollback.py]
+  explicit_non_goals: Do not restructure RoadmapStore lock ordering, do not change the flush callback or bootstrap, do not add store-level serializers, generations, event-loop coordination, or session guards. Those belong to later slices. Keep the existing IntegrityError flush-then-retry behavior exactly as is.
+  required_behavior: replace_items accepts an expected revision, compares it and writes items plus incremented revision inside one existing transaction; mismatch raises an explicit conflict error without touching stored items or revision. Store instances remember the revision they loaded, pass it on save, surface the conflict as persistence_error, and keep their dirty in-memory items instead of overwriting. Revision increments for every cooperative write path including delete, clear and restore_plan_from_json, and never resets when a plan becomes empty.
+  acceptance: '@integration existing test_stale_store_preserves_dirty_items_and_reports_conflict passes unmodified; additionally empty plans, delete, restore and reopening keep revisions monotonic, and a rollback-restored plan is visible after reopening'
+  checks: focused tests, full suite -n 8 green, Ruff lint and format, validator experimental, diff including untracked
+  skills: [clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer]
+  escalation: Stop only if the conflict must be detectable without a caller-supplied expected revision, or a required path is outside the list.
+  documentation_note: Correct the docs/storage.md statement that numbered migration steps run in separate transactions; schema initialization applies them in one transaction.
+integrated_retry:
+  authorization: User approved combining migration foundation and stale roadmap protection and requested completion of the planned work.
+  id: queue-v7-roadmap-cas-v1
+  worker: pas_developer
+  objective: Complete v7 foundation and implement atomic compare-and-swap protection for stale roadmap updates; obtain full green suite without omitting the existing RED.
+  edit_paths: [src/engine/storage/schema.py, src/engine/storage/database.py, src/engine/storage/roadmap.py, src/engine/roadmap/store.py, src/engine/roadmap/stores.py, src/engine/agents/rollback.py, src/engine/bootstrap.py, src/engine/storage/executions.py, docs/storage.md, tests/test_roadmap.py, tests/test_per_agent_state.py, tests/test_rollback.py, tests/test_fork.py, tests/test_storage_migration_safety.py, tests/test_schema_documentation.py, tests/test_accepted_inputs.py]
+  skills: [clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer]
+  acceptance: '@integration v7 migration plus two-store stale writes, dirty preservation, empty revisions, rollback and restore writes, same-store interleavings and no nested SQLite transactions; full suite green'
+  red_green_refactor: RED existing stale-store test and add targeted tests for concurrency, rollback and versioning; GREEN revision CAS plus store coordination; REFACTOR preserving snapshots and lock boundaries.
+  escalation: Stop for unapproved behavior change or evidence no safe implementation possible; do not delete or weaken RED.
+  checks: Full suite -n 8, focused tests, Ruff lint and format, validator experimental, diff including untracked; QA independently verifies v7 and CAS together.
+tasks:
+  - id: queue-v7-schema-foundation-v1
+    worker: pas_developer
+    objective: Atomically migrate v6 to v7 with structures for roadmap revisions and both delivery and recovery facts, without implementing runtime or CAS.
+    edit_paths: [src/engine/storage/schema.py, src/engine/storage/database.py, docs/storage.md, tests/test_storage_migration_safety.py, tests/test_schema_documentation.py, tests/test_accepted_inputs.py]
+    skills: [clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer]
+    acceptance: '@integration fresh and old databases through v7; unknown legacy delivery; recovery history survives destination deletion and original deletion cleans links; atomic migration rollback and retry; revisions persist with empty roadmap'
+    red_green_refactor: RED SQLite migration and integrity tests, GREEN full schema v7 including delivery and recovery structures, REFACTOR migration and documentation.
+    checks: focused tests, full Python suite -n 8, Ruff, validator, diff including untracked. Existing RED test_stale_store_preserves_dirty_items_and_reports_conflict is a known pending next-slice failure and must not be changed or reported as passing.
+    escalation: Stop if complete v7 schema cannot be implemented without additional paths or product decisions; preserve all pre-existing changes.
+  - id: queue-delivery-storage-v2
+    worker: pas_developer
+    objective: Migrate v6 to v7 and implement explicit durable delivery and multiple recovery link facts, atomic normal and recovery checkpoint seams.
+    edit_paths: [src/engine/storage/database.py, src/engine/storage/schema.py, src/engine/storage/accepted_inputs.py, src/engine/sessions/session_store.py, docs/storage.md, tests/test_storage_migration_safety.py, tests/test_accepted_inputs.py, tests/test_schema_documentation.py, tests/test_session_store.py, tests/test_session_sync.py]
+    regression_paths: [tests/test_storage.py, tests/test_durable_prompt_characterization.py, tests/test_steering_identity_characterization.py, tests/test_rollback.py, tests/test_fork.py]
+    skills: [clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer]
+    acceptance: '@integration migration and atomic delivery and recovery facts; old facts unknown, multiple recovery and deletion behavior'
+    red_green_refactor: RED migration, transaction failure, recovery, deletion tests; GREEN SQLite implementation; REFACTOR small typed boundaries.
+    checks: focused tests then full Python suite with -n 8; Ruff lint/format; diff including untracked; experimental validator.
+    escalation: Stop if lifecycle or v6 compatibility cannot be represented without other paths, if another writer can violate atomicity, or user behavior changes.
+  - id: queue-runtime-v2
+    worker: pas_developer
+    objective: Implement approved server ownership and queue runtime, atomic actual delivery, coherent durable read and recovery access contract.
+    edit_paths: [src/server/runtime.py, src/server/app.py, src/server/cli.py, src/server/events.py, src/server/views.py, src/server/ownership.py, src/engine/storage/accepted_inputs.py, src/engine/sessions/session_store.py, src/engine/sessions/recovery.py, src/engine/attachments/content.py, src/engine/attachments/image_attachment.py, docs/architecture.md, docs/domain.md, tests/test_server_runtime.py, tests/test_server_queue.py, tests/test_server_ownership.py]
+    regression_paths: [tests/test_history_recovery.py, tests/test_rollback.py, tests/test_fork.py, tests/test_storage.py, tests/test_session_sync.py, tests/test_steering_images.py, tests/test_steering_identity_characterization.py, tests/test_durable_prompt_characterization.py, tests/test_session_isolation_foundation.py]
+    skills: [clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer]
+    acceptance: '@integration all durable server queue, coherent overlay, distinct IDs, commit boundaries, steering and recovery scenarios; ownership real processes'
+    red_green_refactor: RED prompt and steering event-to-snapshot-before-commit evidence, crash boundaries and old writers; GREEN actual runtime only after seam proven; REFACTOR owned resources.
+    checks: focused tests then full Python suite -n 8; Ruff; diff including untracked; experimental validator.
+    escalation: Stop immediately if event/snapshot cannot be reliably correlated or another save bypasses atomicity, another path is necessary, ownership unsafe, or modified behavior.
+  - id: queue-web-text-v2
+    worker: pas_developer
+    objective: Wire text commands, stable retry, durable overlay and exceptional recovery notice with actionable existing session navigation.
+    edit_paths: [web/src/api.ts, web/src/store.ts, web/src/types.ts, web/src/Composer.tsx, web/src/Transcript.tsx, web/src/useEvents.ts, web/src/queueCommands.test.ts, web/dist/, tests/test_web_dist.py]
+    regression_paths: [web/src/notifications.test.ts, web/src/questionEvents.test.ts, web/src/toolPresentation.test.ts, tests/test_server_runtime.py]
+    skills: [clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer]
+    acceptance: '@integration retry and stable ID, pending overlay, conflict notice and recovery navigation, busy and unavailable target'
+    red_green_refactor: RED stable ID/retry, overlay/dedup and recovery navigation; GREEN existing API and client wiring; REFACTOR redundant state.
+    checks: npm web test/typecheck/lint/format/build per original plan, full Python suite -n 8, Ruff and diff including untracked.
+    escalation: Stop if additional paths, UI behavior, authentication changes or dependencies needed.
+execution: Sequential tasks, each followed by independent pas_qa with same skills. Full project checks final tree. Do not start next task after FAIL or BLOCKED without adjudication.
+limitations:
+  - No TUI migration, shared daemon discovery, complete snapshot/event replay, image picker, native Windows or exactly-once external tool effects.
+  - No general guarantee of one unified bubble after arbitrary divergent writes; conflict notice may repeat text in a distinct section as chosen.
+  - Older noncooperative processes must be closed; durable power safety depends on filesystem and hardware sync.
+  - A checkpoint failure can leave external effects uncertain; never assert that an interrupted input was not processed.

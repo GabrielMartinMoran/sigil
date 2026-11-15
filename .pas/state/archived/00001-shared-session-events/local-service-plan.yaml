@@ -1,0 +1,74 @@
+version: 1
+status: approved
+objective: >-
+  Add a local Sigil service that a terminal or browser client discovers and shares,
+  keeping the durable queue as the single execution path, and migrate the TUI to a client
+  of that service in small verifiable slices.
+approval_basis: >-
+  The user asked to continue the plan until the feature is finished, chose that the TUI
+  becomes a client and launches the service when none is available, that several terminals
+  must share one service, that the service outlives a terminal while active work exists and
+  stops when that work ends, and declined interactive tool approvals.
+user_decisions:
+  - TUI becomes a client of the service; it launches the service when no live one is found.
+  - Several terminals must not spawn several services; only one runner wins and the rest attach.
+  - The service survives a terminal closing while active work exists, and stops when active work ends.
+  - Interactive per-tool approvals are out of scope; declarative profile permissions stay.
+agent_decisions:
+  - Transport is TCP on 127.0.0.1 with an endpoint file holding host, port, pid and a per-run token.
+    Reason: uvicorn forces mode 0666 on a UNIX socket, so socket permissions cannot isolate users,
+    and a UNIX socket is unreliable on WSL paths mounted from Windows. A 0666 socket would be a
+    false sense of isolation.
+  - The endpoint file and a dedicated runtime directory use modes 0600 and 0700 explicitly, created
+    with an explicit mode instead of relying on umask.
+  - Clients authenticate with a bearer token read from the endpoint file; the existing cookie login
+    keeps serving the remote web client. The token rotates on every service start.
+  - The existing ownership lock arbitrates the spawn race; it needs no change and a process killed
+    while holding it releases the lock. A loser waits for the endpoint publication with a bounded
+    deadline and then either attaches or reports a typed error.
+  - Compose the engine after acquiring the lock, so losing candidates do not pay the construction cost.
+  - Active work means a running turn or any non-terminal queue row in the whole database, not only
+    the served session. Connected event subscribers do not by themselves count as work; a browser can
+    reconnect, and the user's rule is that the service stops when the work ends.
+  - Idle shutdown happens only when there is no active work, after a grace window; it must never
+    interrupt open rows, because interrupting is reserved for crash reconciliation.
+  - A pending question keeps the turn active; there is no interactive approval layer to wait for.
+  - Parity endpoints for the terminal are added in batches before the terminal is rewired, so the
+    terminal never loses a visible feature in the middle of the migration.
+slices:
+  - id: local-service-endpoint-v1
+    objective: Publish and clean up an endpoint file with a per-run bearer token, and accept that token.
+    paths: [src/engine/paths.py, src/engine/storage/database.py, src/server/endpoint.py, src/server/auth.py, src/server/cli.py, src/server/app.py, docs/architecture.md, tests/test_server_endpoint.py, tests/test_server_auth.py]
+    acceptance: endpoint published after the port is bound, atomically replaced, removed on close, stale file ignored; runtime directory 0700 and files 0600; bearer accepted, absent or wrong rejected, cookie login still works; /events still requires a session.
+  - id: local-service-launch-v1
+    objective: Discover or launch exactly one service from any client, with a bounded wait and typed failures.
+    paths: [src/server/launch.py, src/server/cli.py, src/server/endpoint.py, src/main.py, docs/architecture.md, tests/test_server_launch.py]
+    acceptance: two real processes never start two services; the loser attaches; a winner dying before publication produces a typed error, not a hang; a stale endpoint is ignored.
+  - id: local-service-idle-v1
+    objective: Stop the service when no work remains, without interrupting queued rows.
+    paths: [src/engine/storage/accepted_inputs.py, src/server/runtime.py, src/server/app.py, src/server/cli.py, docs/architecture.md, tests/test_server_runtime.py]
+    acceptance: no shutdown during a turn; no shutdown while any non-terminal row exists in any session; graceful stop after the grace window leaves rows untouched; crash reconciliation still marks interrupted.
+  - id: tui-parity-endpoints-v1
+    objective: Expose the server contracts the terminal needs, in two batches, with response-shape tests.
+    paths: [src/server/app.py, src/server/runtime.py, src/server/views.py, docs/architecture.md, tests/test_server_runtime.py, tests/test_server_parity.py]
+    acceptance: model, effort, agent selection; rollback and fork; tree actions and subagent transcript; mcp toggle, external files, context, debug, themes; each with a shape test against views.
+  - id: tui-client-v1
+    objective: Run the terminal as a client of the service with feature parity for the migrated surfaces.
+    paths: [src/sigil.py, src/main.py, src/ui/app.py, src/ui/turn_mixin.py, src/ui/provider_mixin.py, src/ui/tree_mixin.py, src/ui/rollback_mixin.py, src/ui/commands_mixin.py, docs/architecture.md, tests/test_ui_client.py]
+    acceptance: terminal attaches to a running service, launches one when missing, streams the same events, keeps steering, stop, questions, images and rollback working; no terminal constructs its own Composition for execution.
+verification:
+  focused: per slice focused tests before the suite
+  full: uv run pytest -q -p no:sugar -n 8
+  lint: uv run ruff check src tests and ruff format --check
+  diff: git diff --check plus untracked inspection
+  validator: report the experimental validator result honestly, without attributing unbaselined findings
+  processes: autonomy tests must use real child processes for ownership and launch
+risks:
+  - TCP loopback is reachable by other local users; the token in a 0600 file is the barrier, plus the login throttle. This is weaker than peer credentials and is stated as such.
+  - A stale endpoint after SIGKILL is harmless only if clients validate it before trusting it.
+  - Idle shutdown that only inspects the served session would stop with work queued elsewhere; the global query is mandatory.
+  - The terminal migration touches five mixins and dozens of app-mounting tests; it goes last, after parity.
+limitations:
+  - No interactive tool approvals in this increment.
+  - No service discovery across machines; the endpoint file is per user and per data directory.
+  - No promise of one server per repository: the ownership lock covers the database, so one service per data directory.

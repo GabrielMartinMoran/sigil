@@ -8,6 +8,8 @@ the model how to proceed.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from src.engine.files.models.file_tool_error import FileToolError
 from src.engine.files.paths import resolve
 from src.engine.tooling.concurrency import ConcurrencyContext
@@ -16,25 +18,25 @@ MUTATING_TOOLS = frozenset({'patch_file', 'write_file'})
 """Tools that rewrite a file and therefore cannot overlap."""
 
 
-def _target_of(args: dict[str, object]) -> object | None:
+def _target_of(args: dict[str, object], root: Path | None = None) -> object | None:
     """Resolved path of a call, or ``None`` if it cannot be resolved."""
     try:
-        return resolve(str(args['path']))
+        return resolve(str(args['path']), root=root)
     except FileToolError, KeyError:
         # Invalid or missing path: the tool will fail with a better message.
         return None
 
 
-def same_file_conflict(ctx: ConcurrencyContext) -> str | None:
+def same_file_conflict(ctx: ConcurrencyContext, root: Path | None = None) -> str | None:
     """Two writes to the same file in the same response would stomp on each other."""
-    target = _target_of(ctx.args)
+    target = _target_of(ctx.args, root)
     if target is None:
         return None
 
     for sibling in ctx.siblings:
         if sibling.tool_name not in MUTATING_TOOLS:
             continue
-        if _target_of(sibling.args) == target:
+        if _target_of(sibling.args, root) == target:
             return (
                 f'Another {sibling.tool_name} call in this same response already edits {str(target)!r}. '
                 'Concurrent edits to one file overwrite each other, so this call was not applied. '

@@ -9,7 +9,9 @@ split is what keeps the destructive and the network paths in one testable place.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from src.engine.agents.model_config import AgentModelConfig
@@ -17,24 +19,67 @@ from src.engine.agents.model_defaults import ConfigScope, ModelDefaultsState
 from src.engine.agents.profile.models.agent_profile import AgentProfile
 from src.engine.agents.profile.models.agent_role import AgentRole
 from src.engine.providers.domain.auth_method import AuthMethod
-from src.engine.providers.domain.model_capability import ModelCatalog
+from src.engine.providers.domain.model_capability import ModelCapability, ModelCatalog
+from src.engine.providers.domain.provider_account import ProviderAccount
 from src.engine.providers.domain.provider_error import (
     AliasError,
     ProviderError,
 )
+from src.engine.providers.domain.provider_kind import ProviderKind
+from src.engine.providers.domain.provider_variant import ProviderVariant
 from src.engine.providers.domain.thinking import EFFORT_LEVELS
 from src.engine.providers.snapshot import ModelSnapshot
 from src.ui.messages import ChatNotice
 from src.ui.model_view_mixin import effort_label
+from src.ui.service_client import ServiceClient, ServiceClientError
+from src.ui.turn_mixin import failure_notice
 from src.ui.widgets.account_form_screen import AccountFormScreen, NewAccount
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.confirm_screen import ConfirmScreen
 from src.ui.widgets.effort_screen import EffortScreen
-from src.ui.widgets.grouped_model_screen import AccountCatalog, GroupedModelScreen
-from src.ui.widgets.model_defaults_screen import DefaultsChoice, DefaultsRow, ModelDefaultsScreen
+from src.ui.widgets.grouped_model_screen import AccountCatalog, GroupedModelChoice, GroupedModelScreen
+from src.ui.widgets.model_defaults_screen import (
+    DefaultsChoice,
+    DefaultsDestinations,
+    DefaultsRow,
+    ModelDefaultsScreen,
+)
 from src.ui.widgets.model_picker_screen import ModelChoice
 from src.ui.widgets.provider_screen import ProviderAction, ProviderScreen
 from src.ui.widgets.sidebar_panel import ModelState
+
+
+def _projected_account(row: Mapping[str, Any]) -> ProviderAccount:
+    """One projected account, rebuilt as the row `ProviderScreen` paints.
+
+    The screen reads the id, the alias, the provider label, the auth label and the
+    last model, so those are rebuilt from the projection. None of them is the
+    credential: the service sends a boolean where the key would be.
+    """
+    return ProviderAccount(
+        id=str(row.get('id') or ''),
+        alias=str(row.get('alias') or ''),
+        kind=ProviderKind(str(row.get('provider') or ProviderKind.OPENROUTER.value)),
+        variant=ProviderVariant(str(row.get('variant') or ProviderVariant.DEFAULT.value)),
+        auth=AuthMethod(str(row.get('auth') or AuthMethod.API_KEY.value)),
+        last_model=row.get('last_model'),
+    )
+
+
+def _projected_model(row: Mapping[str, Any]) -> ModelCapability:
+    """One projected model, rebuilt as the capability the picker paints.
+
+    Every field comes from `GET /api/models/{alias}`: the name, the window and the
+    levels the model accepts. The provider's own display name is used when it sent
+    one, and the id stands in when it did not, so a row never reads as blank.
+    """
+    name = str(row.get('name') or '')
+    return ModelCapability(
+        name=name,
+        display_name=str(row.get('display_name') or '') or name,
+        context_window=row.get('window'),
+        efforts=tuple(str(level) for level in row.get('efforts') or ()),
+    )
 
 
 class ProviderMixin:
@@ -45,6 +90,7 @@ class ProviderMixin:
     """
 
     _model_service: Any
+    _client: ServiceClient | None
     _login_flow: Any
     _session: Any
     _meter: Any
@@ -57,7 +103,14 @@ class ProviderMixin:
 
         The loop is what makes the flow feel like a screen rather than a chain of
         modal boxes: after adding an account you land back in the list.
+
+        An attached terminal delegates every action: the accounts, their credentials
+        and the active one belong to the service. The screen stays here, fed by
+        `GET /api/accounts`, and every refusal is the service's own sentence.
         """
+        if self._client is not None:
+            await self._service_providers(self._client, chat)
+            return
         while True:
             action = await self.push_screen_wait(
                 ProviderScreen(self._model_service.list_accounts(), self._active_account_id())
@@ -67,6 +120,65 @@ class ProviderMixin:
             keep_going = await self._run_action(action, chat)
             if not keep_going:
                 return
+
+    async def _service_providers(self, client: ServiceClient, chat: ChatLog) -> None:
+        """The account screen over the service's accounts, in the same loop."""
+        while True:
+            try:
+                listing = await client.accounts()
+            except ServiceClientError as exc:
+                await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+                return
+            rows = [row for row in listing.get('accounts') or [] if str(row.get('alias') or '')]
+            accounts = [_projected_account(row) for row in rows]
+            active_id = next((str(row.get('id')) for row in rows if row.get('active')), None)
+            action = await self.push_screen_wait(ProviderScreen(accounts, active_id))
+            if action is None:
+                return
+            if not await self._service_provider_action(client, chat, action):
+                return
+
+    async def _service_provider_action(self, client: ServiceClient, chat: ChatLog, action: ProviderAction) -> bool:
+        """One action from the screen, applied where the accounts live."""
+        try:
+            if action.action == 'add':
+                values = await self.push_screen_wait(AccountFormScreen())
+                if values is None:
+                    return True
+                await chat.add_notice(f'Checking the key for {values.kind.label}…', style='cyan')
+                payload = await client.add_account(
+                    values.alias, values.kind.value, values.api_key, auth=values.auth.value
+                )
+                label = str((payload.get('model') or {}).get('label') or values.alias)
+                await chat.add_notice(f'Added {values.alias}. Active: {label}', style='green')
+            elif action.action == 'activate':
+                await client.activate_account(action.alias)
+                await chat.add_notice(f'Active: {action.alias}', style='green')
+            elif action.action == 'rename':
+                from src.ui.widgets.text_prompt_screen import TextPromptScreen
+
+                new_alias = await self.push_screen_wait(
+                    TextPromptScreen(title=f'Rename {action.alias}', placeholder='New alias…', value=action.alias)
+                )
+                if not new_alias or new_alias == action.alias:
+                    return True
+                await client.rename_account(action.alias, new_alias)
+                await chat.add_notice(f'Renamed to {new_alias}.', style='green')
+            elif action.action == 'delete':
+                confirmed = await self.push_screen_wait(
+                    ConfirmScreen(f"Remove '{action.alias}' and its stored credential?", confirm_label='Yes, remove it')
+                )
+                if not confirmed:
+                    return True
+                await client.delete_account(action.alias)
+                await chat.add_notice(f'Removed {action.alias}.', style='green')
+        except ServiceClientError as exc:
+            # The service's sentence: an alias in use, an OAuth-only provider, the
+            # active account, the last one. None of these is guessed here.
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return True
+        await self.refresh_service_state()
+        return True
 
     async def _run_action(self, action: ProviderAction, chat: ChatLog) -> bool:
         if action.action == 'add':
@@ -83,7 +195,16 @@ class ProviderMixin:
         return True
 
     async def show_models(self, chat: ChatLog, query: str = '') -> None:
-        """Chooses a model and reasoning effort across all configured accounts."""
+        """Chooses a model and reasoning effort across all configured accounts.
+
+        An attached terminal delegates: the accounts, the model lists and the switch
+        all belong to the service. The picker stays here, fed by
+        `GET /api/models/{alias}`, and a list that cannot be read becomes the
+        service's error on screen instead of options this process made up.
+        """
+        if self._client is not None:
+            await self._service_models(self._client, chat)
+            return
         service = self._model_service
         if service is None or not service.list_accounts():
             await chat.add_notice('Configure a provider first: /provider', style='yellow')
@@ -137,13 +258,24 @@ class ProviderMixin:
         the destination names. Nothing here changes the model in effect: a default is
         what a *new* conversation starts on, and moving the one in front of the user
         from a screen about defaults is the surprise `/model` exists to avoid.
+
+        An attached terminal delegates both directions: the files belong to the
+        service, so the list is its `GET /api/model-defaults` and every write is its
+        `POST`. The screen and the pickers stay here, which is why the flow reads the
+        same in either mode; what changes is where the rows come from, and in process
+        the write re-reads a file this process owns.
         """
-        service = getattr(self, '_model_service', None)
-        read = getattr(self, '_model_defaults_state', None)
-        save = getattr(self, '_save_model_default', None)
-        if service is None or read is None or save is None:
-            await chat.add_notice('Model defaults are not editable from this client.', style='yellow')
+        if self._client is not None:
+            await self._service_default_models(self._client, chat)
             return
+        service = self._model_service
+        read = self._model_defaults_state
+        save = self._save_model_default
+        if service is None or read is None or save is None:
+            # A wiring bug, not a user situation: only the in-process composition
+            # supplies these, and it always supplies all three. Raising keeps it a
+            # loud failure in a test seam instead of a lie printed to a user.
+            raise RuntimeError('show_default_models needs the model collaborators the composition supplies.')
         accounts = service.list_accounts()
         if not accounts:
             await chat.add_notice('Configure a provider first: /provider', style='yellow')
@@ -197,16 +329,10 @@ class ProviderMixin:
         chat: ChatLog,
     ) -> None:
         """Collects the model and the effort, then writes the entry."""
-        picked = await self.push_screen_wait(
-            GroupedModelScreen(catalogs, self._preferences.model_favorites, on_favorites=self._save_model_favorites)
-        )
+        picked = await self._pick_default_config(catalogs)
         if picked is None:
             return
-        effort = await self.push_screen_wait(EffortScreen(accepted=picked.model.efforts, model=picked.model.name))
-        if effort is None:
-            return
-
-        config = AgentModelConfig(account=picked.alias, model=picked.model.name, effort=effort.effort)
+        model, config = picked
         errors = save(choice.row.target, config, choice.scope)
         if errors:
             for error in errors:
@@ -215,7 +341,7 @@ class ProviderMixin:
 
         after = read()
         await chat.add_notice(
-            f'{choice.row.label}: {picked.display_name} · {config.model} · {config.effort} '
+            f'{choice.row.label}: {model.display_name} · {config.model} · {config.effort} '
             f'→ {_file_label(after, choice.scope)}',
             style='green',
         )
@@ -245,12 +371,193 @@ class ProviderMixin:
         after = read()
         await chat.add_notice(f'Cleared {choice.row.label} from the {_file_label(after, choice.scope)}', style='green')
 
+    async def _pick_default_config(
+        self, catalogs: Sequence[AccountCatalog]
+    ) -> tuple[GroupedModelChoice, AgentModelConfig] | None:
+        """The account, the model and the effort a default starts on, or ``None``.
+
+        Two screens, in the order the decision is taken, and cancelling either one
+        returns to the list rather than closing the flow. Shared by the in-process and
+        the attached command so there is one sequence here to keep in step with
+        `/model`, which offers the same two pickers for the same two decisions.
+        """
+        picked = await self.push_screen_wait(
+            GroupedModelScreen(catalogs, self._preferences.model_favorites, on_favorites=self._save_model_favorites)
+        )
+        if picked is None:
+            return None
+        effort = await self.push_screen_wait(EffortScreen(accepted=picked.model.efforts, model=picked.model.name))
+        if effort is None:
+            return None
+        return picked, AgentModelConfig(account=picked.alias, model=picked.model.name, effort=effort.effort)
+
+    async def _service_default_models(self, client: ServiceClient, chat: ChatLog) -> None:
+        """`/default-models` while attached: the same screen over the service's files.
+
+        Both directions travel. The list is `GET /api/model-defaults` and every write is
+        the `POST`; this process never opens the config files and holds no copy of them
+        that could disagree with the service. The profiles come from `/api/state`,
+        because a profile no file mentions is not in the defaults projection at all and
+        it is exactly the row the user opens this screen to fill in.
+
+        Rebuilding the rows is not rebuilding the rules: ``effective``, ``invalid`` and
+        ``sources`` are read from the projection, so which file wins stays the engine's
+        answer. What is adapted here is the shape a widget paints.
+
+        A refusal ends the flow instead of returning to the list, which is the one
+        difference from the in-process path: the sentence is the service's, and a
+        service that refused this write refuses it again until the turn ends, so
+        reopening the list would only trap the user in it.
+        """
+        try:
+            projection = await client.model_defaults()
+            state = await client.state()
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        catalogs = await self._service_catalogs(client, chat)
+        if not catalogs:
+            return
+        profiles = [row for row in state.get('agents') or () if isinstance(row, Mapping)]
+        active = str((state.get('agent') or {}).get('name') or '')
+        while True:
+            rows = defaults_rows_from_service(
+                projection, accounts=projection.get('accounts') or (), profiles=profiles, active=active
+            )
+            choice = await self.push_screen_wait(ModelDefaultsScreen(rows, projected_defaults(projection)))
+            if choice is None:
+                return
+            if choice.clear:
+                written = await self._service_write(client, chat, choice, None)
+                if written is None:
+                    return
+                projection = written
+                await chat.add_notice(
+                    f'Cleared {choice.row.label} from the {_file_label(projected_defaults(projection), choice.scope)}',
+                    style='green',
+                )
+                continue
+            picked = await self._pick_default_config(catalogs)
+            if picked is None:
+                continue
+            model, config = picked
+            written = await self._service_write(
+                client, chat, choice, {'account': config.account, 'model': config.model, 'effort': config.effort}
+            )
+            if written is None:
+                return
+            projection = written
+            await chat.add_notice(
+                f'{choice.row.label}: {model.display_name} · {config.model} · {config.effort} '
+                f'→ {_file_label(projected_defaults(projection), choice.scope)}',
+                style='green',
+            )
+            entry = _projected_target(projection, choice.row.target)
+            if choice.scope not in _projected_sources(entry):
+                # The write answered with no error and the file still does not show it:
+                # the list is about to lie unless this says so.
+                await chat.add_notice('The entry did not land; the config errors are in the list.', style='yellow')
+            elif _projected_config(None if entry is None else entry.get('effective')) != config:
+                await chat.add_notice(
+                    f'{_projected_higher_file(projection, entry)} still overrides this one; '
+                    'clear it with d on the same row.',
+                    style='yellow',
+                )
+            await chat.add_notice(_effect_note(choice.row), style='dim')
+
+    async def _service_write(
+        self,
+        client: ServiceClient,
+        chat: ChatLog,
+        choice: DefaultsChoice,
+        config: Mapping[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """One write where the files live, and the projection it answered with.
+
+        ``config`` is the three keys the files themselves hold, and ``None`` clears the
+        entry — spelled out, because a write that cleared the default by omission is
+        the failure this shape exists to prevent. ``None`` comes back when the service
+        refused: its sentence is on screen and nothing changed, because this process
+        has nothing to change.
+        """
+        try:
+            return await client.write_model_default(choice.row.target, str(choice.scope), config)
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return None
+
+    async def _service_catalogs(self, client: ServiceClient, chat: ChatLog) -> list[AccountCatalog]:
+        """Every account's catalogue over the service, with the failures kept.
+
+        A provider that is down shortens the list instead of closing the picker: the
+        screen says which lists are incomplete and still offers the rest. Shared by
+        `/model` and `/default-models`, because both offer the same picker and a second
+        copy of "fetch them, name the ones that failed, refuse politely when none
+        answered" would be a second place to keep those sentences in step.
+
+        An empty return means the caller has nothing to offer — the reason is already
+        on screen, in the service's own words where the service gave them.
+        """
+        try:
+            listing = await client.models()
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return []
+        accounts = [row for row in listing.get('accounts') or [] if str(row.get('alias') or '')]
+        if not accounts:
+            await chat.add_notice('Configure a provider first: /provider', style='yellow')
+            return []
+
+        await chat.add_notice('Fetching the model lists…', style='cyan')
+        aliases = [str(row.get('alias')) for row in accounts]
+        results = await asyncio.gather(*(client.catalog_for(alias) for alias in aliases), return_exceptions=True)
+        catalogs: list[AccountCatalog] = []
+        for alias, result in zip(aliases, results, strict=True):
+            if isinstance(result, BaseException):
+                # The route's own sentence, not a paraphrase: it is the only one that
+                # knows whether the provider was slow, unknown or unreachable.
+                reason = failure_notice(result) if isinstance(result, ServiceClientError) else str(result)
+                await chat.add_notice(f'{alias}: {reason}', style='yellow')
+                continue
+            models = tuple(_projected_model(row) for row in (result.get('catalog') or {}).get('models') or ())
+            if not models:
+                continue
+            account_id = str((next(row for row in accounts if row.get('alias') == alias)).get('id') or '')
+            source = str((result.get('catalog') or {}).get('source') or 'remote')
+            catalogs.append(AccountCatalog(account_id, alias, ModelCatalog(models=models, source=source)))
+        if not catalogs:
+            await chat.add_notice('No model list could be read from the service.', style='yellow')
+        return catalogs
+
+    async def _service_models(self, client: ServiceClient, chat: ChatLog) -> None:
+        """The picker over the service's catalogues, then the switch where it lives."""
+        catalogs = await self._service_catalogs(client, chat)
+        if not catalogs:
+            return
+
+        choice = await self.push_screen_wait(
+            GroupedModelScreen(catalogs, self._preferences.model_favorites, on_favorites=self._save_model_favorites)
+        )
+        if choice is None:
+            return
+        effort = await self.push_screen_wait(EffortScreen(accepted=choice.model.efforts, model=choice.model.name))
+        if effort is None:
+            return
+        try:
+            updated = await client.set_model(choice.alias, choice.model.name, effort.effort)
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        await self.refresh_service_state()
+        label = str((updated.get('model') or {}).get('label') or choice.model.name)
+        await chat.add_notice(f'Model: {label}', style='green')
+
     def _save_model_favorites(self, favorites: tuple[tuple[str, str], ...]) -> None:
         self._preferences = self._preferences.with_favorites(favorites)
         self.save_preferences()
 
     async def open_models(self) -> None:
-        """`alt+m` / `/model` with no argument: the picker, from any context.
+        """`ctrl+m` / `/model` with no argument: the picker, from any context.
 
         It goes through the same mid-turn refusal as the command: the shortcut
         is another door into the same room, and swapping the model under a
@@ -282,7 +589,15 @@ class ProviderMixin:
         chat.post_message(ChatNotice(f'Model: {snapshot.display_name}', style='green'))
 
     async def show_effort(self, chat: ChatLog, argument: str = '') -> None:
-        """Sets the reasoning level, or opens the picker when there is no argument."""
+        """Sets the reasoning level, or opens the picker when there is no argument.
+
+        An attached terminal delegates: the level belongs to the model the service
+        is running, and the levels the picker offers are the ones the service
+        reports for it (`model_view.efforts`), not this process's catalogue.
+        """
+        if self._client is not None:
+            await self._service_effort(self._client, chat, argument)
+            return
         service = self._model_service
         if service is None or not service.is_configured():
             await chat.add_notice('Configure a provider first: /provider', style='yellow')
@@ -299,6 +614,33 @@ class ProviderMixin:
             return
         self._after_model_change(updated)
         await chat.add_notice(f'Reasoning effort: {updated.thinking}', style='green')
+
+    async def _service_effort(self, client: ServiceClient, chat: ChatLog, argument: str) -> None:
+        """The reasoning level of the service's model, changed where it lives."""
+        try:
+            model = (await client.state()).get('model') or {}
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        level = argument.strip().lower()
+        if not level:
+            choice = await self.push_screen_wait(
+                EffortScreen(
+                    current=str(model.get('thinking') or 'default'),
+                    accepted=tuple(str(item) for item in model.get('efforts') or ()),
+                    model=str(model.get('model') or ''),
+                )
+            )
+            if choice is None:
+                return
+            level = choice.effort
+        try:
+            updated = await client.effort(level)
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        thinking = updated.get('thinking') or level
+        await chat.add_notice(f'Reasoning effort: {thinking}', style='green')
 
     async def _pick_effort(self, chat: ChatLog) -> None:
         """The effort screen, offering only the levels the model accepts."""
@@ -567,7 +909,182 @@ def _summary(config: AgentModelConfig | None, invalid: bool, accounts: Mapping[s
     return summary
 
 
-def _file_label(state: ModelDefaultsState, scope: ConfigScope) -> str:
+@dataclass(frozen=True, slots=True)
+class ProjectedDefaults:
+    """Where an attached write can go, read from the service's projection.
+
+    The four facts the screen asks about a destination, and nothing about the entries:
+    which files exist, where each one is, whether `SIGIL_CONFIG` replaced the pair, and
+    what could not be parsed. `effective`, `invalid` and `sources` are deliberately
+    absent — those are precedence, and every row arrives carrying the answer the engine
+    already gave, so this process never holds a second copy of that rule.
+    """
+
+    destinations: tuple[ConfigScope, ...]
+    paths: Mapping[ConfigScope, Path]
+    fixed: Path | None = None
+    errors: tuple[str, ...] = ()
+
+    def path_for(self, scope: ConfigScope) -> Path:
+        """The file ``scope`` names."""
+        return self.paths[scope]
+
+
+def projected_defaults(projection: Mapping[str, Any]) -> ProjectedDefaults:
+    """The screen's destination facts, from `GET /api/model-defaults`."""
+    files = [
+        entry
+        for entry in projection.get('files') or ()
+        if isinstance(entry, Mapping) and entry.get('scope') and entry.get('path')
+    ]
+    fixed = projection.get('fixed')
+    return ProjectedDefaults(
+        destinations=tuple(ConfigScope(str(entry['scope'])) for entry in files),
+        paths={ConfigScope(str(entry['scope'])): Path(str(entry['path'])) for entry in files},
+        fixed=Path(str(fixed)) if fixed else None,
+        errors=tuple(str(error) for error in projection.get('errors') or ()),
+    )
+
+
+def defaults_rows_from_service(
+    projection: Mapping[str, Any],
+    *,
+    accounts: Sequence[Mapping[str, Any]] = (),
+    profiles: Sequence[Mapping[str, Any]] = (),
+    active: str = '',
+) -> tuple[DefaultsRow, ...]:
+    """The screen's rows for an attached terminal: the projection, and the profiles.
+
+    Two sources, each answering what only it knows. `/api/model-defaults` says what the
+    files hold and which entry wins per target — ``effective``, ``invalid`` and
+    ``sources`` are read from it, never recomputed, so the precedence stays where the
+    files are. `/api/state` lists the installed profiles, because a profile no file
+    mentions is absent from the defaults projection and it is exactly the row a user
+    opens this screen to set.
+
+    ``accounts`` is the projection's own account list, and it answers one question: does
+    the account this entry names still exist. It is mapped to an empty label on purpose
+    — the projection names the account and not the provider — so a configured entry
+    prints its alias once instead of repeating it.
+    """
+    configured = {str(row.get('alias')): '' for row in accounts if isinstance(row, Mapping) and row.get('configured')}
+    installed = {str(row.get('name')): row for row in profiles if str(row.get('name') or '')}
+    targets = _projected_targets(projection)
+
+    rows = [_projected_row(None, 'Default for new conversations', targets, configured)]
+    for selectable in (True, False):
+        names = sorted(name for name in installed if _projected_role(installed[name]).selectable is selectable)
+        rows.extend(
+            _projected_row(
+                name,
+                name,
+                targets,
+                configured,
+                active=name == active,
+                role=_projected_role(installed[name]),
+            )
+            for name in names
+        )
+    rows.extend(
+        _projected_row(name, name, targets, configured, installed=False)
+        for name in sorted(target for target in targets if target is not None and target not in installed)
+    )
+    return tuple(rows)
+
+
+def _projected_targets(projection: Mapping[str, Any]) -> dict[str | None, Mapping[str, Any]]:
+    """Every target the projection lists, keyed the way a row is addressed."""
+    targets: dict[str | None, Mapping[str, Any]] = {}
+    for entry in projection.get('targets') or ():
+        if isinstance(entry, Mapping):
+            targets[entry.get('target')] = entry
+    return targets
+
+
+def _projected_target(projection: Mapping[str, Any], target: str | None) -> Mapping[str, Any] | None:
+    """One target's projected entry, or ``None`` when the service did not list it."""
+    return _projected_targets(projection).get(target)
+
+
+def _projected_sources(entry: Mapping[str, Any] | None) -> frozenset[ConfigScope]:
+    """The files that mention one target, as the projection names them."""
+    return frozenset(ConfigScope(str(scope)) for scope in (entry or {}).get('sources') or ())
+
+
+def _projected_config(entry: object) -> AgentModelConfig | None:
+    """One projected `{account, model, effort}` as the value a row is built from."""
+    if not isinstance(entry, Mapping):
+        return None
+    account, model, effort = entry.get('account'), entry.get('model'), entry.get('effort')
+    if not account or not model or not effort:
+        return None
+    return AgentModelConfig(str(account), str(model), str(effort))
+
+
+def _projected_role(row: Mapping[str, Any]) -> AgentRole:
+    """The role `/api/state` reports, read as the agent when this build cannot place it.
+
+    An unknown role would otherwise cost the whole list to a `ValueError` over one row
+    it could still paint, and the selectable role is what such a row meant before roles
+    existed.
+    """
+    try:
+        return AgentRole(str(row.get('role') or AgentRole.AGENT))
+    except ValueError:
+        return AgentRole.AGENT
+
+
+def _projected_row(
+    target: str | None,
+    label: str,
+    targets: Mapping[str | None, Mapping[str, Any]],
+    accounts: Mapping[str, str],
+    *,
+    active: bool = False,
+    installed: bool = True,
+    role: AgentRole = AgentRole.AGENT,
+) -> DefaultsRow:
+    """One row, with the entry the server resolved for its target.
+
+    The summary is `_summary`'s — the same function the in-process rows use — so the two
+    modes cannot word the same entry differently. An unknown entry and an invalid one
+    are two different rows on purpose: the second is a value the file holds and the user
+    has to clear, the first is nothing to show.
+    """
+    entry = targets.get(target)
+    invalid = bool((entry or {}).get('invalid'))
+    return DefaultsRow(
+        target=target,
+        label=label,
+        summary=_summary(
+            _projected_config(None if entry is None else entry.get('effective')),
+            invalid,
+            accounts,
+        ),
+        sources=_projected_sources(entry),
+        invalid=invalid,
+        active=active,
+        installed=installed,
+        role=role,
+    )
+
+
+def _projected_higher_file(projection: Mapping[str, Any], entry: Mapping[str, Any] | None) -> str:
+    """The file that still decides for a target, when a write came back shadowed.
+
+    The projection already says which files mention the target; the first one in
+    precedence order is the one that wins — the rule `_higher_file` reads in process,
+    not a second copy of it.
+    """
+    view = projected_defaults(projection)
+    sources = _projected_sources(entry)
+    for scope in view.destinations:
+        if scope in sources:
+            return _file_label(view, scope)
+    return 'Another config file'
+
+
+def _file_label(state: DefaultsDestinations, scope: ConfigScope) -> str:
     """The file a write went to, named the way the user chose it."""
     if state.fixed is not None:
         return f'SIGIL_CONFIG ({state.fixed})'
@@ -597,4 +1114,10 @@ def _effect_note(row: DefaultsRow) -> str:
     return 'New conversations and that agent use it; this session keeps its model.'
 
 
-__all__ = ['ProviderMixin', 'defaults_rows']
+__all__ = [
+    'ProjectedDefaults',
+    'ProviderMixin',
+    'defaults_rows',
+    'defaults_rows_from_service',
+    'projected_defaults',
+]

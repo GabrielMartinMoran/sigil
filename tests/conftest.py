@@ -35,6 +35,9 @@ dotenv.load_dotenv = lambda *args, **kwargs: False
 # 2. Sandbox every path Sigil owns.
 SANDBOX = tempfile.mkdtemp(prefix='sigil-tests-')
 os.environ['SIGIL_HOME'] = SANDBOX
+# Config discovery also uses Path.home(), independently of SIGIL_HOME.
+os.environ['HOME'] = SANDBOX
+os.environ['USERPROFILE'] = SANDBOX
 atexit.register(shutil.rmtree, SANDBOX, True)
 
 
@@ -64,3 +67,25 @@ def memory_databases(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     finally:
         for database in databases.values():
             database.close()
+
+
+@pytest.fixture(autouse=True)
+def prohibit_live_model_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use deterministic models; SDK contract tests must opt into their own transport."""
+    import pydantic_ai.models
+
+    monkeypatch.setattr(pydantic_ai.models, 'ALLOW_MODEL_REQUESTS', False)
+
+
+@pytest.fixture(autouse=True)
+def isolated_sigil_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Keep config discovery and the default database independent for every test."""
+    from src.engine.storage.database import Database
+
+    home = tmp_path / 'home'
+    for name in ('SIGIL_HOME', 'HOME', 'USERPROFILE'):
+        monkeypatch.setenv(name, str(home))
+    try:
+        yield
+    finally:
+        Database.forget(home / 'sigil.db')

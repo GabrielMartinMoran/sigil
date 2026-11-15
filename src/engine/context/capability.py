@@ -50,6 +50,9 @@ class ContextViewCapability(AbstractCapability[Any]):
     on_view: Callable[[ViewResult], None] | None = None
     """Diagnostics callback. It must not break the request if it fails."""
 
+    on_unknown_window: Callable[[str, str], None] | None = None
+    """Report an unbudgeted subagent request without interrupting it."""
+
     provider: Callable[[], str | None] | None = None
     """The provider the next request goes to, read per request.
 
@@ -69,6 +72,16 @@ class ContextViewCapability(AbstractCapability[Any]):
 
     _last: ViewResult | None = field(default=None, init=False, repr=False)
     _snapshot: RequestSnapshot | None = field(default=None, init=False, repr=False)
+
+    _node_requests: dict[str, RequestSnapshot] = field(default_factory=dict, init=False, repr=False)
+
+    _node_budgets: dict[str, ContextBudget] = field(default_factory=dict, init=False, repr=False)
+
+    def budget_for_node(self, node_id: str) -> ContextBudget | None:
+        return self._node_budgets.get(node_id)
+
+    def request_for_node(self, node_id: str) -> RequestSnapshot | None:
+        return self._node_requests.get(node_id)
 
     @property
     def summary_error(self) -> str | None:
@@ -93,6 +106,8 @@ class ContextViewCapability(AbstractCapability[Any]):
         """
         self._last = None
         self._snapshot = None
+        self._node_requests.clear()
+        self._node_budgets.clear()
 
     def project(self, messages: Sequence[ModelMessage]) -> ViewResult:
         """Projects a history with the strategy, without touching the run state.
@@ -184,7 +199,14 @@ class ContextViewCapability(AbstractCapability[Any]):
 
             selected = current_agent_model()
             if selected is not None:
-                budget = replace(budget, window=selected.window)
+                # The window belongs to the model this request goes to. A run that does
+                # not override the model sends to the session's own, so the window the
+                # meter holds is exactly right: an unknown value here must not discard
+                # it and refuse a request that fits.
+                window = selected.window
+                if window is None and selected.model is None:
+                    window = budget.window
+                budget = replace(budget, window=window)
         if is_root:
             self.meter.set_overhead(instructions=instructions, tools=tools)
 
@@ -203,8 +225,21 @@ class ContextViewCapability(AbstractCapability[Any]):
         if is_root:
             self._last = result
         _require_budget(result, budget)
+        captured = snapshot_request(parameters, messages=request_context.messages, preview_chars=0)
         if is_root:
-            self._snapshot = snapshot_request(parameters, messages=request_context.messages, preview_chars=0)
+            self._snapshot = captured
+        else:
+            node_id = ctx.deps.node_id
+            previous_budget = self._node_budgets.get(node_id)
+            self._node_requests[node_id] = captured
+            self._node_budgets[node_id] = budget
+            if (
+                budget.window is None
+                and (previous_budget is None or previous_budget.window is not None)
+                and self.on_unknown_window is not None
+            ):
+                with contextlib.suppress(Exception):
+                    self.on_unknown_window(node_id, request_context.model.model_name)
         self._record_decision(ctx, result, budget, fingerprint)
         if self.on_view is not None:
             # Diagnostics never break the turn.
@@ -345,16 +380,18 @@ def _failed_summary(result: ViewResult, *, error_name: str | None = None) -> Vie
     return replace(result, plan=updated, diagnostics=diagnostics, summary_request=None, summary_error=error_name)
 
 
+def subagent_window_warning(node_id: str, model: str) -> str:
+    return (
+        f'Subagent #{node_id[:8]} ({model}): context window is unknown; '
+        'its requests cannot be checked against the model limit.'
+    )
+
+
 class ContextBudgetExceeded(ValueError):
     """The protected request cannot fit; never send it to the provider."""
 
 
 def _require_budget(result: ViewResult, budget: ContextBudget) -> None:
-    if result.plan is not None and budget.window is None:
-        raise ContextBudgetExceeded(
-            'Context window is unknown; select a model with a known window. '
-            'Passthrough is available only for unguarded diagnostics.'
-        )
     if result.budget_exceeded or budget.fits(result.estimated_tokens) is False:
         raise ContextBudgetExceeded(
             f'Context needs approximately {result.estimated_tokens:,} history tokens, '

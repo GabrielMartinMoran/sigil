@@ -30,6 +30,14 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 COOKIE_NAME = 'sigil_session'
 """Name of the cookie the browser keeps. No `__Host-` prefix: TLS is the deployment's."""
 
+BEARER_SCHEME = 'bearer'
+"""The scheme a local client uses for the per-run token it read from the endpoint file.
+
+Two credentials reach the same gate: the browser keeps a cookie, a terminal reads
+a token from a ``0600`` file. The token is per run and is not a password — it
+opens the API for the life of the process and nothing else.
+"""
+
 SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
 """How long a login lasts. One server restart ends it anyway: the key is per process."""
 
@@ -58,12 +66,16 @@ class Auth:
         cookie_name: str = COOKIE_NAME,
         ttl_seconds: int = SESSION_TTL_SECONDS,
         signing_key: bytes | None = None,
+        service_token: str | None = None,
     ) -> None:
         self._password = password
         self.cookie_name = cookie_name
         self.ttl_seconds = ttl_seconds
         # Per process on purpose: no file to leak, and a restart revokes every session.
         self._key = signing_key if signing_key is not None else secrets.token_bytes(32)
+        # Also per process, and also gone on restart: the token in the endpoint file
+        # is the credential of one run of this service, not of a user.
+        self._service_token = service_token
 
     # --- the password -------------------------------------------------------
 
@@ -112,8 +124,36 @@ class Auth:
         morsel = jar.get(self.cookie_name)
         return None if morsel is None else morsel.value
 
+    def bearer_token(self, scope: Scope) -> str | None:
+        """The per-run service token presented in ``Authorization: Bearer``, if any.
+
+        Only the bearer scheme is read: an ``Authorization`` header carrying
+        something else is not this credential and is left for whatever else might
+        want it. The value is never logged or echoed — a refusal says
+        ``unauthenticated`` and nothing more.
+        """
+        raw = Headers(scope=scope).get('authorization')
+        if not raw:
+            return None
+        scheme, _, value = raw.partition(' ')
+        if scheme.strip().lower() != BEARER_SCHEME:
+            return None
+        presented = value.strip()
+        return presented or None
+
+    def check_service_token(self, presented: object) -> bool:
+        """Constant-time comparison against the token this run published."""
+
+        if not isinstance(presented, str) or not presented or not self._service_token:
+            return False
+        return hmac.compare_digest(_digest(presented), _digest(self._service_token))
+
     def authenticated(self, scope: Scope) -> bool:
-        return self.verify(self.token_from(scope))
+        """Whether the request carries either credential: the cookie or the token."""
+
+        if self.verify(self.token_from(scope)):
+            return True
+        return self.check_service_token(self.bearer_token(scope))
 
 
 class LoginThrottle:

@@ -1,0 +1,31 @@
+version: 1
+contract: session-scoped-workspace-v1
+slice_result: accepted
+parent_feature: active
+core:
+  task: execution-root-core-v1
+  qa_worker: f207b9df
+  verdict: PASS
+  evidence: execution-workspace-core-accepted.yaml
+  final_full_suite: 2794 passed, 1 skipped, 1 warning; eight workers
+  focused: 183 passed
+  ui_runtime: 129 passed
+docs:
+  task: execution-workspace-docs-v1
+  developer: 7f46a61d
+  qa_worker: 2c18a4f9
+  verdict: PASS
+  path: docs/domain.md
+  actual_diff: 34 additions inside existing Workspace section, headings unchanged
+  checks: Content/source consistency, relative link, existing headings, diff whitespace and scope all verified.
+  limitation: No markdown checker configured; no additional tooling installed. No unrelated pytest run for prose-only task.
+spec:
+  path: specs/features/application/session_isolation_foundation.feature
+  publication: Lead appended ten accepted draft scenarios, preserving original feature name, path and five existing scenarios.
+  tags: Three unit, six integration, one contract for newly appended scenarios; no E2E needed.
+lead_adjudication: Both approved tasks accepted; execution-root isolation delivered, parent feature not complete.
+limits:
+  - Does not isolate model, profile, prompt, tree, report or other composition state across concurrently active sessions.
+  - Session-runtime extraction, concurrent consumers/lifecycle and required-session HTTP/client migration remain outstanding.
+  - Existing experimental validator findings remain non-passing and are reported separately.
+  - User changes preserved; no new commit, push, deployment or service restart in this slice.

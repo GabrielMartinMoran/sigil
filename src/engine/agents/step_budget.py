@@ -36,7 +36,9 @@ from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+from src.engine.agents.message_types import origin
+from src.engine.agents.message_types import request as typed_request
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
@@ -111,7 +113,7 @@ class StepBudget(AbstractCapability[Any]):
         if not self.exhausted or self._announced:
             return request_context
         self._announced = True
-        request = ModelRequest(parts=[UserPromptPart(notice(self.max_steps, role=self.role))])
+        request = typed_request(notice(self.max_steps, role=self.role), origin('internal_notice'))
         # Both, deliberately: the first makes the model read it on this request,
         # the second makes it part of the history, so the transcript explains why
         # the run stopped where it did and a resume does not repeat the warning.

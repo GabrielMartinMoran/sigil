@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from src.engine.agents.agent import create_agent
@@ -72,6 +73,7 @@ class AgentSpec:
     rendered on every request, because the tree moves under it.
     """
     allow_external_files: Callable[[], bool] | None = None
+    root: Callable[[], Path] | None = None
     available_features: Callable[[str | None], frozenset[str]] | None = None
     """What the model will see, by agent name. ``None`` means the active profile.
 
@@ -88,6 +90,10 @@ class AgentFactory:
 
     spec: AgentSpec
     _agents: dict[str, Agent[Any, Any]] = field(default_factory=dict, repr=False)
+
+    def clear_profiles(self) -> None:
+        """Discard agents built from profiles of the previous workspace."""
+        self._agents.clear()
 
     def root(self) -> Agent[Any, Any]:
         """The agent of the session: it follows `/agent`, so it is not cached."""
@@ -119,6 +125,7 @@ class AgentFactory:
             else _bound(features, None if profile is None else profile.name),
             node_blocks=self.spec.node_blocks,
             allow_external_files=self.spec.allow_external_files,
+            root=self.spec.root,
         )
         for register in self.spec.tool_registrars:
             register(agent)

@@ -16,7 +16,7 @@ export type Attachment = {
 };
 
 export type TranscriptItem = {
-  kind: 'user' | 'assistant' | 'thinking' | 'tool_call' | 'tool_result';
+  kind: 'user' | 'agent_message' | 'assistant' | 'thinking' | 'tool_call' | 'tool_result' | 'subagent_report';
   index: number;
   text?: string;
   /** Present on a user message that carried pictures; never the payload itself. */
@@ -26,6 +26,26 @@ export type TranscriptItem = {
   args?: unknown;
   ok?: boolean;
   summary?: { text: string; status: 'good' | 'bad' | 'neutral' } | null;
+  /** Present on a report: the execution that sent it, and what to call it. */
+  node_id?: string;
+  label?: string;
+  short_id?: string;
+};
+
+/**
+ * One window of the transcript: the items, the absolute position the page starts at,
+ * and whether anything older exists. `first_index` doubles as the `before` cursor for
+ * the page above it, and `pending` arrives on the newest page only — a row waiting in
+ * the queue is not history and has no place in a chunk.
+ */
+export type TranscriptPage = {
+  session: SessionView;
+  items: TranscriptItem[];
+  first_index: number;
+  has_more: boolean;
+  total: number;
+  skills: string[];
+  pending: DurableEntry[];
 };
 
 export type SessionView = {
@@ -109,6 +129,7 @@ export type ModelView = {
 };
 
 export type AgentView = {
+  permissions: string;
   name: string;
   description: string;
   role: string;
@@ -146,4 +167,33 @@ export type LoginState = {
   authenticated: boolean;
   version: string;
   bundle: { stale: boolean; reason: string };
+};
+
+export type DurableEntry = {
+  request_id: string;
+  sequence: number;
+  kind: 'turn' | 'steer';
+  state: 'accepted' | 'claimed' | 'delivered' | 'finished' | 'stopped' | 'interrupted';
+  text: string;
+  image_count: number;
+  delivered: boolean;
+  checkpointed: boolean | null;
+  destination_id: string | null;
+  destination_available: boolean;
+};
+
+export type DurableSession = {
+  session: { id: string; title: string | null; updated_at: string; preview: string };
+  transcript: TranscriptItem[];
+  skills: string[];
+  queue: DurableEntry[];
+  pending: DurableEntry[];
+  deliveries: {
+    request_id: string;
+    checkpointed: boolean;
+    destination_id: string | null;
+    destination_available: boolean;
+  }[];
+  recoveries: { recovery_session_id: string; available: boolean }[];
+  conflicted_entries: DurableEntry[];
 };

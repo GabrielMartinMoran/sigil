@@ -273,6 +273,40 @@ where `AGENTS.md` is looked up, and how `/load` groups sessions.
 Lifecycle: it appears the first time Sigil opens it and never disappears; a
 workspace with no sessions is not shown.
 
+Selecting a workspace rebinds the composition's session store, scope tracker,
+workspace instructions, skill registry and agent registry to the new root. It
+does not change the process working directory, and a turn already running keeps
+the root it started with. The selection applies to subsequent turns
+(`src/engine/workspace/manager.py`).
+
+A service or standalone terminal turn binds an execution snapshot of its
+selected root for the whole `agent.iter` lifetime, including tool execution
+(`src/server/runtime.py`, `src/ui/turn_mixin.py`). Tools, permission checks and
+shell commands resolve against that snapshot; child tasks and synchronous tool
+work inherit it. Resolution order is the bound execution root, then the
+composition's workspace, then the process working directory when neither is
+bound. An explicit root argument on a path operation remains authoritative
+rather than becoming a fallback. The binding resets in `finally`, so completion,
+failure and cancellation restore the previous root
+(`src/engine/files/paths.py`).
+
+The composition's file tools, including conflict checks, plus its shell, image
+and permission boundaries call `Composition.execution_root()`
+(`src/engine/bootstrap.py`). Default project-skill discovery follows the same
+composition root; an explicit skill-directory override keeps its roots, and a
+skill script still runs with its own directory as cwd. Other subprocesses that
+set an explicit directory keep it intentionally.
+
+This boundary is execution-root isolation, not a complete session runtime. It
+does not isolate the model, agent tree, prompt state or report routing per
+session. Concurrent session runtimes and the HTTP session requirement with its
+client migration remain future work. `ScopeTracker` and
+`WorkspaceInstructions` keep their own roots and are rebound on selection; they
+are not immutable across a switch. This contract extends
+[session isolation foundation](../specs/features/application/session_isolation_foundation.feature).
+
+**Scope:** execution workspace. **Owner:** engine. **Last update:** 2026-11-13.
+
 ### Session
 
 One conversation, and everything needed to resume it: the transcript, the tree,
@@ -726,3 +760,25 @@ and both are cheap only because the storage change has not happened yet.
   turn is an aggregate, "the last three turns" is a bounded query instead of a
   scan whose target is unknown until parsed, and the wake is a row with `origin
   = 'wake'` instead of a synthetic prompt nobody can find later.
+
+## Durable delivery and ownership
+
+The server that owns a database is the only cooperating server allowed to work
+on it; ownership is an OS lock, not a convention. Accepted inputs move through
+typed states: `accepted` is queued, `claimed` has an attempt, `delivered` has a
+snapshot-backed delivery fact, and `finished` follows the final save. `stopped`
+means an explicit stop; `interrupted` means a restart or exit found the work
+unfinished, and that work is never replayed automatically.
+
+A delivery confirmation names the accepting session, the request, the attempt
+and the actual turn identifier, and is written with the transcript in one
+transaction. A destination is valid only for the accepting session or a recovery
+copy linked to it. Confirmation is one-shot. See `src/server/runtime.py`,
+`src/server/ownership.py` and `src/engine/storage/accepted_inputs.py`.
+
+The durable session contract distinguishes the transcript from the queue overlay:
+`pending` is accepted/claimed work without a checkpointed delivery; a delivery
+fact moves an entry out of the overlay and into the transcript. Recovery links
+carry availability, not a promise that the copy still exists, and entries whose
+delivery went to a recovery copy are domain facts of that copy, never messages of
+the original transcript. See `src/server/views.py::durable_session`.

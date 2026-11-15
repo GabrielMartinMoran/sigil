@@ -1,0 +1,45 @@
+version: 1
+feature: 00006-multi-session-service
+status: done
+verdict: PASS
+approval:
+  parent: plan.yaml
+  expanded_plan: User approved four milestones including MCP/task lifecycle with 'Sí, continuar', then repeatedly requested completion.
+implementation:
+  - Canonical registry with one Composition and consumer per resident session; shared database, credentials, process lock and queue recovery.
+  - Independent active model selection over shared future-conversation preferences.
+  - Serialized off-loop creation and open; cancellation retains registry ownership until construction finishes.
+  - Session-owned callbacks and events; session-filtered live SSE and replay with global cursors.
+  - Explicit session query/header required for conversation operations; unscoped state bootstrap and body-addressed open are documented exceptions.
+  - Response-lifetime leases and configurable session idle release; work, clients and unread reports retain ownership.
+  - Shutdown drains all consumers, child cleanup, title tasks, MCP startup and transports, and extensions before process ownership release.
+  - TUI and web own selection; switching leaves earlier work running, streams reconnect by session, stale replies are ignored or refused.
+  - Architecture documentation, runtime/callback/multi-session specs and rebuilt tracked web bundle.
+verification:
+  full_python:
+    command: uv run pytest -q -p no:sugar -n 8
+    result: '3000 passed, 1 skipped, 1 warning in 56.47s'
+    exit: 0
+    log: /tmp/feature6-final-python.log
+  python_lint: 'uv run ruff check src tests: exit 0'
+  python_format: 'uv run ruff format --check src tests: 545 files formatted, exit 0'
+  diff: 'git diff --check: exit 0'
+  web:
+    commands: [npm run typecheck, npm test, npm run lint, 'npm run format:check', npm run build]
+    result: '65 tests pass; all commands exit 0; tracked bundle updated'
+    build_hash: 07e7b96214425d2a
+  architecture_links: 'Local files/anchors checked: zero unresolved targets'
+review:
+  owner: Wizard self-review and verification; not independent QA
+  scout_a67a8179: Read-only review of earlier client snapshot; current /new and /load attached busy exemptions separately verified with keyboard test.
+  scout_a9132992: Cancellation/shutdown race referred to pre-shield snapshot; current lock retention and shutdown coverage verified with barrier-controlled tests. Valid bootstrap lease gap fixed and tested.
+  additional_findings_fixed:
+    - Old EventSource callback rejected even when only selection ID changes before effect cleanup.
+    - TUI late open cannot override a newer selection request.
+    - Session shutdown cancels and awaits its background title tasks.
+limits:
+  - No live provider or external MCP network integration and no manual browser session performed; deterministic model and client boundaries used.
+  - Existing skipped test and pydantic-ai deprecation warning remain.
+  - Experimental clean-python validator reports naming conventions in pre-existing server modules; not a configured project gate and not reported PASS. New middleware module renamed to match its class.
+  - No Python type checker is configured; no additional toolchain installed.
+  - No commit, push or deployment performed.

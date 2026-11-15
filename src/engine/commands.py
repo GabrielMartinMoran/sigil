@@ -50,7 +50,7 @@ COMMANDS: tuple[Command, ...] = (
     Command('/agent', 'Choose the agent that sets Sigil’s behaviour'),
     Command('/provider', 'Manage provider accounts (add, remove, rename)'),
     Command('/model', 'Pick a model and reasoning effort across providers'),
-    Command('/default-models', 'Set the model each agent starts on, in the project or the user config'),
+    Command('/default-models', 'Model each agent starts on; edit them in the service’s config'),
     Command('/effort', 'Show or set the reasoning effort'),
     Command('/external-files', 'Show or set outside-workspace file access (allow/deny)'),
     Command('/mcp', 'Show MCP server status'),

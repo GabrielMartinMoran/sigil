@@ -42,20 +42,24 @@ the prompt says so: the receiver decides whether it deserves an answer.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+import inspect
+from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic_ai.exceptions import RunCancelled, UserError
+from pydantic_ai.messages import ModelRequest
 from pydantic_ai.usage import UsageLimits
 
+from src.engine.agents.message_types import MessageTypes, origin, request
 from src.engine.agents.profile.models.agent_not_found import AgentNotFound
 from src.engine.agents.step_budget import StepBudget
 from src.engine.agents.tree.models.agent_message import AgentMessage
 from src.engine.agents.tree.models.agent_node import AgentNode
 from src.engine.agents.tree.models.node_status import NodeStatus
 from src.engine.agents.tree.models.summon_error import SummonError
+from src.engine.agents.tree.reports import report_view
 from src.engine.sessions.recovery import recover_history
 from src.engine.tooling.events import CURRENT_NODE_ID
 
@@ -70,6 +74,14 @@ if TYPE_CHECKING:
 
 SummonMode = Literal['sync', 'async']
 """How the caller waits: blocked on the result, or free until it arrives."""
+
+REPORTED = (NodeStatus.DONE, NodeStatus.FAILED)
+"""The states whose text is a report a parent may be handed.
+
+A cancelled node is not one. It keeps whatever it had said and keeps
+``delivered`` false if the cancellation came before anyone read it, and handing
+that to a turn would re-run work somebody stopped on purpose.
+"""
 
 DEFAULT_MAX_DEPTH = 3
 """How deep summoning may nest.
@@ -89,6 +101,13 @@ class AgentRunModel:
     settings: dict[str, Any] | None
     label: str
     window: int | None = None
+    """Context window of the model this execution sends to, when anything knows it.
+
+    Read from the built model first and from the catalogue second, because the
+    catalogue is a network resource and a cold or offline start describes nothing.
+    ``None`` means no source knew it: a run that overrides the model is then refused
+    rather than sent blind, and one that does not keeps the window the meter holds.
+    """
     images: bool = True
     provider: str | None = None
 
@@ -153,7 +172,7 @@ class SubagentSummoner:
         max_steps: int = 0,
         model: Callable[[], str] | None = None,
         model_settings: Callable[[], dict[str, Any] | None] | None = None,
-        agent_model: Callable[[str], AgentRunModel | None] | None = None,
+        agent_model: Callable[[str], AgentRunModel | None | Awaitable[AgentRunModel | None]] | None = None,
         base_model: Callable[[], AgentRunModel] | None = None,
         on_change: OnChange | None = None,
         root_run: RootRun | None = None,
@@ -177,6 +196,7 @@ class SubagentSummoner:
         self._on_delivered = on_delivered
         self._on_idle = on_idle
         self._tasks: dict[str, asyncio.Task[Any]] = {}
+        self._cancelling: set[asyncio.Task[Any]] = set()
         self._detached: dict[str, asyncio.Event] = {}
 
     # --- who listens -------------------------------------------------------
@@ -304,7 +324,7 @@ class SubagentSummoner:
                 f'would run at level {caller.depth + 1}. Do this part yourself, or have the '
                 'current agent report back to its parent and let the chain close.'
             )
-        selected = self._model_for(profile)
+        selected = await self._model_for(profile)
         node = tree.add(
             parent_id=caller.id,
             name=profile.name,
@@ -335,7 +355,7 @@ class SubagentSummoner:
                 'to stop it before resuming with something else.'
             )
         profile = self._profile(node.name)
-        selected = self._model_for(profile)
+        selected = await self._model_for(profile)
         node.model = selected.label
         # A node that was killed or cancelled mid-tool leaves a call with no
         # answer; a prompt on top of that is refused for good. The tail is closed
@@ -348,9 +368,11 @@ class SubagentSummoner:
 
     # --- running one node --------------------------------------------------
 
-    def _model_for(self, profile: AgentProfile) -> AgentRunModel:
+    async def _model_for(self, profile: AgentProfile) -> AgentRunModel:
         try:
             configured = self._agent_model(profile.name) if self._agent_model is not None else None
+            if inspect.isawaitable(configured):
+                configured = await configured
         except Exception as exc:
             raise SummonError(f'Cannot use the configured model for {profile.name}: {exc}') from exc
         if configured is not None:
@@ -440,7 +462,7 @@ class SubagentSummoner:
                 deps=SigilDeps(node_id=node.id),
                 message_history=list(node.messages) or None,
                 usage_limits=UsageLimits(request_limit=None),
-                capabilities=[budget],
+                capabilities=[budget, MessageTypes(initial=origin('agent_message'))],
                 model_settings=selected.settings,
                 **({'model': selected.model} if selected.model is not None else {}),
             ) as run:
@@ -486,8 +508,20 @@ class SubagentSummoner:
         The run is untouched — it was never in the caller's stack, only awaited by
         it. Flipping the mode is what changes where the answer goes; waking the
         waiter is what frees the caller.
+
+        The root is refused here, not by a caller: the terminal's tree lists every
+        node and binds `b` on the highlighted row, so a guard in one client would
+        leave the action reachable from another. The session's own agent has no
+        parent waiting for an answer, and flipping its mode would describe the
+        conversation as something it is not.
+
+        Raises:
+            SummonError: Nothing matches the reference, it is the session's agent,
+                or it already finished.
         """
         node = self.resolve(node_id)
+        if node.is_root:
+            raise SummonError('That is the agent of the session, not a subagent: stop the turn instead.')
         if node.status.finished:
             raise SummonError(f'#{node.short_id} already finished: there is nothing to move to the background.')
         if node.mode == 'async':
@@ -551,8 +585,17 @@ class SubagentSummoner:
             if node is not None and not node.status.finished:
                 node.cancel()
                 self._notify(node)
+            self._cancelling.add(handle)
+            handle.add_done_callback(self._cancelling.discard)
             handle.cancel()
         self._tasks.clear()
+
+    async def cancel_all_and_wait(self) -> None:
+        """Cancel active subagents and wait for their cleanup to finish."""
+        self.cancel_all()
+        tasks = tuple(self._cancelling)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def running(self) -> int:
         return len(self._tasks)
@@ -585,7 +628,7 @@ class SubagentSummoner:
             self._notify(target)
             return f'Notification {notice.id} delivered to {target.label} #{target.short_id}; pending ACK.'
         message = AgentMessage(sender_id=sender.id, sender_name=sender.name, kind=kind, text=body)
-        if not _enqueue(self._run_of(target), message.render()):
+        if not _enqueue(self._run_of(target), request(message.render(), origin('agent_message'))):
             raise SummonError(self._unreachable(tree, sender, target, body))
         self._announce_delivery(target)
         return f'Instruction queued for {target.label} #{target.short_id} as steering.'
@@ -680,11 +723,32 @@ class SubagentSummoner:
         session, so closing the app between an answer and the next turn loses
         nothing.
         """
-        waiting = self.waiting()
+        return self._drain(self.waiting())
+
+    def take_reports(self) -> list[str]:
+        """The waiting answers a wake may deliver, and marks them read.
+
+        Only ``done`` and ``failed`` are answers. A cancelled node keeps whatever
+        text it had produced and keeps ``delivered`` false when the cancellation
+        arrived before anyone read it, so taking it here would hand a turn the
+        report of work somebody stopped on purpose — the interruption would be
+        executed again, which is the one thing a stopped node must never get. A
+        failure is the opposite case and belongs: it is what the parent has to see.
+
+        The rule lives here and not in a client because ``_deliver`` decides in the
+        same place which nodes send anything at all; a second copy of it in the
+        service would drift from that one.
+        """
+        return self._drain([node for node in self.waiting() if node.status in REPORTED])
+
+    def _drain(self, waiting: list[AgentNode]) -> list[str]:
+        """Takes exactly ``waiting``: marks each read and returns its envelope."""
         messages: list[str] = []
         for node in waiting:
             node.delivered = True
-            messages.append(_envelope(node, node.result or ''))
+            # A failed node never sets ``result``: the reason it stopped is the
+            # body its parent has to read, so it is the fallback and not a gap.
+            messages.append(_envelope(node, node.result or node.error or ''))
         if waiting:
             self._notify(waiting[-1])
         return messages
@@ -733,7 +797,13 @@ class SubagentSummoner:
         parent = tree.parent(node.id)
         while parent is not None:
             run = self._run_of(parent)
-            if run is not None and _enqueue(run, text):
+            if run is not None and _enqueue(
+                run,
+                request(
+                    text,
+                    origin('subagent_report', reports=[report_view(node)]),
+                ),
+            ):
                 self._announce_delivery(node)
                 return True
             parent = tree.parent(parent.id)
@@ -778,7 +848,7 @@ class SubagentSummoner:
             pass
 
 
-def _enqueue(run: Any, text: str) -> bool:
+def _enqueue(run: Any, text: str | ModelRequest) -> bool:
     """Injects a message into a live run. ``False`` when that run is closed."""
     try:
         run.enqueue(text)

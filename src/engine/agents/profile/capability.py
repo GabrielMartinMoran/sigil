@@ -20,7 +20,9 @@ summoned it, which does not change for the length of its run.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.capabilities import AbstractCapability
@@ -46,6 +48,7 @@ class ToolPermissionsCapability(AbstractCapability[Any]):
     _: KW_ONLY
 
     source: ProfileSource
+    root: Callable[[], Path] | None = None
     id: str | None = 'agent_permissions'
     """One per agent: it is the profile in effect, and there is only one."""
 
@@ -83,7 +86,8 @@ class ToolPermissionsCapability(AbstractCapability[Any]):
         groups = () if declaration is None else declaration.groups
         resources = resource_values(declaration, args)
         kind = ResourceKind.TEXT if declaration is None else declaration.kind
-        if not profile.permissions.permits(tool_def.name, groups, resources, kind):
+        root = None if self.root is None else self.root()
+        if not profile.permissions.permits(tool_def.name, groups, resources, kind, root=root):
             raise ToolFailed(_message(tool_def.name, resources))
         return args
 

@@ -1,0 +1,23 @@
+version: 1
+worker: b02ae7c5
+phase: runtime-origin-lifetime
+research_result: partial
+recommendation_received: PARALLEL_CONFIRMATION
+lead_gate: Not planning-ready; no two independently evidenced root causes justify parallel duplicate research.
+assigned_skills: [clean-code, clean-python, clean-architecture, cognitive-writing, docs-writer]
+nonblocking_hygiene: Worker consulted stale broad skill artifact and additionally applied frontend-design; no source or behavior impact, do not propagate stale role defaults.
+verified_evidence:
+  - Installed pydantic-ai sync tools run through context-propagating executor or AnyIO worker thread.
+  - Existing CURRENT_NODE_ID already propagates through tooling logger and subagent task creation.
+  - Runtime busy guard covers root task; background subagent work is checked separately.
+  - Composition binding changes session and active tree; no explicit background-subagent guard identified.
+  - Extension context exposes session_id when constructed; notices callback accepts text only.
+  - MCP manager loading and installation may see different override state; stable originating owner not explicit.
+lead_constraints:
+  - Approved product behavior permits background work while clients load other sessions; do not introduce a new switching restriction without user authorization.
+  - Context propagation evidence is necessary but not sufficient to prove tree or storage isolation across rebinding.
+remaining_verifiable_gaps:
+  - Observe deterministic active-background-subagent plus session rebind behavior, including original/target tree and report wake destination.
+  - Exact retry registration and lifetime; previous report deferred it despite requested tracing.
+  - Exact extension diagnostic invocation and MCP completion callback origin, rather than assigning session by current mutable pointer.
+next_action: One bounded behavioral confirmation and missing call-site trace; no repeated broad inventory, no implementation yet.

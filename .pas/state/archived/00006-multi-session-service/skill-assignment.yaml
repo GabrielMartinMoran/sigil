@@ -1,0 +1,47 @@
+version: 1
+status: research
+scope: agent-profile-restoration-and-multi-session-service
+skill_assignment:
+  available_skills:
+    - archify
+    - clean-architecture
+    - clean-code
+    - clean-python
+    - cognitive-writing
+    - docs-writer
+    - documentation-lookup
+    - figma-generate-library
+    - figma-use
+    - find-skills
+    - frontend-design
+    - mind-management
+    - prompt-optimizer
+    - skill-creator
+    - vanya
+  required_by_role:
+    researcher:
+      - clean-code
+      - clean-python
+      - cognitive-writing
+      - docs-writer
+      - frontend-design
+    developer:
+      - clean-code
+      - clean-python
+      - cognitive-writing
+      - docs-writer
+      - frontend-design
+    qa:
+      - clean-code
+      - clean-python
+      - cognitive-writing
+      - docs-writer
+      - frontend-design
+  missing_skills:
+    - clean-backend-architecture
+  critical_missing: []
+notes:
+  - The unavailable backend companion is recommended, not critical; do not install it.
+  - The initial researcher applied the first four role skills before web UI scope was added.
+  - Frontend design applies to the newly requested browser profile selector, preserving existing design.
+  - Exact task contracts will record applicability and must be approved before implementation.

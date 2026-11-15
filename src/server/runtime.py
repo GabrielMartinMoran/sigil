@@ -1,492 +1,598 @@
-"""The turn loop, headless: what the terminal client does with widgets, done with events.
+"""The service boundary: what the process owns, and what one session runs.
 
-The terminal and the web client run the same decisions and differ only in where the
-output goes. That duplication already exists in the engine's design (`ui/turn_mixin.py`
-is the terminal's copy); this module is the web's, and it is written to keep the two
-recognisably the same:
+The service is two lifetimes. The process holds an exclusive database lock, one
+store, one event hub and the idle decision that stops it; one session owns the
+turn loop, the queue it claims, the questions it waits on and the callbacks the
+engine calls. `ServerRuntime` is the process side and `SessionRuntime` — in
+`src.server.session_runtime` — is the session side. The turn-loop rationale that
+used to be documented here lives there, next to the code it explains.
 
-- ``agent.iter`` instead of ``agent.run``, so a turn that is cancelled or fails still
-  hands back what it completed and the session keeps its context.
-- ``run.enqueue`` for steering: a message typed mid-turn becomes a real
-  ``ModelRequest`` at the next seam instead of a second turn competing with the first.
-- ``run.cancel`` for abort, with the shell commands killed by process group first.
-- The history is checkpointed as the turn advances and repaired at the end, because a
-  process that dies mid-turn leaves a tool call with no result behind it and
-  pydantic-ai refuses every later prompt on that history.
-
-What is different is the sink: everything that the terminal paints is published on
-the event hub as a delta or a fact, and the browser rebuilds the same view. Nothing
-here formats text for a human — that is the client's job.
+Nothing about the public API moved: routes, the CLI and the existing tests still
+import `ServerRuntime`, the support types and the constants from this module, and
+the facade's methods are explicit, typed delegations with the signatures they had.
+The shared values themselves are defined in `src.server.runtime_support`, so the
+session module can use them without importing the facade back.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
-from pydantic_ai.capabilities import ProcessEventStream
-from pydantic_ai.exceptions import RunCancelled
-from pydantic_ai.messages import (
-    EnqueuedMessagesEvent,
-    FunctionToolResultEvent,
-    PartDeltaEvent,
-    PartStartEvent,
-    TextPart,
-    TextPartDelta,
-    ThinkingPart,
-    ThinkingPartDelta,
-)
-from pydantic_ai.usage import UsageLimits
-
-from src.engine.agents.step_budget import StepBudget
-from src.engine.attachments.content import user_content
-from src.engine.bootstrap import Composition, model_settings
-from src.engine.interaction.models.question_answer import QuestionAnswer
-from src.engine.interaction.models.question_item import QuestionItem
-from src.engine.sessions.recovery import recover_history
-from src.engine.shell import running as running_commands
-from src.engine.tooling.outputs import present_output
+from src.engine.agents.model_config import AgentModelConfig
+from src.engine.agents.model_defaults import ConfigScope, ModelDefaultsState
+from src.engine.agents.profile.models.agent_profile import AgentProfile
+from src.engine.agents.rollback import Checkpoint, ForkOutcome, RollbackOutcome
+from src.engine.agents.tree.models.agent_node import AgentNode
+from src.engine.bootstrap import Composition
+from src.engine.sessions.session_store import Session
+from src.engine.storage.accepted_inputs import AcceptedInputs
+from src.server.diagnostics import record
 from src.server.events import EventHub
+from src.server.ownership import OwnershipError, ServerOwnership
 
-CHECKPOINT_INTERVAL = 1.0
-"""Minimum seconds between checkpoints during a turn. The final save is mandatory."""
+# Re-exported for the importers that already name these here: the routes, the CLI,
+# the terminal client and the existing tests. The definitions live in
+# `runtime_support`, and `__all__` names them so the re-export is deliberate rather
+# than an unused import.
+from src.server.runtime_support import (
+    CHECKPOINT_INTERVAL,
+    DEFAULT_IDLE_GRACE,
+    IDLE_POLL_INTERVAL,
+    MAX_IMAGES,
+    PREVIEW_CHARS,
+    QUESTION_TIMEOUT_ENV,
+    QUESTION_TIMEOUT_SECONDS,
+    QUEUE_POLL_INTERVAL,
+    SLOW_TURN_NOTICE_SECONDS,
+    WAKE_PROMPT,
+    IncomingImage,
+    PendingQuestion,
+    decode_images,
+    resolve_question_timeout,
+)
+from src.server.session_runtime import SessionRuntime
 
-PREVIEW_CHARS = 400
-"""How much of a tool result travels in the event. The full text is in the transcript."""
 
+class IdleShutdown:
+    """Decides when a service that has had no work for a while should stop.
 
-@dataclass
-class PendingQuestion:
-    """A question asked by the agent, waiting for an answer from a browser."""
+    Two facts keep the service alive: a turn that is running, and any queue row
+    that is not terminal — in *any* session, because the service serves one
+    database, not one browser. Connected event subscribers are deliberately not on
+    that list: a page can reconnect to whatever service is there, so an open tab is
+    not a reason for a process to outlive the work.
 
-    id: str
-    questions: list[QuestionItem]
-    future: asyncio.Future[list[QuestionAnswer] | None] = field(
-        default_factory=lambda: asyncio.get_event_loop().create_future()
-    )
+    A pending question needs no rule of its own. The agent asks from inside the
+    turn that is waiting for the answer, so the turn is still running and the
+    question is covered by the first fact; there are no interactive approvals.
+
+    The clock and the work check are arguments, so a test advances the window
+    instead of sleeping through it, and the thirty-minute decision costs nothing.
+    """
+
+    def __init__(
+        self,
+        has_work: Callable[[], bool],
+        *,
+        grace: float,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._has_work = has_work
+        self._grace = grace
+        self._clock = clock
+        self._idle_since: float | None = None
+
+    @property
+    def grace(self) -> float:
+        """Seconds of no work this decision waits for."""
+        return self._grace
+
+    def expired(self) -> bool:
+        """Whether the service has gone ``grace`` seconds without work.
+
+        Called repeatedly: the first look starts the window, work drops it and
+        starts it again later, so a burst of short turns never adds up to a
+        shutdown. A work check that raises is not proof of idleness — the exception
+        propagates, and the caller decides that an unanswerable question means
+        "keep serving".
+        """
+        now = self._clock()
+        if self._has_work():
+            self._idle_since = None
+            return False
+        if self._idle_since is None:
+            self._idle_since = now
+        return now - self._idle_since >= self._grace
 
 
 class ServerRuntime:
-    """Drives one workspace for one browser session.
+    """Owns the process for one browser session and delegates the session's work.
 
     The workspace is process state, not client state: `os.chdir` is global, so two
     browsers share the directory the tools read. That is the same model the terminal
     has (one process, one workspace), and it is the honest one until the engine stops
     resolving paths against the process cwd.
+
+    This object keeps what outlives work: the ownership lock and the gate that asks
+    whether it is held, the reconciliation `start` performs, the accepted-inputs
+    handle, the hub and the service-wide idle decision. A canonical registry maps
+    session IDs to independent compositions and consumers. The legacy facade
+    delegates to its default `session_runtime`; HTTP callers address their own
+    resident owner without changing that default.
     """
 
-    def __init__(self, composition: Composition, hub: EventHub) -> None:
+    def __init__(
+        self,
+        composition: Composition,
+        hub: EventHub,
+        *,
+        require_ownership: bool = True,
+        ownership: ServerOwnership | None = None,
+        question_timeout: float | None = None,
+    ) -> None:
         self.composition = composition
         self.hub = hub
-        composition.extension_notice = lambda text: hub.publish('notice', text=text, tone='danger')
-        self._task: asyncio.Task[None] | None = None
-        self._run: Any = None
-        self._pending_question: PendingQuestion | None = None
-        self._question_ids = 0
-        self._last_checkpoint_at = 0.0
-        self._turn_session: Any = None
+        self._require_ownership = require_ownership
+        # An ownership taken before this runtime existed, or one for it to take.
+        # Adopting is what lets `cli.run` hold the lock across `Composition`: `flock`
+        # treats two descriptors of one process as two holders, so opening the same
+        # file here would refuse this very process after it had already paid to
+        # compose the engine. `acquire` on an object that already holds it does
+        # nothing, so `start` needs no special case and no second descriptor is
+        # ever opened.
+        self._ownership = ownership if ownership is not None else ServerOwnership(composition.store.database.path)
+        self._started = False
+        self._closing = False
 
-        # The agent asks through the hub; the browser answers over HTTP.
-        composition.question_hub.set_asker(self._ask)
+        # Durable consumer. The queue is the source of truth for accepted work, and
+        # it belongs to the process: `start` reconciles it and the idle decision
+        # reads it, whether or not a session is running.
+        self._accepted = AcceptedInputs(composition.store.database)
+        # The deadline is resolved once, here: a question asked while the service
+        # runs cannot change how long it is allowed to wait. `question_timeout` is
+        # the testable seam, and the environment is the operator's.
+        self._session_runtime = SessionRuntime(
+            composition,
+            hub,
+            self._accepted,
+            question_timeout=resolve_question_timeout(question_timeout),
+            require_worker_ownership=self._require_worker_ownership,
+        )
+        self._sessions: dict[str, SessionRuntime] = {self.session.id: self._session_runtime}
+        self._registry_lock = asyncio.Lock()
+        self._last_used: dict[str, float] = {self.session.id: time.monotonic()}
+        self._leases: dict[str, int] = {}
+        self._sessions_shutdown: asyncio.Task[None] | None = None
 
-        # Every tool call and result travels as an event. The sink is sync and never
-        # raises: a broken client must not fail the tool that triggered it.
-        composition.tool_logger.add_sink(self._on_tool_event)
+    def find_session(self, session_id: str) -> SessionRuntime | None:
+        """Find an already resident session without loading or switching it."""
+        return self._sessions.get(session_id)
 
-        # The tree moves while subagents work; the sidebar follows it.
-        composition.on_idle(self._on_tree_idle)
-        composition.tree_changed = self._on_tree_change
+    def resident_session(self, session: Session) -> SessionRuntime:
+        """Return the session's runtime, creating an independent composition if needed."""
+        if self._closing:
+            raise RuntimeError('The service is closing')
+        existing = self._sessions.get(session.id)
+        if existing is not None:
+            return existing
+        composition = Composition(
+            session.cwd,
+            settings=self.composition.settings,
+            session=session,
+            model=self.composition._model_override,
+            provider_paths=self.composition.provider_paths,
+        )
+        owner = SessionRuntime(
+            composition,
+            self.hub,
+            self._accepted,
+            question_timeout=self._session_runtime._question_timeout,
+            require_worker_ownership=self._require_worker_ownership,
+        )
+        self._sessions[session.id] = owner
+        self.touch_session(session.id)
+        return owner
+
+    def load_resident(self, session_id: str) -> SessionRuntime:
+        """Open a stored or resident conversation without changing another owner."""
+        owner = self.find_session(session_id)
+        if owner is not None:
+            return owner
+        session = self.composition.store.load(session_id)
+        if session is None:
+            raise LookupError(f'No session {session_id}.')
+        return self.resident_session(session)
+
+    def create_resident(self, source: SessionRuntime, root: str | None = None) -> SessionRuntime:
+        """Create a draft with independent execution state, preserving the source."""
+        session = source.composition.store.draft_session()
+        if root is not None:
+            session.cwd = str(Path(root).expanduser().resolve(strict=True))
+        session.agent = source.composition.agent_registry.active_name
+        return self.resident_session(session)
+
+    def _select_default(self, owner: SessionRuntime) -> None:
+        self._session_runtime = owner
+        self.composition = owner.composition
+
+    async def _resolve_resident(self, factory: Callable[[], SessionRuntime]) -> SessionRuntime:
+        async with self._registry_lock:
+            if self._closing:
+                raise RuntimeError('The service is closing')
+            task = asyncio.create_task(asyncio.to_thread(factory))
+            cancelled = False
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    cancelled = True
+            owner = task.result()
+            if not self._closing:
+                owner.ensure_workers()
+            if cancelled:
+                raise asyncio.CancelledError
+            return owner
+
+    async def open_resident(self, session_id: str) -> SessionRuntime:
+        return await self._resolve_resident(lambda: self.load_resident(session_id))
+
+    async def new_resident(self, source: SessionRuntime, root: str | None = None) -> SessionRuntime:
+        return await self._resolve_resident(lambda: self.create_resident(source, root))
 
     # --- state ---------------------------------------------------------------
 
     @property
     def session(self) -> Any:
-        return self.composition.session
+        return self._session_runtime.session
 
     @property
     def busy(self) -> bool:
-        return self._task is not None and not self._task.done()
-
-    def start(self) -> None:
-        """Builds the MCP layer in the background, like the terminal client does.
-
-        It is a background task and not a startup await: a cold `npx` server can take
-        seconds, and the page must be able to load and say "starting" in the meantime.
-        """
-        loader = self.composition.mcp_loader()
-        if loader is None:
-            return
-
-        async def load() -> None:
-            try:
-                await asyncio.to_thread(loader)
-            except Exception as exc:  # noqa: BLE001 - startup must survive a broken server
-                self.hub.publish('notice', text=f'MCP: {exc}', tone='danger')
-            self.hub.publish_state('mcp')
-
-        asyncio.get_event_loop().create_task(load())
-
-    # --- a turn --------------------------------------------------------------
-
-    async def send(self, text: str) -> dict[str, Any]:
-        """Accepts a message: a new turn when idle, a steer when one is running."""
-        cleaned = text.strip()
-        if not cleaned:
-            raise ValueError('The message is empty.')
-        if self.busy:
-            queued = self._steer(cleaned)
-            return {'accepted': 'steer', 'delivered': queued}
-        latest = self.composition.store.refresh(self.session)
-        if latest is not None:
-            self.composition.bind_session(latest)
-            self.hub.publish_state('session_reloaded')
-        self._task = asyncio.get_event_loop().create_task(self._turn(cleaned))
-        return {'accepted': 'turn'}
-
-    def _steer(self, text: str) -> bool:
-        run = self._run
-        if run is None:
-            return False
-        try:
-            run.enqueue(text)
-            return True
-        except Exception:  # noqa: BLE001 - a refused steer is reported, not raised
-            return False
-
-    def abort(self) -> bool:
-        """Stops the turn: the shell commands die, then the run unwinds."""
-        if not self.busy:
-            return False
-        running_commands.kill_all()
-        self.composition.summoner.cancel_all()
-        self._resolve_question(None)
-        run = self._run
-        if run is not None:
-            try:
-                run.cancel()
-            except Exception as exc:  # noqa: BLE001 - cancelling a finished run is a no-op
-                # A run the graph already closed refuses the cancel; the turn was
-                # ending anyway, so this is not a failure to report.
-                self.hub.publish('notice', text=f'Abort ignored: {exc}', tone='muted')
-        return True
-
-    async def wait(self) -> None:
-        """Waits for the current turn, if any. Used by tests and by shutdown."""
-        task = self._task
-        if task is not None:
-            await asyncio.gather(task, return_exceptions=True)
-
-    def _checkpoint(self, *, force: bool = False) -> None:
-        """Persists progress at most once per second, so a crash keeps the turn."""
-        run = self._run
-        if run is None:
-            return
-        messages = run.all_messages()
-        if not messages:
-            return
-        session = self._turn_session or self.session
-        current = session.messages
-        if len(messages) == len(current) and current and messages[-1] is current[-1]:
-            return
-        now = time.monotonic()
-        if not force and now - self._last_checkpoint_at < CHECKPOINT_INTERVAL:
-            return
-        self._last_checkpoint_at = now
-        session.messages = list(messages)
-        self.composition.store.save_progress(session)
-
-    async def _turn(self, text: str) -> None:
-        composition = self.composition
-        session = composition.session
-        self._turn_session = session
-        self._last_checkpoint_at = 0.0
-        self.hub.publish('turn_started', session_id=session.id)
-        self._name_session(session, text)
-
-        budget = StepBudget(max_steps=self._budget(), role='turn')
-        agent = composition.agent
-        status = 'ok'
-        error = ''
-
-        try:
-            history = session.messages
-            recovery = recover_history(history)
-            if recovery.changed:
-                history = recovery.messages
-                session.messages = history
-                composition.store.save_progress(session)
-                self.hub.publish('notice', text=recovery.notice, tone='warn')
-
-            async with agent.iter(
-                user_content(text),
-                message_history=history,
-                capabilities=[ProcessEventStream(handler=self._stream), budget],
-                model_settings=model_settings(composition.model_service),
-                usage_limits=UsageLimits(request_limit=None),
-            ) as run:
-                self._run = run
-                async for _node in run:
-                    self._checkpoint()
-            history = run.all_messages()
-        except RunCancelled:
-            status = 'cancelled'
-            if self._run is not None:
-                history = self._run.all_messages()
-        except Exception as exc:  # noqa: BLE001 - the turn reports, the server survives
-            status = 'error'
-            error = str(exc)
-            if self._run is not None:
-                history = self._run.all_messages()
-        finally:
-            self._run = None
-            self._turn_session = None
-            self._resolve_question(None)
-
-        history = recover_history(history).messages
-        session.messages = history
-        current = composition.store.save_current(session)
-        if current is not session:
-            composition.bind_session(current)
-            self.hub.publish(
-                'notice',
-                text='Session changed elsewhere; local progress was saved in a recovered session.',
-                tone='warn',
-            )
-
-        if budget.exhausted:
-            self.hub.publish(
-                'notice',
-                text=f'Step limit of {budget.max_steps} reached: the turn got one last call without tools.',
-                tone='warn',
-            )
-        self.hub.publish('turn_finished', status=status, error=error, session_id=session.id)
-        self.hub.publish_state('turn')
-
-    def _budget(self) -> int:
-        """The profile's own budget, or the configured default — the same rule as the TUI."""
-        profile = self.composition.agent_registry.active
-        declared = getattr(profile, 'max_steps', None)
-        return declared if declared else self.composition.settings.max_steps
-
-    def _name_session(self, session: Any, text: str) -> None:
-        """Titles the conversation after its first message, off the turn's path.
-
-        It costs a model call, so it runs as its own task: the turn must not wait for
-        a title, and a title that fails is not a failed conversation.
-        """
-        if session.title:
-            return
-
-        async def name() -> None:
-            try:
-                from src.engine.sessions.titling import generate_title
-
-                title = await generate_title(self.composition.model_service.current_model(), text)
-            except Exception:  # noqa: BLE001 - a title is a nicety
-                return
-            if not title:
-                return
-            session.title = title
-            self.composition.store.save_progress(session)
-            self.hub.publish_state('session_named')
-
-        asyncio.get_event_loop().create_task(name())
-
-    # --- the stream ----------------------------------------------------------
-
-    async def _stream(self, _ctx: Any, events: Any) -> None:
-        """Turns a pydantic-ai stream into events a browser can apply."""
-        async for event in events:
-            self._checkpoint()
-            if isinstance(event, PartStartEvent):
-                part = event.part
-                if isinstance(part, ThinkingPart) and part.content:
-                    self.hub.publish('thinking_delta', text=part.content)
-                elif isinstance(part, TextPart) and part.content:
-                    self.hub.publish('text_delta', text=part.content)
-            elif isinstance(event, PartDeltaEvent):
-                delta = event.delta
-                if isinstance(delta, TextPartDelta) and delta.content_delta:
-                    # The one event that must not be batched: it is the typing.
-                    self.hub.publish('text_delta', text=delta.content_delta)
-                elif isinstance(delta, ThinkingPartDelta) and delta.content_delta:
-                    self.hub.publish('thinking_delta', text=delta.content_delta)
-            elif isinstance(event, FunctionToolResultEvent):
-                ok = getattr(event.part, 'outcome', 'success') == 'success'
-                content = present_output(event.part.tool_name, event.part.content).text
-                self.hub.publish(
-                    'tool_result',
-                    tool_name=event.part.tool_name,
-                    call_id=str(getattr(event.part, 'tool_call_id', '')),
-                    ok=ok,
-                    preview=content[:PREVIEW_CHARS],
-                )
-            elif isinstance(event, EnqueuedMessagesEvent):
-                self.hub.publish('steer_delivered', enqueue_id=str(event.enqueue_id))
-
-    def _on_tool_event(self, event: Any) -> None:
-        """The tool log sink: what started, how long it took, how it ended."""
-        if getattr(event, 'node_id', None) is not None:
-            return
-        phase = getattr(event, 'phase', '')
-        if phase == 'start':
-            self.hub.publish(
-                'tool_call',
-                tool_name=event.tool_name,
-                args=_jsonable(event.args),
-                invocation_id=getattr(event, 'invocation_id', ''),
-            )
-            return
-        summary = getattr(event, 'summary', None)
-        self.hub.publish(
-            'tool_finished',
-            tool_name=event.tool_name,
-            phase=phase,
-            invocation_id=getattr(event, 'invocation_id', ''),
-            ok=phase != 'error',
-            error=event.error,
-            duration_ms=round(event.duration_ms or 0.0, 1),
-            preview=(event.output if getattr(event, 'output', None) is not None else '')[:PREVIEW_CHARS],
-            summary=None if summary is None else {'text': summary.text, 'status': summary.status},
-        )
-
-    # --- questions -----------------------------------------------------------
-
-    async def _ask(self, questions: list[QuestionItem]) -> list[QuestionAnswer] | None:
-        """Publishes the questions and waits for the browser to answer them."""
-        self._question_ids += 1
-        pending = PendingQuestion(id=f'q{self._question_ids}', questions=questions)
-        self._pending_question = pending
-        self.hub.publish(
-            'question',
-            id=pending.id,
-            questions=[
-                {
-                    'question': item.question,
-                    'allow_custom': item.allow_custom,
-                    'options': [
-                        {'label': option.label, 'description': option.description, 'recommended': option.recommended}
-                        for option in item.options
-                    ],
-                }
-                for item in questions
-            ],
-        )
-        try:
-            return await pending.future
-        except asyncio.CancelledError:
-            self._pending_question = None
-            raise
-
-    def answer(self, question_id: str, answers: list[dict[str, Any]] | None) -> bool:
-        """Resolves the pending question. ``None`` means the user cancelled."""
-        pending = self._pending_question
-        if pending is None or pending.id != question_id:
-            return False
-        parsed: list[QuestionAnswer] | None = None
-        if answers is not None:
-            parsed = [
-                QuestionAnswer(
-                    question=str(item.get('question', '')),
-                    answer=str(item.get('answer', '')),
-                    custom=bool(item.get('custom', False)),
-                )
-                for item in answers
-            ]
-        self._pending_question = None
-        if not pending.future.done():
-            pending.future.set_result(parsed)
-        self.hub.publish('question_closed', id=question_id)
-        return True
-
-    def _resolve_question(self, answers: list[QuestionAnswer] | None) -> None:
-        """Releases a waiting question with nothing: the turn is not going to use it."""
-        pending = self._pending_question
-        if pending is None:
-            return
-        self._pending_question = None
-        if not pending.future.done():
-            pending.future.set_result(answers)
-        self.hub.publish('question_closed', id=pending.id)
+        return self._session_runtime.busy
 
     @property
     def pending_question(self) -> PendingQuestion | None:
-        return self._pending_question
+        return self._session_runtime.pending_question
 
-    # --- tree ----------------------------------------------------------------
+    @property
+    def session_runtime(self) -> SessionRuntime:
+        """The default facade session; HTTP clients select their own registry entry."""
+        return self._session_runtime
 
-    def _on_tree_change(self, node: Any) -> None:
-        self.hub.publish('tree_changed', node_id=getattr(node, 'id', ''))
+    def has_active_work(self) -> bool:
+        """Whether stopping now would cut something short.
 
-    def _on_tree_idle(self) -> None:
-        self.hub.publish_state('tree_idle')
+        A running turn or background agent is work in this process. A non-terminal
+        row is work the database says exists, including rows another session accepted, because the
+        service serves the whole database. A connected event subscriber is not work:
+        it reconnects to whatever service is there.
+        """
+        owners = tuple(set(self._sessions.values()))
+        return (
+            any(owner.busy or owner.composition.summoner.running() > 0 for owner in owners) or self._accepted.has_open()
+        )
 
-    # --- workspace -----------------------------------------------------------
+    async def stop_when_idle(
+        self,
+        request_shutdown: Callable[[], None],
+        *,
+        grace: float,
+        poll: float = IDLE_POLL_INTERVAL,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        """Asks for a graceful stop after ``grace`` seconds with no work left.
+
+        The request is the only thing this does: it does not abandon a turn, stop a
+        row or touch the endpoint file. Ending the serving loop is what runs the
+        lifespan shutdown, which unpublishes the endpoint, closes the runtime and
+        lets go of the ownership lock — in that order, through the path every other
+        exit already uses.
+
+        A work check that raises keeps the service alive and says so once per
+        streak: a database that cannot answer is not proof that nothing is left to
+        do, and a service that dies because its store hiccuped is worse than one
+        that lives an extra window.
+        """
+        decision = IdleShutdown(self.has_active_work, grace=grace, clock=clock)
+        # `poll` bounds how often the queue is asked, never how long the window is
+        # observed late: a 50 ms window looked at every 5 s would make the flag a lie.
+        interval = poll if decision.grace <= 0 else min(poll, decision.grace)
+        complaining = False
+        while not self._closing:
+            try:
+                idle = decision.expired()
+            except Exception as exc:  # noqa: BLE001 - a failed question is not a stop
+                if not complaining:
+                    complaining = True
+                    record('server_idle_check_failed', error=exc)
+                    self.hub.publish('notice', text=f'Idle check: {exc}', tone='warn')
+                await asyncio.sleep(interval)
+                continue
+            complaining = False
+            if idle:
+                record(
+                    'server_idle_shutdown', grace_seconds=grace, background_agents=self.composition.summoner.running()
+                )
+                request_shutdown()
+                return
+            await asyncio.sleep(interval)
+
+    # --- lifecycle -----------------------------------------------------------
+
+    def start(self) -> None:
+        """Owns the database before touching it, then reconciles the queue.
+
+        Reconciliation is a state change, not a replay: every input that was not
+        terminal becomes ``interrupted``. The lock is held until ``close``.
+        """
+        if self._started:
+            return
+        self._ownership.acquire()
+        self._accepted.interrupt_open()
+        self._started = True
+
+    def _require_worker_ownership(self) -> None:
+        """The gate the session asks before starting its workers.
+
+        The consumer and the MCP loader both touch the store, so both need the
+        lock. It stays here because the lock is process state; the session receives
+        this method as a callback and never calls `ServerOwnership` itself.
+        """
+        if self._require_ownership and not self._ownership.held:
+            raise OwnershipError('The queue consumer requires the database lock')
+
+    @staticmethod
+    async def _close_owner(owner: SessionRuntime) -> None:
+        try:
+            owner.abort()
+            await owner.wait()
+        finally:
+            try:
+                await owner.aclose()
+            finally:
+                try:
+                    await owner.composition.extensions.close()
+                finally:
+                    owner.composition.close()
+
+    async def close_sessions(self) -> None:
+        """Drain all owners, even under cancellation, before releasing the lock."""
+        if self._sessions_shutdown is None:
+            self._closing = True
+            self._sessions_shutdown = asyncio.create_task(self._close_sessions())
+        cancelled = False
+        while not self._sessions_shutdown.done():
+            try:
+                await asyncio.shield(self._sessions_shutdown)
+            except asyncio.CancelledError:
+                cancelled = True
+        self._sessions_shutdown.result()
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def _close_sessions(self) -> None:
+        async with self._registry_lock:
+            owners = tuple(set(self._sessions.values()))
+        results = await asyncio.gather(*(self._close_owner(owner) for owner in owners), return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+
+    def touch_session(self, session_id: str, *, now: float | None = None) -> None:
+        self._last_used[session_id] = time.monotonic() if now is None else now
+
+    @contextmanager
+    def session_lease(self, session_id: str) -> Iterator[SessionRuntime]:
+        owner = self.find_session(session_id)
+        if owner is None:
+            raise LookupError(f'Session {session_id} is not resident')
+        self._leases[session_id] = self._leases.get(session_id, 0) + 1
+        try:
+            yield owner
+        finally:
+            self._leases[session_id] -= 1
+            self.touch_session(session_id)
+
+    async def release_idle_sessions(self, *, grace: float, now: float | None = None) -> None:
+        current = time.monotonic() if now is None else now
+        async with self._registry_lock:
+            for session_id, owner in tuple(self._sessions.items()):
+                working = (
+                    owner.busy
+                    or owner.composition.summoner.running() > 0
+                    or bool(owner.composition.summoner.waiting())
+                    or any(row.state in {'accepted', 'claimed', 'delivered'} for row in self._accepted.list(session_id))
+                )
+                if self._leases.get(session_id, 0) or working:
+                    self.touch_session(session_id, now=current)
+                    continue
+                if current - self._last_used.get(session_id, current) < grace:
+                    continue
+                # Remove before awaiting teardown, so new requests cannot use a closing owner.
+                del self._sessions[session_id]
+                self._last_used.pop(session_id, None)
+                self._leases.pop(session_id, None)
+                await self._close_owner(owner)
+
+    async def reap_sessions(self, *, grace: float, poll: float = IDLE_POLL_INTERVAL) -> None:
+        while not self._closing:
+            await asyncio.sleep(min(poll, grace) if grace > 0 else poll)
+            try:
+                await self.release_idle_sessions(grace=grace)
+            except Exception as exc:  # noqa: BLE001 - cleanup errors must not stop residency accounting
+                record('session_release_failed', error=exc)
+
+    def bootstrap_session(self) -> SessionRuntime:
+        owner = self.find_session(self.session.id)
+        if owner is None:
+            owner = self.create_resident(self._session_runtime)
+            self._select_default(owner)
+        self.touch_session(owner.session.id)
+        return owner
+
+    def close(self) -> None:
+        """Releases everything, and leaves the queue exactly as it found it.
+
+        Interruption is crash reconciliation, and it belongs to `start`: a process
+        that is leaving on purpose must not claim that the rows it never executed
+        were lost. A row can land between the last idle look and this call, and
+        marking it ``interrupted`` would be a lie the next run would act on.
+
+        The session closes first — its question, its consumer and its callbacks —
+        and the process resources go in a `finally`, so even a session that fails to
+        close cannot leave the store locked. The ownership is released last, so the
+        store is never writable by a second process while this one is still closing.
+        """
+        try:
+            for owner in set(self._sessions.values()):
+                owner.close()
+        finally:
+            self._closing = True
+            self._started = False
+            # Released whether this runtime took the lock or adopted one taken
+            # before it existed, and whether or not `start` ever ran: a runtime that
+            # exists but never served must not keep the store locked, and the process
+            # that composed the engine is waiting on exactly this. `release` is
+            # idempotent, so closing twice is a no-op rather than a double release.
+            self._ownership.release()
+            self.composition.close()
+
+    # --- delegated to the session --------------------------------------------
+
+    def ensure_workers(self) -> None:
+        """Starts the session's consumer and MCP loader behind the ownership gate."""
+        self._session_runtime.ensure_workers()
+
+    async def send(
+        self, text: str, request_id: str | None = None, images: Sequence[IncomingImage] = ()
+    ) -> dict[str, Any]:
+        """Accepts a message durably; the session's consumer turns it or steers it."""
+        return await self._session_runtime.send(text, request_id, images)
+
+    def abort(self) -> bool:
+        """Stops the turn, if there is one. The session owns the run and its rows."""
+        return self._session_runtime.abort()
+
+    def stop_all(self) -> bool:
+        """Stops the turn and every subagent the session still runs."""
+        return self._session_runtime.stop_all()
+
+    async def wait(self) -> None:
+        """Waits until the session's consumer has no accepted or running work."""
+        await self._session_runtime.wait()
+
+    def answer(self, question_id: str, answers: list[dict[str, Any]] | None) -> bool:
+        """Resolves the session's pending question. ``None`` means the user cancelled."""
+        return self._session_runtime.answer(question_id, answers)
+
+    def node(self, ref: str) -> AgentNode:
+        """The node a reference names, accepting a unique prefix of its id."""
+        return self._session_runtime.node(ref)
+
+    def stop_node(self, node_id: str) -> tuple[AgentNode, str]:
+        """Stops a node and everything it summoned, and returns the terminal's sentence."""
+        return self._session_runtime.stop_node(node_id)
+
+    def background_node(self, node_id: str) -> tuple[AgentNode, str]:
+        """Sends a running node to the background: it keeps working, answers later."""
+        return self._session_runtime.background_node(node_id)
+
+    def set_external_files(self, allow: bool) -> Any:
+        """Allows or denies file access outside the workspace for this session."""
+        return self._session_runtime.set_external_files(allow)
+
+    async def toggle_mcp(self, name: str, enabled: bool) -> Any:
+        """Enables or disables one MCP server for this session."""
+        return await self._session_runtime.toggle_mcp(name, enabled)
+
+    def set_model(self, account: str, model: str, thinking: str = 'default') -> Any:
+        """Switches the session's model, through the engine's own refusal."""
+        return self._session_runtime.set_model(account, model, thinking)
+
+    def set_effort(self, thinking: str) -> Any:
+        """Sets the reasoning level of the active model, effective on the next step."""
+        return self._session_runtime.set_effort(thinking)
+
+    def select_agent(self, name: str) -> AgentProfile:
+        """Activates an agent profile for the next turn."""
+        return self._session_runtime.select_agent(name)
+
+    def rollback_points(self) -> list[Checkpoint]:
+        """The turns the open session can return to, newest first."""
+        return self._session_runtime.rollback_points()
+
+    def rollback(self, turn_id: str, *, files: bool = True) -> RollbackOutcome:
+        """Puts the session back to before ``turn_id``, rows included."""
+        return self._session_runtime.rollback(turn_id, files=files)
+
+    def fork(self, turn_id: str) -> ForkOutcome:
+        """Branches a new session at the instant before ``turn_id``."""
+        return self._session_runtime.fork(turn_id)
+
+    def create_worktree(self, name: str) -> Any:
+        """Cuts a worktree and moves the service into it, like `/new --worktree`."""
+        return self._session_runtime.create_worktree(name)
+
+    def refuse_while_busy(self, action: str) -> None:
+        """The busy refusal, for a route that must answer before slow work."""
+        self._session_runtime.refuse_while_busy(action)
+
+    def adopt_model(self, snapshot: Any) -> None:
+        """Applies a model change the engine already made and republishes the shell."""
+        self._session_runtime.adopt_model(snapshot)
+
+    def model_defaults(self) -> ModelDefaultsState:
+        """What the two config files say about default models, per file."""
+        return self._session_runtime.model_defaults()
+
+    def save_model_default(
+        self, target: str | None, config: AgentModelConfig | None, scope: ConfigScope
+    ) -> ModelDefaultsState:
+        """Writes one default and answers with the state the write left behind."""
+        return self._session_runtime.save_model_default(target, config, scope)
 
     def switch_workspace(self, root: str) -> dict[str, Any]:
-        """Moves the server to another workspace and opens its last session.
-
-        Refused mid-turn: `os.chdir` while a tool is running would make the tool read
-        a different tree than the one it started in.
-        """
-        if self.busy:
-            raise RuntimeError('Cannot switch workspace while a turn is running.')
-        switch = self.composition.workspace_manager.switch(root)
-        self.composition.root = switch.workspace.root
-        store = self.composition.store
-        session = store.load_last() or store.draft_session()
-        self.composition.bind_session(session)
-        self.composition.rebuild_agent()
-        self.hub.publish_state('workspace')
-        return {'root': str(switch.workspace.root), 'label': switch.workspace.label, 'changed': switch.changed}
+        """Moves the service to another workspace and starts an empty conversation."""
+        self.refuse_while_busy('switch workspace')
+        previous = self.session.cwd
+        owner = self.create_resident(self._session_runtime, root)
+        self._select_default(owner)
+        workspace = owner.composition.workspace_manager.current()
+        return {'root': str(workspace.root), 'label': workspace.label, 'changed': previous != owner.session.cwd}
 
     def new_session(self) -> Any:
         """Starts an empty conversation in the current workspace."""
-        if self.busy:
-            raise RuntimeError('Cannot start a session while a turn is running.')
-        session = self.composition.store.draft_session()
-        session.agent = self.composition.agent_registry.active_name
-        # Binding resolves and records the model: the agent's own, then
-        # `default_model`, then the last one used. A model chosen later belongs to
-        # this session only.
-        self.composition.bind_session(session)
-        session.selection = session.selection or self.composition.model_service.snapshot().selection
-        self.hub.publish_state('session')
-        return session
+        self.refuse_while_busy('start a session')
+        owner = self.create_resident(self._session_runtime)
+        self._select_default(owner)
+        return owner.session
 
     def open_session(self, session_id: str) -> Any:
         """Opens an existing conversation, wherever its workspace is."""
-        if self.busy:
-            raise RuntimeError('Cannot switch session while a turn is running.')
-        target = self.composition.store.load(session_id)
-        if target is None:
-            raise LookupError(f'No session {session_id}.')
-        if target.cwd != self.composition.store.cwd:
-            self.composition.workspace_manager.switch(target.cwd)
-            self.composition.root = target.cwd
-        self.composition.bind_session(target)
-        self.hub.publish_state('session')
-        return target
-
-    def close(self) -> None:
-        self.composition.question_hub.set_asker(None)
-        self.composition.tool_logger.remove_sink(self._on_tool_event)
-        self.composition.close()
+        self.refuse_while_busy('open another session')
+        owner = self.load_resident(session_id)
+        self._select_default(owner)
+        return owner.session
 
 
-def _jsonable(value: Any) -> Any:
-    """Tool arguments as JSON, with bytes summarized instead of base64'd."""
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    if isinstance(value, bytes):
-        return f'<{len(value)} bytes>'
-    if isinstance(value, dict):
-        return {str(key): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_jsonable(item) for item in value]
-    return str(value)[:PREVIEW_CHARS]
-
-
-__all__ = ['CHECKPOINT_INTERVAL', 'PREVIEW_CHARS', 'PendingQuestion', 'ServerRuntime']
+__all__ = [
+    'CHECKPOINT_INTERVAL',
+    'DEFAULT_IDLE_GRACE',
+    'IDLE_POLL_INTERVAL',
+    'MAX_IMAGES',
+    'PREVIEW_CHARS',
+    'QUESTION_TIMEOUT_ENV',
+    'QUESTION_TIMEOUT_SECONDS',
+    'QUEUE_POLL_INTERVAL',
+    'SLOW_TURN_NOTICE_SECONDS',
+    'WAKE_PROMPT',
+    'IncomingImage',
+    'PendingQuestion',
+    'ServerRuntime',
+    'decode_images',
+    'resolve_question_timeout',
+]

@@ -1,0 +1,39 @@
+version: 1
+contract: session-event-hub-v2
+subtask_result: accepted
+parent_feature: active
+qa_worker: 53e0dfa2
+qa_verdict: PASS
+recommendation: APPROVE
+lead_adjudication: Accepted within the two-file EventHub foundation only; no end-to-end concurrency claim.
+source_paths: [src/server/events.py, tests/test_server_events.py]
+published_spec: specs/features/application/session_events.feature
+checks_repeated_by_qa:
+  focused: 13 passed in 0.08s
+  regression: 291 passed in 86.48s
+  full: 2778 passed, 1 skipped, 1 pre-existing warning in 57.48s; eight pytest-xdist workers.
+  lint: Ruff passed
+  format: Ruff check passed, 530 files
+  diff: git diff --check passed
+  validator: Non-passing pilot; four pre-existing class-layout convention findings in events.py, no findings in new methods.
+skills_verified:
+  developer: [clean-code, clean-python, clean-architecture]
+  qa: [clean-code, clean-python, clean-architecture]
+acceptance:
+  - Six unit scenarios covered by thirteen tests using real queues.
+  - Exact wire bytes and key ordering preserved through real publish entry point.
+  - owner_session_id publication metadata never consumes payload session_id.
+  - Matching shared by live and replay; global sequence gaps preserved.
+  - Foreign traffic filtered before enqueue; overflow markers stay subscriber-local and outside global replay.
+  - Cleanup and legacy internal unfiltered observers retained.
+nonblocking_notes:
+  - _deliver is slightly above clean-code size guidance but one responsibility.
+  - Raced second QueueFull cleanup branch is untested, as was the original branch; inspection confirmed unsubscribe fix.
+  - Original broad skill-assignment artifact is prior work; this task's exact versioned contract governs worker assignment.
+remaining:
+  - Runtime event ownership capture and explicit producer migration.
+  - Required session selector on /events including valid active drafts.
+  - Joint TUI and web subscription identity, reconnect and transition readiness migration.
+  - Workspace context, runtime extraction, concurrent consumers and all other request routing.
+preservation: QA found only the two authorized implementation paths attributable to this task; all prior user/profile work preserved.
+external_effects: No commit, push, deployment or live service restart performed.

@@ -1,0 +1,25 @@
+version: 1
+feature: 00006-multi-session-service
+phase: session-runtime-extraction-v1
+state: awaiting_plan_approval
+completed:
+  - EventHub foundation accepted and committed at 046badd.
+  - Execution workspace slice accepted by core and docs QA; merged scenarios published in original session_isolation_foundation.feature.
+current:
+  research_worker: 5524780c
+  research_result: CONTINUE
+  evidence: Full runtime state/method/caller/lifecycle inventory plus exact facade signatures and private fixture/patch seam follow-up.
+  proposed_plan: session-runtime-plan.yaml
+  draft_feature: session-runtime.feature
+next:
+  - Present human plan and obtain approval for one-session extraction before source writes.
+  - Delegate one bounded developer task with exact allowlist, then independent QA.
+  - Preserve unchanged public API and mechanical assertion-equivalent fixture adaptations.
+memory_continuity:
+  backend: available
+  warning: Active shared Mind checkpoint was updated by a separate core-performance task; its goal must not be overwritten or adopted by feature00006.
+  source_of_truth: This local feature package and feature-specific durable memory records.
+remaining_after_extraction:
+  - Multiple session runtimes/consumers and background report lifetime isolation.
+  - Required session selector on HTTP events and client/API session addressing.
+  - Idle session release and full concurrency verification/documentation.

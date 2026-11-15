@@ -1,0 +1,64 @@
+version: 1
+status: approved
+objective: >-
+  Wire the terminal to the local service so one process owns execution and the terminal
+  attaches to it, without losing any visible terminal feature.
+approval_basis: >-
+  The user asked to wire the terminal to the service. The prior increment left the endpoint
+  and token in place; this plan adds discovery, idle shutdown, the missing contracts and the
+  terminal client, in that order, because the terminal cannot attach to something it cannot
+  find and cannot drop features that have no server contract.
+reference: .pas/state/archived/00001-shared-session-events/local-service-plan.yaml
+user_decisions:
+  - The terminal becomes a client and launches the service when no live one is available.
+  - Several terminals share one service; only one runner wins and the rest attach.
+  - The service outlives a terminal while active work exists and stops when that work ends.
+  - No interactive per-tool approvals; declarative profile permissions stay.
+agent_decisions:
+  - Discovery reads the endpoint file, then proves liveness with a bounded health request before trusting it; a stale file is ignored and the launcher competes for the ownership lock.
+  - The ownership lock is the only arbiter of the spawn race; a loser waits for publication with a bounded deadline and reports a typed outcome instead of a raw error.
+  - The engine is composed only after the lock is held, so losing candidates never pay that cost.
+  - Active work means a running turn or any non-terminal queue row in the whole database. Connected event subscribers do not count.
+  - Idle shutdown never interrupts rows; interrupting stays reserved for crash reconciliation.
+  - Parity contracts are added in two batches before the terminal is rewired, each with response-shape tests against the views module.
+  - The terminal keeps its widgets; only the source of events and commands changes. Question answering, steering, stop, images and rollback keep their current behaviour.
+slices:
+  - id: service-launcher-v1
+    objective: Discover a live service or launch exactly one, from any client.
+    paths: [src/server/launch.py, src/server/endpoint.py, src/server/cli.py, src/main.py, docs/architecture.md, tests/test_server_launch.py]
+    acceptance: a stale endpoint is ignored; two real processes never start two services; the loser attaches; a winner dying before publication yields a typed error rather than a hang; no test bypasses the ownership lock.
+  - id: service-launcher-v1-paths-note
+    objective: Record the paths the launcher actually needed, without new work.
+    paths: []
+    acceptance: documented only; the launcher cut is approved and closed.
+    resolved_paths: [src/server/launch.py, src/server/endpoint.py, src/server/cli.py, src/server/ownership.py, src/server/runtime.py, docs/architecture.md, tests/test_server_launch.py, tests/test_server_runtime.py]
+  - id: service-idle-v1
+    objective: Stop the service when no work remains anywhere, without interrupting rows.
+    paths: [src/engine/storage/accepted_inputs.py, src/server/runtime.py, src/server/app.py, src/server/cli.py, docs/architecture.md, tests/test_server_runtime.py]
+    acceptance: no shutdown during a turn; none while any non-terminal row exists in any session; graceful stop after the grace window leaves rows untouched; crash reconciliation still marks interrupted.
+  - id: parity-core-v1
+    objective: Expose model, effort and agent selection, rollback and fork, with shape tests.
+    paths: [src/server/app.py, src/server/runtime.py, src/server/views.py, docs/architecture.md, tests/test_server_runtime.py, tests/test_server_parity.py]
+    acceptance: each command changes the same state the terminal changes today, is rejected while busy where the in-process path rejects it, and its response shape matches the view projection.
+  - id: parity-extra-v1
+    objective: Expose tree actions, subagent transcript, mcp toggle, external files, context, debug and themes.
+    paths: [src/server/app.py, src/server/runtime.py, src/server/views.py, docs/architecture.md, tests/test_server_runtime.py, tests/test_server_parity.py]
+    acceptance: same state changes and same rejections as the in-process paths; tree actions covered including stop and background.
+  - id: tui-attach-v1
+    objective: Run the terminal against the service for execution, streaming and commands.
+    paths: [src/sigil.py, src/main.py, src/ui/app.py, src/ui/turn_mixin.py, src/ui/provider_mixin.py, src/ui/tree_mixin.py, src/ui/rollback_mixin.py, src/ui/commands_mixin.py, docs/architecture.md, tests/test_ui_client.py]
+    acceptance: the terminal attaches to a running service and launches one when missing; streams deltas, tools and questions; steering, stop, images and rollback keep working; no terminal composes an engine for execution.
+verification:
+  full: uv run pytest -q -p no:sugar -n 8
+  lint: uv run ruff check src tests and ruff format --check
+  web: npm --prefix web test and typecheck when web files change
+  diff: git diff --check plus untracked inspection
+  processes: launcher and ownership proofs use real child processes
+risks:
+  - A terminal that keeps an in-process fallback would create two executors on one session; the fallback must be removed, not hidden.
+  - Question answering without timeout can pin a turn when a client disappears; the terminal slice must not make that worse.
+  - The terminal migration touches five mixins and dozens of app-mounting tests; it goes last.
+limitations:
+  - One service per data directory, because the ownership lock covers the database.
+  - No cross-machine discovery.
+  - No interactive tool approvals.

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 from src.engine.shell.limits import DEFAULT_TIMEOUT
 from src.engine.shell.models.run_tool_output import RunToolOutput
 from src.engine.shell.runner import execute_commands
+from src.engine.shell.running import RunningCommands
 from src.engine.tooling.catalog import ToolCatalog
 from src.engine.tooling.compaction_policies import RUN_COMPACTOR
 from src.engine.tooling.logging import ToolLogger
@@ -63,7 +65,14 @@ def _last_line(text: str | None) -> str | None:
     return None
 
 
-def register_shell_tools(agent: Any, logger: ToolLogger | None = None, catalog: ToolCatalog | None = None) -> None:
+def register_shell_tools(
+    agent: Any,
+    logger: ToolLogger | None = None,
+    catalog: ToolCatalog | None = None,
+    *,
+    root: Callable[[], Path] | None = None,
+    owner: RunningCommands | None = None,
+) -> None:
     """Registers the shell tool on a pydantic-ai agent."""
     tools = ToolRegistrar(agent, logger, catalog)
 
@@ -86,4 +95,6 @@ def register_shell_tools(agent: Any, logger: ToolLogger | None = None, catalog: 
             timeout_seconds: Execution timeout in seconds (1-120), applied
                 to each command individually.
         """
-        return await execute_commands(cmds, timeout_seconds)
+        if root is None and owner is None:
+            return await execute_commands(cmds, timeout_seconds)
+        return await execute_commands(cmds, timeout_seconds, cwd=root() if root is not None else None, owner=owner)

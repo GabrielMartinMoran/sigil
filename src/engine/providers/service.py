@@ -17,7 +17,7 @@ Nothing here touches the UI, and nothing here reads the environment.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 from pydantic_ai.models import Model
@@ -80,6 +80,7 @@ class ModelService:
     probe: CredentialProbe | None = None
     is_busy: IsBusy = field(default=lambda: False)
     _probe_results: dict[str, ProbeResult] = field(default_factory=dict, init=False, repr=False)
+    on_window: Callable[[int], None] | None = None
 
     # --- accounts ----------------------------------------------------------
 
@@ -226,7 +227,24 @@ class ModelService:
         resolver that knows a plan account renews its token. Here it is only the
         credential and the call.
         """
-        return await self.catalog.models(account, secret=self._api_key_for(account))
+        catalog = await self.catalog.models(account, secret=self._api_key_for(account))
+        if catalog.source == 'remote' and not catalog.error:
+            self.state.remember_windows(
+                account.id, {model.name: model.context_window for model in catalog.models if model.context_window}
+            )
+        windows = self.state.model_windows(account.id)
+        selection = self.state.last_selection()
+        if selection is not None and selection.account_id == account.id and self.on_window is not None:
+            window = windows.get(selection.model)
+            if window is not None:
+                self.on_window(window)
+        return replace(
+            catalog,
+            models=tuple(
+                replace(model, context_window=model.context_window or windows.get(model.name))
+                for model in catalog.models
+            ),
+        )
 
     def select(
         self,
@@ -250,11 +268,21 @@ class ModelService:
             raise BusyError()
 
         choice = _parse_thinking(thinking)
+        previous = self.state.last_selection()
+        if (
+            previous is not None
+            and previous.window
+            and previous.model not in self.state.model_windows(previous.account_id)
+        ):
+            self.state.remember_windows(previous.account_id, {previous.model: previous.window})
         capability = self._capability_for(account, model)
         cached = self.catalog.cached(account)
         if known is not None and (cached is None or cached.find(model) is None) and fallback_capability(model) is None:
             capability = ModelCapability(
-                name=model, context_window=known.window, efforts=known.efforts, supports_images=known.images
+                name=model,
+                context_window=capability.context_window or known.window,
+                efforts=known.efforts,
+                supports_images=known.images,
             )
         selection = Selection(
             account_id=account.id,
@@ -334,6 +362,10 @@ class ModelService:
                 efforts=selection.efforts,
                 supports_images=selection.images,
             )
+        if capability.context_window is None:
+            capability = replace(
+                capability, context_window=self.state.model_windows(account.id).get(selection.model) or selection.window
+            )
         notice = None
         if fetched is not None and fetched.error:
             notice = f'The model list could not be refreshed ({fetched.error}); the menu is shortened.'
@@ -403,9 +435,9 @@ class ModelService:
         budget the first turn of a cold start.
         """
         selection = self.state.last_selection()
-        if selection is None or selection.window is None:
+        if selection is None:
             return None
-        return selection.window
+        return self.state.model_windows(selection.account_id).get(selection.model) or selection.window
 
     def apply(self, selection: Selection) -> ModelSnapshot:
         """Points the router at ``selection`` without touching the stored state.
@@ -498,24 +530,33 @@ class ModelService:
         fetched = self.catalog.cached(account)
         found = fetched.find(model) if fetched is not None else None
         if found is not None:
-            return found
+            selection = self.state.last_selection()
+            previous = (
+                selection.window
+                if selection and selection.account_id == account.id and selection.model == model
+                else None
+            )
+            return replace(
+                found,
+                context_window=found.context_window or self.state.model_windows(account.id).get(model) or previous,
+            )
         # Nothing fetched: the static table may still know this model, and its
         # efforts are about to be persisted, so a guess of "none" would stick.
         static = fallback_capability(model)
         if static is not None:
-            return static
+            return replace(
+                static, context_window=self.state.model_windows(account.id).get(model) or static.context_window
+            )
         selection = self.state.last_selection()
         if selection is not None and selection.account_id == account.id and selection.model == model:
             return ModelCapability(
                 name=model,
-                context_window=selection.window,
+                context_window=self.state.model_windows(account.id).get(model) or selection.window,
                 efforts=selection.efforts,
                 supports_images=selection.images,
             )
-        # A model no catalogue has described (Go, free text, cold cache) is allowed
-        # with unknown capabilities: refusing it would make a valid model unusable
-        # just because a list could not be fetched.
-        return ModelCapability(name=model)
+        # A model no catalogue has described remains usable with unknown capabilities.
+        return ModelCapability(name=model, context_window=self.state.model_windows(account.id).get(model))
 
     def _save(self, accounts: list[ProviderAccount]) -> None:
         try:

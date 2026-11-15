@@ -1,0 +1,139 @@
+version: 1
+prerequisite_result: complete
+approval_note: User explicitly requested "Implementa" after the research and UI choices.
+parent: .pas/state/active/00006-multi-session-service/plan.yaml
+phase: agent-profile-prerequisite
+gherkin:
+  draft: .pas/state/active/00006-multi-session-service/agent-profiles.feature
+  publish_on_done: specs/features/application/agent_profiles.feature
+  owner: PAS Lead only; workers consume drafts read-only.
+  existing_paths_preserved: true
+objective: Restore the effective session profile and expose authoritative profile selection in TUI and web.
+authorization:
+  implementation: granted
+  boundary: Single-use approval covers only the four tasks below, not unspecified multi-session edits.
+  following_phase: Retain the six parent slices in order; complete their exact contracts before implementation.
+user_decisions:
+  - Incorporate this prerequisite in active feature 00006 and then continue multi-session work.
+  - Missing or nonselectable saved profile falls back to a valid default and persists its replacement.
+  - TUI and web show and allow changing the effective profile.
+  - Web selector lives in the header and shows name, description and origin, not permissions.
+agent_decisions:
+  - Use the existing default policy (selectable wizard, then first selectable); never inherit an arbitrary previously active profile.
+  - Keep legacy empty profile values unchanged unless a fallback or explicit choice is made; UI always projects the effective registry profile.
+  - Reuse ToolPermissions.describe() in a permissions string in agent_view, without changing wording.
+  - Introduce a display-only picker row rather than fabricate AgentProfile filesystem paths for server projections.
+  - Preserve the existing web palette, typography and button idioms; compact header control opens a collapsible list panel, not a new modal system.
+  - Filter selectable profiles by role agent; keep the existing POST reply shape and busy refusal.
+  - Successful selection applies on the next turn without restart; refresh authoritative state after success, do not claim optimistic success on errors.
+  - Use no new packages. Unit tests cover formatting/filtering; integration tests cover API/store and TUI input wiring. Browser visual and keyboard review supplements these checks.
+  - Preserve session model overrides on bind; explicit profile selection retains the existing model-change behavior.
+  - Do not modify discovery precedence; prove project-over-global and global retention using isolated temporary roots.
+excluded:
+  - Reimplementing permission matching or changing the default permission policy.
+  - Showing permission summaries in the web UI.
+  - Model or test-toolchain configuration changes and new test dependencies.
+  - Changes to unrelated user edits, global agent files, secrets or external services.
+  - Running six parent multi-session slices under these incomplete task contracts.
+skill_contract: .pas/state/active/00006-multi-session-service/skill-assignment.yaml
+assigned_skills: &skills [clean-code, clean-python, cognitive-writing, docs-writer, frontend-design]
+checks:
+  python_full: uv run pytest -q -p no:sugar -n 8
+  lint: uv run ruff check src tests
+  format: uv run ruff format --check src tests
+  web: [npm run test, npm run typecheck, npm run lint, npm run format:check, npm run build]
+  web_directory: web
+  additional: Apply clean-python testing guidance and report validator pilot availability/results without toolchain changes.
+common_task_contract:
+  worker: Wizard
+  verifier: Wizard self-review; no independent QA
+  assigned_skills: *skills
+  sequence: Direct implementation and verification under the active Wizard profile; no delegation.
+  escalation: Stop before any path outside the allowlist, behavior change, unknown constructor boundary, or unrelated failing baseline. No scope expansion.
+  verification: Report raw Red/Green commands, final diff, full-suite results, skill application and existing user modifications preserved. Affected checks are repeated on the final tree.
+tasks:
+  - contract: profile-restore-v1
+    objective: Bind saved profile into the effective registry before tree/model/prompt/permission resolution.
+    paths:
+      - src/engine/bootstrap.py
+      - src/engine/agents/profile/registry.py
+      - tests/test_agents.py
+      - tests/test_session_isolation_foundation.py
+    acceptance: [saved-profile, invalid-profile, restored-permissions, profile-discovery]
+    levels:
+      unit: Registry validity and deterministic default selection.
+      integration: Real composition bind, session persistence/reopen, profile source, tree and concrete tool authorization; unit predicates cannot establish wiring.
+    red: Add regressions for binding a different valid profile, removed profile and subagent name; demonstrate the prior stale-registry failure.
+    green: Align registry and session, persist fallback, bind tree to effective profile, preserve model override; deny a real patch_file targeting src after bind and allow an authorized temporary path.
+    refactor: Reuse existing registry selection logic; retain typed signatures and avoid rebuilding unrelated services.
+    focused: uv run pytest -q -p no:sugar tests/test_agents.py tests/test_session_isolation_foundation.py tests/test_agent_permissions.py
+    full_checks: [python_full, lint, format]
+    fixtures_at_risk: Temporary project profiles, composition/model fixtures, real tool permission tests; never use user home profiles.
+  - contract: authoritative-tui-profile-v1
+    objective: Project authoritative profile metadata and consume it in TUI selection and effective-profile display.
+    paths:
+      - src/server/views.py
+      - src/ui/agent_mixin.py
+      - src/ui/widgets/agent_picker_screen.py
+      - tests/test_server_parity.py
+      - tests/test_agent_ui.py
+      - tests/test_ui_client.py
+      - tests/test_ui_service_client.py
+    acceptance: [authoritative-tui, live-selection]
+    levels:
+      unit: Agent projection and display row conversion.
+      integration: HTTP selection/refusal, attached TUI actual picker input and refresh; helper-only tests cannot establish input routing.
+    red: Assert projected permission text, divergent client/server profiles including server-only names, effective current marker and local invalid-saved-profile fallback.
+    green: Feed display-only rows from server projection, preserve local picker behavior, take current name from effective server agent and keep local bind semantics consistent with valid-default fallback.
+    refactor: Remove client-local metadata inference on attached path; preserve notice and permission summary wording.
+    focused: uv run pytest -q -p no:sugar tests/test_server_parity.py tests/test_agent_ui.py tests/test_ui_client.py tests/test_ui_service_client.py
+    full_checks: [python_full, lint, format]
+    fixtures_at_risk: Local AgentProfile picker rows, attached client state payloads and server agent projections.
+  - contract: web-profile-selector-v1
+    objective: Show effective profile in header and select a service-offered root profile without restart.
+    paths:
+      - web/src/types.ts
+      - web/src/api.ts
+      - web/src/store.ts
+      - web/src/App.tsx
+      - web/src/AgentPicker.tsx
+      - web/src/agentPresentation.ts
+      - web/src/agentPresentation.test.ts
+      - web/src/agentSelection.test.ts
+      - web/dist/
+    acceptance: [web-identification, live-selection]
+    levels:
+      unit: Selectable-role filtering, identification and empty-state formatting; no permission display.
+      integration: Store/API request, server refresh, busy/error paths and external state_changed refresh using existing Node test harness.
+    red: Tests for selected-profile display data, exclusion of subagents, empty catalog, request failure without false success, successful refresh and busy selection refusal.
+    green: Add typed selectAgent route/action, header control and accessible collapsible button list; server metadata only, identification without permissions, disable during busy/pending, preserve state on failed request and show actionable error.
+    refactor: Reuse existing tokens/row idioms; small pure presentation helper, no dependency or global CSS changes.
+    full_checks: [python_full, lint, format, web]
+    fixtures_at_risk: Existing web store/state test fixtures and server bundle freshness checks; run existing Node tests as well as new tests.
+    browser_review:
+      owner: QA when an existing browser environment is available; otherwise the user.
+      procedure: Open desktop and 320px viewport; use keyboard to expand and select, check focus and current marker, select another root profile, check server state and second client refresh, verify busy/failed selection cannot claim success, confirm no permission text.
+      limitation: Typecheck/build and Node tests do not prove rendered browser interaction. If unavailable, report browser review NOT_RUN and keep that acceptance pending, never claim full UI verification.
+  - contract: profile-contract-docs-v1
+    objective: Document the delivered profile authority and fallback contract without rewriting historical architecture proposals.
+    paths: [docs/agent-profiles.md]
+    acceptance: [documented-profile-contract]
+    levels:
+      contract: Content/link/diff consistency with implemented source and feature scenarios.
+    red: Identify absent current-runtime profile contract and distinguish historical target sections.
+    green: Add a concise clearly delimited current-runtime note for effective profile, fallback persistence, catalog roots, TUI/web selection and busy semantics; reference exact source and feature paths.
+    refactor: Avoid duplicating permission rules or presenting multi-session as already delivered; add owner/update metadata for the edited note.
+    full_checks: [content, relative-links, diff]
+risks:
+  - The broader runtime still has a service-global session until the parent multi-session phase; this prerequisite must not promise client session isolation prematurely.
+  - Profile restoration deliberately reinstates real permission restrictions; the effective restricted profile may refuse writes that were previously allowed by the incorrect default.
+  - Generated web assets change hashed filenames; the implementation rebuilds them and must preserve the source hash contract.
+  - Empty registry behavior remains the existing no-profile behavior, not a newly invented unrestricted profile.
+  - Browser review may need user execution because this repository has no component DOM test harness; no tests will be represented as browser proof.
+  - Existing user changes in server cli, launch tests and validator skill files must remain untouched.
+gates:
+  research: Passed for this prerequisite; one confirmed binding cause and exact UI integration evidence.
+  planning: Complete four bounded contracts; no unresolved product choices for this phase. Parent contracts are not yet execution-ready.
+  approval: Granted by explicit user request to implement.
+  result: Profile prerequisite complete; parent multi-session slices remain pending.
+  evidence: agent-profile-verification.md

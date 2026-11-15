@@ -43,7 +43,7 @@ from src.engine.sessions.session_store import SessionStore
 from src.engine.storage.blobs import ABANDONED, ROADMAP, Blobs
 from src.engine.storage.database import Database
 from src.engine.storage.executions import root_id_for
-from src.engine.storage.roadmap import plan_as_json, restore_plan_from_json
+from src.engine.storage.roadmap import delete_items, plan_as_json, restore_plan_from_json
 
 if TYPE_CHECKING:
     from pydantic_ai.messages import BinaryContent
@@ -568,7 +568,9 @@ class Rollback:
                     tuple(doomed),
                 ).rowcount
             # The plan of the root is restored from the checkpoint, not derived.
-            conn.execute('DELETE FROM roadmap_items WHERE execution_id = ?', (root,))
+            # Emptying it goes through the shared write path so its revision moves
+            # with every other cooperative write, without opening a nested transaction.
+            delete_items(self._db, root, conn=conn)
         return int(turns or 0), int(executions or 0), int(messages_before or 0)
 
     def _turn_starts_before(self, turn_id: str, boundary: int) -> bool:

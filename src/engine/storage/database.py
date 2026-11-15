@@ -29,7 +29,7 @@ DEFAULT_DATABASE_NAME = 'sigil.db'
 
 _PRAGMAS = (
     'PRAGMA journal_mode = WAL',
-    'PRAGMA synchronous = NORMAL',
+    'PRAGMA synchronous = FULL',
     'PRAGMA foreign_keys = ON',
     'PRAGMA busy_timeout = 5000',
     'PRAGMA temp_store = MEMORY',
@@ -43,6 +43,17 @@ MAX_INSTANCES = 8
 One is the app. Eight leaves room for a test that works on a few at once, and evicting
 the oldest is what keeps a long run from exhausting the process's descriptors.
 """
+
+
+def _execute_statements(conn: sqlite3.Connection, script: str) -> None:
+    statement = ''
+    for character in script:
+        statement += character
+        if character == ';' and sqlite3.complete_statement(statement):
+            conn.execute(statement)
+            statement = ''
+    if statement.strip():
+        raise ValueError('Incomplete schema statement')
 
 
 class Database:
@@ -65,9 +76,15 @@ class Database:
             check_same_thread=False,
         )
         self._connection.row_factory = sqlite3.Row
-        for pragma in _PRAGMAS:
-            self._connection.execute(pragma)
-        self._apply_schema()
+        try:
+            if int(self._connection.execute('PRAGMA user_version').fetchone()[0]) > USER_VERSION:
+                raise RuntimeError('Incompatible newer database schema')
+            for pragma in _PRAGMAS:
+                self._connection.execute(pragma)
+            self._apply_schema()
+        except BaseException:
+            self._connection.close()
+            raise
 
     # --- schema --------------------------------------------------------------
 
@@ -80,17 +97,19 @@ class Database:
         every column. A file that was written by an older Sigil carries its number and
         gets the steps it is missing, in order.
         """
-        with self._lock:
-            current = int(self._connection.execute('PRAGMA user_version').fetchone()[0])
+        with self.transaction() as conn:
+            current = int(conn.execute('PRAGMA user_version').fetchone()[0])
+            if current > USER_VERSION:
+                raise RuntimeError('Incompatible newer database schema')
             if current == USER_VERSION:
                 return
             if current > 0:
                 for version in range(current + 1, USER_VERSION + 1):
                     step = MIGRATIONS.get(version)
                     if step is not None:
-                        self._connection.executescript(step)
-            self._connection.executescript(SCHEMA)
-            self._connection.execute(f'PRAGMA user_version = {USER_VERSION}')
+                        _execute_statements(conn, step)
+            _execute_statements(conn, SCHEMA)
+            conn.execute(f'PRAGMA user_version = {USER_VERSION}')
 
     # --- access --------------------------------------------------------------
 

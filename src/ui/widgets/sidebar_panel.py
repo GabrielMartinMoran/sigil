@@ -35,6 +35,7 @@ from textual.containers import Vertical
 from textual.widgets import Static
 
 from src.engine.context.meter.cost import SessionCost
+from src.engine.roadmap.models.todo_item import TodoItem
 from src.engine.roadmap.store import RoadmapStore
 from src.ui.money_format import compact_usd
 from src.ui.palette import color
@@ -62,6 +63,14 @@ ROADMAP_STYLE = {
     'done': 'green strike',
 }
 ROADMAP_FALLBACK_ICON = '·'
+
+UNREPORTED = 'the service did not report it'
+"""What a section says when the projection does not carry it.
+
+`none yet`, `No tasks yet.` and `not configured` are claims about the session. A
+missing key supports none of them, and a zero would be worse: it reads as a
+measurement the service never made.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,10 +118,15 @@ class SidebarPanel(Vertical):
         self._store = store
         self._shown = True
         self._skills: tuple[str, ...] = ()
-        self._agent: str | None = None
+        self._subject: str | None = None
         self._servers: tuple[MCPServerState, ...] = ()
         self._mcp_known = False
+        self._mcp_reported = False
         self._model: ModelState | None = None
+        self._model_reported = True
+        self._skills_reported = True
+        self._roadmap: tuple[TodoItem, ...] | None = None
+        self._roadmap_reported = False
         self._context_state: ContextState | None = None
 
     def compose(self) -> ComposeResult:
@@ -161,8 +175,9 @@ class SidebarPanel(Vertical):
 
     # --- state --------------------------------------------------------------
 
-    def update_model(self, state: ModelState | None) -> None:
+    def update_model(self, state: ModelState | None, *, reported: bool = True) -> None:
         self._model = state
+        self._model_reported = reported
         self._repaint()
 
     def update_context(self, state: ContextState | None) -> None:
@@ -171,24 +186,50 @@ class SidebarPanel(Vertical):
         self._context_state = state
         self._repaint()
 
-    def update_skills(self, names: Sequence[str]) -> None:
+    def update_skills(self, names: Sequence[str], *, reported: bool = True) -> None:
         self._skills = tuple(names)
+        self._skills_reported = reported
         self._repaint()
 
-    def update_agent(self, label: str | None) -> None:
-        """Who the panel is describing: the session's agent, or a subagent.
+    def update_subject(self, subject: str | None) -> None:
+        """Who the sections below describe: the session, or the subagent on screen.
 
         It is the first line of the column on purpose. The rest of the panel looks
         the same for a parent and its child — same model, same window shape — so
         without this line a reader cannot tell whose context they are looking at.
+
+        ``None`` is the session on its own screen: the chat and the panel show the
+        same conversation, so a line saying so would only repeat the window title.
+        Attached, the service projects the model, the context, the skills and the
+        plan of the *session* and none of them per node, so reading a subagent says
+        ``session``: naming the node over numbers that are not its own would be the
+        panel claiming a measurement it does not have.
         """
-        self._agent = label
+        self._subject = subject
         self._repaint()
 
-    def update_mcp(self, servers: Sequence[MCPServerState]) -> None:
-        """MCP server state. With no servers, the section does not appear."""
+    def update_mcp(self, servers: Sequence[MCPServerState], *, reported: bool = True) -> None:
+        """MCP server state.
+
+        ``reported=False`` is the attached case where the projection carried no
+        MCP section: the panel names the gap instead of hiding it, because
+        hiding it would look the same as a service with no servers.
+        """
         self._servers = tuple(servers)
-        self._mcp_known = True
+        self._mcp_known = reported
+        self._mcp_reported = True
+        self._repaint()
+
+    def update_roadmap(self, items: Sequence[TodoItem] | None) -> None:
+        """The plan as the service projects it.
+
+        ``None`` means the projection carried no roadmap: the section says so.
+        An empty sequence is a real answer — the plan exists and has no tasks.
+        The local store is not consulted once the projection has spoken: it reads
+        the same file once, at construction, and never sees the service's writes.
+        """
+        self._roadmap = None if items is None else tuple(items)
+        self._roadmap_reported = True
         self._repaint()
 
     def refresh_palette(self) -> None:
@@ -234,8 +275,8 @@ class SidebarPanel(Vertical):
         text.append(f'{title}\n', style=f'bold {color(self, "sidebar-section")}')
 
     def _append_agent(self, text: Text) -> None:
-        """The agent the rest of the column describes."""
-        label = self._agent
+        """Who the rest of the column describes: the session, or the node on screen."""
+        label = self._subject
         if not label:
             return
         text.append('● ', style='bold yellow')
@@ -248,19 +289,22 @@ class SidebarPanel(Vertical):
         The context line lives here rather than in a section of its own because it
         is the same fact as the model: which window, and how much of it is gone.
         """
-        self._section(text, 'Model', first=not self._agent)
+        self._section(text, 'Model', first=not self._subject)
         state = self._model
-        if state is None or not state.alias:
+        if not self._model_reported:
+            text.append(f' unknown — {UNREPORTED}\n', style='dim')
+        elif state is None or not state.alias:
             text.append(' not configured — /provider\n', style='dim')
             return
-        text.append(' ', style='dim')
-        text.append(state.alias, style='cyan')
-        text.append(f' · {state.provider}\n', style='dim')
-        text.append(' ', style='dim')
-        text.append(state.model, style='bold')
-        text.append('\n')
-        text.append(' effort: ', style='dim')
-        text.append(f'{state.effort}\n', style='magenta')
+        else:
+            text.append(' ', style='dim')
+            text.append(state.alias, style='cyan')
+            text.append(f' · {state.provider}\n', style='dim')
+            text.append(' ', style='dim')
+            text.append(state.model, style='bold')
+            text.append('\n')
+            text.append(' effort: ', style='dim')
+            text.append(f'{state.effort}\n', style='magenta')
         self._append_context_line(text)
         self._append_cost_line(text)
 
@@ -291,6 +335,9 @@ class SidebarPanel(Vertical):
 
     def _append_skills(self, text: Text) -> None:
         self._section(text, 'Loaded skills')
+        if not self._skills_reported:
+            text.append(f' unknown — {UNREPORTED}\n', style='dim')
+            return
         if not self._skills:
             text.append(' none yet\n', style='dim')
             return
@@ -299,6 +346,10 @@ class SidebarPanel(Vertical):
             text.append(f'{name}\n')
 
     def _append_mcp(self, text: Text) -> None:
+        if self._mcp_reported and not self._mcp_known:
+            self._section(text, 'MCP')
+            text.append(f' unknown — {UNREPORTED}\n', style='dim')
+            return
         if not (self._mcp_known and self._servers):
             return
         ok = sum(1 for server in self._servers if server.ok)
@@ -324,13 +375,22 @@ class SidebarPanel(Vertical):
 
         It goes at the end on purpose: the model, the skills and the servers are
         what the agent is working with, and the plan is what it has done so far.
-        With no store there is no plan to show, and the section stays away instead
-        of announcing a feature this app was started without.
+        With no store and no projection there is no plan to show, and the section
+        stays away instead of announcing a feature this app was started without.
         """
-        if self._store is None:
+        if not self._roadmap_reported and self._store is None:
             return
         self._section(text, 'Roadmap')
-        items = self._store.snapshot()
+        if self._roadmap_reported:
+            if self._roadmap is None:
+                text.append(f' unknown — {UNREPORTED}\n', style='dim')
+                return
+            items: Sequence[TodoItem] = self._roadmap
+        else:
+            store = self._store
+            if store is None:  # pragma: no cover - guarded above
+                return
+            items = store.snapshot()
         if not items:
             text.append(' No tasks yet.\n', style='dim')
             return

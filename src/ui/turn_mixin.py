@@ -23,9 +23,11 @@ Three responsibilities share this file because they share one object: the run.
 
 from __future__ import annotations
 
+import base64
 import time
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import ProcessEventStream
@@ -46,19 +48,36 @@ from textual import work
 from textual.css.query import NoMatches
 from textual.widgets import Static
 
+from src.engine.agents.message_types import MessageTypes, origin
 from src.engine.agents.step_budget import StepBudget
+from src.engine.agents.tree.reports import report_view
+from src.engine.agents.turn_timing import TurnTimings
 from src.engine.attachments.content import user_content
 from src.engine.attachments.image_attachment import ImageAttachment
+from src.engine.files.paths import execution_workspace
 from src.engine.providers.domain.thinking import settings_value as thinking_settings
 from src.engine.sessions.recovery import recover_history
-from src.engine.shell import running as running_commands
 from src.ui.desktop_notifications import Attention
 from src.ui.messages import ChatNotice
+from src.ui.service_client import (
+    OutgoingImage,
+    PayloadTooLarge,
+    RequestRejected,
+    ServiceBusy,
+    ServiceClient,
+    ServiceClientError,
+    ServiceUnavailable,
+    TurnRequest,
+    Unauthorized,
+    UnexpectedResponse,
+)
 from src.ui.session_refresh import render_refreshed_session, session_view
-from src.ui.turn_timing import TurnTimings
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.status_bar import StatusBar
+
+if TYPE_CHECKING:
+    from src.engine.agents.rollback import Rollback
 
 CHECKPOINT_INTERVAL = 1.0
 """Minimum seconds between checkpoints during a turn (the final save is mandatory)."""
@@ -71,6 +90,92 @@ ABORT_HINT = 'Press Esc again to stop the agent.'
 
 STOPPING_HINT = 'Stopping the agent…'
 """What the status bar says between the confirmation and the run unwinding."""
+
+SERVICE_SEND_GROUP = 'service-send'
+"""Worker group of the request that hands one message to the service."""
+
+SERVICE_STOP_GROUP = 'service-stop'
+"""Worker group of the stop request."""
+
+
+def pending_request(previous: TurnRequest | None, text: str, images: tuple[OutgoingImage, ...]) -> TurnRequest:
+    """The request to put on the wire: the failed one again, or a new message.
+
+    The durable queue deduplicates by request id, so the id belongs to the content and
+    not to the attempt. Sending the same text and images after a refusal is the same
+    message and reuses its id; changing either is a different message and must not,
+    because one id for two bodies is a conflict the service refuses. The decision is
+    made here, once, and nothing on the server second-guesses it.
+    """
+    if previous is not None and previous.text == text and previous.images == images:
+        return previous
+    return TurnRequest(text=text, images=images)
+
+
+_BACK_IN_PROMPT = ' What you typed is back in the prompt.'
+"""Said once, so the sentences above can end with it without repeating themselves."""
+
+_BUSY_MARKERS = ('turn is running', 'turn is in progress', 'a turn is running')
+"""How the service words a busy refusal, lowercased.
+
+`/api/session/open` and `/api/rollback` answer `409` for other reasons too — a turn
+this session cannot reach, a session that does not exist. The marker is what tells
+those apart without matching a whole sentence that may be reworded.
+"""
+
+
+def _is_busy_reason(reason: str) -> bool:
+    """Whether a `409` sentence is the service saying a turn is in the way."""
+    text = reason.lower()
+    return any(marker in text for marker in _BUSY_MARKERS)
+
+
+def failure_notice(exc: ServiceClientError) -> str:
+    """What the screen says about a refusal: the reason, then the way out.
+
+    One function, because the difference between these failures is the whole reason
+    the client raises typed ones: a terminal that printed them all the same way would
+    have paid for the vocabulary and thrown it away. No sentence carries a traceback,
+    and none stops at the reason — a person who cannot act on the message has learned
+    nothing they can use.
+    """
+    if isinstance(exc, ServiceBusy):
+        reason = str(exc).strip()
+        if reason and not _is_busy_reason(reason):
+            # Not every `409` means a turn is in the way: the routes use it for
+            # anything the session cannot do *now*, including a turn it cannot
+            # reach. Saying "still working" over that sentence would be inventing
+            # a cause, so the server's own words are the answer.
+            return f'The service refused this: {reason}'
+        detail = f' The service said: {reason}' if reason else ''
+        return (
+            f'The agent is still working on this session.{detail} Wait for the turn to finish, or press Esc '
+            'twice to stop it. What you typed is back in the prompt.'
+        )
+    if isinstance(exc, Unauthorized):
+        return (
+            'The service refused this terminal: its run token is not the one this service published. '
+            'Restart Sigil so it attaches to the running service.'
+        )
+    if isinstance(exc, PayloadTooLarge):
+        return (
+            'That message is over the size the service accepts, images included. Remove an image or shorten '
+            'the text, and send it again.'
+        )
+    if isinstance(exc, RequestRejected):
+        return f'The service refused this message: {exc}'
+    if isinstance(exc, ServiceUnavailable):
+        if exc.launch_code == 'service_starting':
+            return 'The service is still starting. Try again in a moment.' + _BACK_IN_PROMPT
+        # The exception already opens with "No Sigil service answered at …": repeating
+        # it here read as two failures instead of one.
+        return f'{exc} Start it with `sigil server`, or check that it is still running.' + _BACK_IN_PROMPT
+    if isinstance(exc, UnexpectedResponse):
+        return (
+            'The service answered something this terminal cannot read. Restart Sigil; if it happens again, '
+            'the terminal and the service are different versions.'
+        )
+    return f'The service could not take this message: {exc}'
 
 
 @dataclass
@@ -107,6 +212,15 @@ class TurnMixin:
     It expects the app to define ``_agent``, ``_history``, ``_session``, ``_store``,
     ``_current_run``, ``_last_checkpoint_at``, ``_turn_active``, ``_turn_session``,
     ``_steering``, ``_abort_deadline`` and ``_abort_timer``.
+
+    **Two transports, one of them test-only.** When the terminal is attached to the
+    service, the turn belongs to that process: this mixin sends a message, paints
+    what the stream reports and asks the service to stop, and never iterates the
+    agent. The in-process path below is the seam the existing app tests mount
+    (`SigilApp(agent=..., store=...)`); `src/sigil.py` — the only production entry
+    point — cannot reach it, because attaching is the only thing it builds. Nothing
+    may grow here that both paths need: the moment a decision is duplicated is the
+    moment the two disagree.
     """
 
     _agent: Any
@@ -121,6 +235,10 @@ class TurnMixin:
     _steering: list[Steer]
     _abort_deadline: float | None
     _abort_timer: Any
+    _client: ServiceClient | None
+    _service_request: TurnRequest | None
+    _service_steers: list[Static]
+    _service_sent: set[str]
 
     def model_settings(self) -> dict[str, Any] | None:
         """Per-request settings: the reasoning level of the active model.
@@ -246,7 +364,7 @@ class TurnMixin:
             return
         self.run_worker(self._snapshot_workspace(rollback, session.id))
 
-    async def _snapshot_workspace(self, rollback, session_id: str) -> None:
+    async def _snapshot_workspace(self, rollback: Rollback, session_id: str) -> None:
         import asyncio
 
         try:
@@ -276,6 +394,9 @@ class TurnMixin:
         multimodal content, so ``[Image #1]`` in the text and the picture beside
         it arrive together in the request the agent reads next.
         """
+        if self._client is not None:
+            self.submit_to_service(text, attachments=attachments, widget=widget)
+            return
         entry = Steer(text=text, attachments=attachments, widget=widget)
         run = self._current_run
         if run is None:
@@ -383,7 +504,12 @@ class TurnMixin:
         self._abort_deadline = None
         self._stop_abort_timer()
         self._paint_status(STOPPING_HINT, style='yellow')
-        running_commands.kill_all()
+        if self._client is not None:
+            # The shell commands and the subagents are the service's: it stops what
+            # it started and reports when the turn is over.
+            self.stop_service_turn()
+            return
+        self._cancel_shell()
         # A subagent started by this turn has no reason to outlive it: `Esc` twice
         # means stop, and a background node still spending tokens is not stopped.
         self.stop_subagents()
@@ -406,6 +532,9 @@ class TurnMixin:
         until the event loop gets to it, and a message typed in between has to
         know that a turn is already on its way.
         """
+        if self._client is not None:
+            self.submit_to_service(text, attachments=attachments)
+            return
         if self._turn_active:
             self.steer(text, attachments=attachments)
             return
@@ -416,6 +545,91 @@ class TurnMixin:
         # ready, and the window title is repainted then.
         self.name_session(self._session, text)
         self.run_turn(text, attachments=attachments)
+
+    # --- the service ---------------------------------------------------------
+
+    def attached(self) -> bool:
+        """Whether the conversation runs in the service instead of this process."""
+        return self._client is not None
+
+    @work(group=SERVICE_SEND_GROUP)
+    async def submit_to_service(
+        self, text: str, *, attachments: tuple[ImageAttachment, ...] = (), widget: Static | None = None
+    ) -> None:
+        """Hands one message to the service, and keeps it if the service refuses.
+
+        One call for both a new turn and a steer: which of the two it is belongs to
+        the process that owns the queue, and a terminal that guessed would sooner or
+        later send a second turn into a running one.
+
+        A refusal never costs what was typed. The message goes back into the composer
+        with its images, in the same order, and the failure is one sentence that says
+        what to do — that is the whole of the error policy here.
+        """
+        images = tuple(
+            OutgoingImage(media_type=attachment.media_type, data=base64.b64encode(attachment.data).decode('ascii'))
+            for attachment in sorted(attachments, key=lambda item: item.number)
+        )
+        request = pending_request(self._service_request, text, images)
+        self._service_request = request
+        try:
+            await self._client.send_turn(request)
+        except ServiceClientError as exc:
+            await self.refuse_message(exc, request, attachments)
+            return
+        self._service_request = None
+        # This window wrote this row, and its line is already in the transcript as
+        # queued. The acceptance the service publishes for it must not be painted a
+        # second time by the queue overlay (`refresh_service_queue`).
+        self._service_sent.add(request.request_id)
+        if widget is not None:
+            # The service confirms it when the run reads it; until then the line says
+            # it is waiting.
+            self._service_steers.append(widget)
+        self._turn_active = True
+        self.set_activity(running=True, label='Thinking')
+
+    async def refuse_message(
+        self, exc: ServiceClientError, request: TurnRequest, attachments: tuple[ImageAttachment, ...]
+    ) -> None:
+        """One line about the refusal, and the message back where it was typed."""
+        message = failure_notice(exc)
+        await self.query_one(ChatLog).add_notice(f'✖ {message}', style='bold red')
+        self.notify(message, severity='error')
+        if not isinstance(exc, ServiceBusy):
+            # A busy service is still running a turn; anything else means nothing is.
+            self._turn_active = False
+            self.set_activity(running=False)
+        prompt = self.query_one(PromptInput)
+        prompt.restore([(request.text, attachments)])
+        prompt.focus()
+
+    @work(group=SERVICE_STOP_GROUP)
+    async def stop_service_turn(self) -> None:
+        """Asks the service to stop the turn at the next safe point.
+
+        The shell commands and the subagents belong to the service, so nothing here
+        kills them: the service decides what stopping means and says when it stopped.
+        """
+        try:
+            stopped = await self._client.abort()
+        except ServiceClientError as exc:
+            await self.query_one(ChatLog).add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            stopped = False
+        if not stopped:
+            # Nothing was running: the hint goes away instead of sitting there.
+            self._paint_status('')
+
+    def _execution_workspace(self) -> AbstractContextManager[Any]:
+        """Binds this turn's workspace for the whole run, or nothing when attached.
+
+        The root is read once, when the turn starts: a `/new` accepted while the
+        agent works changes the selection for the next turn, not for the tools
+        already running. An attached client has no local workspace manager — the
+        service resolves the root — so there is nothing to bind here.
+        """
+        root = self._workspace_root()
+        return nullcontext() if root is None else execution_workspace(root)
 
     @work(exclusive=True)
     async def run_turn(self, text: str, *, attachments: tuple[ImageAttachment, ...] = ()) -> None:
@@ -429,11 +643,21 @@ class TurnMixin:
         # conversation the user just loaded.
         session = self._session
         chat = self.query_one(ChatLog)
+        if self._meter.window is None:
+            await chat.add_notice(
+                'Context window is unknown; this request cannot be checked against the model limit.', style='yellow'
+            )
         # What a subagent sent while nothing was running: it travels with this
         # turn's prompt, before what the user typed, because it is the answer to
         # something the agent did earlier.
+        waiting = self._summoner.waiting() if self._summoner is not None else []
+        snapshots = [report_view(node) for node in waiting]
+        initial_origin = origin()
         pending = self._take_subagent_messages()
         if pending:
+            initial_origin = origin('subagent_report', reports=snapshots)
+            if not self._wake_pending:
+                initial_origin['user_text'] = text
             text = '\n\n'.join([*pending, text])
             if self._wake_pending:
                 # The turn exists because of these reports: the agent should not
@@ -497,23 +721,24 @@ class TurnMixin:
                     self._history = history
                 self._store.save_progress(session)
                 await chat.add_notice(recovery.notice, style='yellow')
-            async with self._agent.iter(
-                user_content(text, attachments),
-                message_history=history,
-                capabilities=[ProcessEventStream(handler=handler), budget],
-                model_settings=self.model_settings(),
-                usage_limits=UsageLimits(request_limit=None),
-            ) as run:
-                self._current_run = run
-                # A message typed while the run was being built has no id yet.
-                self._flush_steering(run)
-                async for _node in timings.trace(run):
-                    if Agent.is_model_request_node(_node):
-                        self.set_activity_label('Waiting for model')
-                    # Checkpoint per iteration: every completed node (model
-                    # response, tool batch) gets persisted.
-                    self.checkpoint()
-            history = run.all_messages()
+            with self._execution_workspace():
+                async with self._agent.iter(
+                    user_content(text, attachments),
+                    message_history=history,
+                    capabilities=[ProcessEventStream(handler=handler), budget, MessageTypes(initial=initial_origin)],
+                    model_settings=self.model_settings(),
+                    usage_limits=UsageLimits(request_limit=None),
+                ) as run:
+                    self._current_run = run
+                    # A message typed while the run was being built has no id yet.
+                    self._flush_steering(run)
+                    async for _node in timings.trace(run):
+                        if Agent.is_model_request_node(_node):
+                            self.set_activity_label('Waiting for model')
+                        # Checkpoint per iteration: every completed node (model
+                        # response, tool batch) gets persisted.
+                        self.checkpoint()
+                history = run.all_messages()
         except RunCancelled:
             attention = None
             # The user stopped the turn: cancelling an `ask_user` panel, or `Esc`
@@ -627,7 +852,7 @@ class TurnMixin:
             bar.clear()
 
 
-def _take_snapshot(rollback, session_id: str) -> None:
+def _take_snapshot(rollback: Rollback, session_id: str) -> None:
     """Takes the tree snapshot of the newest checkpoint of a session, if it has none."""
     database = rollback._db
     row = database.one(

@@ -1,0 +1,339 @@
+"""Tests for the debug view in the app: `alt+d` replaces the chat."""
+
+from __future__ import annotations
+
+import asyncio
+import tempfile
+from pathlib import Path
+
+import pytest
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
+
+from src.engine.context.capability import ContextViewCapability
+from src.engine.context.meter.context_meter import ContextMeter
+from src.engine.context.strategy.append_only import AppendOnlyStrategy
+from src.engine.sessions.session_store import SessionStore
+from src.ui.app import SigilApp
+from src.ui.widgets.chat_log import ChatLog
+from src.ui.widgets.debug_view import AgentDebugView, build_debug_body, build_debug_header
+from src.ui.widgets.prompt_input import PromptInput
+from tests.support.ui import wait_for_turn
+
+pytestmark = pytest.mark.usefixtures('memory_databases')
+
+
+def _make_app(tmp: str) -> SigilApp:
+    store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
+    session = store.create_session()
+    meter = ContextMeter(window=200_000)
+    capability = ContextViewCapability(strategy=AppendOnlyStrategy(), meter=meter)
+    agent = Agent(TestModel(custom_output_text='ok'), instructions='x')
+    return SigilApp(
+        agent=agent,
+        store=store,
+        session=session,
+        meter=meter,
+        context_capability=capability,
+    )
+
+
+def _header_text(app: SigilApp) -> str:
+    """Plain text of the fixed header of the view."""
+    return app.query_one(AgentDebugView)._header.render().plain
+
+
+def _report_text(app: SigilApp) -> str:
+    """The view body is painted as tables: to assert, the report is rendered."""
+    from src.engine.context.meter.debug_render import render_debug_report
+
+    report = app.query_one(AgentDebugView).last_report
+    assert report is not None
+    return render_debug_report(report)
+
+
+def _chat_text(app: SigilApp) -> str:
+    chat = app.query_one(ChatLog)
+    return '\n'.join(getattr(child.render(), 'plain', '') for child in chat.children if callable(child.render))
+
+
+def test_alt_d_replaces_chat_with_debug_view(monkeypatch):
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _make_app(tmp)
+            async with app.run_test() as pilot:
+                chat = app.query_one(ChatLog)
+                view = app.query_one(AgentDebugView)
+                assert view.display is False
+
+                await pilot.press('alt+d')
+
+                assert app.debug_visible is True
+                assert view.display is True
+                # Reemplaza: no conviven.
+                assert chat.display is False
+                # The input stays usable: you can prompt and watch the cost live.
+                assert app._turn_active is False
+
+                await pilot.press('alt+d')
+
+                assert app.debug_visible is False
+                assert view.display is False
+                assert chat.display is True
+                assert app._turn_active is False
+
+    asyncio.run(inner())
+
+
+def test_debug_view_renders_agent_side_sections(monkeypatch):
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _make_app(tmp)
+            async with app.run_test() as pilot:
+                app.query_one(PromptInput).value = 'hello'
+                await pilot.press('enter')
+                await wait_for_turn(app)
+
+                await pilot.press('alt+d')
+
+                header = _header_text(app)
+                assert 'DEBUG' in header
+                assert 'Context and cache' in header
+                assert 'log' in header and 'cache' in header
+
+                body = _report_text(app)
+                assert 'Fixed cost per request' in body
+                assert 'History composition' in body
+                assert 'hello' not in body
+                assert 'Prompt cache' in body
+
+    asyncio.run(inner())
+
+
+def test_debug_command_toggles_and_text_mode(monkeypatch):
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _make_app(tmp)
+            async with app.run_test() as pilot:
+                app.query_one(PromptInput).value = '/debug'
+                await pilot.press('enter')
+
+                assert app.debug_visible is True
+                assert app.query_one(AgentDebugView).display is True
+
+                # `--text` vuelca el reporte al chat.
+                await app.handle_command('/debug', '--text')
+                await pilot.pause()
+
+                assert 'Agent debug' in _chat_text(app)
+                assert app.debug_visible is True
+
+    asyncio.run(inner())
+
+
+def test_debug_command_rejects_bad_argument(monkeypatch):
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _make_app(tmp)
+            async with app.run_test() as pilot:
+                await app.handle_command('/debug', 'nonsense')
+                await pilot.pause()
+                assert 'Usage: /debug' in _chat_text(app)
+                assert app.debug_visible is False
+
+    asyncio.run(inner())
+
+
+def test_report_without_request_does_not_raise(monkeypatch):
+    """With no request run, the view paints anyway (no tool data)."""
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _make_app(tmp)
+            async with app.run_test() as pilot:
+                app.set_debug_visible(True)
+                await pilot.pause()
+                body = _report_text(app)
+                assert 'Fixed cost per request' in body
+                assert 'no usage reported yet' in body
+                assert 'History composition' in body
+                # The zeros for instructions/tools are not shown as if they
+                # were a measurement.
+                assert 'no request captured' in body
+
+    asyncio.run(inner())
+
+
+def test_refresh_is_coalesced_while_streaming(monkeypatch):
+    """Several refreshes in a burst produce a single repaint."""
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _make_app(tmp)
+            async with app.run_test() as pilot:
+                app.set_debug_visible(True)
+                await pilot.pause()
+
+                paints = 0
+                original = app._flush_debug
+
+                def counting_flush():
+                    nonlocal paints
+                    paints += 1
+                    original()
+
+                monkeypatch.setattr(app, '_flush_debug', counting_flush)
+
+                for _ in range(5):
+                    app.refresh_debug()
+                # A single timer for the whole burst.
+                assert app._debug_timer is not None
+                await pilot.pause(0.3)
+
+                assert paints == 1
+                assert app._debug_timer is None
+
+    asyncio.run(inner())
+
+
+def test_closing_cancels_a_pending_refresh(monkeypatch):
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _make_app(tmp)
+            async with app.run_test() as pilot:
+                app.set_debug_visible(True)
+                await pilot.pause()
+
+                app.refresh_debug()
+                assert app._debug_timer is not None
+
+                app.set_debug_visible(False)
+                await pilot.pause()
+                assert app._debug_timer is None
+                assert app._debug_pending is None
+
+    asyncio.run(inner())
+
+
+def test_header_and_body_are_plain_renderables():
+    """The widget builders are pure: they do not need a mounted app."""
+    from src.engine.context.meter.debug import build_debug_report
+    from src.engine.context.meter.request import snapshot_request
+
+    meter = ContextMeter(window=1_000)
+    report = build_debug_report([], snapshot=meter.snapshot([]), request=snapshot_request(None), model='m')
+    assert 'DEBUG' in build_debug_header(report).plain
+    assert build_debug_body(report) is not None
+
+
+def test_should_expose_real_turn_node_timings_in_debug_text() -> None:
+    async def scenario() -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _make_app(tmp)
+            async with app.run_test():
+                worker = app.run_turn('hello')
+                await worker.wait()
+                report = await app.show_debug_text()
+                assert 'Turn timing: total' in report
+                assert 'ModelRequestNode:' in report
+                assert 'first event' in report
+                assert 'outside nodes' in report
+                app.set_debug_visible(True)
+                app.refresh_debug(immediate=True)
+                view = app.query_one(AgentDebugView)
+                from tests.support.ui import render_text
+
+                assert 'Turn timing: total' not in render_text(view._body.content)
+                assert 'ModelRequestNode:' not in render_text(view._body.content)
+
+    asyncio.run(scenario())
+
+
+def test_rendered_debug_tables_do_not_contain_message_content():
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+    from src.engine.context.meter.debug import build_debug_report
+    from src.engine.context.meter.request import snapshot_request
+    from tests.support.ui import render_text
+
+    messages = [ModelRequest(parts=[UserPromptPart(content='private-debug-sentinel')])]
+    report = build_debug_report(messages, snapshot=ContextMeter().snapshot(messages), request=snapshot_request(None))
+    for width in (80, 120):
+        body = render_text(build_debug_body(report), width=width)
+        assert 'private-debug-sentinel' not in body
+        assert 'History composition' in body
+
+
+def test_dynamic_instruction_rows_are_highlighted_without_coloring_static_rows():
+    from src.engine.context.meter.debug import build_debug_report
+    from src.engine.context.meter.request import InstructionRow, RequestSnapshot
+    from src.ui.widgets.debug_view import _fixed_cost_table
+
+    report = build_debug_report(
+        [],
+        snapshot=ContextMeter().snapshot([]),
+        request=RequestSnapshot(
+            instructions=(
+                InstructionRow(name='stable', dynamic=False, tokens=20, preview=''),
+                InstructionRow(name='changing', dynamic=True, tokens=30, preview=''),
+            ),
+            captured=True,
+        ),
+    )
+    table = _fixed_cost_table(report)
+    assert table.rows[0].style is None
+    assert table.rows[1].style == '#ffaf5f'
+
+
+def test_debug_refresh_uses_live_history_instead_of_stale_session():
+    from pydantic_ai.messages import ModelResponse, TextPart
+    from pydantic_ai.usage import RequestUsage
+
+    class Run:
+        def all_messages(self):
+            return [ModelResponse(parts=[TextPart('ok')], usage=RequestUsage(input_tokens=100, output_tokens=10))]
+
+    async def inner():
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _make_app(tmp)
+            async with app.run_test() as pilot:
+                await pilot.press('alt+d')
+                app._current_run = Run()
+                app.refresh_debug(immediate=True)
+                assert app.query_one(AgentDebugView).last_report.cache.requests == 1
+                app._current_run = None
+
+    asyncio.run(inner())
+
+
+def test_should_roundtrip_content_free_report_without_losing_styled_tables() -> None:
+    from src.engine.context.meter.debug import build_debug_report
+    from src.engine.context.meter.debug_wire import DEBUG_REPORT_ADAPTER
+    from src.engine.context.meter.request import InstructionRow, RequestSnapshot
+    from tests.support.ui import render_text
+
+    report = build_debug_report(
+        [],
+        snapshot=ContextMeter(window=1_000).snapshot([]),
+        request=RequestSnapshot(instructions=(InstructionRow('changing', True, 30, ''),), captured=True),
+    )
+    decoded = DEBUG_REPORT_ADAPTER.validate_json(DEBUG_REPORT_ADAPTER.dump_json(report))
+    assert decoded == report
+    assert build_debug_header(decoded) == build_debug_header(report)
+    assert render_text(build_debug_body(decoded)) == render_text(build_debug_body(report))
+
+
+def test_should_dispatch_debug_events_without_requiring_a_mounted_chat() -> None:
+    from types import SimpleNamespace
+
+    from src.ui.service_client import ServiceEvent
+
+    refreshes: list[bool] = []
+    host = SimpleNamespace(refresh_debug=lambda: refreshes.append(True))
+    asyncio.run(SigilApp.apply_service_event(host, ServiceEvent(1, 'debug_changed', {})))
+    assert refreshes == [True]

@@ -1,0 +1,22 @@
+version: 1
+contract: session-event-hub-v1
+worker_id: 882b57c2
+verdict: BLOCKED
+recommendation: DO_NOT_CONTINUE
+reported_changes: [src/server/events.py, tests/test_server_events.py]
+initial_partial_work: None found; source unmodified and new test absent before implementation.
+reported_checks:
+  red: 11 failed due to absent ownership/filter API.
+  focused_green: 11 passed
+  baseline_regression: 291 passed
+  final_regression: 291 passed
+  full: 2776 passed, 1 skipped, 1 warning; exit 0, eight workers, 56.30 seconds.
+  lint: passed
+  format: passed, 530 files
+  diff: passed
+  validator: Exit 1, 3874 repository findings; four in existing module class layout conventions.
+blocker: New publish session_id keyword captures former payload field from existing turn_started and turn_finished producers; direct Event serialization tests failed to cover this argument-binding compatibility boundary.
+lead_adjudication: Accept evidence of progress, not completion. Amend internal keyword to owner_session_id and add publish-call byte regressions before independent QA.
+skills_applied: [clean-code, clean-python, clean-architecture]
+qa: NOT_RUN
+scope_preserved_per_worker: Only the two authorized files; no reset/stash/commit.

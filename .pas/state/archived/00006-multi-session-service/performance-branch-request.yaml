@@ -1,0 +1,23 @@
+version: 1
+request: integrate-performance-branch
+source_branch: perf/core-tools-agent-loop
+request_state: queued
+user_authorization: Bring the changes from perf/core-tools-agent-loop and adapt them to current behavior if necessary.
+workspace: /home/gabrielmoran/Git/sigil
+constraints:
+  - Preserve existing user work and accepted workspace execution isolation.
+  - Do not expand the currently running session-runtime-extraction-v1 worker contract.
+  - Inspect actual branch divergence and changes before choosing an integration strategy.
+  - Do not assume the branch is available, committed, already integrated or compatible without evidence.
+  - No reset, stash, force overwrite, push, deployment or service restart.
+sequence:
+  - Process the active developer result and independent extraction QA before starting another worker task.
+  - Research the performance branch and its overlap with the current tree.
+  - Record a bounded integration contract covering exact paths and any compatibility adaptations.
+  - Integrate through a developer and verify through independent QA.
+verification:
+  - Preserve tools and agent-loop behavioral contracts and session execution isolation.
+  - Run focused affected tests and the final complete Python suite with eight workers.
+  - Run configured lint, format and diff checks on the final tree.
+  - Claim a performance improvement only with comparable measurements; otherwise report functional integration only.
+completion: Not yet researched, integrated or verified.

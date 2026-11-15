@@ -13,8 +13,9 @@ does not. This module is the guard, and it is the only place that knows the reci
   run implicitly by the server: a first launch that installs 300 MB of packages is
   a surprise, and a network failure would look like a broken UI.
 
-The pre-commit hook (`scripts/pre-commit`) and `sigil server` both call this module,
-so the three entry points cannot disagree about what "fresh" means.
+The pre-commit hook (`scripts/pre-commit`) and `sigil serve` both call this module,
+so the three entry points cannot disagree about what "fresh" means. `sigil server`
+does not: the API has no bundle to be stale.
 """
 
 from __future__ import annotations

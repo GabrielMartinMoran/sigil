@@ -1,0 +1,33 @@
+version: 1
+status: verification
+scope: session-runtime-extraction-v1
+request: Continue remaining feature 6 work.
+bootstrap:
+  config_valid: true
+  memory: available
+  state_check_violations: 0
+  active: 1
+  max_active: 1
+recovery:
+  researcher: 699f135b
+  recommendation: CONTINUE
+  head: 9df4b38
+  tree: clean
+  extraction_present_commit: 51c1421
+  performance_merge_present_commit: 19ab6b3
+  stale_artifacts:
+    - performance-branch-request.yaml still says queued; Git proves merged.
+    - session-runtime-handoff.yaml predates approved plan.
+  missing_evidence:
+    - Extraction developer completion report.
+    - Independent extraction QA on current tree.
+research_gate: Passed for recovery and delegation of existing-contract QA only; no new implementation conclusions.
+skill_assignment:
+  available_skills: [archify, clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer, documentation-lookup, figma-generate-library, figma-use, find-skills, frontend-design, mind-management, prompt-optimizer, skill-creator, vanya]
+  required_by_role:
+    researcher: [clean-code, clean-python, clean-architecture]
+    developer: [clean-code, clean-python, clean-architecture, cognitive-writing, docs-writer]
+    qa: [clean-code, clean-python, clean-architecture, cognitive-writing, docs-writer]
+  missing_skills: [clean-backend-architecture]
+  critical_missing: []
+next: Read-only independent QA using session-runtime-plan.yaml; no implementation or duplicate branch integration.

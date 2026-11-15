@@ -19,9 +19,12 @@ from textual.css.query import NoMatches
 
 from src.engine.agents.profile.models.agent_not_found import AgentNotFound
 from src.engine.agents.profile.models.agent_profile import AgentProfile
+from src.engine.agents.profile.models.agent_role import AgentRole
 from src.engine.providers.domain.provider_error import ProviderError
 from src.ui.messages import ChatNotice
-from src.ui.widgets.agent_picker_screen import AgentChoice, AgentPickerScreen
+from src.ui.service_client import ServiceClient, ServiceClientError
+from src.ui.turn_mixin import failure_notice
+from src.ui.widgets.agent_picker_screen import AgentChoice, AgentPickerRow, AgentPickerScreen
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.status_bar import StatusBar
 
@@ -42,11 +45,20 @@ class AgentMixin:
 
     _agent_registry: Any
     _session: Any
+    _client: ServiceClient | None
 
     # --- the command -------------------------------------------------------
 
     async def show_agent(self, chat: ChatLog, argument: str = '') -> None:
-        """`/agent` opens the picker; `/agent <name>` switches directly."""
+        """`/agent` opens the picker; `/agent <name>` switches directly.
+
+        An attached terminal delegates the switch: which profile the session runs
+        under is the service's fact, and this process must not stamp it locally.
+        The picker stays here, and lists the profiles the service reports.
+        """
+        if self._client is not None:
+            await self._service_agent(self._client, chat, argument)
+            return
         registry = getattr(self, '_agent_registry', None)
         if registry is None:
             await chat.add_notice(NO_PROFILES_NOTICE, style='yellow')
@@ -67,6 +79,9 @@ class AgentMixin:
 
     async def open_agent(self) -> None:
         """The picker, from any context (`/agent` and `ctrl+a`)."""
+        if self._client is not None:
+            await self._service_agent(self._client, self.query_one(ChatLog), '')
+            return
         registry = getattr(self, '_agent_registry', None)
         if registry is None or not registry.agents():
             return
@@ -80,6 +95,51 @@ class AgentMixin:
         if choice is None:
             return
         self.apply_agent(choice.name, self.query_one(ChatLog))
+
+    async def _service_agent(self, client: ServiceClient, chat: ChatLog, argument: str) -> None:
+        """Switches the profile through the service and paints what it answered.
+
+        Nothing local is stamped: `session.agent` and the active name stay the
+        service's, so a second terminal that refreshes sees the same agent and
+        this one does not drift into a second truth.
+        """
+        try:
+            state = await client.state()
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        active = str((state.get('agent') or {}).get('name') or '')
+        name = argument.strip().lower()
+        if not name:
+            offered = self._offered_agents(state.get('agents') or [])
+            if not offered:
+                await chat.add_notice(NO_PROFILES_NOTICE, style='yellow')
+                return
+            choice = await self.push_screen_wait(AgentPickerScreen(offered, current=active))
+            if choice is None:
+                return
+            name = choice.name
+        try:
+            payload = await client.select_agent(name)
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        await self.refresh_service_state()
+        selected = str((payload.get('agent') or {}).get('name') or name)
+        await chat.add_notice(f'Agent: {selected.replace("-", " ").title()}', style='green')
+
+    def _offered_agents(self, rows: list[dict[str, Any]]) -> list[AgentPickerRow]:
+        """Paint server-owned metadata without consulting the client's filesystem."""
+        return [
+            AgentPickerRow(
+                name=str(row.get('name') or ''),
+                description=str(row.get('description') or ''),
+                source=str(row.get('source') or ''),
+                permissions=str(row.get('permissions') or ''),
+            )
+            for row in rows
+            if row.get('role') == str(AgentRole.AGENT)
+        ]
 
     # --- applying the choice -----------------------------------------------
 
@@ -110,11 +170,7 @@ class AgentMixin:
         registry = getattr(self, '_agent_registry', None)
         if registry is None:
             return
-        if name:
-            try:
-                registry.activate(name)
-            except AgentNotFound:
-                pass
+        registry.restore(name)
         self.remember_agent(registry.active)
 
     def remember_agent(self, profile: AgentProfile | None) -> None:
@@ -143,11 +199,18 @@ class AgentMixin:
         before mount), and its absence is not worth failing anything over.
         """
         profile = self.active_agent()
+        label = profile.label if profile is not None else ''
+        service = getattr(self, '_service_state', None)
+        if self._client is not None and isinstance(service, dict):
+            # The projection is the authority while attached: the local registry
+            # is a catalogue of files, not a statement about this session.
+            name = str((service.get('agent') or {}).get('name') or '')
+            label = name.replace('-', ' ').title() if name else ''
         try:
             bar = self.query_one(StatusBar)
         except NoMatches:
             return
-        bar.set_agent(profile.label if profile is not None else '')
+        bar.set_agent(label)
 
     def active_agent(self) -> AgentProfile | None:
         registry = getattr(self, '_agent_registry', None)

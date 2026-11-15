@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic_ai import Agent, RunContext
@@ -70,6 +71,7 @@ def create_agent(
     available_features: Callable[[], frozenset[str]] | None = None,
     node_blocks: Callable[[str | None], str] | None = None,
     allow_external_files: Callable[[], bool] | None = None,
+    root: Callable[[], Path] | None = None,
 ) -> Agent:
     """Builds the agent.
 
@@ -105,7 +107,7 @@ def create_agent(
         # previous profile's instructions have to stop travelling with the
         # conversation. It goes right after the base prompt, before everything
         # that describes the session.
-        capabilities.append(ToolPermissionsCapability(source=source))
+        capabilities.append(ToolPermissionsCapability(source=source, root=root))
 
     if node_blocks is not None:
         capabilities.append(AgentContextTail(node_blocks=node_blocks))

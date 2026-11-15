@@ -66,7 +66,9 @@ class MenuMixin:
         matches = match_commands(text)
         menu = self.query_one(CommandMenu)
         if matches:
-            menu.update_matches(matches)
+            # The menu cannot know this: whether a service owns the session is the
+            # app's fact, and it decides which rows carry the transport's mark.
+            menu.update_matches(matches, attached=self._client is not None)
             menu.display = True
             self.menu_visible = True
         else:

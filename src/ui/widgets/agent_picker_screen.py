@@ -31,6 +31,24 @@ class AgentChoice:
     name: str
 
 
+@dataclass(frozen=True, slots=True)
+class AgentPickerRow:
+    """Display data only: remote profiles do not imply local filesystem paths."""
+
+    name: str
+    description: str
+    source: str
+    permissions: str
+
+    @property
+    def label(self) -> str:
+        return self.name.replace('-', ' ').replace('_', ' ').title()
+
+    @classmethod
+    def from_profile(cls, profile: AgentProfile) -> AgentPickerRow:
+        return cls(profile.name, profile.description, profile.source, profile.permissions.describe())
+
+
 class AgentPickerScreen(ProviderModal):
     """Returns the chosen agent name, or ``None``."""
 
@@ -48,11 +66,11 @@ class AgentPickerScreen(ProviderModal):
         Binding('enter', 'choose', 'Choose', show=False, priority=True),
     ]
 
-    def __init__(self, profiles: Sequence[AgentProfile], *, current: str = '') -> None:
+    def __init__(self, profiles: Sequence[AgentProfile | AgentPickerRow], *, current: str = '') -> None:
         super().__init__()
-        self._profiles = list(profiles)
+        self._profiles = [AgentPickerRow.from_profile(p) if isinstance(p, AgentProfile) else p for p in profiles]
         self._current = current
-        self._visible: list[AgentProfile] = []
+        self._visible: list[AgentPickerRow] = []
 
     def compose_body(self) -> ComposeResult:
         yield Static('', id='agent-status')
@@ -133,12 +151,12 @@ class AgentPickerScreen(ProviderModal):
         self.dismiss(None)
 
 
-def _row(profile: AgentProfile, *, current: str) -> str:
+def _row(profile: AgentPickerRow, *, current: str) -> str:
     marker = '[green]●[/green] ' if profile.name == current else '  '
     origin = {'builtin': 'built-in', 'project': 'project', 'global': 'global'}.get(profile.source, profile.source)
     description = ' '.join(profile.description.split())
     return (
         f'{marker}[bold]{profile.label}[/bold] [dim]{profile.name} · {origin}[/dim]\n'
         f'    [dim]{description}[/dim]\n'
-        f'    [dim]{profile.permissions.describe()}[/dim]'
+        f'    [dim]{profile.permissions}[/dim]'
     )

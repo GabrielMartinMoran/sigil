@@ -79,7 +79,7 @@ class Rule:
             return True
         return fnmatchcase(tool_name, self.scope)
 
-    def matches_resource(self, values: tuple[str, ...], kind: ResourceKind) -> bool:
+    def matches_resource(self, values: tuple[str, ...], kind: ResourceKind, root: Path | None = None) -> bool:
         """Whether the call acts on something the rule talks about.
 
         A rule without patterns speaks about every resource. Otherwise *one* of
@@ -88,7 +88,7 @@ class Rule:
         """
         if not self.patterns:
             return True
-        return any(_matches(pattern, value, kind) for pattern in self.patterns for value in values)
+        return any(_matches(pattern, value, kind, root) for pattern in self.patterns for value in values)
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +127,8 @@ class ToolPermissions:
         groups: tuple[str, ...] = (),
         resources: tuple[str, ...] = (),
         kind: ResourceKind = ResourceKind.TEXT,
+        *,
+        root: Path | None = None,
     ) -> bool:
         """Whether this concrete call may run.
 
@@ -151,7 +153,7 @@ class ToolPermissions:
                 continue
             if rule.patterns:
                 allow_listed = allow_listed or rule.effect is Effect.ALLOW
-                if not rule.matches_resource(resources, kind):
+                if not rule.matches_resource(resources, kind, root):
                     continue
             decision = rule.effect is Effect.ALLOW
         if decision is not None:
@@ -189,13 +191,13 @@ UNRESTRICTED = ToolPermissions()
 # --- matching ----------------------------------------------------------------
 
 
-def _matches(pattern: str, value: str, kind: ResourceKind | str) -> bool:
+def _matches(pattern: str, value: str, kind: ResourceKind | str, root: Path | None = None) -> bool:
     try:
         resolved = ResourceKind(kind)
     except ValueError:
         resolved = ResourceKind.TEXT
     if resolved is ResourceKind.PATH:
-        return _matches_path(pattern, value)
+        return _matches_path(pattern, value, root)
     if resolved is ResourceKind.COMMAND:
         return _matches_command(pattern, value)
     return fnmatchcase(value, pattern)
@@ -215,44 +217,45 @@ def _matches_command(pattern: str, command: str) -> bool:
     return candidate.endswith(' *') and fnmatchcase(normalized, candidate[:-2])
 
 
-def _matches_path(pattern: str, value: str) -> bool:
+def _matches_path(pattern: str, value: str, root: Path | None = None) -> bool:
     """Matches a path, relative to the workspace or absolute.
 
     The pattern can be written either way — ``src/*.py``, ``./src/*.py``,
     ``$HOME/notes/*`` — and the value is tried in both forms, so the rule does
     not depend on how the model spelled the path it asked for.
     """
-    candidates = _path_candidates(value)
-    for form in _pattern_forms(pattern):
+    root = workspace_root() if root is None else root
+    candidates = _path_candidates(value, root)
+    for form in _pattern_forms(pattern, root):
         if any(fnmatchcase(candidate, form) for candidate in candidates):
             return True
     return False
 
 
-def _path_candidates(value: str) -> tuple[str, ...]:
-    absolute = _absolute(value)
-    relative = _relative(absolute)
+def _path_candidates(value: str, root: Path) -> tuple[str, ...]:
+    absolute = _absolute(value, root)
+    relative = _relative(absolute, root)
     return (absolute,) if relative is None else (relative, absolute)
 
 
-def _pattern_forms(pattern: str) -> tuple[str, ...]:
+def _pattern_forms(pattern: str, root: Path) -> tuple[str, ...]:
     expanded = _expand_home(pattern)
     if os.path.isabs(expanded):
         return (_normalize(expanded),)
     normalized = _normalize(expanded)
-    return (normalized, _normalize(str(workspace_root() / normalized)))
+    return (normalized, _normalize(str(root / normalized)))
 
 
-def _absolute(path: str) -> str:
+def _absolute(path: str, root: Path) -> str:
     expanded = _expand_home(path)
     if not os.path.isabs(expanded):
-        expanded = str(workspace_root() / expanded)
+        expanded = str(root / expanded)
     return _normalize(expanded)
 
 
-def _relative(absolute: str) -> str | None:
+def _relative(absolute: str, root: Path) -> str | None:
     try:
-        return Path(absolute).relative_to(workspace_root()).as_posix()
+        return Path(absolute).relative_to(root).as_posix()
     except ValueError:
         return None
 

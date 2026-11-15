@@ -1,0 +1,37 @@
+version: 1
+contract: execution-root-core-v1
+subtask_result: accepted
+parent_feature: active
+qa_worker: f207b9df
+qa_verdict: PASS
+recommendation: APPROVE
+retry_history: Initial FAIL test_insufficiency, bounded retry1 added standalone TUI real cancellation test, independent re-QA PASS.
+lead_adjudication: Core accepted; docs task remains pending before publishing merged scenarios and declaring workspace slice delivered.
+checks_repeated_by_qa:
+  focused: 183 passed in 7.56s
+  ui_runtime: 129 passed in 52.54s
+  full: 2794 passed, 1 skipped, 1 warning in 72.41s; eight workers
+  lint: Ruff passed
+  format: Ruff check passed, 530 files
+  diff: git diff --check passed
+  validator: Not rerun after test-only retry; prior same-production-source pilot non-passing with 486 existing layout/naming findings. No validator PASS claimed.
+acceptance:
+  - Bound execution root takes priority over composition fallback and unbound process cwd.
+  - Explicit root parameters retain authority.
+  - Nested, failed and cancelled contexts restore correctly.
+  - Concurrent task/thread/child execution retains captured roots.
+  - File, conflict, shell, image and permission callbacks route through Composition.execution_root.
+  - WorkspaceManager.switch rebinds without changing process cwd.
+  - Default skill discovery follows Composition root while explicit overrides and skill script cwd remain intact.
+  - Server and standalone TUI real-tool run wiring tested, including same-worker reset after real Escape cancellation.
+source_paths: [src/engine/files/paths.py, src/engine/workspace/manager.py, src/engine/bootstrap.py, src/server/runtime.py, src/ui/turn_mixin.py]
+worker_attributable_paths: 13 of 14 allowlisted paths; tests/test_workspace_rebind.py unchanged.
+skills_verified: [clean-code, clean-python, clean-architecture]
+nonblocking_notes:
+  - Local helper attached-client docstring is inaccurate; no behavior change required or included in retry.
+  - New test helper return annotation and monkeypatch parameter typing follow older local style; cosmetic only.
+limits:
+  - Does not isolate ScopeTracker, WorkspaceInstructions, model, tree or report state across sessions.
+  - Session-runtime extraction and required events/client migration remain mandatory.
+  - Pre-existing user modifications preserved; attribution in mixed bootstrap file is content-based.
+external_effects: No new commit, deployment or live service restart in this core task.

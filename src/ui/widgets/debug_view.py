@@ -352,6 +352,12 @@ class AgentDebugView(Vertical):
         """Last painted report. Tests use it to inspect without parsing the screen."""
         return self._report
 
+    def show_unavailable(self, message: str) -> None:
+        """Discard stale measurements after a failed service read."""
+        self._report = None
+        self._header.update(Text(' DEBUG  Service diagnostics unavailable', style='bold yellow'))
+        self._body.update(Text(message, style='dim'))
+
     def update_report(self, report: DebugReport) -> None:
         """Repaints context and cache diagnostics."""
         self._report = report

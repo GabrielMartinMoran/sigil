@@ -17,17 +17,31 @@ Two rules from the architecture page apply here:
 
 from __future__ import annotations
 
+import json
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from typing import Any
 
-from pydantic_ai.messages import BinaryContent, ModelMessage
+from pydantic_ai.messages import BinaryContent, ModelMessage, ModelMessagesTypeAdapter
 
+from src.engine.agents.message_types import input_views
+from src.engine.agents.model_config import AgentModelConfig
+from src.engine.agents.model_defaults import ConfigFileState, ModelDefaultsState
+from src.engine.agents.rollback import PROMPT_KIND, Checkpoint, ForkOutcome, RollbackOutcome, prompt_of_turn
 from src.engine.agents.tree.models.agent_node import AgentNode
 from src.engine.agents.tree.tree import AgentTree
 from src.engine.context.images import image_size
+from src.engine.context.meter.cost import SessionCost
+from src.engine.context.meter.snapshot import ContextSnapshot
 from src.engine.mcp.tool_models.server_status import ServerStatus
+from src.engine.providers.domain.model_capability import ModelCatalog
 from src.engine.roadmap.models.todo_item import TodoItem
 from src.engine.sessions.session_store import Session, SessionSummary
+from src.engine.sessions.titling import shorten
 from src.engine.skills.loaded import loaded_skills
+from src.engine.storage.accepted_inputs import _record
+from src.engine.storage.database import Database
+from src.engine.storage.executions import root_id_for
 from src.engine.tooling.outputs import present_output
 from src.engine.tooling.presentation import human_bytes
 from src.engine.workspace.models.worktree import Workspace
@@ -38,6 +52,18 @@ MAX_ITEM_CHARS = 200_000
 A single tool result is already capped by the engine; this is the backstop for a
 transcript read that would otherwise put a hundred megabytes in one JSON body.
 """
+
+
+class SessionNotStored(LookupError):
+    """The session exists only in memory, so there is no durable row to project.
+
+    ``Composition`` opens a *draft* session — an id and a workspace with nothing
+    saved under it yet — until the first message gives it a title and a row. Asking
+    for its transcript is a legitimate question with a legitimate answer, "nothing
+    yet", and it is not a server failure: the route answers a typed 404 that a client
+    reads as an empty conversation. It stays a `LookupError` so every caller that
+    already treats a missing row that way keeps working.
+    """
 
 
 def _text(value: Any) -> str:
@@ -135,7 +161,13 @@ def repositories_view(
 
 
 def session_view(session: Session) -> dict[str, Any]:
-    """The open conversation: what it is called and what it runs on."""
+    """The open conversation: what it is called and what it runs on.
+
+    ``external_files`` and ``mcp_overrides`` are the two settings of the session
+    that a client can toggle. They travel here because the row is where they
+    live: a command that changed one has to be readable from the same projection
+    the screen is painted from, not only from its own reply.
+    """
     return {
         'id': session.id,
         'short_id': session.short_id,
@@ -146,6 +178,8 @@ def session_view(session: Session) -> dict[str, Any]:
         'created_at': session.created_at,
         'updated_at': session.updated_at,
         'messages': len(session.messages),
+        'external_files': session.allow_external_files,
+        'mcp_overrides': dict(session.mcp_overrides),
     }
 
 
@@ -172,7 +206,7 @@ def summary_view(
     }
 
 
-def node_view(node: AgentNode, *, include_messages: bool = False) -> dict[str, Any]:
+def node_view(node: AgentNode, *, include_messages: bool = False, reports: Sequence[AgentNode] = ()) -> dict[str, Any]:
     """One execution of the tree."""
     data: dict[str, Any] = {
         'id': node.id,
@@ -194,7 +228,8 @@ def node_view(node: AgentNode, *, include_messages: bool = False) -> dict[str, A
         'budget_exhausted': node.budget_exhausted,
     }
     if include_messages:
-        data['transcript'] = transcript(node.messages)
+        items = transcript(node.messages, reports=reports)
+        data['transcript'] = items
     return data
 
 
@@ -251,7 +286,148 @@ def skills_view(messages: list[ModelMessage]) -> list[str]:
     return list(loaded_skills(messages))
 
 
-def transcript(messages: list[ModelMessage]) -> list[dict[str, Any]]:
+def durable_session(database: Database, session_id: str) -> dict[str, Any]:
+    """One coherent read of the durable session: transcript, queue and recovery facts.
+
+    The transcript is rebuilt from the messages rows, not from the live session in
+    memory. ``pending`` holds accepted or claimed inputs without an
+    ``input_deliveries`` fact; delivered rows are read from the transcript and never
+    reappear as pending. Recovery copies are listed with availability, and entries
+    whose delivery went to a recovery copy are kept in a separate section. Nothing
+    is merged across transcripts.
+    """
+    with database.transaction() as conn:
+        row = conn.execute('SELECT id, title, updated_at, preview FROM sessions WHERE id = ?', (session_id,)).fetchone()
+        if row is None:
+            raise SessionNotStored(f'No session {session_id}.')
+        messages = [
+            ModelMessagesTypeAdapter.validate_python([json.loads(str(message['payload']))])[0]
+            for message in conn.execute(
+                'SELECT payload FROM messages WHERE execution_id = ? ORDER BY seq',
+                (root_id_for(session_id),),
+            )
+        ]
+        links = conn.execute(
+            'SELECT destination_id, destination_session_id FROM recovery_links '
+            'WHERE original_session_id = ? ORDER BY destination_id',
+            (session_id,),
+        ).fetchall()
+        entries = queue_entries(conn, session_id)
+        recoveries = [
+            {
+                'recovery_session_id': str(link['destination_id']),
+                'available': destination_available(conn, link['destination_id'], link['destination_session_id']),
+            }
+            for link in links
+        ]
+        pending = waiting(entries)
+        conflicted = [
+            entry for entry in entries if entry['delivered'] and entry['destination_id'] not in (None, session_id)
+        ]
+        return {
+            'session': {
+                'id': str(row['id']),
+                'title': row['title'],
+                'updated_at': str(row['updated_at']),
+                'preview': row['preview'],
+            },
+            'transcript': transcript(messages),
+            'skills': skills_view(messages),
+            'queue': entries,
+            'pending': pending,
+            'deliveries': [
+                {
+                    'request_id': entry['request_id'],
+                    'checkpointed': entry['checkpointed'],
+                    'destination_id': entry['destination_id'],
+                    'destination_available': entry['destination_available'],
+                }
+                for entry in entries
+                if entry['delivered']
+            ],
+            'recoveries': recoveries,
+            'conflicted_entries': conflicted,
+        }
+
+
+WAITING_STATES = ('accepted', 'claimed')
+"""The queue states that still mean "waiting". A delivered row is history already."""
+
+
+def destination_available(conn: Any, destination_id: Any, destination_session_id: Any) -> bool:
+    """Whether the session a delivery went to still exists, so a client can offer it."""
+    if destination_id is None or destination_session_id is None:
+        return False
+    return conn.execute('SELECT 1 FROM sessions WHERE id = ?', (destination_session_id,)).fetchone() is not None
+
+
+def queue_entries(conn: Any, session_id: str) -> list[dict[str, Any]]:
+    """Every row the queue holds for a session, in the order it was accepted.
+
+    One projection of ``accepted_inputs`` and its deliveries, shared by the durable
+    read and by the newest transcript page: two reads that disagreed about a waiting
+    message would be two answers about one wait. ``delivered`` is what retires a row
+    from the queue — a message the run has read is in the transcript already.
+    """
+    queue_rows = conn.execute(
+        'SELECT * FROM accepted_inputs WHERE session_id = ? ORDER BY sequence', (session_id,)
+    ).fetchall()
+    facts = {
+        str(fact['request_id']): fact
+        for fact in conn.execute(
+            'SELECT request_id, checkpointed, destination_id, destination_session_id '
+            'FROM input_deliveries WHERE session_id = ?',
+            (session_id,),
+        )
+    }
+    entries: list[dict[str, Any]] = []
+    for queue_row in queue_rows:
+        record = _record(queue_row)
+        fact = facts.get(record.request_id)
+        destination = None if fact is None else str(fact['destination_id'])
+        destination_session = None if fact is None else fact['destination_session_id']
+        entries.append(
+            {
+                'request_id': record.request_id,
+                'sequence': record.sequence,
+                'kind': record.kind,
+                'state': record.state,
+                'text': record.text
+                if not record.origin or record.origin['type'] == 'user'
+                else 'Subagent report received.',
+                'message_type': (record.origin or {'type': 'user'})['type'],
+                'image_count': len(record.images),
+                'delivered': fact is not None,
+                'checkpointed': None if fact is None else bool(fact['checkpointed']),
+                'destination_id': destination,
+                'destination_available': destination_available(conn, destination, destination_session),
+            }
+        )
+    return entries
+
+
+def waiting(entries: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The rows still waiting: accepted or claimed, and never delivered.
+
+    The rule lives here and nowhere else. Both reads that publish the queue call it,
+    so the terminal and the durable consumer cannot be told different things about
+    one waiting message.
+    """
+    return [entry for entry in entries if entry['state'] in WAITING_STATES and not entry['delivered']]
+
+
+def pending_rows(database: Database, session_id: str) -> list[dict[str, Any]]:
+    """The queue's waiting rows, for a read that is not the durable one.
+
+    The newest transcript page carries them so a terminal can paint the conversation
+    and the wait in one read; a session with no row yet has no queue to report, which
+    is an empty list and not a failure.
+    """
+    with database.transaction() as conn:
+        return waiting(queue_entries(conn, session_id))
+
+
+def transcript(messages: list[ModelMessage], *, reports: Sequence[AgentNode] = ()) -> list[dict[str, Any]]:
     """The conversation as a flat list of items a client can paint.
 
     The shapes are the pydantic-ai part kinds, not a new vocabulary: ``user``,
@@ -259,6 +435,9 @@ def transcript(messages: list[ModelMessage]) -> list[dict[str, Any]]:
     A tool call and its result travel as two items with the same ``call_id``,
     because that is how they exist in the history — the pairing is the client's,
     and doing it here would lose the case where a result never arrived.
+
+    Application input types are stored per part in message metadata. Untyped
+    historical input defaults to user; the current tree is not used to infer it.
 
     **Binary payloads never travel.** An image is described by what it is —
     ``1 image (640×480 PNG, 118 KB)`` — exactly as the terminal client paints it.
@@ -269,10 +448,153 @@ def transcript(messages: list[ModelMessage]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for index, message in enumerate(messages):
         for part in getattr(message, 'parts', ()):
-            item = _part_view(part, index)
-            if item is not None:
-                items.append(item)
+            items.extend(_part_views(part, index, message))
     return items
+
+
+@dataclass(frozen=True)
+class TranscriptPage:
+    """One window of a projected transcript, and the cursor that precedes it.
+
+    ``items`` are projected items, unchanged: a page never rewrites one. The item's
+    ``index`` is the message it was built from — the absolute point a click maps to
+    its rollback — and it travels as it is, so a window cannot renumber a
+    conversation.
+
+    ``first_index`` is the absolute position of the first item in the whole
+    transcript, and it doubles as the ``before`` cursor for the chunk just above
+    this page. ``total`` counts transcript items only: a row waiting in the queue is
+    not one, so it neither enters the count nor moves a cursor.
+    """
+
+    items: list[dict[str, Any]]
+    first_index: int
+    has_more: bool
+    total: int
+
+
+def transcript_page(
+    items: list[dict[str, Any]],
+    *,
+    limit: int | None = None,
+    before: int | None = None,
+) -> TranscriptPage:
+    """The window of ``items`` that ends just before ``before``.
+
+    Paging is over *positions*, not over the ``index`` each item carries. Several
+    items can share one index — a message with a thought and a tool call — so a
+    cursor expressed in message indexes could not be chained without either
+    repeating a message or dropping part of it. ``first_index`` is the position the
+    next page ends just before, which is what makes walking the cursor back hand
+    every item over exactly once.
+
+    ``limit=None`` is not a default window: it is the whole transcript, which is what
+    a client that has not migrated still asks for. The window size is the client's
+    decision to make, and a service that imposed one would change an answer that
+    already has callers.
+    """
+    total = len(items)
+    end = total if before is None else max(0, min(before, total))
+    start = 0 if limit is None else max(0, end - limit)
+    return TranscriptPage(items=items[start:end], first_index=start, has_more=start > 0, total=total)
+
+
+RENDERED_KINDS = frozenset(
+    {
+        'user-prompt',
+        'text',
+        'thinking',
+        'tool-call',
+        'tool-return',
+        'retry-prompt',
+        'builtin-tool-call',
+        'builtin-tool-return',
+    }
+)
+"""The part kinds ``_part_view`` builds an item from.
+
+A page has to know how many items a message projects before it projects any of
+them, and building the dict is the cost a window exists to avoid. The set mirrors
+``_part_view``'s dispatch: a kind added there and not here would make a page
+disagree with the whole read, which the parity test compares item by item.
+"""
+
+
+def _projects(part: Any) -> bool:
+    """Whether this part becomes an item, without building one.
+
+    Mirrors ``_part_view``: a system prompt is not painted, and anything unknown
+    that is not binary content has no shape to paint. ``BinaryContent`` is the last
+    case ``_part_view`` accepts, so it is accepted here too.
+    """
+    return getattr(part, 'part_kind', '') in RENDERED_KINDS or isinstance(part, BinaryContent)
+
+
+def _item_count(message: ModelMessage) -> int:
+    """Count visible items without formatting or decoding their content."""
+    return sum(
+        len(input_views(message, part)) if getattr(part, 'part_kind', '') == 'user-prompt' else int(_projects(part))
+        for part in getattr(message, 'parts', ())
+    )
+
+
+def transcript_window(
+    messages: list[ModelMessage],
+    *,
+    limit: int | None = None,
+    before: int | None = None,
+    reports: Sequence[AgentNode] = (),
+) -> TranscriptPage:
+    """The window of a transcript, projected without projecting the whole of it.
+
+    The answer is exactly the one ``transcript_page(transcript(messages), ...)``
+    gives: the same items, the same ``first_index``, ``has_more`` and ``total``. It
+    is computed differently because that path costs O(messages) per page. Here the
+    messages are counted first — one cheap pass that builds no dicts — and only the
+    parts the window returns are projected.
+
+    The cut is at part level, not message level: a message with a thought, an answer
+    and a tool call spans three positions, and a page may start or end inside it.
+    ``index`` still travels as the message the item came from, so a click maps to the
+    same rollback point a whole read would.
+
+    ``limit=None`` is the whole conversation, as it is for ``transcript_page``. That
+    read has to build every item either way; this function does not impose a window
+    the caller did not ask for.
+    """
+    counts = [_item_count(message) for message in messages]
+    total = sum(counts)
+    end = total if before is None else max(0, min(before, total))
+    start = 0 if limit is None else max(0, end - limit)
+
+    items: list[dict[str, Any]] = []
+    position = 0
+    for index, count in enumerate(counts):
+        if count == 0:
+            continue
+        # A whole message above the window is one addition and no projection.
+        if position + count <= start:
+            position += count
+            continue
+        if position >= end:
+            break
+        message = messages[index]
+        for part in getattr(message, 'parts', ()):
+            if position >= end:
+                break
+            if not _projects(part):
+                continue
+            # A part can project more than one item — a woken turn's reports — so the
+            # page is cut inside it, by offset, instead of assuming one item per part.
+            views = _part_views(part, index, message)
+            if not views:
+                continue
+            for offset, item in enumerate(views):
+                if start <= position + offset < end:
+                    items.append(item)
+            position += len(views)
+
+    return TranscriptPage(items=items, first_index=start, has_more=start > 0, total=total)
 
 
 def attachment_view(part: BinaryContent) -> dict[str, Any]:
@@ -405,6 +727,23 @@ def _part_view(part: Any, index: int) -> dict[str, Any] | None:
     return None
 
 
+def _part_views(part: Any, index: int, message: ModelMessage) -> list[dict[str, Any]]:
+    """Project input according to its stored type, never its text or current tree."""
+    if getattr(part, 'part_kind', '') != 'user-prompt':
+        item = _part_view(part, index)
+        return [] if item is None else [item]
+    items: list[dict[str, Any]] = []
+    for view in input_views(message, part):
+        if view['kind'] == 'subagent_report':
+            items.append({**view, 'index': index})
+        else:
+            item = _part_view(replace(part, content=view['content']), index)
+            if item is not None:
+                item['kind'] = view['kind']
+                items.append(item)
+    return items
+
+
 def _jsonable(value: Any) -> Any:
     """Arguments as JSON, cut if they are huge. Bytes become a size, not a payload."""
     if isinstance(value, (str, int, float, bool)) or value is None:
@@ -419,18 +758,110 @@ def _jsonable(value: Any) -> Any:
 
 
 def model_view(snapshot: Any) -> dict[str, Any]:
-    """The active model, its window and the effort levels it accepts."""
+    """The active model, its window and the effort levels it accepts.
+
+    ``images`` is ``None`` while no model is configured: `ModelSnapshot` defaults it
+    to true, which is a harmless default inside the process that owns the model but
+    a false fact once it crosses the boundary. A client that cannot know has to be
+    able to say "unknown" instead of accepting an image the provider will refuse.
+    """
+    configured = bool(getattr(snapshot, 'is_configured', False))
     account = getattr(snapshot, 'account', None)
     return {
-        'configured': bool(getattr(snapshot, 'is_configured', False)),
+        'configured': configured,
         'account': None if account is None else {'id': account.id, 'alias': account.alias, 'kind': str(account.kind)},
         'model': _text(getattr(snapshot, 'model', '')),
         'thinking': _text(getattr(snapshot, 'thinking', 'default')),
         'label': _text(getattr(snapshot, 'label', '')),
         'window': getattr(snapshot, 'window', None),
         'efforts': [str(level) for level in getattr(snapshot, 'efforts', ())],
-        'images': bool(getattr(snapshot, 'images', True)),
+        'images': bool(getattr(snapshot, 'images', False)) if configured else None,
         'notice': getattr(snapshot, 'notice', None),
+    }
+
+
+def model_defaults_view(state: ModelDefaultsState, *, accounts: Sequence[Any]) -> dict[str, Any]:
+    """Both config files that decide what a profile starts on, per file.
+
+    Per file and never merged: which file an entry belongs to is a decision the user
+    takes when they write it, and the screen says so. The precedence between the two
+    is not decided here either — ``targets`` carries `ModelDefaultsState`'s own
+    answers, so no client has to hold a second copy of that rule.
+
+    ``accounts`` is what the service has configured. An entry that names an account
+    that is gone then reads as that, instead of as an alias nobody can place.
+
+    ``exists`` is the one fact read from the filesystem rather than from the state: a
+    file that is not there yet is a real state for the screen (the first write creates
+    it), and the reader treats it exactly like an empty one.
+    """
+    known = {str(getattr(account, 'alias', '')) for account in accounts}
+    return {
+        'fixed': None if state.fixed is None else str(state.fixed),
+        'destinations': [str(scope) for scope in state.destinations],
+        'files': [_defaults_file_view(scope, state.files[scope]) for scope in state.destinations],
+        'targets': [
+            {
+                'target': target,
+                'effective': _defaults_entry_view(state.effective(target)),
+                'invalid': state.invalid(target),
+                'sources': [str(scope) for scope in state.destinations if scope in state.sources(target)],
+            }
+            for target in (None, *state.agent_names())
+        ],
+        'accounts': [{'alias': alias, 'configured': alias in known} for alias in _named_accounts(state)],
+        'errors': list(state.errors),
+    }
+
+
+def _defaults_file_view(scope: Any, file: ConfigFileState) -> dict[str, Any]:
+    """One config file: where it is, what it says, and what it could not parse."""
+    return {
+        'scope': str(scope),
+        'path': str(file.path),
+        'exists': file.path.is_file(),
+        'default': _defaults_entry_view(file.default),
+        'default_invalid': file.default_invalid,
+        'agents': {name: _defaults_entry_view(config) for name, config in file.agents.items()},
+        'invalid_agents': sorted(file.invalid_agents),
+        'errors': list(file.errors),
+    }
+
+
+def _defaults_entry_view(config: AgentModelConfig | None) -> dict[str, Any] | None:
+    """One entry, with the three keys the file itself holds."""
+    if config is None:
+        return None
+    return {'account': config.account, 'model': config.model, 'effort': config.effort}
+
+
+def _named_accounts(state: ModelDefaultsState) -> list[str]:
+    """Every account the entries name, so a client can say which one is not configured."""
+    aliases: set[str] = set()
+    for scope in state.destinations:
+        file = state.files[scope]
+        entries = (file.default, *file.agents.values())
+        aliases.update(config.account for config in entries if config is not None)
+    return sorted(aliases)
+
+
+def account_view(account: Any, *, active: bool, has_credential: bool) -> dict[str, Any]:
+    """One provider account, as data.
+
+    The credential is never here. `has_credential` is a boolean computed from the
+    secret store in the process that owns it, and the key itself never leaves that
+    process — not in this projection, not in an error, not in a log line.
+    """
+    return {
+        'id': account.id,
+        'alias': account.alias,
+        'provider': str(getattr(account.kind, 'value', account.kind)),
+        'provider_label': account.provider_label,
+        'variant': str(getattr(account.variant, 'value', account.variant)),
+        'auth': str(getattr(account.auth, 'value', account.auth)),
+        'last_model': account.last_model,
+        'has_credential': has_credential,
+        'active': active,
     }
 
 
@@ -443,16 +874,190 @@ def agent_view(profile: Any, *, active: bool) -> dict[str, Any]:
         'source': getattr(profile, 'source', ''),
         'max_steps': getattr(profile, 'max_steps', None),
         'active': active,
+        'permissions': profile.permissions.describe(),
     }
+
+
+def rollback_points(database: Database, checkpoints: list[Checkpoint]) -> list[dict[str, Any]]:
+    """The turns a session can return to, newest first, with what opened each one.
+
+    ``preview`` is the first line of the prompt that started the turn, not the
+    turn's first message: a point is identified by what the user typed, and the
+    first message of a turn can be a thought or a tool result. It is the same
+    rule the terminal's picker applies, projected here so both clients list the
+    same points in the same order.
+    """
+    return [
+        rollback_point_view(
+            checkpoint,
+            preview=_turn_preview(database, checkpoint.turn_id),
+            seq=_prompt_seq(database, checkpoint.turn_id),
+        )
+        for checkpoint in checkpoints
+    ]
+
+
+def rollback_point_view(checkpoint: Checkpoint, *, preview: str, seq: int | None = None) -> dict[str, Any]:
+    """One point of the rollback list.
+
+    The file cost of a restore is deliberately absent: it is a diff of the
+    workspace, and a projection that cannot compute it leaves the field out
+    instead of estimating one.
+    """
+    return {
+        'turn_id': checkpoint.turn_id,
+        'at': checkpoint.at,
+        'reason': checkpoint.reason,
+        'label': checkpoint.label,
+        'preview': preview,
+        'tree_commit': checkpoint.tree_commit,
+        'seq': seq,
+    }
+
+
+def catalog_view(catalog: ModelCatalog) -> dict[str, Any]:
+    """The models of one account, as data: the client builds its own rows.
+
+    ``source`` says whether the list came from the provider or from the engine's
+    fallback, and ``error`` why the remote one could not be read. The client needs
+    both: a fallback list presented as the provider's would be a quieter lie than
+    an error message.
+    """
+    return {
+        'source': catalog.source,
+        'error': catalog.error,
+        'models': [
+            {
+                'name': model.name,
+                'display_name': model.display_name,
+                'window': model.context_window,
+                'efforts': [str(level) for level in model.efforts],
+            }
+            for model in catalog.models
+        ],
+    }
+
+
+def rollback_view(
+    outcome: RollbackOutcome, *, prompt: str | None = None, prompt_images: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """What a rollback did, as data: the counts are the engine's, not an estimate.
+
+    ``prompt`` is the text the user typed to open the turn that was dropped, read
+    from the rows *before* they were truncated and carried here so a client can put
+    it back in its composer. It is the argument the in-process terminal used to look
+    up itself; the field changes no row and no count.
+    """
+    return {
+        'target_turn_id': outcome.target_turn_id,
+        'turns_dropped': outcome.turns_dropped,
+        'executions_dropped': outcome.executions_dropped,
+        'messages_dropped': outcome.messages_dropped,
+        'files_restored': outcome.files_restored,
+        'files_deleted': outcome.files_deleted,
+        'files_unavailable': outcome.files_unavailable,
+        'undo_checkpoint': outcome.undo_checkpoint,
+        'prompt': prompt,
+        'prompt_images': list(prompt_images or []),
+    }
+
+
+def fork_view(outcome: ForkOutcome) -> dict[str, Any]:
+    """The session a fork created and how much of the conversation it kept."""
+    return {
+        'session_id': outcome.session_id,
+        'turns_copied': outcome.turns_copied,
+        'messages_copied': outcome.messages_copied,
+        'executions_copied': outcome.executions_copied,
+    }
+
+
+def context_view(snapshot: ContextSnapshot, cost: SessionCost) -> dict[str, Any]:
+    """How full the window is and what the session has cost, from the meter.
+
+    ``used`` and ``percent`` are the **projected** numbers, the same pair the
+    terminal's sidebar paints: the question is whether the next request fits, and
+    the measured value describes the request that already happened. With a window
+    and nothing measured the real usage is zero — a cold session paints 0%, not
+    `?`, which is the rule the terminal applies.
+
+    ``budget`` travels with the usage because the window is not all available:
+    the tool schemas and the instruction blocks are sent on every request. They
+    are the meter's measurements, and a session that has not made a request in
+    this process has none yet; the numbers say that rather than guessing.
+    """
+    used = snapshot.projected
+    percent = snapshot.projected_percent
+    if used is None and snapshot.window:
+        used = 0
+        percent = 0.0
+    budget = snapshot.budget
+    return {
+        'window': snapshot.window,
+        'used': used,
+        'percent': percent,
+        'measured': snapshot.measured,
+        'projected': snapshot.projected,
+        'budget': {
+            'tools': budget.tools,
+            'instructions': budget.instructions,
+            'output_reserve': budget.output_reserve,
+            'safety_reserve': budget.safety_reserve,
+            'available_for_history': budget.available_for_history,
+        },
+        'cost': {
+            'total': None if cost.total is None else str(cost.total),
+            'approximate': cost.approximate,
+            'requests': cost.requests,
+        },
+    }
+
+
+def _prompt_seq(database: Database, turn_id: str | None) -> int | None:
+    """Where the turn's prompt sits in the transcript.
+
+    A click on a message carries a `seq`; a rollback point carries a turn id. This
+    column is what lets a client preselect the point the user actually clicked,
+    without keeping a transcript of its own.
+    """
+    if turn_id is None:
+        return None
+    row = database.one(
+        'SELECT seq FROM messages WHERE turn_id = ? AND payload LIKE ? ORDER BY seq LIMIT 1',
+        (turn_id, f'%"part_kind":"{PROMPT_KIND}"%'),
+    )
+    return None if row is None else int(row['seq'])
+
+
+def _turn_preview(database: Database, turn_id: str | None) -> str:
+    """The prompt that opened a turn, on one line, or ``''`` when it is gone."""
+    if turn_id is None:
+        return ''
+    prompt = prompt_of_turn(database, turn_id)
+    if prompt is None:
+        return ''
+    text, images = prompt
+    line = shorten(' '.join(text.split()))
+    if not images:
+        return line
+    plural = 'image' if len(images) == 1 else 'images'
+    return f'{line} +{len(images)} {plural}'.strip()
 
 
 __all__ = [
     'MAX_ITEM_CHARS',
+    'SessionNotStored',
     'agent_view',
+    'context_view',
+    'fork_view',
     'mcp_view',
+    'model_defaults_view',
     'model_view',
     'node_view',
     'roadmap_view',
+    'rollback_point_view',
+    'rollback_points',
+    'rollback_view',
     'session_view',
     'skills_view',
     'summary_view',

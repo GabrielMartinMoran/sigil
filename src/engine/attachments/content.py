@@ -19,9 +19,25 @@ from collections.abc import Sequence
 from pydantic_ai.messages import BinaryContent, UserContent
 
 from src.engine.attachments.image_attachment import ImageAttachment
+from src.engine.storage.accepted_inputs import StoredImage
 
 TEXT_ONLY = ''
 """What a message with no images sends: just its text."""
+
+
+def stored_parts(text: str, images: Sequence[StoredImage]) -> list[UserContent]:
+    """The prompt parts of an accepted input: text first, images in stored order."""
+    return [
+        text,
+        *(BinaryContent(data=image.data, media_type=image.media_type) for image in images),
+    ]
+
+
+def stored_content(text: str, images: Sequence[StoredImage]) -> str | list[UserContent]:
+    """An accepted input as pydantic-ai takes it, plain text when it has no images."""
+    if not images:
+        return text
+    return stored_parts(text, images)
 
 
 def user_content(text: str, attachments: Sequence[ImageAttachment] = ()) -> str | list[UserContent]:
