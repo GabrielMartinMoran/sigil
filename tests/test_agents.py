@@ -261,19 +261,65 @@ def test_the_shipped_set_has_an_agent_and_a_subagent():
     registry = AgentRegistry([('builtin', _builtin_root())], active='wizard')
     assert [profile.name for profile in registry.agents()] == ['wizard']
     assert [profile.name for profile in registry.subagents()] == ['scout']
-    assert 'Reads one thing end to end' in registry.require('scout').description
+    assert 'research' in registry.require('scout').description.lower()
 
 
-def test_the_shipped_subagent_is_read_only():
-    """It reads and reports: the point of summoning it is to not touch the tree."""
-    from src.engine.tooling.permission import ResourceKind, ToolGroup
+def test_the_shipped_scout_exposes_research_without_direct_mutation_tools():
+    """Shell access is unrestricted; read-only behavior is a prompt contract."""
+    from src.engine.agents.profile.permissions import Effect
+    from src.engine.tooling.permission import BUILTIN_TOOLS, ResourceKind, ToolGroup
 
     permissions = AgentRegistry([('builtin', _builtin_root())], active='scout').require('scout').permissions
-    assert not permissions.advertises('write_file', (ToolGroup.WRITE,))
-    assert not permissions.advertises('patch_file', (ToolGroup.WRITE,))
-    assert permissions.advertises('read_file', (ToolGroup.READ,))
+    allowed = {
+        'read_file',
+        'run',
+        'web_search',
+        'read_url',
+        'list_skills',
+        'load_skill',
+        'read_skill_resource',
+        'list_mcp_servers',
+        'list_mcp_resources',
+        'read_mcp_resource',
+        'list_mcp_prompts',
+        'get_mcp_prompt',
+        'send_message',
+        'ack_notifications',
+    }
+    advertised = {name for name, group in BUILTIN_TOOLS.items() if permissions.advertises(name, (group,))}
+    assert advertised == allowed
+    run_rules = [rule for rule in permissions.rules if rule.matches_tool('run', (ToolGroup.RUN,))]
+    assert run_rules[-1].effect is Effect.ALLOW
+    assert not run_rules[-1].patterns
     assert permissions.permits('run', (ToolGroup.RUN,), ('git status',), ResourceKind.COMMAND)
-    assert not permissions.permits('run', (ToolGroup.RUN,), ('rm -rf build',), ResourceKind.COMMAND)
+    assert permissions.permits('run', (ToolGroup.RUN,), ('grep -R approval src',), ResourceKind.COMMAND)
+
+
+@pytest.mark.parametrize(
+    ('tool', 'allowed'),
+    [
+        ('codegraph_explore', True),
+        ('mcp_codegraph_explore', True),
+        ('context7_resolve-library-id', True),
+        ('context7_query-docs', True),
+        ('mind_space_get', True),
+        ('mind_memory_query', True),
+        ('mind_memory_read', True),
+        ('mind_checkpoint_query', True),
+        ('mind_memory_add', False),
+        ('mind_memory_update', False),
+        ('mind_space_delete', False),
+        ('mind_checkpoint_save', False),
+        ('codegraph_reindex', False),
+        ('mcp_github_create_issue', False),
+        ('unknown_tool', False),
+    ],
+)
+def test_the_shipped_scout_only_exposes_selected_external_research_tools(tool: str, allowed: bool):
+    permissions = AgentRegistry([('builtin', _builtin_root())], active='scout').require('scout').permissions
+
+    assert permissions.advertises(tool) is allowed
+    assert permissions.permits(tool) is allowed
 
 
 def _builtin_root() -> Path:

@@ -424,10 +424,13 @@ A project profile with the same name as a global one shadows it, and either of
 them shadows a built-in. Profiles are flat `*.md` files; a name starting with
 `_` or `.` is skipped, so a notes file next to them is not parsed as one.
 
-Sigil ships with two profiles: `wizard`, the general-purpose agent in effect when
-nothing else is chosen or remembered, and `scout`, a read-only subagent built to
-be summoned. `wizard` is the smallest complete example: copy it, rename it,
-rewrite the body.
+Sigil ships with two profiles: `wizard`, the default general-purpose lead that
+investigates and waits for plan approval before implementation, and `scout`, a
+research subagent that can investigate in parallel with other Scouts. Scout has
+shell and research tools; its read-only shell use is enforced by instructions,
+not a command sandbox. See the [built-in working agreements](docs/agent-profiles.md#built-in-working-agreements)
+for approval, delegation, and permission boundaries. Copy and adapt a built-in
+profile when creating your own.
 
 Create the directories yourself; Sigil reads them and does not create them. A
 profile added while the session is open shows up on the next `/agent`, without a

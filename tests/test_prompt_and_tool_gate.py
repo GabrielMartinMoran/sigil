@@ -105,7 +105,13 @@ def test_the_real_prompt_renders_without_markers():
 
     template = _load_prompt()
 
-    for features in (None, set(), {'image_input'}, {'run', 'read_file', 'view_image', 'image_input'}):
+    for features in (
+        None,
+        set(),
+        {'image_input'},
+        {'run', 'read_file', 'view_image', 'image_input'},
+        {'summon', 'list_skills', 'list_mcp_servers'},
+    ):
         rendered = render(template, features)
         assert '<!--' not in rendered
         assert rendered.strip()
