@@ -13,16 +13,17 @@ would bring its own. What the domain owns is the content they paint: the reasoni
 the tool results are in the transcript either way, and `/tools expanded` is one command
 away from reading them.
 
-They live in `engine/preferences.py` (`ui.json`) and not in the database for the same
+They live in `core/preferences.py` (`ui.json`) and not in the database for the same
 reason: configuration, not data.
 """
 
 from __future__ import annotations
 
-from src.engine.paths import themes_dir
-from src.engine.preferences import Preferences, PreferencesStore
-from src.engine.themes import ThemeRegistry, theme_variable_defaults
-from src.ui.desktop_notifications import Attention, notification_command
+from src.core.paths import themes_dir
+from src.core.preferences import Preferences, PreferencesStore
+from src.core.themes import ThemeRegistry, theme_variable_defaults
+from src.ui.attention import Attention
+from src.ui.desktop_notifications import notification_command
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.theme_picker_screen import ThemePickerScreen
 

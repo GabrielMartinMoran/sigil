@@ -18,12 +18,12 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from textual.color import Color
 
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.engine.agents.tree.store import AgentTreeStore
-from src.engine.sessions.catalog import CatalogEntry
-from src.engine.sessions.session_store import Session, SessionStore
-from src.engine.workspace.models.worktree import Workspace
-from src.ui.app import SigilApp
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.agents.tree.agent_tree_store import AgentTreeStore
+from src.core.sessions.catalog import CatalogEntry
+from src.core.sessions.session_store import Session, SessionStore
+from src.core.workspace.models.workspace import Workspace
+from src.ui.sigil_app import SigilApp
 from src.ui.widgets.agent_tree_screen import AgentTreeScreen
 from src.ui.widgets.session_picker import SessionPicker
 
@@ -98,7 +98,7 @@ def _entry(short_id: str, *, title: str, current: bool = False) -> CatalogEntry:
     return CatalogEntry(session=session, workspace=Workspace(root=Path('/repo')), is_current=current)
 
 
-def test_the_branch_of_the_selected_session_is_readable():
+def test_the_branch_of_the_selected_session_is_readable() -> None:
     """`/load`: the highlighted row keeps its workspace badge legible."""
     entries = [
         _entry('a', title='First', current=True),
@@ -121,7 +121,7 @@ def test_the_branch_of_the_selected_session_is_readable():
     assert worst >= MIN_CONTRAST, f'the selected row has unreadable text: {spans}'
 
 
-def test_a_running_row_of_the_tree_is_readable_while_selected():
+def test_a_running_row_of_the_tree_is_readable_while_selected() -> None:
     """The tree marks work in the accent colour; the cursor cannot eat it."""
 
     async def inner() -> list[tuple[str, float]]:
@@ -143,7 +143,7 @@ def test_a_running_row_of_the_tree_is_readable_while_selected():
     assert worst >= MIN_CONTRAST, f'the selected row has unreadable text: {spans}'
 
 
-def test_the_tree_still_opens_with_the_theme_in_place():
+def test_the_tree_still_opens_with_the_theme_in_place() -> None:
     """Sanity: the app of these tests paints with the shipped theme, not a default."""
     tree = AgentTreeStore().active
     tree.ensure_root('wizard')

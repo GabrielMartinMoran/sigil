@@ -34,28 +34,27 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from starlette.types import Message, Receive, Scope, Send
 
-from src.engine.agents.model_config import AgentModelConfig
-from src.engine.agents.model_defaults import ConfigScope
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.engine.agents.tree.models.agent_node import AgentNode
-from src.engine.agents.tree.models.node_status import NodeStatus
-from src.engine.agents.tree.models.summon_error import SummonError
-from src.engine.bootstrap import Composition
-from src.engine.interaction.models.question_item import QuestionItem
-from src.engine.interaction.models.question_option import QuestionOption
-from src.engine.settings import load_settings
+from src.core.agents.model_config import AgentModelConfig
+from src.core.agents.model_defaults import ConfigScope
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.agents.tree.models.agent_node import AgentNode
+from src.core.agents.tree.models.node_status import NodeStatus
+from src.core.agents.tree.models.summon_error import SummonError
+from src.core.agents.tree.reports import WAKE_PROMPT
+from src.core.bootstrap import Composition
+from src.core.interaction.models.question_item import QuestionItem
+from src.core.interaction.models.question_option import QuestionOption
+from src.core.settings import load_settings
 from src.server import views
-from src.server.app import BodyLimitMiddleware, create_app
-from src.server.config import ServerConfig
-from src.server.events import EventHub
-from src.server.ownership import OwnershipError, ServerOwnership
-from src.server.runtime import (
-    QUESTION_TIMEOUT_ENV,
-    WAKE_PROMPT,
-    PendingQuestion,
-    ServerRuntime,
-    resolve_question_timeout,
-)
+from src.server.app import create_app
+from src.server.body_limit_middleware import BodyLimitMiddleware
+from src.server.event_hub import EventHub
+from src.server.ownership_error import OwnershipError
+from src.server.pending_question import PendingQuestion
+from src.server.runtime_support import QUESTION_TIMEOUT_ENV, resolve_question_timeout
+from src.server.server_config import ServerConfig
+from src.server.server_ownership import ServerOwnership
+from src.server.server_runtime import ServerRuntime
 
 
 @pytest.fixture
@@ -77,7 +76,7 @@ def composition(tmp_path: Path) -> Composition:
 
 
 def _paths(tmp_path: Path):
-    from src.engine.providers.bootstrap import ProviderPaths
+    from src.core.providers.bootstrap import ProviderPaths
 
     home = tmp_path / '.sigil'
     home.mkdir(exist_ok=True)
@@ -161,8 +160,8 @@ def test_the_state_projection_has_every_section_the_client_reads(runtime: Server
 
 def test_a_question_is_published_and_answered(runtime: ServerRuntime) -> None:
     """The `ask_user` tool blocks on an answer that arrives over HTTP."""
-    from src.engine.interaction.models.question_item import QuestionItem
-    from src.engine.interaction.models.question_option import QuestionOption
+    from src.core.interaction.models.question_item import QuestionItem
+    from src.core.interaction.models.question_option import QuestionOption
 
     item = QuestionItem(
         question='¿Sigo?',
@@ -185,8 +184,8 @@ def test_a_question_is_published_and_answered(runtime: ServerRuntime) -> None:
 
 
 def test_a_question_can_be_cancelled(runtime: ServerRuntime) -> None:
-    from src.engine.interaction.models.question_item import QuestionItem
-    from src.engine.interaction.models.question_option import QuestionOption
+    from src.core.interaction.models.question_item import QuestionItem
+    from src.core.interaction.models.question_option import QuestionOption
 
     item = QuestionItem(question='¿Sigo?', options=[QuestionOption(label='si'), QuestionOption(label='no')])
 
@@ -435,7 +434,8 @@ def test_serve_mounts_the_client_and_asks_for_the_password(tmp_path: Path, compo
     from fastapi.testclient import TestClient
 
     from src.server.app import create_app
-    from src.server.config import PASSWORD_ENV, resolve_config
+    from src.server.config import resolve_config
+    from src.server.server_defaults import PASSWORD_ENV
 
     runtime = ServerRuntime(composition, EventHub())
     config = resolve_config(host='127.0.0.1', port=8760, env={PASSWORD_ENV: 'secret-pass'})
@@ -457,7 +457,7 @@ def test_the_backend_accepts_the_endpoint_token_for_a_turn(tmp_path: Path, runti
     """The API surface is still the whole API: the token opens `/api/turn`."""
     from src.server.app import create_app
     from src.server.config import resolve_config
-    from src.server.endpoint import EndpointPublisher
+    from src.server.endpoint_publisher import EndpointPublisher
 
     publisher = EndpointPublisher(path=tmp_path / 'service' / 'endpoint.json')
     app = create_app(
@@ -625,7 +625,7 @@ def test_switching_workspace_leaves_an_empty_draft(runtime: ServerRuntime, tmp_p
 
 
 def test_abort_cancels_only_the_runtime_composition(runtime: ServerRuntime) -> None:
-    from src.engine.shell.running import RunningCommands
+    from src.core.shell.running import RunningCommands
 
     other = RunningCommands()
     owner = runtime.composition.shell_commands
@@ -647,7 +647,7 @@ def test_abort_cancels_only_the_runtime_composition(runtime: ServerRuntime) -> N
 
 def test_the_durable_endpoint_is_registered(runtime: ServerRuntime) -> None:
     from src.server.app import create_app
-    from src.server.config import ServerConfig
+    from src.server.server_config import ServerConfig
 
     app = create_app(runtime, ServerConfig(password='x'), dist=runtime.composition.root / 'missing')
 
@@ -795,13 +795,13 @@ def test_send_reuses_the_client_request_id_and_does_not_duplicate(runtime: Serve
     first, second = asyncio.run(go())
     assert first['request_id'] == second['request_id'] == request_id
     assert second['duplicate'] is True
-    from src.engine.storage.accepted_inputs import AcceptedInputs
+    from src.core.storage.accepted_inputs import AcceptedInputs
 
     assert len(AcceptedInputs(runtime.composition.store.database).list(runtime.session.id)) == 1
 
 
 def test_send_rejects_an_empty_request_id(runtime: ServerRuntime) -> None:
-    async def go():
+    async def go() -> None:
         with pytest.raises(ValueError, match='request_id must not be empty'):
             await runtime.send('hola', request_id='')
 
@@ -811,7 +811,7 @@ def test_send_rejects_an_empty_request_id(runtime: ServerRuntime) -> None:
 def test_the_same_request_id_in_two_sessions_is_independent(runtime: ServerRuntime) -> None:
     import uuid
 
-    from src.engine.storage.accepted_inputs import AcceptedInputs
+    from src.core.storage.accepted_inputs import AcceptedInputs
 
     store = runtime.composition.store
     first = store.create_session()
@@ -828,7 +828,7 @@ def test_send_rejects_a_request_id_reused_with_different_text(runtime: ServerRun
 
     request_id = str(uuid.uuid4())
 
-    async def go():
+    async def go() -> None:
         await runtime.send('first', request_id=request_id)
         await asyncio.wait_for(runtime.wait(), 5)
         with pytest.raises(ValueError):
@@ -1162,7 +1162,7 @@ def test_a_chunked_body_is_refused_at_the_ceiling_while_it_arrives() -> None:
 
 def test_a_body_that_grows_after_the_response_started_is_not_refused_twice() -> None:
     """Defence in depth: a response already going out cannot be replaced by a 413."""
-    from src.server.app import _BodyTooLarge
+    from src.server.body_limit_middleware import _BodyTooLarge
 
     limit = 512
     sent: list[dict[str, object]] = []
@@ -1298,7 +1298,8 @@ ROOT = Path(__file__).resolve().parents[2]
 OTHER_PROCESS = """
 import sys
 
-from src.server.ownership import OwnershipError, ServerOwnership
+from src.server.ownership_error import OwnershipError
+from src.server.server_ownership import ServerOwnership
 
 try:
     ServerOwnership({database!r}).acquire()
@@ -1962,7 +1963,7 @@ def test_a_turn_that_ends_in_error_leaves_its_row_terminal(runtime: ServerRuntim
     the table allows from `claimed`; there is no failure state, and `interrupted` is
     reserved for reconciling a process that died (see `docs/architecture.md`).
     """
-    from src.engine.storage.accepted_inputs import AcceptedInputs
+    from src.core.storage.accepted_inputs import AcceptedInputs
 
     class Refusing:
         """An agent whose run cannot start: the engine's failure, not the model's."""
@@ -2098,7 +2099,7 @@ def test_the_defaults_projection_names_both_files_and_what_each_one_holds(tmp_pa
     """Two files, not one merged answer: which file says it is what the screen shows."""
     from types import SimpleNamespace
 
-    from src.engine.agents.model_defaults import read_defaults
+    from src.core.agents.model_defaults import read_defaults
     from src.server import views
 
     project, user = tmp_path / 'project' / 'config.json', tmp_path / 'home' / 'config.json'
@@ -2135,7 +2136,7 @@ def test_the_defaults_projection_names_both_files_and_what_each_one_holds(tmp_pa
 
 def test_a_defaults_file_that_is_not_there_is_an_empty_file_and_not_an_error(tmp_path: Path) -> None:
     """A missing file is a state to show, with nothing in it: the first write creates it."""
-    from src.engine.agents.model_defaults import read_defaults
+    from src.core.agents.model_defaults import read_defaults
     from src.server import views
 
     project, user = tmp_path / 'project' / 'config.json', tmp_path / 'home' / 'config.json'
@@ -2154,7 +2155,7 @@ def test_a_defaults_file_that_is_not_there_is_an_empty_file_and_not_an_error(tmp
 
 def test_a_defaults_file_the_reader_cannot_use_is_reported_instead_of_guessed(tmp_path: Path) -> None:
     """A file that does not parse is named, and an entry it rejects is not silently dropped."""
-    from src.engine.agents.model_defaults import read_defaults
+    from src.core.agents.model_defaults import read_defaults
     from src.server import views
 
     project, user = tmp_path / 'project' / 'config.json', tmp_path / 'home' / 'config.json'
@@ -2471,7 +2472,7 @@ def test_a_window_can_start_and_end_inside_one_message() -> None:
 def test_a_turn_binds_the_selected_workspace_for_its_tools(runtime: ServerRuntime) -> None:
     from pydantic_ai import Agent
 
-    from src.engine.files.paths import workspace_root
+    from src.core.files.paths import workspace_root
 
     seen: list[Path] = []
 

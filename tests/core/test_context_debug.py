@@ -14,12 +14,12 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import RequestUsage
 
-from src.engine.context.meter.cache import cache_summary, request_cache_rows
-from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.context.meter.debug import build_debug_report, debug_messages
-from src.engine.context.meter.debug_render import render_debug_report
-from src.engine.context.meter.request import snapshot_request
-from src.engine.context.strategy.view_result import ViewResult
+from src.core.context.meter.cache import cache_summary, request_cache_rows
+from src.core.context.meter.context_meter import ContextMeter
+from src.core.context.meter.debug import build_debug_report, debug_messages
+from src.core.context.meter.debug_render import render_debug_report
+from src.core.context.meter.request import snapshot_request
+from src.core.context.strategy.view_result import ViewResult
 
 # --- helpers ---------------------------------------------------------------
 
@@ -49,7 +49,7 @@ class _Params:
 # --- cache -----------------------------------------------------------------
 
 
-def test_cache_rows_split_cached_from_uncached():
+def test_cache_rows_split_cached_from_uncached() -> None:
     """`input_tokens` is inclusive: the cached ones are already inside."""
     messages = [
         _request(UserPromptPart(content='hello')),
@@ -64,7 +64,7 @@ def test_cache_rows_split_cached_from_uncached():
     assert row.hit_ratio == 0.8
 
 
-def test_cache_summary_aggregates_requests():
+def test_cache_summary_aggregates_requests() -> None:
     messages = [
         _response(input_tokens=1_000, cache_read_tokens=0, cache_write_tokens=1_000, output_tokens=10),
         _response(input_tokens=1_000, cache_read_tokens=900, cache_write_tokens=0, output_tokens=10),
@@ -80,21 +80,21 @@ def test_cache_summary_aggregates_requests():
     assert summary.hit_ratio == 0.45
 
 
-def test_cache_summary_without_usage_is_empty():
+def test_cache_summary_without_usage_is_empty() -> None:
     summary = cache_summary([_request(UserPromptPart(content='hello'))])
     assert not summary.has_data
     assert summary.rows == ()
     assert summary.hit_ratio is None
 
 
-def test_cache_summary_skips_responses_without_usage():
+def test_cache_summary_skips_responses_without_usage() -> None:
     """A response without usage is not a measured request: it does not count as 0 tokens."""
     messages = [ModelResponse(parts=[TextPart(content='x')]), _response(input_tokens=10, output_tokens=1)]
     assert len(request_cache_rows(messages)) == 1
     assert cache_summary(messages).unmeasured == 1
 
 
-def test_cache_summary_skips_unmeasured_requests():
+def test_cache_summary_skips_unmeasured_requests() -> None:
     """`unmeasured_requests` marks omitted usage: its totals are not a measurement."""
     messages = [_response(input_tokens=0, output_tokens=0, unmeasured_requests=1)]
     summary = cache_summary(messages)
@@ -102,7 +102,7 @@ def test_cache_summary_skips_unmeasured_requests():
     assert summary.unmeasured == 1
 
 
-def test_cache_summary_adds_cost_when_reported():
+def test_cache_summary_adds_cost_when_reported() -> None:
     from decimal import Decimal
 
     messages = [
@@ -114,7 +114,7 @@ def test_cache_summary_adds_cost_when_reported():
     assert round(summary.cost, 6) == 0.003
 
 
-def test_cache_cost_is_none_when_provider_does_not_report_it():
+def test_cache_cost_is_none_when_provider_does_not_report_it() -> None:
     summary = cache_summary([_response(input_tokens=100, output_tokens=10)])
     assert summary.cost is None
 
@@ -122,7 +122,7 @@ def test_cache_cost_is_none_when_provider_does_not_report_it():
 # --- request snapshot ------------------------------------------------------
 
 
-def test_snapshot_request_reads_instructions_and_tools():
+def test_snapshot_request_reads_instructions_and_tools() -> None:
     params = _Params(
         instruction_parts=[
             _Part(name=None, dynamic=False, content='prompt base'),
@@ -148,7 +148,7 @@ def test_snapshot_request_reads_instructions_and_tools():
     assert snapshot.captured is True
 
 
-def test_snapshot_request_tolerates_missing_parameters():
+def test_snapshot_request_tolerates_missing_parameters() -> None:
     snapshot = snapshot_request(None)
     assert snapshot.instructions == ()
     assert snapshot.tools == ()
@@ -158,14 +158,14 @@ def test_snapshot_request_tolerates_missing_parameters():
     assert snapshot.captured is False
 
 
-def test_snapshot_marks_deferred_tools():
+def test_snapshot_marks_deferred_tools() -> None:
     params = _Params(
         function_tools=[_Part(name='hidden', description='', parameters_json_schema={}, defer_loading=True)]
     )
     assert snapshot_request(params).tools[0].deferred is True
 
 
-def test_snapshot_preview_is_clipped():
+def test_snapshot_preview_is_clipped() -> None:
     params = _Params(instruction_parts=[_Part(name='big', dynamic=False, content='x' * 500)])
     block = snapshot_request(params, preview_chars=40).instructions[0]
     assert len(block.preview) <= 40
@@ -175,7 +175,7 @@ def test_snapshot_preview_is_clipped():
 # --- debug messages --------------------------------------------------------
 
 
-def test_debug_messages_label_parts_and_count_tokens():
+def test_debug_messages_label_parts_and_count_tokens() -> None:
     messages = [
         _request(UserPromptPart(content='hello world')),
         ModelResponse(parts=[ThinkingPart(content='thinking'), TextPart(content='done')]),
@@ -191,7 +191,7 @@ def test_debug_messages_label_parts_and_count_tokens():
     assert all(row.tokens > 0 for row in rows)
 
 
-def test_debug_messages_clip_long_previews_but_keep_the_real_cost():
+def test_debug_messages_clip_long_previews_but_keep_the_real_cost() -> None:
     big = 'a' * 5_000
     rows = debug_messages(
         [_request(ToolReturnPart(tool_name='read_file', content=big, tool_call_id='1'))], part_chars=100
@@ -205,14 +205,14 @@ def test_debug_messages_clip_long_previews_but_keep_the_real_cost():
     assert part.tokens == 1_252
 
 
-def test_debug_messages_reports_compaction_and_instructions():
+def test_debug_messages_reports_compaction_and_instructions() -> None:
     messages = [ModelRequest(parts=[CompactionPart(content='summary of old turns')], instructions='base prompt')]
     row = debug_messages(messages)[0]
     assert row.parts[0].kind == 'compaction'
     assert row.instructions == ('(inline)',)
 
 
-def test_debug_messages_handle_tool_call_args():
+def test_debug_messages_handle_tool_call_args() -> None:
     rows = debug_messages([ModelResponse(parts=[ToolCallPart(tool_name='run', args={'cmd': 'ls'})])])
     assert rows[0].kinds == 'tool_call'
     assert 'ls' in rows[0].parts[0].preview
@@ -241,7 +241,7 @@ def _report(messages, *, view_result=None):
     )
 
 
-def test_report_measures_log_against_view():
+def test_report_measures_log_against_view() -> None:
     messages = _session()
     dropped = ViewResult(messages=[messages[0]], estimated_tokens=5, dropped_thinking=1)
     report = _report(messages, view_result=dropped)
@@ -256,7 +256,7 @@ def test_report_measures_log_against_view():
     assert 'dropped reasoning: 1' in report.strategies_note
 
 
-def test_report_without_view_sends_everything():
+def test_report_without_view_sends_everything() -> None:
     report = _report(_session())
     assert not report.has_view
     assert report.view == ()
@@ -265,7 +265,7 @@ def test_report_without_view_sends_everything():
     assert report.strategies_note == ''
 
 
-def test_report_carries_cache_and_fixed_cost():
+def test_report_carries_cache_and_fixed_cost() -> None:
     report = _report(_session())
     assert report.cache.requests == 1
     assert report.cache.cached == 400
@@ -276,7 +276,7 @@ def test_report_carries_cache_and_fixed_cost():
 # --- render ----------------------------------------------------------------
 
 
-def test_render_debug_report_includes_every_section():
+def test_render_debug_report_includes_every_section() -> None:
     messages = _session()
     dropped = ViewResult(messages=[messages[0]], estimated_tokens=5, dropped_thinking=2)
     text = render_debug_report(_report(messages, view_result=dropped))
@@ -293,25 +293,25 @@ def test_render_debug_report_includes_every_section():
     assert 'History composition' in text
 
 
-def test_render_debug_report_without_usage_says_so():
+def test_render_debug_report_without_usage_says_so() -> None:
     text = render_debug_report(_report([_request(UserPromptPart(content='solo yo'))]))
     assert '(no usage reported yet)' in text
 
 
-def test_report_never_renders_context_content():
+def test_report_never_renders_context_content() -> None:
     secret = 'sensitive-message-not-for-debug'
     report = _report([_request(UserPromptPart(content=secret))])
     assert secret not in render_debug_report(report)
     assert all(not part.preview for row in report.log for part in row.parts)
 
 
-def test_invalid_cache_counts_are_not_presented_as_a_valid_hit():
+def test_invalid_cache_counts_are_not_presented_as_a_valid_hit() -> None:
     row = request_cache_rows([_response(input_tokens=100, cache_read_tokens=80, cache_write_tokens=30)])[0]
     assert row.hit_ratio is None
     assert row.uncached is None
 
 
-def test_partial_cost_and_unmeasured_requests_are_labeled():
+def test_partial_cost_and_unmeasured_requests_are_labeled() -> None:
     from decimal import Decimal
 
     messages = [
@@ -325,7 +325,7 @@ def test_partial_cost_and_unmeasured_requests_are_labeled():
     assert '1 of 3' in render_debug_report(report)
 
 
-def test_provider_cost_takes_precedence_and_estimates_are_labeled():
+def test_provider_cost_takes_precedence_and_estimates_are_labeled() -> None:
     from decimal import Decimal
 
     provider = ModelResponse(

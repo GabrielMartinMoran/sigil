@@ -36,25 +36,25 @@ import pytest
 from PIL import Image
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 
-from src.engine.agents.tree.models.node_status import NodeStatus
-from src.engine.bootstrap import Composition
-from src.server.events import EventHub
-from src.server.launch import Launch, ServiceStarting
-from src.server.runtime import PendingQuestion, ServerRuntime
-from src.ui.service_client import (
-    OutgoingImage,
-    PayloadTooLarge,
-    RequestRejected,
-    ServiceBusy,
-    ServiceClient,
-    ServiceClientError,
-    ServiceUnavailable,
-    SseDecoder,
-    StreamInterrupted,
-    TurnRequest,
-    Unauthorized,
-    UnexpectedResponse,
-)
+from src.core.agents.tree.models.node_status import NodeStatus
+from src.core.bootstrap import Composition
+from src.server.event_hub import EventHub
+from src.server.launch import Launch
+from src.server.pending_question import PendingQuestion
+from src.server.server_runtime import ServerRuntime
+from src.server.service_starting import ServiceStarting
+from src.ui.outgoing_image import OutgoingImage
+from src.ui.payload_too_large import PayloadTooLarge
+from src.ui.request_rejected import RequestRejected
+from src.ui.service_busy import ServiceBusy
+from src.ui.service_client import ServiceClient
+from src.ui.service_client_error import ServiceClientError
+from src.ui.service_unavailable import ServiceUnavailable
+from src.ui.sse_decoder import SseDecoder
+from src.ui.stream_interrupted import StreamInterrupted
+from src.ui.turn_request import TurnRequest
+from src.ui.unauthorized import Unauthorized
+from src.ui.unexpected_response import UnexpectedResponse
 from tests.support.server_parity import _busy, _composition
 from tests.support.ui_service_client import (
     TOKEN,
@@ -725,7 +725,7 @@ def test_terminal_launch_starts_a_blank_session_in_its_directory(
     runtime: ServerRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, other_directory: bool
 ) -> None:
     from src import sigil
-    from src.engine.settings import load_settings
+    from src.core.settings import load_settings
 
     root = tmp_path / 'other' if other_directory else tmp_path
     root.mkdir(exist_ok=True)
@@ -834,7 +834,7 @@ def test_new_session_keeps_the_previous_turn_running(runtime: ServerRuntime, tmp
 
 
 def test_the_catalog_route_returns_one_accounts_models(runtime: ServerRuntime, tmp_path: Path) -> None:
-    from src.engine.providers.domain.model_capability import ModelCapability
+    from src.core.providers.domain.model_capability import ModelCapability
 
     _with_catalog(
         runtime,
@@ -882,7 +882,7 @@ def test_an_unknown_account_is_a_rejection(runtime: ServerRuntime, tmp_path: Pat
 
 
 def test_set_model_changes_the_services_model(runtime: ServerRuntime, tmp_path: Path) -> None:
-    from src.engine.providers.domain.model_capability import ModelCapability
+    from src.core.providers.domain.model_capability import ModelCapability
 
     _with_catalog(
         runtime, _Catalog((ModelCapability(name='second/model', context_window=200_000, efforts=('low', 'high')),))

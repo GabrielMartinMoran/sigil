@@ -6,7 +6,7 @@ from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
-from src.engine.agents.tree.notifications import AgentNotification, Notifications
+from src.core.agents.tree.notifications import AgentNotification, Notifications
 
 
 def notice(sequence: int = 1) -> AgentNotification:

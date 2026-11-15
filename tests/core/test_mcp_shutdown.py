@@ -13,9 +13,9 @@ from pathlib import Path
 
 import pytest
 
-from src.engine.mcp import shutdown
-from src.engine.mcp.config.loader import load_config
-from src.engine.mcp.manager.manager import MCPManager
+from src.core.mcp import shutdown
+from src.core.mcp.config.loader import load_config
+from src.core.mcp.manager.mcp_manager import MCPManager
 
 
 def stdio_server(tmp_path: Path) -> dict:
@@ -50,24 +50,24 @@ if __name__ == '__main__':
 # --- the setting -------------------------------------------------------------
 
 
-def test_the_default_grace_period_is_short():
+def test_the_default_grace_period_is_short() -> None:
     """Two seconds per server is the SDK's default and is far too long for a quit."""
     assert shutdown.read_shutdown_timeout({}) < 1.0
 
 
-def test_the_grace_period_is_read_from_the_environment():
+def test_the_grace_period_is_read_from_the_environment() -> None:
     environ = {shutdown.ENV_MCP_SHUTDOWN_TIMEOUT: '0.75'}
     assert shutdown.read_shutdown_timeout(environ) == pytest.approx(0.75)
 
 
 @pytest.mark.parametrize('raw', ['', '   ', 'not-a-number', '0', '-1'])
-def test_a_malformed_grace_period_falls_back_to_the_default(raw: str):
+def test_a_malformed_grace_period_falls_back_to_the_default(raw: str) -> None:
     """It tunes how long a quit waits; it is not worth refusing to start over."""
     environ = {shutdown.ENV_MCP_SHUTDOWN_TIMEOUT: raw}
     assert shutdown.read_shutdown_timeout(environ) == shutdown.DEFAULT_SHUTDOWN_TIMEOUT
 
 
-def test_applying_the_setting_reaches_the_sdk():
+def test_applying_the_setting_reaches_the_sdk() -> None:
     """The SDK reads its constant at call time, so assigning it is what takes effect."""
     from mcp.client import stdio
 
@@ -80,11 +80,11 @@ def test_applying_the_setting_reaches_the_sdk():
         stdio.PROCESS_TERMINATION_TIMEOUT = original
 
 
-def test_the_builder_installs_the_timeout_it_was_given():
+def test_the_builder_installs_the_timeout_it_was_given() -> None:
     """The value travels from the composition root down to the SDK, not around it."""
     from mcp.client import stdio
 
-    from src.engine.mcp.deferred import build_manager
+    from src.core.mcp.deferred import build_manager
 
     original = stdio.PROCESS_TERMINATION_TIMEOUT
     try:
@@ -97,7 +97,7 @@ def test_the_builder_installs_the_timeout_it_was_given():
 # --- the manager -------------------------------------------------------------
 
 
-def test_closing_the_manager_releases_every_server(tmp_path):
+def test_closing_the_manager_releases_every_server(tmp_path: Path) -> None:
     """`aclose` closes each transport and leaves no session running or process behind."""
     config = tmp_path / 'config.json'
     config.write_text(__import__('json').dumps({'mcp_servers': {'probe': stdio_server(tmp_path)}}), encoding='utf-8')
@@ -118,7 +118,7 @@ def test_closing_the_manager_releases_every_server(tmp_path):
     asyncio.run(inner())
 
 
-def test_closing_the_manager_twice_is_harmless(tmp_path):
+def test_closing_the_manager_twice_is_harmless(tmp_path: Path) -> None:
     """A second close happens on every path that shuts down defensively."""
     config = tmp_path / 'config.json'
     config.write_text(__import__('json').dumps({'mcp_servers': {'probe': stdio_server(tmp_path)}}), encoding='utf-8')
@@ -132,7 +132,7 @@ def test_closing_the_manager_twice_is_harmless(tmp_path):
     asyncio.run(inner())
 
 
-def test_closing_waits_for_all_servers_concurrently():
+def test_closing_waits_for_all_servers_concurrently() -> None:
     """No close may finish until every server has started closing."""
     from types import SimpleNamespace
 
@@ -165,7 +165,7 @@ def test_closing_waits_for_all_servers_concurrently():
     asyncio.run(inner())
 
 
-def test_a_manager_without_servers_closes_cleanly():
+def test_a_manager_without_servers_closes_cleanly() -> None:
     manager = MCPManager({})
 
     async def inner() -> None:

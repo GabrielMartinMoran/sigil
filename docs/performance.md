@@ -9,7 +9,7 @@ recent turn.
 ## What the web extraction changes
 
 The audit started at commit `be9a957`, which introduces the web client and moves
-composition from `src/sigil.py` into `src/engine/bootstrap.py`.
+composition from `src/sigil.py` into `src/core/bootstrap.py`.
 
 The terminal path remains `SigilApp` → `TurnMixin.run_turn` → `Agent.iter`.
 It does not pass through FastAPI, HTTP, the server event hub, SSE, or the browser
@@ -131,7 +131,7 @@ structure, green success, and red failure within the existing application palett
 ## Declaring human-readable tool output
 
 Tool summaries and expanded output now share a presentation boundary in the
-engine. `src/engine/tooling/outputs.py` returns `ToolOutput(text, summary)`;
+engine. `src/core/tooling/outputs.py` returns `ToolOutput(text, summary)`;
 `output_defaults.py` declares the built-in formatters. The original tool result
 still goes to the model unchanged. The TUI, browser events, and persisted web
 transcript consume the human view rather than calling `str()` on a result.
@@ -151,8 +151,8 @@ For example:
 ```python
 from typing import Any
 
-from src.engine.tooling.outputs import ToolOutput
-from src.engine.tooling.presentation import ToolSummary
+from src.core.tooling.outputs import ToolOutput
+from src.core.tooling.presentation import ToolSummary
 
 
 def format_matches(data: Any) -> ToolOutput:

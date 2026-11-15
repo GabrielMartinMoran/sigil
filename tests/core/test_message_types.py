@@ -3,10 +3,10 @@
 import uuid
 from pathlib import Path
 
-from src.engine.agents.message_types import origin
-from src.engine.sessions.session_store import SessionStore
-from src.engine.storage.accepted_inputs import AcceptedInputs
-from src.engine.storage.database import Database, database_path
+from src.core.agents.message_types import origin
+from src.core.sessions.session_store import SessionStore
+from src.core.storage.accepted_inputs import AcceptedInputs
+from src.core.storage.database import Database, database_path
 
 
 def _report() -> dict:

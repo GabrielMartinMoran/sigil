@@ -17,15 +17,15 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import FunctionModel
 
-from src.engine.context.budget import ContextBudget
-from src.engine.context.capability import ContextViewCapability
-from src.engine.context.compaction.events import POLICY_VERSION, RECORD_KEY
-from src.engine.context.compaction.policy import CompactionPolicy
-from src.engine.context.compaction.summary import Summary
-from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.context.strategy.append_only import AppendOnlyStrategy
-from src.engine.context.tokens import estimate_messages_tokens
-from src.engine.tooling.compaction_policies import ALL_COMPACTORS
+from src.core.context.capability import ContextViewCapability
+from src.core.context.compaction.compaction_policy import CompactionPolicy
+from src.core.context.compaction.events import POLICY_VERSION, RECORD_KEY
+from src.core.context.compaction.summary import Summary
+from src.core.context.context_budget import ContextBudget
+from src.core.context.meter.context_meter import ContextMeter
+from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
+from src.core.context.tokens import estimate_messages_tokens
+from src.core.tooling.compaction_policies import ALL_COMPACTORS
 from tests.support.append_only_pipeline import (
     budget_for,
     conversation,
@@ -34,7 +34,7 @@ from tests.support.append_only_pipeline import (
 )
 
 
-def test_ordinary_operation_appends_without_rewriting_anything():
+def test_ordinary_operation_appends_without_rewriting_anything() -> None:
     messages = conversation(3)
     result = AppendOnlyStrategy(lookup=ALL_COMPACTORS.get).view(messages, budget_for(messages, share=0.2))
 
@@ -45,7 +45,7 @@ def test_ordinary_operation_appends_without_rewriting_anything():
     assert result.compacted_parts == 0
 
 
-def test_crossing_the_trigger_reduces_old_payloads_and_reasoning_in_one_batch():
+def test_crossing_the_trigger_reduces_old_payloads_and_reasoning_in_one_batch() -> None:
     messages = conversation(30)
     result = AppendOnlyStrategy(lookup=ALL_COMPACTORS.get).view(messages, budget_for(messages, share=0.9))
 
@@ -63,7 +63,7 @@ def test_crossing_the_trigger_reduces_old_payloads_and_reasoning_in_one_batch():
     assert result.summary_request is not None
 
 
-def test_default_thresholds_trigger_compaction_and_request_a_summary_only_if_needed():
+def test_default_thresholds_trigger_compaction_and_request_a_summary_only_if_needed() -> None:
     strategy = AppendOnlyStrategy()
     below_trigger = conversation(30)
     below = strategy.view(below_trigger, budget_for(below_trigger, share=0.59))
@@ -85,7 +85,7 @@ def test_default_thresholds_trigger_compaction_and_request_a_summary_only_if_nee
     assert reduced.summary_request is None
 
 
-def test_the_checkpoint_replaces_the_older_span_and_keeps_the_tail():
+def test_the_checkpoint_replaces_the_older_span_and_keeps_the_tail() -> None:
     messages = conversation(30)
     strategy = AppendOnlyStrategy(lookup=ALL_COMPACTORS.get)
     budget = budget_for(messages, share=0.9)
@@ -103,7 +103,7 @@ def test_the_checkpoint_replaces_the_older_span_and_keeps_the_tail():
     assert len(messages) == 61
 
 
-def test_the_checkpoint_covers_the_older_span_and_never_splits_an_exchange():
+def test_the_checkpoint_covers_the_older_span_and_never_splits_an_exchange() -> None:
     messages = conversation(30)
     request = AppendOnlyStrategy().view(messages, budget_for(messages, share=0.9)).summary_request
 
@@ -118,7 +118,7 @@ def test_the_checkpoint_covers_the_older_span_and_never_splits_an_exchange():
     assert request.previous is None
 
 
-def test_a_checkpoint_is_not_requested_when_the_span_would_not_advance():
+def test_a_checkpoint_is_not_requested_when_the_span_would_not_advance() -> None:
     messages = conversation(4)
     budget = budget_for(messages, share=0.9)
     strategy = AppendOnlyStrategy()
@@ -129,7 +129,7 @@ def test_a_checkpoint_is_not_requested_when_the_span_would_not_advance():
     assert applied.summary_request is None
 
 
-def test_the_trigger_is_configurable_and_the_target_decides_the_summary():
+def test_the_trigger_is_configurable_and_the_target_decides_the_summary() -> None:
     messages = conversation(30)
     budget = budget_for(messages, share=0.9)
     wide = CompactionPolicy(trigger_percent=95, target_percent=90)
@@ -138,7 +138,7 @@ def test_the_trigger_is_configurable_and_the_target_decides_the_summary():
     assert AppendOnlyStrategy().view(messages, budget).plan.state.compacted_calls
 
 
-def test_a_previous_checkpoint_is_offered_to_the_next_summary():
+def test_a_previous_checkpoint_is_offered_to_the_next_summary() -> None:
     messages = conversation(30)
     budget = budget_for(messages, share=0.9)
     strategy = AppendOnlyStrategy()
@@ -163,7 +163,7 @@ def test_a_previous_checkpoint_is_offered_to_the_next_summary():
     assert again.summary_request.previous == 'older checkpoint'
 
 
-def test_a_version_two_record_becomes_call_and_part_identities():
+def test_a_version_two_record_becomes_call_and_part_identities() -> None:
     messages = conversation(3)
     record = {
         'version': 2,
@@ -188,7 +188,7 @@ def test_a_version_two_record_becomes_call_and_part_identities():
     assert len(messages) == 7
 
 
-def test_the_capability_asks_the_model_for_the_checkpoint_and_applies_it():
+def test_the_capability_asks_the_model_for_the_checkpoint_and_applies_it() -> None:
     def answer(messages, info):
         if '<conversation>' in str(messages[-1].parts[0].content):
             return ModelResponse(parts=[TextPart('## Goal\ncontinue the work')])
@@ -207,7 +207,7 @@ def test_the_capability_asks_the_model_for_the_checkpoint_and_applies_it():
     assert capability.last_view.plan.state.summary == '## Goal\ncontinue the work'
 
 
-def test_a_failed_checkpoint_leaves_the_deterministic_projection_and_says_why():
+def test_a_failed_checkpoint_leaves_the_deterministic_projection_and_says_why() -> None:
     def broken(messages, info):
         if '<conversation>' in str(messages[-1].parts[0].content):
             raise RuntimeError('no summary today')
@@ -229,7 +229,7 @@ def test_a_failed_checkpoint_leaves_the_deterministic_projection_and_says_why():
     assert view.plan.state.compacted_calls
 
 
-def test_a_recorded_decision_is_replayed_instead_of_recomputed():
+def test_a_recorded_decision_is_replayed_instead_of_recomputed() -> None:
     messages = conversation(3)
     decision = AppendOnlyStrategy().view(messages, budget_for(messages, share=0.9))
     record = {

@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from src.engine.agents.tree.reports import WAKE_PROMPT
+from src.core.agents.tree.reports import WAKE_PROMPT
 
 __all__ = ['WAKE_PROMPT']

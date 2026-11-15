@@ -24,10 +24,10 @@ Three measurements, each one pointing at the same seam.
 
 | Observation | Number | Where |
 | --- | --- | --- |
-| `src/engine` imports of Textual | **2**, both in one file | `themes.py` uses `textual.color.Color` and `textual.theme.Theme` |
+| `src/core` imports of Textual | **2**, both in one file | `themes.py` uses `textual.color.Color` and `textual.theme.Theme` |
 | Dependencies `SigilApp` is constructed with | **25** | `ui/app.py`, `SigilApp.__init__` |
 | Direct calls from `src/ui` into `_store`, `_model_service`, `_summoner` | **29** | across `ui/*.py` |
-| `src/engine` / `src/ui` size | 19,819 / 8,195 lines | — |
+| `src/core` / `src/ui` size | 19,819 / 8,195 lines | — |
 
 So the engine is not the problem. The problem is where the *application* lives:
 
@@ -484,7 +484,7 @@ conversation's queue painted over an empty one, and says nothing about it.
 A turn can be slow without being broken, and the service used to be unable to tell
 you the difference. The engine already retried transient model failures — five
 attempts with a backoff of 0.5 to 8 seconds, see
-`src/engine/agents/retry.py` — but only the in-process client listened for the
+`src/core/agents/retry.py` — but only the in-process client listened for the
 notice: `SigilApp.notify_model_retry` paints every attempt in its chat. In the
 service that callback had no subscriber, so a provider that kept failing published
 nothing at all and the screen read "Thinking" for minutes.
@@ -515,7 +515,7 @@ A turn that ends in error closes its rows, exactly as a cancelled one does.
 accepted input cannot stay `claimed` until the next start interrupts it — which is
 what used to happen, and what made a failed turn look like a lost one. The terminal
 state is `stopped`, not a new one: `_TRANSITIONS` in
-`src/engine/storage/accepted_inputs.py` allows `claimed → stopped` and has no
+`src/core/storage/accepted_inputs.py` allows `claimed → stopped` and has no
 failure state, while `interrupted` stays reserved for reconciling a process that
 died, as [idle shutdown](#idle-shutdown) states.
 
@@ -747,7 +747,7 @@ the same original payload is idempotent, but it is not a fixed point for JPEG:
 sending back bytes the server already normalized can produce different bytes
 and is refused as a conflict, not recognized as a duplicate. The ids and
 timestamps the server assigns are excluded from the fingerprint. See
-`src/engine/storage/accepted_inputs.py`.
+`src/core/storage/accepted_inputs.py`.
 
 Validation happens in `decode_images` (`src/server/runtime_support.py`) before the
 queue is touched,
@@ -761,7 +761,7 @@ so a refusal writes nothing:
 | Payload | must be valid base64 and must decode as an image |
 | Request body | 64 MiB of JSON |
 
-Images are re-encoded by `src/engine/attachments/images.py` before they are
+Images are re-encoded by `src/core/attachments/images.py` before they are
 stored, which bounds their dimensions and makes the stored media type the one
 the bytes actually are.
 
@@ -788,7 +788,7 @@ already uses.
 | Written | From the application's lifespan, after the port is listening |
 | Removed | When the same lifespan ends |
 
-`src/engine/paths.py` owns both locations, like every other directory Sigil
+`src/core/paths.py` owns both locations, like every other directory Sigil
 writes to. `src/server/endpoint.py` owns the contract.
 
 ### Why TCP on loopback and not a UNIX socket
@@ -1497,7 +1497,7 @@ configuration from having two authors.
 
 ### The help is derived, never repeated
 
-Every listing of commands reads the same two tables: `src/engine/commands.py` for a
+Every listing of commands reads the same two tables: `src/core/commands/catalog.py` for a
 command's name and sentence, and `src/ui/command_transport.py` for whether this terminal
 can act on it. `src/ui/help_text.py` renders a row as the catalogue's words plus
 `listing_mark`, and `/help` and the `/` menu both call it — the help with
@@ -1802,9 +1802,9 @@ Two rules decide what a gap looks like:
 
 The plan is read from the projection instead of the terminal's own
 `RoadmapStores` for one reason. `RoadmapStore` loads its rows once, in its
-constructor (`src/engine/roadmap/store.py`), and only `reload()` or `bind()`
+constructor (`src/core/roadmap/roadmap_store.py`), and only `reload()` or `bind()`
 refreshes them; `RoadmapStores.for_node` caches the store per node. The service
-writes the plan through its own store (`src/engine/bootstrap.py`) and projects it in
+writes the plan through its own store (`src/core/bootstrap.py`) and projects it in
 `/api/state`, and nothing in the attached terminal subscribes to those writes. The
 local copy is therefore a photograph taken at mount: showing it would be showing
 frozen rows without saying so. The service's copy is the only one that moves.
@@ -1863,7 +1863,7 @@ boundaries also refresh requests that produced no visible output.
 A failed or invalid read clears stale measurements and shows an explicit
 `Debug unavailable` message, never a fabricated zero. Closing the view stops
 its coalescing timer and cancels its client worker. Turn timing is measured in
-`src/engine/agents/turn_timing.py` and is included in `/debug --text`, as it was
+`src/core/agents/turn_timing.py` and is included in `/debug --text`, as it was
 for local runs; the service does not import the TUI.
 
 **`seq` of a typed message.** In process the position is `len(_history)`: the prompt
@@ -2075,7 +2075,7 @@ classification is separate from that text: the service persists the input's
 capability restores per-part types in message metadata after the model library
 merges request envelopes.
 
-Both transcript adapters use `src.engine.agents.message_types.input_views`.
+Both transcript adapters use `src.core.agents.message_types.input_views`.
 It emits one `subagent_report` item per saved snapshot, keeps explicitly marked
 user text as a user item, distinguishes agent messages, and hides internal
 notices. Untyped historical parts remain user input, even when their text looks

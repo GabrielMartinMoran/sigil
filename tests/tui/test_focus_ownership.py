@@ -22,10 +22,11 @@ from textual import events
 from textual.pilot import Pilot
 from textual.widgets import OptionList, Static
 
-from src.engine.interaction.hub import QuestionHub
-from src.engine.interaction.models.question_item import QuestionItem, QuestionOption
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
+from src.core.interaction.models.question_item import QuestionItem
+from src.core.interaction.models.question_option import QuestionOption
+from src.core.interaction.question_hub import QuestionHub
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.question_panel import QuestionPanel
@@ -79,8 +80,8 @@ async def _wheel_up(pilot, widget, times: int = 2) -> None:
     await pilot.pause()
 
 
-def test_a_click_on_the_transcript_keeps_the_keys_in_the_composer():
-    async def inner():
+def test_a_click_on_the_transcript_keeps_the_keys_in_the_composer() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 40)) as pilot:
@@ -98,8 +99,8 @@ def test_a_click_on_the_transcript_keeps_the_keys_in_the_composer():
     asyncio.run(inner())
 
 
-def test_a_click_on_the_side_panel_keeps_the_keys_in_the_composer():
-    async def inner():
+def test_a_click_on_the_side_panel_keeps_the_keys_in_the_composer() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 40)) as pilot:
@@ -116,10 +117,10 @@ def test_a_click_on_the_side_panel_keeps_the_keys_in_the_composer():
     asyncio.run(inner())
 
 
-def test_tab_stays_in_the_composer():
+def test_tab_stays_in_the_composer() -> None:
     """Nothing reachable by `Tab` is worth stranding the cursor for."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 40)) as pilot:
@@ -135,10 +136,10 @@ def test_tab_stays_in_the_composer():
     asyncio.run(inner())
 
 
-def test_the_wheel_still_scrolls_the_transcript():
+def test_the_wheel_still_scrolls_the_transcript() -> None:
     """The regression the fix could cause: no focus, no scroll."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 40)) as pilot:
@@ -153,8 +154,8 @@ def test_the_wheel_still_scrolls_the_transcript():
     asyncio.run(inner())
 
 
-def test_pageup_and_pagedown_scroll_the_transcript_from_the_composer():
-    async def inner():
+def test_pageup_and_pagedown_scroll_the_transcript_from_the_composer() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 40)) as pilot:
@@ -173,8 +174,8 @@ def test_pageup_and_pagedown_scroll_the_transcript_from_the_composer():
     asyncio.run(inner())
 
 
-def test_ctrl_arrows_scroll_the_transcript_from_the_composer():
-    async def inner():
+def test_ctrl_arrows_scroll_the_transcript_from_the_composer() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 40)) as pilot:
@@ -192,7 +193,7 @@ def test_ctrl_arrows_scroll_the_transcript_from_the_composer():
     asyncio.run(inner())
 
 
-def test_every_option_is_one_line_at_any_width():
+def test_every_option_is_one_line_at_any_width() -> None:
     """A wrapped row makes the list read as two lists, so the row is clipped.
 
     `OptionList` renders each option through its own `Visual` at the list width, so
@@ -204,7 +205,7 @@ def test_every_option_is_one_line_at_any_width():
     `[recommended]` tag survive, because they are what the decision is made on.
     """
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hub = QuestionHub()
             app = _app(tmp, hub)
@@ -245,10 +246,10 @@ def test_every_option_is_one_line_at_any_width():
     asyncio.run(inner())
 
 
-def test_the_help_line_never_scrolls_away():
+def test_the_help_line_never_scrolls_away() -> None:
     """It is the only legend while the composer is out of the way."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hub = QuestionHub()
             app = _app(tmp, hub)
@@ -274,7 +275,7 @@ def test_the_help_line_never_scrolls_away():
     asyncio.run(inner())
 
 
-def test_the_composer_steps_aside_for_the_question():
+def test_the_composer_steps_aside_for_the_question() -> None:
     """The box that owns the keyboard is the box on screen.
 
     A composer that is visible and cannot be typed into is a lie, and it was the
@@ -282,7 +283,7 @@ def test_the_composer_steps_aside_for_the_question():
     gone and the question takes its place, across the full width.
     """
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hub = QuestionHub()
             app = _app(tmp, hub)
@@ -314,10 +315,10 @@ def test_the_composer_steps_aside_for_the_question():
     asyncio.run(inner())
 
 
-def test_a_question_leaves_the_side_panel_preference_alone():
+def test_a_question_leaves_the_side_panel_preference_alone() -> None:
     """`/sidebar off` is the user's decision, and a question is not a reason to redo it."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hub = QuestionHub()
             app = _app(tmp, hub)
@@ -340,7 +341,7 @@ def test_a_question_leaves_the_side_panel_preference_alone():
     asyncio.run(inner())
 
 
-def test_the_side_panel_shrinks_with_the_transcript_instead_of_stepping_out():
+def test_the_side_panel_shrinks_with_the_transcript_instead_of_stepping_out() -> None:
     """Both columns give up height; neither gives up its place.
 
     The panel is a sibling of `#main`, so it takes its height from the whole row above
@@ -349,7 +350,7 @@ def test_the_side_panel_shrinks_with_the_transcript_instead_of_stepping_out():
     still a usable one — and its roadmap is often what the question is about.
     """
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hub = QuestionHub()
             app = _app(tmp, hub)
@@ -381,8 +382,8 @@ def test_the_side_panel_shrinks_with_the_transcript_instead_of_stepping_out():
     asyncio.run(inner())
 
 
-def test_the_panel_keeps_the_keys_after_a_click_outside_it():
-    async def inner():
+def test_the_panel_keeps_the_keys_after_a_click_outside_it() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hub = QuestionHub()
             app = _app(tmp, hub)
@@ -413,10 +414,10 @@ def test_the_panel_keeps_the_keys_after_a_click_outside_it():
     asyncio.run(inner())
 
 
-def test_the_panel_keeps_the_keys_in_the_free_text_field():
+def test_the_panel_keeps_the_keys_in_the_free_text_field() -> None:
     """The same rule, one state further: a click does not close the field."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hub = QuestionHub()
             app = _app(tmp, hub)
@@ -445,7 +446,7 @@ def test_the_panel_keeps_the_keys_in_the_free_text_field():
     asyncio.run(inner())
 
 
-def test_escape_outside_the_panel_cancels_the_question_not_the_turn():
+def test_escape_outside_the_panel_cancels_the_question_not_the_turn() -> None:
     """`Esc` means the same thing everywhere while a question is open.
 
     The panel is not in the focus chain here — nothing is — which is the state a
@@ -453,7 +454,7 @@ def test_escape_outside_the_panel_cancels_the_question_not_the_turn():
     would kill the run and leave the question on screen with nobody to answer it.
     """
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hub = QuestionHub()
             app = _app(tmp, hub)
@@ -480,10 +481,10 @@ def test_escape_outside_the_panel_cancels_the_question_not_the_turn():
     asyncio.run(inner())
 
 
-def test_the_composer_border_follows_the_focus():
+def test_the_composer_border_follows_the_focus() -> None:
     """A composer that is not listening has to look like one."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 40)) as pilot:
@@ -506,12 +507,12 @@ def test_the_composer_border_follows_the_focus():
     asyncio.run(inner())
 
 
-def test_assistant_markdown_can_be_selected():
+def test_assistant_markdown_can_be_selected() -> None:
     from textual.selection import SELECT_ALL
 
-    from src.ui.widgets.chat_log import AssistantBlock
+    from src.ui.widgets.assistant_block import AssistantBlock
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 40)) as pilot:
@@ -528,10 +529,10 @@ def test_assistant_markdown_can_be_selected():
     asyncio.run(inner())
 
 
-def test_assistant_markdown_link_opens_in_browser():
-    from src.ui.widgets.chat_log import AssistantBlock
+def test_assistant_markdown_link_opens_in_browser() -> None:
+    from src.ui.widgets.assistant_block import AssistantBlock
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             opened = []
@@ -549,10 +550,10 @@ def test_assistant_markdown_link_opens_in_browser():
     asyncio.run(inner())
 
 
-def test_assistant_plain_url_opens_in_browser():
-    from src.ui.widgets.chat_log import AssistantBlock
+def test_assistant_plain_url_opens_in_browser() -> None:
+    from src.ui.widgets.assistant_block import AssistantBlock
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             opened = []
@@ -569,10 +570,10 @@ def test_assistant_plain_url_opens_in_browser():
     asyncio.run(inner())
 
 
-def test_error_notice_is_also_shown_as_a_toast():
-    from src.ui.messages import ChatNotice
+def test_error_notice_is_also_shown_as_a_toast() -> None:
+    from src.ui.chat_notice import ChatNotice
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             toasts = []
@@ -585,10 +586,10 @@ def test_error_notice_is_also_shown_as_a_toast():
     asyncio.run(inner())
 
 
-def test_url_in_notice_opens_in_browser():
-    from src.ui.widgets.chat_log import LinkNotice
+def test_url_in_notice_opens_in_browser() -> None:
+    from src.ui.widgets.link_notice import LinkNotice
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             opened = []

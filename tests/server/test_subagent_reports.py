@@ -5,10 +5,11 @@ from __future__ import annotations
 import pytest
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
-from src.engine.agents.message_types import origin, request
-from src.engine.agents.tree.models.agent_node import AgentNode, NodeStatus
-from src.engine.agents.tree.reports import WAKE_PROMPT, report_view
-from src.engine.agents.tree.summoner import _envelope
+from src.core.agents.message_types import origin, request
+from src.core.agents.tree.models.agent_node import AgentNode
+from src.core.agents.tree.models.node_status import NodeStatus
+from src.core.agents.tree.reports import WAKE_PROMPT, report_view
+from src.core.agents.tree.summoner import _envelope
 from src.server import views
 
 

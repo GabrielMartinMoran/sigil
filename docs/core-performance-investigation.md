@@ -184,10 +184,10 @@ overhead;
 its purpose here is call attribution, not a replacement timing result.
 
 The entry path is in
-[`ContextViewCapability.before_model_request`](../src/engine/context/capability.py),
+[`ContextViewCapability.before_model_request`](../src/core/context/capability.py),
 with the repeated work in
 [`prepare`, `finish`, and
-`metrics`](../src/engine/context/compaction/projection.py).
+`metrics`](../src/core/context/compaction/projection.py).
 Both the server and terminal checkpoint paths also invoke synchronous
 persistence
 while processing a turn. In the server, `_stream()` checks for checkpoints on
@@ -215,7 +215,7 @@ Never globally monkeypatch or share mutable caches between concurrent sessions.
 
 The storage profile attributes approximately 94% of its profiled save time to
 `SessionStore._fingerprint()`: the database already writes only a tail, but
-[`synchronization.fingerprint`](../src/engine/sessions/synchronization.py) still
+[`synchronization.fingerprint`](../src/core/sessions/synchronization.py) still
 serializes all messages. Incremental hashes or explicit revision-based dirty
 tracking need tests for stream mutations, rollback, forks, recovery, concurrent
 writers, and tree changes. Length and last-object identity alone are not a safe
@@ -229,7 +229,7 @@ language or starting an external command.
 
 ### Read bounded bytes and avoid per-line allocations
 
-[`_read_whole`](../src/engine/files/tools.py) calls `read_bytes()` before
+[`_read_whole`](../src/core/files/tools.py) calls `read_bytes()` before
 slicing.
 A complete-tool prototype using bounded I/O, the same decoder, model
 construction,
@@ -256,7 +256,7 @@ is an experiment, not an automatic improvement.
 
 ### Remove the shell's empty-selector wait
 
-[`drain`](../src/engine/shell/process.py) continues while streams remain **or**
+[`drain`](../src/core/shell/process.py) continues while streams remain **or**
 the
 process has not exited. If both pipes close before `poll()` observes exit, the
 next `_read_available()` selects on no descriptors with a 0.2-second timeout.
@@ -283,7 +283,7 @@ semantics and is not justified by the small-command timings.
 
 ### Short-circuit images before decoding
 
-[`view_image`](../src/engine/attachments/tools.py) computes attached IDs, then
+[`view_image`](../src/core/attachments/tools.py) computes attached IDs, then
 calls `load_source()` before checking membership. That path already reads,
 decodes, resizes, and re-encodes the image. Session-image reads also reprocess
 already prepared bytes.
@@ -305,7 +305,7 @@ photos, transparency, and JPEG fallback first.
 
 ### Bound patch diagnostics without changing match semantics silently
 
-[`apply_string_patch`](../src/engine/files/text.py) records every overlapping
+[`apply_string_patch`](../src/core/files/text.py) records every overlapping
 match
 in Python. On ambiguity it calculates each line number by counting from the
 start again. With 50,000 matches this repeatedly scans prefixes and constructs a
@@ -325,7 +325,7 @@ do not report the faster helper as a validated drop-in replacement.
 
 ### Cache skills and reduce wrapper work
 
-[`render_loaded_skills`](../src/engine/skills/rendering.py) calls
+[`render_loaded_skills`](../src/core/skills/rendering.py) calls
 `registry.load()`
 for each loaded skill on every request. That operation reparses YAML and walks
 the resource tree, even though the prompt needs the body, not a fresh inventory.
@@ -337,7 +337,7 @@ microbenchmark is approximately nine times faster than `SafeLoader`, but that
 is only YAML parsing, not a ninefold skill-tool improvement. Loader differences
 and deployment availability need tests before changing the parser.
 
-[`wrap_tool`](../src/engine/tooling/wrapper.py) binds signatures at start and
+[`wrap_tool`](../src/core/tooling/wrapper.py) binds signatures at start and
 end,
 then again for guarded calls. It builds event previews even with no logger.
 A paired 9 KiB read measures 0.078–0.081 ms raw and 0.203–0.208 ms wrapped.

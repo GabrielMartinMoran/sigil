@@ -33,35 +33,59 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, StrictBool
-from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from src.engine.agents.model_config import AgentModelConfig
-from src.engine.agents.model_defaults import ConfigScope
-from src.engine.agents.profile.models.agent_name import is_valid_agent_name
-from src.engine.agents.profile.models.agent_not_found import AgentNotFound
-from src.engine.agents.rollback import RollbackError, prompt_of_turn
-from src.engine.agents.tree.models.summon_error import SummonError
-from src.engine.context.meter.cost import session_cost
-from src.engine.providers.domain.auth_method import AuthMethod, auth_methods_for
-from src.engine.providers.domain.provider_error import BusyError, ProviderError
-from src.engine.providers.domain.provider_kind import ProviderKind
-from src.engine.providers.domain.thinking import EFFORT_LEVELS, parse_choice
-from src.engine.sessions.catalog import catalog
-from src.engine.sessions.catalog import workspaces as discover_workspaces
-from src.engine.workspace.models.workspace_error import WorkspaceError
-from src.engine.workspace.repository import GitRepository
+from src.core.agents.model_config import AgentModelConfig
+from src.core.agents.model_defaults import ConfigScope
+from src.core.agents.profile.models.agent_name import is_valid_agent_name
+from src.core.agents.profile.models.agent_not_found import AgentNotFound
+from src.core.agents.rollback import RollbackError, prompt_of_turn
+from src.core.agents.tree.models.summon_error import SummonError
+from src.core.context.meter.cost import session_cost
+from src.core.providers.domain.auth_method import AuthMethod, auth_methods_for
+from src.core.providers.domain.provider_error import BusyError, ProviderError
+from src.core.providers.domain.provider_kind import ProviderKind
+from src.core.providers.domain.thinking import EFFORT_LEVELS, parse_choice
+from src.core.sessions.catalog import catalog
+from src.core.sessions.catalog import workspaces as discover_workspaces
+from src.core.workspace.git_repository import GitRepository
+from src.core.workspace.models.workspace_error import WorkspaceError
 from src.server import views
-from src.server.auth import Auth, AuthMiddleware, LoginThrottle, cleared_cookie, client_key, session_cookie
-from src.server.config import ServerConfig
-from src.server.debug import DebugDiagnostics
+from src.server.account_body import AccountBody
+from src.server.agent_body import AgentBody
+from src.server.answer_body import AnswerBody
+from src.server.auth import Auth
+from src.server.auth_cookies import cleared_cookie, session_cookie
+from src.server.auth_middleware import AuthMiddleware
+from src.server.body_limit_middleware import MAX_COMMAND_BYTES, BodyLimitMiddleware
+from src.server.client_key import client_key
+from src.server.debug_diagnostics import DebugDiagnostics
 from src.server.diagnostics import record
-from src.server.endpoint import EndpointPublisher
-from src.server.events import EventHub
-from src.server.runtime import DEFAULT_IDLE_GRACE, IDLE_POLL_INTERVAL, IncomingImage, ServerRuntime
+from src.server.effort_body import EffortBody
+from src.server.endpoint_publisher import EndpointPublisher
+from src.server.event_hub import EventHub
+from src.server.external_files_body import ExternalFilesBody
+from src.server.fork_body import ForkBody
+from src.server.graceful_stop import GracefulStop
+from src.server.incoming_image import IncomingImage
+from src.server.login_body import LoginBody
+from src.server.login_throttle import LoginThrottle
+from src.server.mcp_body import McpBody
+from src.server.model_body import ModelBody
+from src.server.model_default_body import ModelDefaultBody
+from src.server.new_session_body import NewSessionBody
+from src.server.node_body import NodeBody
+from src.server.rename_body import RenameBody
+from src.server.rollback_body import RollbackBody
+from src.server.runtime_support import IDLE_POLL_INTERVAL
+from src.server.server_config import ServerConfig
+from src.server.server_runtime import DEFAULT_IDLE_GRACE, ServerRuntime
+from src.server.session_body import SessionBody
 from src.server.session_lease_middleware import SessionLeaseMiddleware
 from src.server.session_runtime import SessionRuntime
+from src.server.turn_body import TurnBody
 from src.server.webbuild import dist_root, staleness
+from src.server.workspace_body import WorkspaceBody
+from src.server.worktree_body import WorktreeBody
 
 HEARTBEAT_SECONDS = 20.0
 """How often an idle stream says something, so a proxy does not close it."""
@@ -88,7 +112,6 @@ can hand back. The bound lives here and not only in the transport so the route c
 hang a caller: a provider that never answers becomes a refusal with a sentence.
 """
 
-MAX_COMMAND_BYTES = 64 * 1024 * 1024
 """Ceiling for one JSON command body, counted as the bytes arrive.
 
 Ten images at the per-image limit are about 53 MiB once base64 adds a third; the
@@ -112,101 +135,6 @@ A bare 404 is what a browser shows when a URL is wrong; this URL is right, and t
 sentence names the command that serves the page. The backend is not a broken web
 server — it is a different surface.
 """
-
-
-class _BodyTooLarge(BaseException):
-    """The body of the request passed `MAX_COMMAND_BYTES` while it was being read.
-
-    It inherits ``BaseException`` on purpose. FastAPI reads a JSON body inside an
-    ``except Exception`` and turns anything raised there into ``HTTPException(400)``,
-    so a regular exception raised from ``receive`` would never reach this
-    middleware and the client would see a parse error instead of the ``413``. This
-    is deliberate control flow between the wrapped app and the middleware, not a
-    program error, and it must not be caught by code that handles ordinary
-    failures.
-    """
-
-
-class BodyLimitMiddleware:
-    """Refuses an HTTP request whose body exceeds the command ceiling.
-
-    A declared ``Content-Length`` is checked first, which is the common case and
-    costs nothing. A chunked body has no length to check, so the bytes are counted
-    as they arrive and the request is refused at the ceiling instead of after it.
-    """
-
-    def __init__(self, app: ASGIApp, *, limit: int = MAX_COMMAND_BYTES) -> None:
-        self.app = app
-        self.limit = limit
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope['type'] != 'http':
-            await self.app(scope, receive, send)
-            return
-        declared = _content_length(scope)
-        if declared is not None and declared > self.limit:
-            await _too_large(send, self.limit)
-            return
-        counted = 0
-        started = False
-
-        async def limited() -> Message:
-            nonlocal counted
-            message = await receive()
-            if message['type'] == 'http.request':
-                counted += len(message.get('body', b''))
-                if counted > self.limit:
-                    raise _BodyTooLarge
-            return message
-
-        async def watched(message: Message) -> None:
-            nonlocal started
-            if message['type'] == 'http.response.start':
-                started = True
-            await send(message)
-
-        try:
-            await self.app(scope, limited, watched)
-        except _BodyTooLarge:
-            if started:  # the response is already going out; nothing left to refuse
-                raise
-            await _too_large(send, self.limit)
-
-
-def _content_length(scope: Scope) -> int | None:
-    for name, value in scope.get('headers', ()):
-        if name.lower() == b'content-length':
-            try:
-                return int(value)
-            except ValueError:
-                return None
-    return None
-
-
-async def _too_large(send: Send, limit: int) -> None:
-    body = json.dumps({'error': f'The request body is larger than {_size(limit)}.'}).encode('utf-8')
-    await send(
-        {
-            'type': 'http.response.start',
-            'status': 413,
-            'headers': [
-                (b'content-type', b'application/json; charset=utf-8'),
-                (b'content-length', str(len(body)).encode()),
-            ],
-        }
-    )
-    await send({'type': 'http.response.body', 'body': body})
-
-
-def _size(limit: int) -> str:
-    """The ceiling as a person reads it: MiB when it is whole, bytes otherwise.
-
-    The second branch exists because the limit is injectable — a test drives it with
-    a few hundred bytes, and ``0 MiB`` would be a message that says nothing.
-    """
-    if limit >= 1024 * 1024 and limit % (1024 * 1024) == 0:
-        return f'{limit // (1024 * 1024)} MiB'
-    return f'{limit} bytes'
 
 
 def _conflict(exc: Exception) -> JSONResponse:
@@ -276,220 +204,7 @@ def _page_before(raw: str | None) -> int | None:
     return before
 
 
-class LoginBody(BaseModel):
-    """The only thing the login form sends."""
-
-    password: str = Field(min_length=1)
-
-
-class ImageBody(BaseModel):
-    """One image of a message, in the order the text marks it.
-
-    The shape is deliberately the bytes and nothing else: ``media_type`` is what the
-    picture claims to be and ``data`` is its base64 payload. There is no filename
-    field, because a client that sent a path would be asking the server to open a
-    file, and the API never does that.
-    """
-
-    media_type: str = Field(min_length=1)
-    data: str = Field(min_length=1)
-
-
-class TurnBody(BaseModel):
-    """A message from the composer: text, an optional request id, ordered images.
-
-    ``images[0]`` is ``[Image #1]`` in the text; the position is the number, and it
-    is part of what a retry has to match to be treated as the same message.
-    """
-
-    text: str = Field(min_length=1)
-    request_id: str | None = None
-    """Client-generated UUIDv4, reused by a retry of the same deliberate send."""
-    images: list[ImageBody] = Field(default_factory=list)
-    """Pictures in the order the text refers to them; bounded by the runtime."""
-
-
-class AnswerBody(BaseModel):
-    """An answer to the questions the agent asked."""
-
-    id: str
-    answers: list[dict[str, Any]] | None = None
-    """``None`` cancels: the tool reports that the user declined."""
-
-
-class WorkspaceBody(BaseModel):
-    """A directory to move the server to."""
-
-    root: str = Field(min_length=1)
-
-
-class SessionBody(BaseModel):
-    """A conversation to open."""
-
-    id: str = Field(min_length=1)
-
-
-class ModelBody(BaseModel):
-    """A model to switch the session to.
-
-    ``thinking`` is optional: omitting it keeps the level the model would pick by
-    default, which is what the terminal's picker does when it only chooses a model.
-    """
-
-    account: str = Field(min_length=1)
-    model: str = Field(min_length=1)
-    thinking: str | None = None
-
-
-class EffortBody(BaseModel):
-    """The reasoning level to apply to the model in effect."""
-
-    effort: str = Field(min_length=1)
-
-
-class AccountBody(BaseModel):
-    """A provider account to add, with the credential it needs.
-
-    ``auth`` is accepted so an OAuth request is answered explicitly instead of
-    being misread as a key-less API-key account.
-    """
-
-    alias: str = Field(min_length=1)
-    provider: str = Field(min_length=1)
-    api_key: str | None = None
-    auth: str = 'api_key'
-
-
-class NewSessionBody(BaseModel):
-    """A conversation to start, optionally in a worktree cut first."""
-
-    worktree: str | None = None
-
-
-class WorktreeBody(BaseModel):
-    """A worktree to create and move into."""
-
-    name: str = Field(min_length=1)
-
-
-class RenameBody(BaseModel):
-    """The new label for an account. The id, and saved sessions, stay valid."""
-
-    new_alias: str = Field(min_length=1)
-
-
-class AgentBody(BaseModel):
-    """A profile to activate for the next turn."""
-
-    name: str = Field(min_length=1)
-
-
-class RollbackBody(BaseModel):
-    """A rollback point to return to.
-
-    ``files`` restores the workspace snapshot too; ``False`` puts the conversation
-    back and leaves the tree as it is, which is the other choice the picker offers.
-    """
-
-    turn_id: str = Field(min_length=1)
-    files: bool = True
-
-
-class ForkBody(BaseModel):
-    """A fork point: the instant before this turn becomes a new session."""
-
-    turn_id: str = Field(min_length=1)
-
-
-class NodeBody(BaseModel):
-    """A node of the session tree, by id or a unique prefix of it."""
-
-    node_id: str = Field(min_length=1)
-
-
-class McpBody(BaseModel):
-    """One MCP server to enable or disable for this session."""
-
-    name: str = Field(min_length=1)
-    enabled: bool
-
-
-class ExternalFilesBody(BaseModel):
-    """Whether the session may read files outside its workspace.
-
-    ``StrictBool`` on purpose: the terminal's `/external-files` refuses anything
-    that is not `allow` or `deny`, and a lax bool would read `"yes"` as consent to
-    a permission change nobody spelled out.
-    """
-
-    allow: StrictBool
-
-
-class DefaultEntryBody(BaseModel):
-    """One defaults entry: the account, the model and the level it starts on.
-
-    The three keys are the file's own — `agents.<name>` and `default_model` hold
-    exactly these — so a client writes the shape the reader accepts instead of a
-    translation of it.
-    """
-
-    account: str = Field(min_length=1)
-    model: str = Field(min_length=1)
-    effort: str = 'default'
-
-
-class ModelDefaultBody(BaseModel):
-    """One default to write, and the file it belongs to.
-
-    ``config`` is required and nullable on purpose: ``null`` clears the entry, which
-    is the screen's `d`. Clearing therefore has to be spelled out, and cannot be what
-    happens because a client forgot a field.
-    """
-
-    target: str | None = None
-    """An agent name, or ``null`` for the block a conversation starts on."""
-    scope: str = Field(min_length=1)
-    """Which of the two files: ``project`` or ``global``."""
-    config: DefaultEntryBody | None
-
-
 # --- the app ----------------------------------------------------------------
-
-
-class GracefulStop:
-    """A one-way request to leave the serving loop, bound once the loop exists.
-
-    The application is built before the server that runs it, and the server is
-    what can stop, so neither can be handed to the other directly. This is the
-    indirection: the app calls `request`, whoever runs the loop calls `bind`, and
-    the request is a flag rather than an exit so the loop still unwinds in order —
-    lifespan shutdown, endpoint removed, runtime closed, lock released.
-
-    A request made before a binding is kept and applied at `bind`: a grace window
-    shorter than the startup is legitimate configuration, and losing the request
-    would leave the process serving forever.
-    """
-
-    def __init__(self) -> None:
-        self._requested = False
-        self._stop: Callable[[], None] | None = None
-
-    @property
-    def requested(self) -> bool:
-        """Whether a stop has been asked for, bound or not."""
-        return self._requested
-
-    def bind(self, stop: Callable[[], None]) -> None:
-        """Attaches the loop's own switch, applying a request already made."""
-        self._stop = stop
-        if self._requested:
-            stop()
-
-    def request(self) -> None:
-        """Asks the serving loop to stop. Idempotent."""
-        self._requested = True
-        if self._stop is not None:
-            self._stop()
 
 
 def create_app(

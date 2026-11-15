@@ -18,8 +18,8 @@ from pathlib import Path
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-from src.engine.mcp.config.loader import load_config
-from src.engine.mcp.deferred import MCPGateway
+from src.core.mcp.config.loader import load_config
+from src.core.mcp.deferred import MCPGateway
 
 SERVER_SCRIPT = '''\
 from mcp.server.mcpserver import MCPServer
@@ -60,7 +60,7 @@ def _config(tmp_path: Path, *, keep_alive: bool = False) -> Path:
     return config
 
 
-def test_the_agent_starts_with_the_placeholder_and_the_meta_tools(tmp_path: Path):
+def test_the_agent_starts_with_the_placeholder_and_the_meta_tools(tmp_path: Path) -> None:
     """The meta-tools exist from the first paint and answer through the gateway.
 
     This is what makes the deferral safe: `/mcp`, resources and prompts do not

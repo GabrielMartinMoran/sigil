@@ -4,11 +4,11 @@ import asyncio
 
 import pytest
 
-from src.engine.interaction.hub import QuestionHub
-from src.engine.interaction.models.question_answer import QuestionAnswer
-from src.engine.interaction.models.question_item import QuestionItem
-from src.engine.interaction.models.question_option import QuestionOption
-from src.engine.interaction.tools import register_interaction_tools
+from src.core.interaction.models.question_answer import QuestionAnswer
+from src.core.interaction.models.question_item import QuestionItem
+from src.core.interaction.models.question_option import QuestionOption
+from src.core.interaction.question_hub import QuestionHub
+from src.core.interaction.tools import register_interaction_tools
 
 
 class DummyAgent:
@@ -40,7 +40,7 @@ def _tool(hub):
     return agent.tools['ask_user']
 
 
-def test_ask_user_returns_answers():
+def test_ask_user_returns_answers() -> None:
     async def asker(questions):
         return [QuestionAnswer(question=questions[0].question, answer='A')]
 
@@ -52,7 +52,7 @@ def test_ask_user_returns_answers():
     assert result.answers[0].answer == 'A'
 
 
-def test_ask_user_cancelled():
+def test_ask_user_cancelled() -> None:
     async def asker(questions):
         return None
 
@@ -74,7 +74,7 @@ class _RecordingContext:
         self.cancelled = True
 
 
-def test_cancelling_the_panel_cancels_the_run():
+def test_cancelling_the_panel_cancels_the_run() -> None:
     async def asker(questions):
         return None
 
@@ -86,7 +86,7 @@ def test_cancelling_the_panel_cancels_the_run():
     assert ctx.cancelled is True
 
 
-def test_answering_does_not_cancel_the_run():
+def test_answering_does_not_cancel_the_run() -> None:
     async def asker(questions):
         return [QuestionAnswer(question=questions[0].question, answer='A')]
 
@@ -99,14 +99,14 @@ def test_answering_does_not_cancel_the_run():
     assert result.cancelled is False
 
 
-def test_ask_user_without_ui_raises():
+def test_ask_user_without_ui_raises() -> None:
     hub = QuestionHub()
     tool = _tool(hub)
     with pytest.raises(RuntimeError, match='not available'):
         asyncio.run(tool(questions=[_question()]))
 
 
-def test_empty_questions_raises():
+def test_empty_questions_raises() -> None:
     async def asker(questions):
         return []
 

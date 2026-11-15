@@ -42,19 +42,15 @@ from typing import Any
 import pytest
 
 from src.server.cli import listening_socket
-from src.server.endpoint import Endpoint, read_endpoint
-from src.server.launch import (
-    LaunchCommand,
-    ServiceDied,
-    ServiceStarting,
-    ServiceUnpublished,
-    default_command,
-    ensure_service,
-    live_endpoint,
-    probe,
-    spawn_server,
-)
-from src.server.ownership import OwnershipError, ServerOwnership
+from src.server.endpoint import Endpoint
+from src.server.endpoint_file import read_endpoint
+from src.server.launch_command import LaunchCommand
+from src.server.ownership_error import OwnershipError
+from src.server.server_ownership import ServerOwnership
+from src.server.service_died import ServiceDied
+from src.server.service_launch import default_command, ensure_service, live_endpoint, probe, spawn_server
+from src.server.service_starting import ServiceStarting
+from src.server.service_unpublished import ServiceUnpublished
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -69,8 +65,9 @@ sys.path.insert(0, {root})
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from src.server.endpoint import EndpointPublisher
-from src.server.ownership import OwnershipError, ServerOwnership
+from src.server.endpoint_publisher import EndpointPublisher
+from src.server.ownership_error import OwnershipError
+from src.server.server_ownership import ServerOwnership
 
 
 class Health(BaseHTTPRequestHandler):
@@ -125,7 +122,8 @@ sys.path.insert(0, {root})
 
 from pathlib import Path
 
-from src.server.launch import LaunchCommand, ensure_service
+from src.server.launch_command import LaunchCommand
+from src.server.service_launch import ensure_service
 
 gate = Path({gate})
 while not gate.exists():
@@ -856,7 +854,7 @@ def test_the_backend_surface_resolves_its_config_without_a_password(
     """
 
     from src.server import cli
-    from src.server.config import ServerConfigError
+    from src.server.server_config_error import ServerConfigError
 
     seen: dict[str, object] = {}
 

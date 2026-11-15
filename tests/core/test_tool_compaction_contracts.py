@@ -7,37 +7,30 @@ import json
 import pytest
 from pydantic_ai.messages import BinaryContent, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 
-from src.engine.context.compaction.coordinator import apply, exceptions, plan
-from src.engine.context.compaction.policy import CompactionPolicy
-from src.engine.files.models.file_content import FileContent
-from src.engine.files.models.patch_result import PatchResult
-from src.engine.files.models.write_result import WriteResult
-from src.engine.interaction.models.question_answer import QuestionAnswer
-from src.engine.interaction.models.question_result import QuestionResult
-from src.engine.mcp.tool_models.prompt_info import PromptInfo
-from src.engine.mcp.tool_models.prompt_message_info import PromptMessageInfo
-from src.engine.mcp.tool_models.prompt_result_info import PromptResultInfo
-from src.engine.mcp.tool_models.resource_content import ResourceContent
-from src.engine.mcp.tool_models.resource_info import ResourceInfo
-from src.engine.mcp.tool_models.server_status import ServerStatus
-from src.engine.roadmap.tools import RoadmapSnapshot
-from src.engine.shell.models.run_tool_output import RunToolOutput
-from src.engine.skills.tool_models.loaded_skill import LoadedSkill
-from src.engine.skills.tool_models.resource_content import ResourceContent as SkillResourceContent
-from src.engine.skills.tool_models.script_run_result import ScriptRunResult
-from src.engine.skills.tool_models.skill_summary import SkillSummary
-from src.engine.tooling.compaction import (
-    GENERIC_COMPACTOR,
-    ToolCompactor,
-    compact_json,
-    encoded,
-    normalize,
-    shorten,
-)
-from src.engine.tooling.compaction_policies import ALL_COMPACTORS
-from src.engine.web.models.page_content import PageContent
-from src.engine.web.models.search_response import SearchResponse
-from src.engine.web.models.search_result import SearchResult
+from src.core.context.compaction.compaction_policy import CompactionPolicy
+from src.core.context.compaction.coordinator import apply, exceptions, plan
+from src.core.files.models.file_content import FileContent
+from src.core.files.models.patch_result import PatchResult
+from src.core.files.models.write_result import WriteResult
+from src.core.interaction.models.question_answer import QuestionAnswer
+from src.core.interaction.models.question_result import QuestionResult
+from src.core.mcp.tool_models.prompt_info import PromptInfo
+from src.core.mcp.tool_models.prompt_message_info import PromptMessageInfo
+from src.core.mcp.tool_models.prompt_result_info import PromptResultInfo
+from src.core.mcp.tool_models.resource_content import ResourceContent
+from src.core.mcp.tool_models.resource_info import ResourceInfo
+from src.core.mcp.tool_models.server_status import ServerStatus
+from src.core.roadmap.models.roadmap_snapshot import RoadmapSnapshot
+from src.core.shell.models.run_tool_output import RunToolOutput
+from src.core.skills.tool_models.loaded_skill import LoadedSkill
+from src.core.skills.tool_models.resource_content import ResourceContent as SkillResourceContent
+from src.core.skills.tool_models.script_run_result import ScriptRunResult
+from src.core.skills.tool_models.skill_summary import SkillSummary
+from src.core.tooling.compaction import GENERIC_COMPACTOR, ToolCompactor, compact_json, encoded, normalize, shorten
+from src.core.tooling.compaction_policies import ALL_COMPACTORS
+from src.core.web.models.page_content import PageContent
+from src.core.web.models.search_response import SearchResponse
+from src.core.web.models.search_result import SearchResult
 
 LONG = 'payload ' * 2000
 
@@ -86,7 +79,7 @@ def samples() -> dict:
 
 
 @pytest.mark.parametrize('name', sorted(ALL_COMPACTORS))
-def test_every_registered_compactor_handles_real_output_and_stored_json_identically(name):
+def test_every_registered_compactor_handles_real_output_and_stored_json_identically(name) -> None:
     value = samples()[name]
     compactor = ALL_COMPACTORS[name]
     stored = normalize(value)
@@ -100,7 +93,7 @@ def test_every_registered_compactor_handles_real_output_and_stored_json_identica
 
 
 @pytest.mark.parametrize('name', sorted(ALL_COMPACTORS))
-def test_every_compactor_handles_its_arguments(name):
+def test_every_compactor_handles_its_arguments(name) -> None:
     args = {
         'cmds': [LONG],
         'path': 'file.py',
@@ -130,7 +123,7 @@ def test_every_compactor_handles_its_arguments(name):
     assert len(encoded(reduced)) <= len(encoded(args))
 
 
-def test_generic_json_preserves_validity_and_aggregate_budget_with_escaping():
+def test_generic_json_preserves_validity_and_aggregate_budget_with_escaping() -> None:
     value = {'rows': ['"\\\n' * 1000 for _ in range(20)]}
     for original in (value, '"\\\n' * 2000):
         result = compact_json(original, 500)
@@ -138,7 +131,7 @@ def test_generic_json_preserves_validity_and_aggregate_budget_with_escaping():
         assert len(result) <= 500
 
 
-def test_failed_structured_tool_returns_are_not_interpreted_as_success_models():
+def test_failed_structured_tool_returns_are_not_interpreted_as_success_models() -> None:
     messages = [
         ModelResponse(parts=[ToolCallPart(tool_name='web_search', args={'query': 'q'}, tool_call_id='c')]),
         ModelRequest(
@@ -161,7 +154,7 @@ def test_failed_structured_tool_returns_are_not_interpreted_as_success_models():
     assert result.tool_call_id == 'c'
 
 
-def test_opaque_external_binary_is_preserved_and_reported():
+def test_opaque_external_binary_is_preserved_and_reported() -> None:
     binary = BinaryContent(data=b'\x00' * 5000, media_type='application/octet-stream')
     messages = [
         ModelResponse(parts=[ToolCallPart(tool_name='foreign', args={'q': LONG}, tool_call_id='c')]),
@@ -175,7 +168,7 @@ def test_opaque_external_binary_is_preserved_and_reported():
     assert 'opaque_binary_or_multimodal' in exceptions(messages, planned, None)
 
 
-def test_stream_truncation_flags_and_exact_omitted_count_are_honest():
+def test_stream_truncation_flags_and_exact_omitted_count_are_honest() -> None:
     result = ALL_COMPACTORS['run'].compact_output([RunToolOutput(returncode=1, stdout=LONG)])[0]
     assert result['stdout_truncated'] is True
     shortened = shorten('a' * 1000, 100)
@@ -184,32 +177,32 @@ def test_stream_truncation_flags_and_exact_omitted_count_are_honest():
     assert len(shortened) <= 100
 
 
-def test_user_decisions_and_identity_are_not_cut_to_hit_own_semantic_sizes():
+def test_user_decisions_and_identity_are_not_cut_to_hit_own_semantic_sizes() -> None:
     value = QuestionResult(answers=[QuestionAnswer(question='Confirm?', answer='Do not ' + LONG)])
     assert ALL_COMPACTORS['ask_user'].compact_output(value)['answers'][0]['answer'] == 'Do not ' + LONG
     source = 'https://test/' + 'long/path/' * 100
     assert ALL_COMPACTORS['view_image'].compact_input({'source': source})['source'] == source
 
 
-def test_generic_nested_failure_metadata_survives_even_when_it_exceeds_the_target():
+def test_generic_nested_failure_metadata_survives_even_when_it_exceeds_the_target() -> None:
     value = {'rows': ['x' * 10000], 'envelope': {'error': 'nested failure ' * 100, 'status': 'failed'}}
     reduced = GENERIC_COMPACTOR.compact_output(value)
     assert reduced['metadata']['envelope']['error'] == value['envelope']['error']
     assert reduced['metadata']['envelope']['status'] == 'failed'
 
 
-def test_generic_policy_accepts_json_schema_type_arrays_without_treating_them_as_binary():
+def test_generic_policy_accepts_json_schema_type_arrays_without_treating_them_as_binary() -> None:
     value = {'type': ['string', 'null'], 'examples': ['x' * 5000]}
     reduced = GENERIC_COMPACTOR.compact_output(value)
     assert reduced['truncated'] is True
     assert len(json.dumps(reduced)) <= 500
 
 
-def test_compactor_contract_requires_explicit_callable_formatters_for_both_sides():
+def test_compactor_contract_requires_explicit_callable_formatters_for_both_sides() -> None:
     with pytest.raises(TypeError, match='callable'):
         ToolCompactor(input=None, output=lambda value: value)
 
 
-def test_a_compactor_never_expands_a_value_that_it_cannot_shrink():
+def test_a_compactor_never_expands_a_value_that_it_cannot_shrink() -> None:
     assert GENERIC_COMPACTOR.compact_output('short') == 'short'
     assert ALL_COMPACTORS['read_file'].compact_output({'path': 'a.py'}) == {'path': 'a.py'}

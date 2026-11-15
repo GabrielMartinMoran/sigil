@@ -2,7 +2,9 @@
 
 import asyncio
 
-from src.engine.web.tools import register_web_tools
+import pytest
+
+from src.core.web.tools import register_web_tools
 
 
 class DummyAgent:
@@ -33,13 +35,13 @@ class FakeDDGS:
 
 
 def _tools(monkeypatch):
-    monkeypatch.setattr('src.engine.web.tools.DDGS', FakeDDGS)
+    monkeypatch.setattr('src.core.web.tools.DDGS', FakeDDGS)
     agent = DummyAgent()
     register_web_tools(agent)
     return agent.tools
 
 
-def test_web_search_maps_results(monkeypatch):
+def test_web_search_maps_results(monkeypatch: pytest.MonkeyPatch) -> None:
     tools = _tools(monkeypatch)
     result = asyncio.run(tools['web_search'](query='python', max_results=2))
     assert result.query == 'python'
@@ -49,7 +51,7 @@ def test_web_search_maps_results(monkeypatch):
     assert result.results[1].url == 'https://example.com/2'
 
 
-def test_read_url_returns_markdown(monkeypatch):
+def test_read_url_returns_markdown(monkeypatch: pytest.MonkeyPatch) -> None:
     tools = _tools(monkeypatch)
     result = asyncio.run(tools['read_url'](url='https://example.com'))
     assert result.url == 'https://example.com'

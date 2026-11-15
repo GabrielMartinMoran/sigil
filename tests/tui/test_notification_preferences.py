@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.engine.preferences import Preferences
+from src.core.preferences import Preferences
 
 
 def test_should_allow_disabling_desktop_notifications_in_preferences() -> None:

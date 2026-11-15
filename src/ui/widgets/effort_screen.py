@@ -11,7 +11,6 @@ model rejects turns a menu into a guessing game with an error message.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import ClassVar
 
 from textual.app import ComposeResult
@@ -19,18 +18,12 @@ from textual.binding import Binding
 from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
-from src.engine.providers.domain.thinking import EFFORT_LEVELS, ThinkingChoice
+from src.core.providers.domain.thinking import EFFORT_LEVELS, ThinkingChoice
+from src.ui.widgets.effort_choice import EffortChoice
 from src.ui.widgets.provider_modal import ProviderModal
 
 DEFAULT_VALUE = 'default'
 OFF_VALUE = 'off'
-
-
-@dataclass(frozen=True, slots=True)
-class EffortChoice:
-    """What the user picked."""
-
-    effort: ThinkingChoice
 
 
 class EffortScreen(ProviderModal):

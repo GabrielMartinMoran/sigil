@@ -13,8 +13,8 @@ from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
 
-from src.engine.agents.model_features import IMAGE_INPUT, ModelFeatureGate
-from src.engine.agents.prompts.render import render
+from src.core.agents.model_feature_gate import IMAGE_INPUT, ModelFeatureGate
+from src.core.agents.prompts.render import render
 
 # --- the renderer ----------------------------------------------------------
 
@@ -36,34 +36,34 @@ End.
 """
 
 
-def test_a_block_is_kept_when_its_feature_is_available():
+def test_a_block_is_kept_when_its_feature_is_available() -> None:
     rendered = render(TEMPLATE, {'image_input'})
 
     assert '## Images' in rendered
 
 
-def test_a_block_is_dropped_when_its_feature_is_missing():
+def test_a_block_is_dropped_when_its_feature_is_missing() -> None:
     rendered = render(TEMPLATE, set())
 
     assert '## Images' not in rendered
     assert 'Pictures travel here.' not in rendered
 
 
-def test_a_line_is_dropped_with_its_marker():
+def test_a_line_is_dropped_with_its_marker() -> None:
     rendered = render(TEMPLATE, {'read_file'})
 
     assert 'read_file' in rendered
     assert 'view_image' not in rendered
 
 
-def test_markers_never_reach_the_model():
+def test_markers_never_reach_the_model() -> None:
     rendered = render(TEMPLATE, {'image_input', 'read_file', 'view_image'})
 
     assert '<!--' not in rendered
     assert '-->' not in rendered
 
 
-def test_kept_sections_do_not_leave_holes():
+def test_kept_sections_do_not_leave_holes() -> None:
     """Dropping a section must not leave three blank lines where it was."""
     rendered = render(TEMPLATE, set())
 
@@ -72,7 +72,7 @@ def test_kept_sections_do_not_leave_holes():
     assert rendered.endswith('End.\n')
 
 
-def test_none_keeps_everything():
+def test_none_keeps_everything() -> None:
     """An embedded agent or a test wants the whole prompt."""
     rendered = render(TEMPLATE, None)
 
@@ -81,27 +81,27 @@ def test_none_keeps_everything():
     assert '<!--' not in rendered
 
 
-def test_an_unclosed_block_is_an_error():
+def test_an_unclosed_block_is_an_error() -> None:
     with pytest.raises(ValueError) as error:
         render('A\n<!-- if: x -->\nB\n', set())
     assert 'never closed' in str(error.value)
 
 
-def test_a_close_without_open_is_an_error():
+def test_a_close_without_open_is_an_error() -> None:
     with pytest.raises(ValueError) as error:
         render('A\n<!-- endif -->\nB\n', set())
     assert 'without' in str(error.value)
 
 
-def test_a_block_can_require_more_than_one_feature():
+def test_a_block_can_require_more_than_one_feature() -> None:
     rendered = render('<!-- if: a b -->\nboth\n<!-- endif -->\n', {'a'})
 
     assert 'both' not in rendered
 
 
-def test_the_real_prompt_renders_without_markers():
+def test_the_real_prompt_renders_without_markers() -> None:
     """The shipped template is valid, whatever the feature set."""
-    from src.engine.agents.agent import _load_prompt
+    from src.core.agents.agent import _load_prompt
 
     template = _load_prompt()
 
@@ -117,8 +117,8 @@ def test_the_real_prompt_renders_without_markers():
         assert rendered.strip()
 
 
-def test_the_real_prompt_hides_images_when_the_model_cannot_read_them():
-    from src.engine.agents.agent import _load_prompt
+def test_the_real_prompt_hides_images_when_the_model_cannot_read_them() -> None:
+    from src.core.agents.agent import _load_prompt
 
     template = _load_prompt()
 
@@ -134,7 +134,7 @@ def test_the_real_prompt_hides_images_when_the_model_cannot_read_them():
 
 
 def _definition(name: str, *, requires: tuple[str, ...] = ()) -> ToolDefinition:
-    from src.engine.tooling.registrar import REQUIRES_METADATA_KEY
+    from src.core.tooling.registrar import REQUIRES_METADATA_KEY
 
     metadata = {REQUIRES_METADATA_KEY: list(requires)} if requires else None
     return ToolDefinition(name=name, parameters_json_schema={'type': 'object'}, metadata=metadata)
@@ -147,7 +147,7 @@ def _run(capability: ModelFeatureGate, tools: list[ToolDefinition]) -> list[Tool
     return asyncio.run(capability.prepare_tools(ctx, tools))
 
 
-def test_a_tool_without_requirements_is_always_offered():
+def test_a_tool_without_requirements_is_always_offered() -> None:
     gate = ModelFeatureGate(supports=lambda feature: False)
 
     kept = _run(gate, [_definition('read_file')])
@@ -155,7 +155,7 @@ def test_a_tool_without_requirements_is_always_offered():
     assert [tool.name for tool in kept] == ['read_file']
 
 
-def test_a_tool_whose_feature_is_missing_is_hidden():
+def test_a_tool_whose_feature_is_missing_is_hidden() -> None:
     gate = ModelFeatureGate(supports=lambda feature: feature != IMAGE_INPUT)
 
     kept = _run(gate, [_definition('read_file'), _definition('view_image', requires=(IMAGE_INPUT,))])
@@ -163,7 +163,7 @@ def test_a_tool_whose_feature_is_missing_is_hidden():
     assert [tool.name for tool in kept] == ['read_file']
 
 
-def test_a_tool_whose_feature_is_present_is_offered():
+def test_a_tool_whose_feature_is_present_is_offered() -> None:
     gate = ModelFeatureGate(supports=lambda feature: True)
 
     kept = _run(gate, [_definition('view_image', requires=(IMAGE_INPUT,))])
@@ -171,7 +171,7 @@ def test_a_tool_whose_feature_is_present_is_offered():
     assert [tool.name for tool in kept] == ['view_image']
 
 
-def test_a_call_to_a_hidden_tool_is_refused():
+def test_a_call_to_a_hidden_tool_is_refused() -> None:
     """Defence in depth: a call that survived from another step does not run."""
     import asyncio
 
@@ -189,7 +189,7 @@ def test_a_call_to_a_hidden_tool_is_refused():
         )
 
 
-def test_the_gate_reads_the_model_per_request():
+def test_the_gate_reads_the_model_per_request() -> None:
     """`/model` swaps the route mid-session: the answer cannot be cached."""
     state = {'images': False}
     gate = ModelFeatureGate(supports=lambda feature: state['images'])

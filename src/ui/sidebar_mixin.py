@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from pydantic_ai.messages import ModelMessage
@@ -11,12 +10,16 @@ from textual import work
 from textual.app import ScreenStackError
 from textual.css.query import NoMatches
 
-from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.context.meter.cost import SessionCost, session_cost
-from src.engine.roadmap.models.todo_item import TodoItem
-from src.engine.skills.loaded import loaded_skills
-from src.ui.service_client import ServiceClientError
-from src.ui.widgets.sidebar_panel import ContextState, MCPServerState, ModelState, SidebarPanel
+from src.core.context.meter.context_meter import ContextMeter
+from src.core.context.meter.cost import session_cost
+from src.core.roadmap.models.todo_item import TodoItem
+from src.core.skills.loaded import loaded_skills
+from src.ui.context_state_from_service import context_state_from_service
+from src.ui.service_client_error import ServiceClientError
+from src.ui.widgets.context_state import ContextState
+from src.ui.widgets.mcp_server_state import MCPServerState
+from src.ui.widgets.model_state import ModelState
+from src.ui.widgets.sidebar_panel import SidebarPanel
 
 SERVICE_CONTEXT = 'sidebar-context'
 """The worker that reads `/api/context`.
@@ -263,7 +266,7 @@ class SidebarMixin:
         subprocess and its session after the panel is painted. Nothing closes them
         on the way out, and the event loop then waits each one out — which is what
         made quitting take seconds. Closing here is bounded by the grace period
-        ``src.engine.mcp.shutdown`` installs, and it runs once per quit.
+        ``src.core.mcp.shutdown`` installs, and it runs once per quit.
         """
         manager = self._mcp_manager
         if manager is None or not manager:
@@ -275,35 +278,6 @@ class SidebarMixin:
             await close()
         except Exception:  # noqa: BLE001 - a quit never fails over a diagnostic
             return
-
-
-def context_state_from_service(payload: Mapping[str, Any]) -> ContextState:
-    """The panel's context line, from the projection of the service's meter.
-
-    ``percent`` of ``0.0`` is a real measurement — a cold session with a known
-    window — and is painted ``0%``. Only a value the route did not send becomes
-    ``None`` and paints ``?``; the two are different claims.
-
-    One limitation travels here: `/api/context` projects ``total``, ``approximate``
-    and ``requests``, not the ``unpriced``/``unmeasured`` counts. A partial total
-    (the ``+`` mark the in-process path can show) therefore cannot be rebuilt, and
-    is not invented. The route is the place to widen if that mark is wanted.
-    """
-    percentage = _ratio(payload.get('percent'))
-    used = _whole(payload.get('used'))
-    window = _whole(payload.get('window'))
-    cost_view = payload.get('cost')
-    cost_view = cost_view if isinstance(cost_view, Mapping) else {}
-    total = _amount(cost_view.get('total'))
-    requests = _whole(cost_view.get('requests')) or 0
-    approximate = bool(cost_view.get('approximate'))
-    cost = SessionCost(
-        total=total,
-        reported=0 if approximate else requests,
-        estimated=requests if approximate else 0,
-        unpriced=requests if total is None and requests else 0,
-    )
-    return ContextState(percent=percentage, used=used, window=window, cost=cost)
 
 
 def _model_from_state(state: Mapping[str, Any]) -> ModelState | None:
@@ -386,26 +360,3 @@ def _todo_items(items: list[Any]) -> tuple[TodoItem, ...]:
             # rest of the plan is not lost because of it.
             continue
     return tuple(tasks)
-
-
-def _whole(value: object) -> int | None:
-    """A JSON integer, or ``None``. Booleans are not numbers here."""
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-
-def _ratio(value: object) -> float | None:
-    """A JSON number, or ``None``. Booleans are not numbers here."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    return float(value)
-
-
-def _amount(value: object) -> Decimal | None:
-    """A non-negative amount from the string the route sends, or ``None``."""
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        amount = Decimal(str(value))
-    except InvalidOperation, ValueError:
-        return None
-    return amount if amount.is_finite() and amount >= 0 else None

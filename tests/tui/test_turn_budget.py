@@ -14,11 +14,11 @@ from pathlib import Path
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-from src.engine.agents.profile.registry import AgentRegistry
-from src.engine.agents.tree.store import AgentTreeStore
-from src.engine.sessions.session_store import SessionStore
-from src.engine.settings import SigilSettings
-from src.ui.app import SigilApp
+from src.core.agents.profile.agent_registry import AgentRegistry
+from src.core.agents.tree.agent_tree_store import AgentTreeStore
+from src.core.sessions.session_store import SessionStore
+from src.core.settings import SigilSettings
+from src.ui.sigil_app import SigilApp
 
 
 def _app(tmp: str, *, agents: dict[str, str] | None = None, active: str = 'wizard') -> SigilApp:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import ClassVar
 
 from rich.text import Text
@@ -11,7 +10,8 @@ from textual.binding import Binding
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from src.engine.commands import COMMANDS
+from src.core.commands.catalog import COMMANDS
+from src.ui.widgets.palette_choice import PaletteChoice
 from src.ui.widgets.provider_modal import ProviderModal
 
 COMMAND_LABELS = {
@@ -34,13 +34,6 @@ COMMAND_LABELS = {
     '/help': 'Show help',
     '/quit': 'Quit Sigil',
 }
-
-
-@dataclass(frozen=True, slots=True)
-class PaletteChoice:
-    name: str
-    worktree: bool = False
-    args: str = ''
 
 
 class CommandPaletteScreen(ProviderModal):

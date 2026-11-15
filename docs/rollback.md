@@ -6,8 +6,8 @@ moment.**
 
 <!-- prettier-ignore -->
 > [!IMPORTANT]
-> **Implemented.** `src/engine/agents/rollback.py` holds the command and
-> `src/engine/agents/snapshots.py` the git half. A checkpoint is written with
+> **Implemented.** `src/core/agents/rollback.py` holds the command and
+> `src/core/agents/snapshots.py` the git half. A checkpoint is written with
 > every user turn, and the tree snapshot of the turn that just started runs in
 > a worker thread. The numbers below are measured on the implementation and on
 > scratch repositories.

@@ -13,12 +13,14 @@ on the session, and the session is read back.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
-from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.sessions.session_store import SessionStore
-from src.engine.storage.database import Database, database_path
-from src.engine.storage.schema import USER_VERSION
+from src.core.context.meter.context_meter import ContextMeter
+from src.core.sessions.session_store import SessionStore
+from src.core.storage.database import Database, database_path
+from src.core.storage.schema import USER_VERSION
 
 
 def _messages() -> list:
@@ -31,7 +33,7 @@ def _messages() -> list:
 # --- the row ------------------------------------------------------------------
 
 
-def test_the_measured_overhead_survives_a_load(tmp_path):
+def test_the_measured_overhead_survives_a_load(tmp_path: Path) -> None:
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     session = store.create_session()
     session.messages = _messages()
@@ -46,7 +48,7 @@ def test_the_measured_overhead_survives_a_load(tmp_path):
     assert loaded.instructions_tokens == 9_300
 
 
-def test_a_session_that_measured_nothing_reports_zero_not_a_guess(tmp_path):
+def test_a_session_that_measured_nothing_reports_zero_not_a_guess(tmp_path: Path) -> None:
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     session = store.create_session()
     session.messages = _messages()
@@ -59,7 +61,7 @@ def test_a_session_that_measured_nothing_reports_zero_not_a_guess(tmp_path):
     assert loaded.instructions_tokens == 0
 
 
-def test_an_older_database_gets_the_new_columns(tmp_path):
+def test_an_older_database_gets_the_new_columns(tmp_path: Path) -> None:
     """The database in `$SIGIL_HOME` was written before these columns existed."""
     base = tmp_path / 'store'
     path = database_path(base)
@@ -88,7 +90,7 @@ def test_an_older_database_gets_the_new_columns(tmp_path):
     assert reopened.database.value('PRAGMA user_version') == USER_VERSION
 
 
-def test_the_meter_stamps_what_it_measured_onto_the_session():
+def test_the_meter_stamps_what_it_measured_onto_the_session() -> None:
     meter = ContextMeter(window=200_000)
     meter.set_overhead(instructions=9_000, tools=21_000)
 

@@ -1,15 +1,15 @@
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.usage import RequestUsage
 
-from src.engine.context.budget import ContextBudget
-from src.engine.context.meter.debug import build_debug_report
-from src.engine.context.meter.debug_render import render_debug_report
-from src.engine.context.meter.request import RequestSnapshot
-from src.engine.context.meter.snapshot import ContextSnapshot
+from src.core.context.context_budget import ContextBudget
+from src.core.context.meter.debug import build_debug_report
+from src.core.context.meter.debug_render import render_debug_report
+from src.core.context.meter.request import RequestSnapshot
+from src.core.context.meter.snapshot import ContextSnapshot
 
 
-def test_debug_turns_keep_steering_in_its_run():
-    from src.engine.context.meter.debug import debug_turns
+def test_debug_turns_keep_steering_in_its_run() -> None:
+    from src.core.context.meter.debug import debug_turns
 
     messages = [
         ModelRequest(parts=[UserPromptPart(content='start')], run_id='first'),
@@ -24,7 +24,7 @@ def test_debug_turns_keep_steering_in_its_run():
     assert second.input_total == 30
 
 
-def test_debug_turns_use_reported_input_and_cache_without_exposing_content():
+def test_debug_turns_use_reported_input_and_cache_without_exposing_content() -> None:
     messages = [
         ModelRequest(parts=[UserPromptPart(content='secret prompt')]),
         ModelResponse(

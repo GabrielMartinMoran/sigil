@@ -11,7 +11,7 @@ from textual.binding import Binding
 from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
-from src.engine.mcp.tool_models.server_status import ServerStatus
+from src.core.mcp.tool_models.server_status import ServerStatus
 from src.ui.widgets.provider_modal import ProviderModal
 
 

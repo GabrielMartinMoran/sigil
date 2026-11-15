@@ -13,7 +13,7 @@ from pathlib import Path
 
 from textual.widgets import OptionList
 
-from src.engine.sessions.session_store import SessionStore
+from src.core.sessions.session_store import SessionStore
 from src.ui.widgets.effort_screen import EffortScreen
 from src.ui.widgets.sidebar_panel import SidebarPanel
 from tests.support.provider_commands import _app, _submit, _texts
@@ -21,8 +21,8 @@ from tests.support.provider_setup import _prepared
 from tests.support.ui import wait_until
 
 
-def test_effort_without_a_provider_points_at_the_setup_command():
-    async def inner():
+def test_effort_without_a_provider_points_at_the_setup_command() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(Path(tmp))
             async with app.run_test() as pilot:
@@ -33,8 +33,8 @@ def test_effort_without_a_provider_points_at_the_setup_command():
     asyncio.run(inner())
 
 
-def test_effort_without_argument_opens_the_picker_with_the_accepted_levels():
-    async def inner():
+def test_effort_without_argument_opens_the_picker_with_the_accepted_levels() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             service = await _prepared(root)
@@ -52,8 +52,8 @@ def test_effort_without_argument_opens_the_picker_with_the_accepted_levels():
     asyncio.run(inner())
 
 
-def test_the_effort_picker_applies_the_highlighted_level():
-    async def inner():
+def test_the_effort_picker_applies_the_highlighted_level() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             service = await _prepared(root)
@@ -72,8 +72,8 @@ def test_the_effort_picker_applies_the_highlighted_level():
     asyncio.run(inner())
 
 
-def test_effort_sets_the_level_and_the_panel_follows():
-    async def inner():
+def test_effort_sets_the_level_and_the_panel_follows() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             service = await _prepared(root)
@@ -88,8 +88,8 @@ def test_effort_sets_the_level_and_the_panel_follows():
     asyncio.run(inner())
 
 
-def test_effort_rejects_a_level_the_model_does_not_accept():
-    async def inner():
+def test_effort_rejects_a_level_the_model_does_not_accept() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             service = await _prepared(root)
@@ -104,8 +104,8 @@ def test_effort_rejects_a_level_the_model_does_not_accept():
     asyncio.run(inner())
 
 
-def test_the_panel_shows_the_active_account_and_its_context():
-    async def inner():
+def test_the_panel_shows_the_active_account_and_its_context() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             service = await _prepared(root)
@@ -123,8 +123,8 @@ def test_the_panel_shows_the_active_account_and_its_context():
     asyncio.run(inner())
 
 
-def test_the_panel_says_no_model_before_anything_is_configured():
-    async def inner():
+def test_the_panel_says_no_model_before_anything_is_configured() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(Path(tmp))
             async with app.run_test():
@@ -137,8 +137,8 @@ def test_the_panel_says_no_model_before_anything_is_configured():
     asyncio.run(inner())
 
 
-def test_loading_a_session_restores_its_model():
-    async def inner():
+def test_loading_a_session_restores_its_model() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             service = await _prepared(root)
@@ -161,8 +161,8 @@ def test_loading_a_session_restores_its_model():
     asyncio.run(inner())
 
 
-def test_a_session_without_a_selection_loads_without_touching_the_model():
-    async def inner():
+def test_a_session_without_a_selection_loads_without_touching_the_model() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             service = await _prepared(root)

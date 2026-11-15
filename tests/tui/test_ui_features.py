@@ -17,13 +17,13 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from textual.containers import VerticalScroll
 
-from src.engine.preferences import Preferences, PreferencesStore
-from src.engine.roadmap.models.todo_item import TodoItem
-from src.engine.roadmap.stores import RoadmapStores
-from src.engine.sessions.session_store import SessionStore
-from src.engine.themes import ThemeRegistry
-from src.engine.tooling.presentation import display_name
-from src.ui.app import SigilApp
+from src.core.preferences import Preferences, PreferencesStore
+from src.core.roadmap.models.todo_item import TodoItem
+from src.core.roadmap.roadmap_stores import RoadmapStores
+from src.core.sessions.session_store import SessionStore
+from src.core.themes import ThemeRegistry
+from src.core.tooling.presentation import display_name
+from src.ui.sigil_app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.sidebar_panel import SidebarPanel
@@ -51,8 +51,8 @@ def _app(tmp: str, **kwargs) -> SigilApp:
 # --- 1. Shift+Enter ---------------------------------------------------------
 
 
-def test_shift_enter_inserts_a_line_and_enter_sends():
-    async def inner():
+def test_shift_enter_inserts_a_line_and_enter_sends() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)) as pilot:
@@ -75,8 +75,8 @@ def test_shift_enter_inserts_a_line_and_enter_sends():
     asyncio.run(inner())
 
 
-def test_a_multi_line_message_reaches_the_turn_whole():
-    async def inner():
+def test_a_multi_line_message_reaches_the_turn_whole() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)) as pilot:
@@ -96,8 +96,8 @@ def test_a_multi_line_message_reaches_the_turn_whole():
     asyncio.run(inner())
 
 
-def test_the_composer_grows_with_the_message_and_stops():
-    async def inner():
+def test_the_composer_grows_with_the_message_and_stops() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)) as pilot:
@@ -110,8 +110,8 @@ def test_the_composer_grows_with_the_message_and_stops():
     asyncio.run(inner())
 
 
-def test_whitespace_only_is_not_sent():
-    async def inner():
+def test_whitespace_only_is_not_sent() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)) as pilot:
@@ -127,8 +127,8 @@ def test_whitespace_only_is_not_sent():
 # --- 2. Activity indicator --------------------------------------------------
 
 
-def test_the_bar_is_idle_before_the_turn_and_spins_during_it():
-    async def inner():
+def test_the_bar_is_idle_before_the_turn_and_spins_during_it() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)):
@@ -145,8 +145,8 @@ def test_the_bar_is_idle_before_the_turn_and_spins_during_it():
     asyncio.run(inner())
 
 
-def test_the_spinner_animates_and_stops():
-    async def inner():
+def test_the_spinner_animates_and_stops() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)):
@@ -164,8 +164,8 @@ def test_the_spinner_animates_and_stops():
     asyncio.run(inner())
 
 
-def test_the_label_follows_the_stream():
-    async def inner():
+def test_the_label_follows_the_stream() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)):
@@ -177,8 +177,8 @@ def test_the_label_follows_the_stream():
     asyncio.run(inner())
 
 
-def test_the_elapsed_time_shows_only_after_a_second():
-    async def inner():
+def test_the_elapsed_time_shows_only_after_a_second() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)):
@@ -196,8 +196,8 @@ def test_the_elapsed_time_shows_only_after_a_second():
 # --- 3. Branch, worktree and diff -------------------------------------------
 
 
-def test_the_bar_shows_the_branch_and_the_diff(tmp_path):
-    from src.engine.workspace.manager import WorkspaceManager
+def test_the_bar_shows_the_branch_and_the_diff(tmp_path: Path) -> None:
+    from src.core.workspace.workspace_manager import WorkspaceManager
 
     root = tmp_path / 'repo'
     root.mkdir()
@@ -207,7 +207,7 @@ def test_the_bar_shows_the_branch_and_the_diff(tmp_path):
     _git(root, 'commit', '-q', '-m', 'init')
     (root / 'a.txt').write_text('one\ntwo\n', encoding='utf-8')
 
-    async def inner():
+    async def inner() -> None:
         app = _app(str(tmp_path), workspace_manager=WorkspaceManager(root))
         async with app.run_test(size=(120, 30)):
             app.refresh_workspace_badge()
@@ -223,8 +223,8 @@ def test_the_bar_shows_the_branch_and_the_diff(tmp_path):
     asyncio.run(inner())
 
 
-def test_should_refresh_the_branch_after_an_external_checkout(tmp_path):
-    from src.engine.workspace.manager import WorkspaceManager
+def test_should_refresh_the_branch_after_an_external_checkout(tmp_path: Path) -> None:
+    from src.core.workspace.workspace_manager import WorkspaceManager
 
     root = tmp_path / 'repo'
     root.mkdir()
@@ -233,7 +233,7 @@ def test_should_refresh_the_branch_after_an_external_checkout(tmp_path):
     _git(root, 'add', '.')
     _git(root, 'commit', '-q', '-m', 'init')
 
-    async def inner():
+    async def inner() -> None:
         app = _app(str(tmp_path), workspace_manager=WorkspaceManager(root))
         async with app.run_test(size=(120, 30)):
             app._stop_diff_polling()
@@ -254,8 +254,8 @@ def test_should_refresh_the_branch_after_an_external_checkout(tmp_path):
     asyncio.run(inner())
 
 
-def test_without_git_the_bar_says_nothing_about_changes():
-    async def inner():
+def test_without_git_the_bar_says_nothing_about_changes() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)):
@@ -266,8 +266,8 @@ def test_without_git_the_bar_says_nothing_about_changes():
     asyncio.run(inner())
 
 
-def test_the_diff_summary_paints_additions_green_and_deletions_red():
-    from src.engine.workspace.diff import DiffStat
+def test_the_diff_summary_paints_additions_green_and_deletions_red() -> None:
+    from src.core.workspace.models.diff_stat import DiffStat
     from src.ui.widgets.status_bar import StatusBar as Bar
 
     bar = Bar()
@@ -280,7 +280,7 @@ def test_the_diff_summary_paints_additions_green_and_deletions_red():
 # --- 4. One sidebar ---------------------------------------------------------
 
 
-def test_the_sidebar_is_one_panel_with_the_roadmap_as_its_last_section():
+def test_the_sidebar_is_one_panel_with_the_roadmap_as_its_last_section() -> None:
     """One box, one scroll, and the plan at the end of the same list.
 
     The plan used to live in a box of its own under the diagnostics. Both are read
@@ -288,7 +288,7 @@ def test_the_sidebar_is_one_panel_with_the_roadmap_as_its_last_section():
     column, which sat mostly empty.
     """
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             roadmap = RoadmapStores(session_id=None, base_dir=Path(tmp))
             roadmap.root.set_items([TodoItem(title='Ship it', status='in_progress')])
@@ -315,14 +315,14 @@ def test_the_sidebar_is_one_panel_with_the_roadmap_as_its_last_section():
     asyncio.run(inner())
 
 
-def test_the_panel_scrolls_when_a_long_plan_does_not_fit():
+def test_the_panel_scrolls_when_a_long_plan_does_not_fit() -> None:
     """Twenty items in a short terminal: the panel keeps its height and scrolls.
 
     One scrollbar for the whole column, not a scrolling roadmap inside a scrolling
     panel: there are 34 columns of room and two of them would already be borders.
     """
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             roadmap = RoadmapStores(session_id=None, base_dir=Path(tmp))
             roadmap.root.set_items([TodoItem(title=f'Task {index}') for index in range(20)])
@@ -346,10 +346,10 @@ def test_the_panel_scrolls_when_a_long_plan_does_not_fit():
     asyncio.run(inner())
 
 
-def test_the_panel_scrolls_when_there_are_more_skills_than_rows():
+def test_the_panel_scrolls_when_there_are_more_skills_than_rows() -> None:
     """Twenty loaded skills must not hide the plan: the panel scrolls, it does not grow."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             roadmap = RoadmapStores(session_id=None, base_dir=Path(tmp))
             roadmap.root.set_items([TodoItem(title='The only task')])
@@ -370,8 +370,8 @@ def test_the_panel_scrolls_when_there_are_more_skills_than_rows():
     asyncio.run(inner())
 
 
-def test_the_roadmap_still_updates_live():
-    async def inner():
+def test_the_roadmap_still_updates_live() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             roadmap = RoadmapStores(session_id=None, base_dir=Path(tmp))
             app = _app(tmp, roadmap_store=roadmap)
@@ -387,10 +387,10 @@ def test_the_roadmap_still_updates_live():
     asyncio.run(inner())
 
 
-def test_the_panel_without_a_roadmap_store_has_no_roadmap_section():
+def test_the_panel_without_a_roadmap_store_has_no_roadmap_section() -> None:
     """No store, no plan: the section stays away instead of announcing a missing feature."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)):
@@ -402,8 +402,8 @@ def test_the_panel_without_a_roadmap_store_has_no_roadmap_section():
     asyncio.run(inner())
 
 
-def test_hiding_the_sidebar_hides_the_roadmap_with_it():
-    async def inner():
+def test_hiding_the_sidebar_hides_the_roadmap_with_it() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)):
@@ -420,8 +420,8 @@ def test_hiding_the_sidebar_hides_the_roadmap_with_it():
 # --- 5. Reasoning visibility ------------------------------------------------
 
 
-def test_reasoning_is_collapsed_by_default():
-    async def inner():
+def test_reasoning_is_collapsed_by_default() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)):
@@ -432,7 +432,7 @@ def test_reasoning_is_collapsed_by_default():
                 await chat.add_thinking('secret reasoning')
                 chat.finalize()
 
-                from src.ui.widgets.chat_log import AssistantBlock
+                from src.ui.widgets.assistant_block import AssistantBlock
 
                 block = next(child for child in chat.children if isinstance(child, AssistantBlock))
                 text = render_text(block._build())
@@ -442,8 +442,8 @@ def test_reasoning_is_collapsed_by_default():
     asyncio.run(inner())
 
 
-def test_the_command_expands_and_collapses_in_place():
-    async def inner():
+def test_the_command_expands_and_collapses_in_place() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)):
@@ -452,7 +452,7 @@ def test_the_command_expands_and_collapses_in_place():
                 await chat.add_thinking('secret reasoning')
                 chat.finalize()
 
-                from src.ui.widgets.chat_log import AssistantBlock
+                from src.ui.widgets.assistant_block import AssistantBlock
 
                 block = next(child for child in chat.children if isinstance(child, AssistantBlock))
 
@@ -466,8 +466,8 @@ def test_the_command_expands_and_collapses_in_place():
     asyncio.run(inner())
 
 
-def test_the_command_toggles_without_an_argument():
-    async def inner():
+def test_the_command_toggles_without_an_argument() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)):
@@ -480,8 +480,8 @@ def test_the_command_toggles_without_an_argument():
     asyncio.run(inner())
 
 
-def test_the_preference_survives_a_restart():
-    async def inner():
+def test_the_preference_survives_a_restart() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = PreferencesStore(Path(tmp) / 'ui.json')
             first = _app(tmp)
@@ -497,8 +497,8 @@ def test_the_preference_survives_a_restart():
     asyncio.run(inner())
 
 
-def test_an_unknown_argument_reports_the_usage():
-    async def inner():
+def test_an_unknown_argument_reports_the_usage() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)):
@@ -512,10 +512,10 @@ def test_an_unknown_argument_reports_the_usage():
 # --- 6. Tool call blocks ----------------------------------------------------
 
 
-def test_a_tool_call_and_its_result_share_one_block():
+def test_a_tool_call_and_its_result_share_one_block() -> None:
     """The result lands inside the call, and `expanded` is what makes it visible."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)):
@@ -523,14 +523,14 @@ def test_a_tool_call_and_its_result_share_one_block():
                 await chat.add_tool_call('read_file', {'path': 'a.py'})
                 await chat.add_tool_result('read_file', 'line one\nline two')
 
-                from src.ui.widgets.chat_log import ToolCallBlock
+                from src.ui.widgets.tool_call_block import ToolCallBlock
 
                 blocks = [child for child in chat.children if isinstance(child, ToolCallBlock)]
                 assert len(blocks) == 1
                 blocks[0].set_expanded(True)
                 text = render_text(blocks[0]._build())
                 # The row shows the tool's display name, not its callable name: `read`,
-                # not `read_file`. See `engine.tooling.presentation`.
+                # not `read_file`. See `core.tooling.presentation`.
                 assert display_name('read_file') in text
                 assert 'a.py' in text
                 assert 'line one' in text
@@ -539,8 +539,8 @@ def test_a_tool_call_and_its_result_share_one_block():
     asyncio.run(inner())
 
 
-def test_the_block_indents_the_output_under_a_gutter():
-    from src.ui.widgets.chat_log import ToolCallBlock
+def test_the_block_indents_the_output_under_a_gutter() -> None:
+    from src.ui.widgets.tool_call_block import ToolCallBlock
 
     block = ToolCallBlock('run', {'command': 'ls'})
     block.set_result('a.txt\nb.txt')
@@ -548,8 +548,8 @@ def test_the_block_indents_the_output_under_a_gutter():
     assert all(line.startswith('  │ ') for line in lines if line.strip())
 
 
-def test_long_output_is_truncated_with_a_count():
-    from src.ui.widgets.chat_log import ToolCallBlock
+def test_long_output_is_truncated_with_a_count() -> None:
+    from src.ui.widgets.tool_call_block import ToolCallBlock
 
     block = ToolCallBlock('run', {'command': 'seq 100'})
     block.set_result('\n'.join(str(i) for i in range(40)))
@@ -560,8 +560,8 @@ def test_long_output_is_truncated_with_a_count():
     assert '39' not in text
 
 
-def test_a_pending_call_is_marked_as_running():
-    async def inner():
+def test_a_pending_call_is_marked_as_running() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)) as pilot:
@@ -569,7 +569,7 @@ def test_a_pending_call_is_marked_as_running():
                 await chat.add_tool_call('run', {'command': 'sleep 10'})
                 await pilot.pause()
 
-                from src.ui.widgets.chat_log import ToolCallBlock
+                from src.ui.widgets.tool_call_block import ToolCallBlock
 
                 block = next(child for child in chat.children if isinstance(child, ToolCallBlock))
                 assert 'running' in render_text(block._build())
@@ -578,9 +578,9 @@ def test_a_pending_call_is_marked_as_running():
     asyncio.run(inner())
 
 
-def test_indentation_of_the_output_is_kept():
+def test_indentation_of_the_output_is_kept() -> None:
     """A diff or a snippet is unreadable without its leading whitespace."""
-    from src.ui.widgets.chat_log import ToolCallBlock
+    from src.ui.widgets.tool_call_block import ToolCallBlock
 
     block = ToolCallBlock('read_file', {'path': 'a.py'})
     block.set_result('def f():\n    return 1')
@@ -588,8 +588,8 @@ def test_indentation_of_the_output_is_kept():
     assert '│     return 1' in render_text(block._build())
 
 
-def test_several_arguments_are_readable():
-    from src.ui.widgets.chat_log import format_tool_args
+def test_several_arguments_are_readable() -> None:
+    from src.ui.widgets.chat_text import format_tool_args
 
     assert format_tool_args({'path': 'a.py'}) == 'a.py'
     assert format_tool_args({'path': 'a.py', 'limit': 10}) == 'path=a.py, limit=10'
@@ -599,8 +599,8 @@ def test_several_arguments_are_readable():
 # --- 7. Themes --------------------------------------------------------------
 
 
-def test_the_builtin_themes_are_registered_and_the_default_applies():
-    async def inner():
+def test_the_builtin_themes_are_registered_and_the_default_applies() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)):
@@ -611,8 +611,8 @@ def test_the_builtin_themes_are_registered_and_the_default_applies():
 
 
 @pytest.mark.parametrize('theme', ['dark', 'synthwave'])
-def test_a_stored_theme_is_applied_on_start(theme):
-    async def inner():
+def test_a_stored_theme_is_applied_on_start(theme) -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             PreferencesStore(Path(tmp) / 'ui.json').save(Preferences(theme=theme))
             app = _app(tmp)
@@ -622,7 +622,7 @@ def test_a_stored_theme_is_applied_on_start(theme):
     asyncio.run(inner())
 
 
-def test_an_installed_theme_shows_up(tmp_path):
+def test_an_installed_theme_shows_up(tmp_path: Path) -> None:
     themes = tmp_path / 'themes'
     themes.mkdir()
     (themes / 'mine.json').write_text(
@@ -630,7 +630,7 @@ def test_an_installed_theme_shows_up(tmp_path):
         encoding='utf-8',
     )
 
-    async def inner():
+    async def inner() -> None:
         app = _app(str(tmp_path), themes=ThemeRegistry.load(themes))
         async with app.run_test(size=(100, 30)):
             assert 'mine' in app.available_themes
@@ -638,8 +638,8 @@ def test_an_installed_theme_shows_up(tmp_path):
     asyncio.run(inner())
 
 
-def test_the_command_switches_the_theme_and_remembers_it():
-    async def inner():
+def test_the_command_switches_the_theme_and_remembers_it() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)):
@@ -650,8 +650,8 @@ def test_the_command_switches_the_theme_and_remembers_it():
     asyncio.run(inner())
 
 
-def test_an_unknown_theme_lists_what_is_installed():
-    async def inner():
+def test_an_unknown_theme_lists_what_is_installed() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)):
@@ -664,8 +664,8 @@ def test_an_unknown_theme_lists_what_is_installed():
     asyncio.run(inner())
 
 
-def test_the_picker_previews_on_highlight_and_restores_on_cancel():
-    async def inner():
+def test_the_picker_previews_on_highlight_and_restores_on_cancel() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)) as pilot:
@@ -692,8 +692,8 @@ def test_the_picker_previews_on_highlight_and_restores_on_cancel():
     asyncio.run(inner())
 
 
-def test_the_picker_applies_the_highlighted_theme_on_enter():
-    async def inner():
+def test_the_picker_applies_the_highlighted_theme_on_enter() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)) as pilot:
@@ -717,8 +717,8 @@ def test_the_picker_applies_the_highlighted_theme_on_enter():
     asyncio.run(inner())
 
 
-def test_a_theme_change_repaints_the_text_and_not_only_the_boxes():
-    async def inner():
+def test_a_theme_change_repaints_the_text_and_not_only_the_boxes() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)) as pilot:
@@ -732,8 +732,8 @@ def test_a_theme_change_repaints_the_text_and_not_only_the_boxes():
     asyncio.run(inner())
 
 
-def test_theme_list_reports_the_installed_ones():
-    async def inner():
+def test_theme_list_reports_the_installed_ones() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)):
@@ -766,12 +766,12 @@ def _git(cwd: Path, *args: str) -> None:
     )
 
 
-def test_markdown_uses_theme_colors_and_repaints_on_theme_change():
+def test_markdown_uses_theme_colors_and_repaints_on_theme_change() -> None:
     from rich.color import Color
 
-    from src.ui.widgets.chat_log import AssistantBlock
+    from src.ui.widgets.assistant_block import AssistantBlock
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)) as pilot:

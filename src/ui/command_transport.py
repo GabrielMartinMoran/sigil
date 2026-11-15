@@ -1,6 +1,6 @@
 """Which commands this terminal can serve, and where the rest have to go.
 
-The catalogue in :mod:`src.engine.commands` answers *who may serve a command*: the
+The catalogue in :mod:`src.core.commands.catalog` answers *who may serve a command*: the
 core, or the client in front of the user. It cannot answer *whether this terminal
 can reach that server*, because that depends on which routes the client has been
 wired to — a fact about the client, and one that changes cut by cut.
@@ -28,43 +28,10 @@ menu entry that silently does nothing.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import StrEnum
-
-from src.engine.commands import COMMANDS, CommandOwner
-
-
-class TransportState(StrEnum):
-    """How this terminal can serve one command."""
-
-    CLIENT = 'client'
-    """It runs here: it paints or configures this window and travels nowhere."""
-
-    DELEGATED = 'delegated'
-    """The service owns it and this terminal has a sender for its route."""
-
-    NOT_WIRED = 'not_wired'
-    """The service owns it and has the route; this terminal has no sender yet."""
-
-    BLOCKED = 'blocked'
-    """The service owns it and has no endpoint for it, so nothing can be wired."""
-
-
-@dataclass(frozen=True)
-class Transport:
-    """One command's way out of this terminal.
-
-    ``reason`` explains a row that does not run here, in the words the user reads:
-    it names what is missing, not which cut is missing it. It is empty exactly for
-    the rows that run here, because they have nothing to explain.
-    """
-
-    name: str
-    owner: CommandOwner
-    state: TransportState
-    route: str | None = None
-    reason: str = ''
-
+from src.core.commands.catalog import COMMANDS
+from src.core.commands.command_owner import CommandOwner
+from src.ui.transport import Transport
+from src.ui.transport_state import TransportState
 
 _ROWS: tuple[Transport, ...] = (
     # --- the core serves these; this terminal has no sender for them yet ------

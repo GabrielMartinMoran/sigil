@@ -12,7 +12,7 @@ added. Persistence fingerprints and skill caches are unchanged.
 The changes remove unnecessary work at the existing boundaries rather than
 replacing the tool architecture.
 
-- **Shell:** [`drain()`](../src/engine/shell/process.py) drains registered
+- **Shell:** [`drain()`](../src/core/shell/process.py) drains registered
   streams,
   then waits for process exit using the remaining command deadline. It no longer
   waits on an empty selector. Output capture remains bounded, discarded output
@@ -21,31 +21,31 @@ replacing the tool architecture.
   termination, noninteractive stdin, cancellation ownership, and exit-code
   policy
   are unchanged.
-- **Byte reads:** [`_read_whole()`](../src/engine/files/tools.py) reads at most
+- **Byte reads:** [`_read_whole()`](../src/core/files/tools.py) reads at most
   `max_bytes + 1` for nonnegative byte limits. The extra byte establishes
   truncation from the actual read, not a possibly stale `stat()` size. Decoding
   still receives only the requested prefix, preserving UTF-8 tail handling and
   binary/base64 behavior. Existing negative-slice semantics are retained with a
   full read for negative limits.
 - **Line ranges:** [`count_lines()` and
-  `line_boundary()`](../src/engine/files/text.py)
+  `line_boundary()`](../src/core/files/text.py)
   count LF-delimited editor lines without allocating one string per line, then
   locate boundaries from the nearer end of the text. Reads still decode the
   whole file to validate UTF-8 and compute exact `total_lines`. CRLF, a missing
   trailing newline, range normalization, and errors remain unchanged. This is
   not constant-time reading of arbitrary ranges.
 - **Context:**
-  [`ProjectionMeasurements`](../src/engine/context/compaction/measurements.py)
+  [`ProjectionMeasurements`](../src/core/context/compaction/projection_measurements.py)
   belongs to one synchronous
-  [`AppendOnlyStrategy.view()`](../src/engine/context/strategy/append_only.py).
+  [`AppendOnlyStrategy.view()`](../src/core/context/strategy/append_only_strategy.py).
   [`prepare()`, `finish()`, and
-  diagnostics](../src/engine/context/compaction/projection.py)
+  diagnostics](../src/core/context/compaction/projection.py)
   share it explicitly. Keys include the ordered message identities and budget;
   changed projections are measured separately. Strong references prevent object
   id reuse. There is no global cache, session cache, or mutable state on the
   strategy, and nothing is persisted. Subsequent views, model changes, and
   in-place history edits start with fresh measurements.
-- **Images:** [`source_identity()`](../src/engine/attachments/tools.py)
+- **Images:** [`source_identity()`](../src/core/attachments/tools.py)
   identifies
   a session id, URL, or resolved path before loading pixels. An image already
   attached in the current round returns the existing short response without
@@ -53,7 +53,7 @@ replacing the tool architecture.
   still
   resolved and authorized before the early return, including symlinks. A new
   round can load the image again; new images keep their existing codec behavior.
-- **Patches:** [`apply_string_patch()`](../src/engine/files/text.py) counts
+- **Patches:** [`apply_string_patch()`](../src/core/files/text.py) counts
   matches
   without storing every offset. Ambiguous diagnostics include the exact total,
   the first ten line locations, and the number of omitted locations. Newlines

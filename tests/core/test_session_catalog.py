@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from src.engine.sessions.catalog import catalog, label_for, workspaces
-from src.engine.sessions.session_store import SessionStore
-from src.engine.workspace.repository import GitRepository
+from src.core.sessions.catalog import catalog, label_for, workspaces
+from src.core.sessions.session_store import SessionStore
+from src.core.workspace.git_repository import GitRepository
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -40,14 +40,14 @@ def _session(store: SessionStore, text: str) -> str:
     return session.id
 
 
-def test_no_repository_means_a_single_workspace(tmp_path):
+def test_no_repository_means_a_single_workspace(tmp_path: Path) -> None:
     plain = tmp_path / 'plain'
     plain.mkdir()
     assert [workspace.label for workspace in workspaces(plain)] == ['plain']
     assert label_for(plain) == 'plain'
 
 
-def test_workspaces_are_labeled_main_and_by_worktree_name(repo, tmp_path):
+def test_workspaces_are_labeled_main_and_by_worktree_name(repo, tmp_path: Path) -> None:
     repository = GitRepository.discover(repo)
     assert repository is not None
     repository.create_worktree('fix-login', base_dir=tmp_path / 'worktrees')
@@ -58,7 +58,7 @@ def test_workspaces_are_labeled_main_and_by_worktree_name(repo, tmp_path):
     assert listed[1].is_worktree is True
 
 
-def test_the_active_workspace_comes_first(repo, tmp_path):
+def test_the_active_workspace_comes_first(repo, tmp_path: Path) -> None:
     repository = GitRepository.discover(repo)
     assert repository is not None
     created = repository.create_worktree('fix-login', base_dir=tmp_path / 'worktrees')
@@ -69,7 +69,7 @@ def test_the_active_workspace_comes_first(repo, tmp_path):
     assert listed[1].label == 'main'
 
 
-def test_label_inside_a_worktree_is_not_main(repo, tmp_path):
+def test_label_inside_a_worktree_is_not_main(repo, tmp_path: Path) -> None:
     """Discovering from a linked worktree must not call it `main`.
 
     `git rev-parse --show-toplevel` answers with the linked worktree itself, so the
@@ -87,7 +87,7 @@ def test_label_inside_a_worktree_is_not_main(repo, tmp_path):
     assert label_for(inside) == 'fix-login'
 
 
-def test_catalog_gathers_sessions_of_every_workspace(repo, tmp_path):
+def test_catalog_gathers_sessions_of_every_workspace(repo, tmp_path: Path) -> None:
     base = tmp_path / 'sessions'
     repository = GitRepository.discover(repo)
     assert repository is not None
@@ -107,7 +107,7 @@ def test_catalog_gathers_sessions_of_every_workspace(repo, tmp_path):
     assert by_id[worktree_session].is_worktree is True
 
 
-def test_catalog_from_a_worktree_marks_it_as_current(repo, tmp_path):
+def test_catalog_from_a_worktree_marks_it_as_current(repo, tmp_path: Path) -> None:
     base = tmp_path / 'sessions'
     repository = GitRepository.discover(repo)
     assert repository is not None
@@ -121,7 +121,7 @@ def test_catalog_from_a_worktree_marks_it_as_current(repo, tmp_path):
     assert entries[main_session].is_current is False
 
 
-def test_catalog_lists_newest_first_across_workspaces(repo, tmp_path):
+def test_catalog_lists_newest_first_across_workspaces(repo, tmp_path: Path) -> None:
     base = tmp_path / 'sessions'
     repository = GitRepository.discover(repo)
     assert repository is not None
@@ -134,7 +134,7 @@ def test_catalog_lists_newest_first_across_workspaces(repo, tmp_path):
     assert entries[0].session.id == newest
 
 
-def test_a_session_belongs_to_the_workspace_it_was_created_in(repo, tmp_path):
+def test_a_session_belongs_to_the_workspace_it_was_created_in(repo, tmp_path: Path) -> None:
     """One row, one workspace: the catalog lists it once and labels it.
 
     The duplicate the file store could produce across two folders — and had to
@@ -155,7 +155,7 @@ def test_a_session_belongs_to_the_workspace_it_was_created_in(repo, tmp_path):
     assert worktree_store.list_sessions() == []
 
 
-def test_sessions_of_another_repository_are_not_listed(repo, tmp_path):
+def test_sessions_of_another_repository_are_not_listed(repo, tmp_path: Path) -> None:
     base = tmp_path / 'sessions'
     other = tmp_path / 'unrelated'
     other.mkdir()
@@ -169,7 +169,7 @@ def test_sessions_of_another_repository_are_not_listed(repo, tmp_path):
     assert [entry.session.preview for entry in entries] == ['mine']
 
 
-def test_removed_worktree_no_longer_offers_its_sessions(repo, tmp_path):
+def test_removed_worktree_no_longer_offers_its_sessions(repo, tmp_path: Path) -> None:
     """A deleted worktree stops being a workspace: its folder is gone from the listing."""
     base = tmp_path / 'sessions'
     repository = GitRepository.discover(repo)

@@ -21,7 +21,7 @@ here formats text for a human — that is the client's job.
 `SessionRuntime` is also the ownership boundary. A turn, the queue it claims, the
 question it waits on, the steering it hands over and the reports it wakes for are
 session state; the database lock, the store, the hub and the idle decision are
-process state and live on `src.server.runtime.ServerRuntime`, which passes what the
+process state and live on `src.server.server_runtime.ServerRuntime`, which passes what the
 session needs. This module therefore never imports the facade.
 """
 
@@ -47,38 +47,37 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import UsageLimits
 
-from src.engine.agents.message_types import MessageTypes, origin
-from src.engine.agents.model_config import AgentModelConfig
-from src.engine.agents.model_defaults import ConfigScope, ModelDefaultsState
-from src.engine.agents.profile.models.agent_profile import AgentProfile
-from src.engine.agents.retry import RetryNotice
-from src.engine.agents.rollback import Checkpoint, ForkOutcome, RollbackOutcome
-from src.engine.agents.step_budget import StepBudget
-from src.engine.agents.tree.models.agent_node import AgentNode
-from src.engine.agents.tree.models.node_status import NodeStatus
-from src.engine.agents.tree.models.summon_error import SummonError
-from src.engine.agents.tree.reports import report_view
-from src.engine.agents.turn_map import library_run_id
-from src.engine.agents.turn_timing import TurnTimings
-from src.engine.attachments.content import stored_content, stored_parts, user_content
-from src.engine.bootstrap import Composition, model_settings
-from src.engine.context.capability import subagent_window_warning
-from src.engine.files.paths import execution_workspace
-from src.engine.interaction.models.question_answer import QuestionAnswer
-from src.engine.interaction.models.question_item import QuestionItem
-from src.engine.sessions.recovery import recover_history
-from src.engine.storage.accepted_inputs import AcceptedInput, AcceptedInputs, DeliveryConfirmation
-from src.engine.tooling.outputs import present_output
-from src.server.events import EventHub
+from src.core.agents.message_types import MessageTypes, origin
+from src.core.agents.model_config import AgentModelConfig
+from src.core.agents.model_defaults import ConfigScope, ModelDefaultsState
+from src.core.agents.profile.models.agent_profile import AgentProfile
+from src.core.agents.retry import RetryNotice
+from src.core.agents.rollback import Checkpoint, ForkOutcome, RollbackOutcome
+from src.core.agents.step_budget import StepBudget
+from src.core.agents.tree.models.agent_node import AgentNode
+from src.core.agents.tree.models.node_status import NodeStatus
+from src.core.agents.tree.models.summon_error import SummonError
+from src.core.agents.tree.reports import WAKE_PROMPT, report_view
+from src.core.agents.turn_map import library_run_id
+from src.core.agents.turn_timing import TurnTimings
+from src.core.attachments.content import stored_content, stored_parts, user_content
+from src.core.bootstrap import Composition, model_settings
+from src.core.context.capability import subagent_window_warning
+from src.core.files.paths import execution_workspace
+from src.core.interaction.models.question_answer import QuestionAnswer
+from src.core.interaction.models.question_item import QuestionItem
+from src.core.sessions.recovery import recover_history
+from src.core.storage.accepted_inputs import AcceptedInput, AcceptedInputs, DeliveryConfirmation
+from src.core.tooling.outputs import present_output
+from src.server.event_hub import EventHub
+from src.server.incoming_image import IncomingImage
+from src.server.pending_question import PendingQuestion
 from src.server.runtime_support import (
     CHECKPOINT_INTERVAL,
     PREVIEW_CHARS,
     QUEUE_POLL_INTERVAL,
     SLOW_TURN_NOTICE_SECONDS,
-    WAKE_PROMPT,
-    IncomingImage,
     OwnershipGuard,
-    PendingQuestion,
     decode_images,
     jsonable,
     matching_message,
@@ -632,7 +631,7 @@ class SessionRuntime:
         try:
             composition.store.save(session, confirmations=confirmations)
         except Exception as exc:  # a conflicting winner keeps the turn alive
-            from src.engine.sessions.session_store import SessionConflictError
+            from src.core.sessions.session_store import SessionConflictError
 
             if not isinstance(exc, SessionConflictError):
                 raise
@@ -683,7 +682,7 @@ class SessionRuntime:
 
         async def name() -> None:
             try:
-                from src.engine.sessions.titling import generate_title
+                from src.core.sessions.titling import generate_title
 
                 title = await generate_title(self.composition.model_service.current_model(), text)
             except Exception:  # noqa: BLE001 - a title is a nicety

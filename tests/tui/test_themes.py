@@ -7,35 +7,28 @@ from pathlib import Path
 
 import pytest
 
-from src.engine.paths import themes_dir
-from src.engine.themes import (
-    BUILTIN_NAMES,
-    ROLES,
-    ThemeError,
-    ThemeRegistry,
-    load_file,
-    theme_variable_defaults,
-)
+from src.core.paths import themes_dir
+from src.core.themes import BUILTIN_NAMES, ROLES, ThemeError, ThemeRegistry, load_file, theme_variable_defaults
 
 
 def _write(directory, name: str, payload: object) -> None:
     (directory / name).write_text(json.dumps(payload), encoding='utf-8')
 
 
-def test_the_builtins_include_sigil_dark_and_synthwave():
+def test_the_builtins_include_sigil_dark_and_synthwave() -> None:
     registry = ThemeRegistry.load()
     assert BUILTIN_NAMES == {'sigil', 'dark', 'synthwave'}
     assert registry.names()[:3] == ['sigil', 'dark', 'synthwave']
 
 
-def test_the_default_theme_is_a_builtin_and_resolves(tmp_path):
+def test_the_default_theme_is_a_builtin_and_resolves(tmp_path: Path) -> None:
     registry = ThemeRegistry.load(tmp_path)
     assert registry.resolve('dark').name == 'dark'
     # A stored preference can name a theme that was uninstalled since.
     assert registry.resolve('gone').name == 'sigil'
 
 
-def test_sigil_uses_the_brand_palette(tmp_path):
+def test_sigil_uses_the_brand_palette(tmp_path: Path) -> None:
     theme = ThemeRegistry.load(tmp_path).resolve('sigil')
     assert theme.name == 'sigil'
     assert theme.colors['background'] == '#0b0a0d'
@@ -45,7 +38,7 @@ def test_sigil_uses_the_brand_palette(tmp_path):
     assert theme.colors['error'] != theme.colors['background']
 
 
-def test_builtins_define_every_variable_the_stylesheet_uses():
+def test_builtins_define_every_variable_the_stylesheet_uses() -> None:
     """The stylesheet names `$tool-border` and friends; every theme must supply them.
 
     Textual fails to parse the sheet when a variable is undefined, and the failure
@@ -59,7 +52,7 @@ def test_builtins_define_every_variable_the_stylesheet_uses():
         assert set(defaults) <= set(theme.colors), f'{name} is missing variables'
 
 
-def test_the_app_offers_those_defaults_under_textuals_own_name():
+def test_the_app_offers_those_defaults_under_textuals_own_name() -> None:
     """`get_theme_variable_defaults`, not `theme_variable_defaults`.
 
     The sheet is parsed while the app is being built, before any Sigil theme is
@@ -72,7 +65,7 @@ def test_the_app_offers_those_defaults_under_textuals_own_name():
     assert 'muted' in PreferencesMixin.get_theme_variable_defaults(object.__new__(PreferencesMixin))
 
 
-def test_builtins_define_the_core_roles():
+def test_builtins_define_the_core_roles() -> None:
     registry = ThemeRegistry.load()
     for name in BUILTIN_NAMES:
         theme = registry.get(name)
@@ -80,7 +73,7 @@ def test_builtins_define_the_core_roles():
         assert {'primary', 'accent', 'background', 'foreground'} <= set(theme.colors)
 
 
-def test_a_user_theme_loads_from_a_file(tmp_path):
+def test_a_user_theme_loads_from_a_file(tmp_path: Path) -> None:
     _write(tmp_path, 'mine.json', {'name': 'mine', 'dark': True, 'colors': {'primary': '#ff0000'}})
     registry = ThemeRegistry.load(tmp_path)
     theme = registry.get('mine')
@@ -90,13 +83,13 @@ def test_a_user_theme_loads_from_a_file(tmp_path):
     assert not theme.builtin
 
 
-def test_an_installed_theme_appears_after_the_builtins(tmp_path):
+def test_an_installed_theme_appears_after_the_builtins(tmp_path: Path) -> None:
     _write(tmp_path, 'aaa.json', {'name': 'aaa', 'colors': {'primary': '#00ff00'}})
     registry = ThemeRegistry.load(tmp_path)
     assert registry.names() == ['sigil', 'dark', 'synthwave', 'aaa']
 
 
-def test_a_user_file_can_replace_a_builtin(tmp_path):
+def test_a_user_file_can_replace_a_builtin(tmp_path: Path) -> None:
     """The escape hatch: same layout, your colors."""
     _write(tmp_path, 'dark.json', {'name': 'dark', 'colors': {'primary': '#123456'}})
     registry = ThemeRegistry.load(tmp_path)
@@ -106,7 +99,7 @@ def test_a_user_file_can_replace_a_builtin(tmp_path):
     assert not theme.builtin
 
 
-def test_extra_colors_become_css_variables():
+def test_extra_colors_become_css_variables() -> None:
     theme = ThemeRegistry.load().get('dark')
     assert theme is not None
     textual = theme.to_textual()
@@ -116,7 +109,7 @@ def test_extra_colors_become_css_variables():
     assert 'primary' not in textual.variables
 
 
-def test_a_broken_file_is_reported_and_skipped(tmp_path):
+def test_a_broken_file_is_reported_and_skipped(tmp_path: Path) -> None:
     (tmp_path / 'bad.json').write_text('{not json', encoding='utf-8')
     _write(tmp_path, 'good.json', {'name': 'good', 'colors': {'primary': '#00ff00'}})
     registry = ThemeRegistry.load(tmp_path)
@@ -125,13 +118,13 @@ def test_a_broken_file_is_reported_and_skipped(tmp_path):
     assert 'bad.json' in registry.errors[0]
 
 
-def test_a_missing_directory_is_not_an_error(tmp_path):
+def test_a_missing_directory_is_not_an_error(tmp_path: Path) -> None:
     registry = ThemeRegistry.load(tmp_path / 'nowhere')
     assert registry.errors == []
     assert registry.names()[:3] == ['sigil', 'dark', 'synthwave']
 
 
-def test_a_color_that_does_not_parse_rejects_the_whole_file(tmp_path):
+def test_a_color_that_does_not_parse_rejects_the_whole_file(tmp_path: Path) -> None:
     """Half-applying a theme paints an interface nobody designed."""
     _write(
         tmp_path,
@@ -142,7 +135,7 @@ def test_a_color_that_does_not_parse_rejects_the_whole_file(tmp_path):
         load_file(tmp_path / 'broken.json')
 
 
-def test_a_theme_needs_a_name_and_a_primary_color(tmp_path):
+def test_a_theme_needs_a_name_and_a_primary_color(tmp_path: Path) -> None:
     _write(tmp_path, 'noname.json', {'colors': {'primary': '#ff0000'}})
     with pytest.raises(ThemeError, match='name'):
         load_file(tmp_path / 'noname.json')
@@ -152,25 +145,25 @@ def test_a_theme_needs_a_name_and_a_primary_color(tmp_path):
         load_file(tmp_path / 'noprimary.json')
 
 
-def test_a_theme_needs_colors(tmp_path):
+def test_a_theme_needs_colors(tmp_path: Path) -> None:
     _write(tmp_path, 'empty.json', {'name': 'empty', 'colors': {}})
     with pytest.raises(ThemeError, match='no colors'):
         load_file(tmp_path / 'empty.json')
 
 
-def test_an_unknown_version_is_rejected(tmp_path):
+def test_an_unknown_version_is_rejected(tmp_path: Path) -> None:
     _write(tmp_path, 'v9.json', {'version': 9, 'name': 'v9', 'colors': {'primary': '#ff0000'}})
     with pytest.raises(ThemeError, match='version'):
         load_file(tmp_path / 'v9.json')
 
 
-def test_dark_must_be_a_boolean(tmp_path):
+def test_dark_must_be_a_boolean(tmp_path: Path) -> None:
     _write(tmp_path, 'x.json', {'name': 'x', 'dark': 'yes', 'colors': {'primary': '#ff0000'}})
     with pytest.raises(ThemeError, match='dark'):
         load_file(tmp_path / 'x.json')
 
 
-def test_roles_are_the_textual_palette():
+def test_roles_are_the_textual_palette() -> None:
     """A role outside this set would silently become a variable instead."""
     assert set(ROLES) == {
         'primary',
@@ -187,12 +180,12 @@ def test_roles_are_the_textual_palette():
     }
 
 
-def test_themes_dir_honours_the_environment(monkeypatch, tmp_path):
+def test_themes_dir_honours_the_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv('SIGIL_THEMES_DIR', str(tmp_path / 'shared'))
     assert themes_dir() == tmp_path / 'shared'
 
 
-def test_the_shipped_templates_match_the_builtins():
+def test_the_shipped_templates_match_the_builtins() -> None:
     """The files under `themes/` are the copy-paste starting point.
 
     If they drifted from the builtins, the file a user copies would not look like
@@ -211,7 +204,7 @@ def test_the_shipped_templates_match_the_builtins():
         assert data['dark'] == theme.dark
 
 
-def test_a_shipped_template_is_a_valid_theme(tmp_path):
+def test_a_shipped_template_is_a_valid_theme(tmp_path: Path) -> None:
     """A template that does not load is worse than no template at all."""
     root = Path(__file__).resolve().parents[2] / 'themes'
     for path in sorted(root.glob('*.json')):

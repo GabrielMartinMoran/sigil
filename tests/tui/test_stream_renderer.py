@@ -17,7 +17,7 @@ from src.ui.stream_renderer import StreamRenderer
 
 
 class _FakeEvents:
-    def __init__(self, events):
+    def __init__(self, events) -> None:
         self._events = events
 
     async def __aiter__(self):
@@ -34,7 +34,7 @@ def _render(events):
     return output.getvalue()
 
 
-def test_streams_text_as_it_arrives_without_duplicates():
+def test_streams_text_as_it_arrives_without_duplicates() -> None:
     output = _render(
         [
             PartStartEvent(index=0, part=TextPart(content='')),
@@ -46,7 +46,7 @@ def test_streams_text_as_it_arrives_without_duplicates():
     assert output == 'Hello world!\n'
 
 
-def test_streams_thinking_before_text():
+def test_streams_thinking_before_text() -> None:
     output = _render(
         [
             PartStartEvent(index=0, part=ThinkingPart(content='Thinking')),
@@ -62,7 +62,7 @@ def test_streams_thinking_before_text():
     assert 'Thinking...' in output.splitlines()[0]
 
 
-def test_new_model_response_starts_on_its_own_line():
+def test_new_model_response_starts_on_its_own_line() -> None:
     # An intermediate message with text + tool call followed by the final answer.
     output = _render(
         [
@@ -75,11 +75,11 @@ def test_new_model_response_starts_on_its_own_line():
     assert output == 'Let me check\nDone, finished\n'
 
 
-def test_empty_stream_prints_nothing():
+def test_empty_stream_prints_nothing() -> None:
     assert _render([]) == ''
 
 
-def test_renderer_can_be_reused_between_turns():
+def test_renderer_can_be_reused_between_turns() -> None:
     output = StringIO()
     console = Console(file=output, force_terminal=False, width=1000, color_system=None)
     renderer = StreamRenderer(console)

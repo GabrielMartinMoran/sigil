@@ -1,6 +1,16 @@
+import pytest
+
+from src.core.bootstrap import Composition
+from src.core.providers.bootstrap import ProviderPaths
+from src.core.settings import load_settings
+from src.core.storage.accepted_inputs import AcceptedInputs, ImageInput
+from src.server.event_hub import EventHub
+from src.server.server_runtime import ServerRuntime
+
 """Characterize the real agent delivery event and snapshot boundary."""
 
 import asyncio
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -12,10 +22,11 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     UserPromptPart,
 )
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 
-from src.engine.sessions.session_store import SessionStore
-from src.engine.storage.database import Database, database_path
+from src.core.sessions.session_store import SessionStore
+from src.core.storage.database import Database, database_path
 
 
 def test_delivery_event_snapshots_and_reopened_history(tmp_path: Path) -> None:
@@ -106,19 +117,6 @@ def test_delivery_event_snapshots_and_reopened_history(tmp_path: Path) -> None:
     asyncio.run(characterize())
 
 
-import uuid
-
-import pytest
-from pydantic_ai.models.function import FunctionModel
-
-from src.engine.bootstrap import Composition
-from src.engine.providers.bootstrap import ProviderPaths
-from src.engine.settings import load_settings
-from src.engine.storage.accepted_inputs import AcceptedInputs, ImageInput
-from src.server.events import EventHub
-from src.server.runtime import ServerRuntime
-
-
 @pytest.fixture
 def runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ServerRuntime:
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
@@ -169,7 +167,7 @@ def test_a_queued_turn_finishes_and_confirms_delivery(runtime: ServerRuntime) ->
 
 
 def test_an_input_accepted_outside_the_runtime_is_consumed(runtime: ServerRuntime) -> None:
-    async def go():
+    async def go() -> None:
         runtime.start()
         runtime.ensure_workers()
         sub = runtime.hub.subscribe()
@@ -290,7 +288,7 @@ def test_no_confirmation_without_the_delivery_in_the_snapshot(runtime: ServerRun
 def test_an_accepted_image_reaches_the_history(runtime: ServerRuntime) -> None:
     from pydantic_ai.messages import BinaryContent, ModelRequest, UserPromptPart
 
-    async def go():
+    async def go() -> None:
         runtime.start()
         runtime.ensure_workers()
         sub = runtime.hub.subscribe()
@@ -395,7 +393,7 @@ def test_a_late_steer_is_stopped_and_never_becomes_a_turn(runtime: ServerRuntime
     runtime.composition.bind_session(session)
     request = str(uuid.uuid4())
 
-    async def go():
+    async def go() -> None:
         runtime.start()
         # Accepted after reconciliation, so this is the end-of-turn window and not
         # a restart: a steer that misses the seam must be stopped, not promoted.
@@ -410,7 +408,7 @@ def test_a_late_steer_is_stopped_and_never_becomes_a_turn(runtime: ServerRuntime
 
 
 def test_abort_finishes_an_already_confirmed_delivery(runtime: ServerRuntime) -> None:
-    from src.engine.storage.accepted_inputs import DeliveryConfirmation, confirm_delivery
+    from src.core.storage.accepted_inputs import DeliveryConfirmation, confirm_delivery
 
     runtime.start()
     store = runtime.composition.store
@@ -435,7 +433,7 @@ def test_abort_finishes_an_already_confirmed_delivery(runtime: ServerRuntime) ->
 
 
 def test_send_fails_when_the_consumer_is_dead(runtime: ServerRuntime) -> None:
-    async def go():
+    async def go() -> None:
         runtime.start()
         runtime.ensure_workers()
         runtime.session_runtime._consumer_error = RuntimeError('consumer died')
@@ -447,9 +445,9 @@ def test_send_fails_when_the_consumer_is_dead(runtime: ServerRuntime) -> None:
 
 
 def test_ensure_workers_requires_ownership(runtime: ServerRuntime) -> None:
-    from src.server.ownership import OwnershipError
+    from src.server.ownership_error import OwnershipError
 
-    async def go():
+    async def go() -> None:
         with pytest.raises(OwnershipError, match='requires the database lock'):
             runtime.ensure_workers()
 
@@ -457,7 +455,7 @@ def test_ensure_workers_requires_ownership(runtime: ServerRuntime) -> None:
 
 
 def test_close_releases_the_database_lock(runtime: ServerRuntime) -> None:
-    from src.server.ownership import ServerOwnership
+    from src.server.server_ownership import ServerOwnership
 
     runtime.start()
     path = runtime.composition.store.database.path
@@ -505,11 +503,11 @@ def test_consumer_death_interrupts_accepted_rows(runtime: ServerRuntime) -> None
     runtime.composition.bind_session(session)
     request = str(uuid.uuid4())
 
-    async def go():
+    async def go() -> None:
         runtime.start()
         store.accept_input(session, request, 'orphan', [], 'turn')
 
-        def boom(*_args, **_kwargs):
+        def boom(*_args, **_kwargs) -> None:
             raise RuntimeError('consumer died')
 
         runtime._accepted.claim_next = boom
@@ -526,8 +524,8 @@ def test_consumer_death_interrupts_accepted_rows(runtime: ServerRuntime) -> None
 def test_durable_read_separates_pending_from_delivered(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
-    from src.engine.sessions.session_store import SessionStore
-    from src.engine.storage.accepted_inputs import DeliveryConfirmation
+    from src.core.sessions.session_store import SessionStore
+    from src.core.storage.accepted_inputs import DeliveryConfirmation
     from src.server import views
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
@@ -555,7 +553,7 @@ def test_durable_read_separates_pending_from_delivered(tmp_path: Path, monkeypat
 
 
 def test_durable_read_keeps_stopped_and_interrupted_visible(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.engine.sessions.session_store import SessionStore
+    from src.core.sessions.session_store import SessionStore
     from src.server import views
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
@@ -581,8 +579,8 @@ def test_durable_read_exposes_recovery_and_keeps_conflict_separate(
 ) -> None:
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
-    from src.engine.sessions.session_store import SessionStore
-    from src.engine.storage.accepted_inputs import DeliveryConfirmation
+    from src.core.sessions.session_store import SessionStore
+    from src.core.storage.accepted_inputs import DeliveryConfirmation
     from src.server import views
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))

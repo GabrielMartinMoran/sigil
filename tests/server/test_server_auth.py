@@ -16,10 +16,11 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.server.auth import Auth, AuthMiddleware
-from src.server.config import ServerConfig
-from src.server.endpoint import EndpointPublisher
-from src.server.events import EventHub
+from src.server.auth import Auth
+from src.server.auth_middleware import AuthMiddleware
+from src.server.endpoint_publisher import EndpointPublisher
+from src.server.event_hub import EventHub
+from src.server.server_config import ServerConfig
 
 PASSWORD = 'secret-pass'
 

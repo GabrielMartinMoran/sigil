@@ -7,12 +7,12 @@ from typing import Any
 
 import pytest
 
-from src.engine.storage.database import Database
-from src.engine.storage.schema import USER_VERSION
+from src.core.storage.database import Database
+from src.core.storage.schema import USER_VERSION
 
 
 def test_v7_structures_preserve_facts_and_deletions(tmp_path: Path) -> None:
-    from src.engine.sessions.session_store import SessionStore
+    from src.core.sessions.session_store import SessionStore
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     original = store.create_session()
@@ -63,7 +63,7 @@ def test_v7_structures_preserve_facts_and_deletions(tmp_path: Path) -> None:
 
 
 def test_v6_delivery_is_unknown_after_upgrade(tmp_path: Path) -> None:
-    from src.engine.sessions.session_store import SessionStore
+    from src.core.sessions.session_store import SessionStore
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     session = store.create_session()
@@ -91,8 +91,8 @@ def test_v7_gains_the_open_input_index_without_losing_rows(tmp_path: Path) -> No
     `accepted_inputs` only grows, so an unindexed question would scan the table once
     per poll. This asserts the rows survive the step and the plan becomes a lookup.
     """
-    from src.engine.sessions.session_store import SessionStore
-    from src.engine.storage.accepted_inputs import OPEN_INPUTS_SQL
+    from src.core.sessions.session_store import SessionStore
+    from src.core.storage.accepted_inputs import OPEN_INPUTS_SQL
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     session = store.create_session()
@@ -118,7 +118,7 @@ def test_v7_gains_the_open_input_index_without_losing_rows(tmp_path: Path) -> No
 
 
 def test_v7_failure_rolls_back_all_structures_and_retries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.engine.storage import database as module
+    from src.core.storage import database as module
 
     path, session_id = _legacy_with_history(tmp_path)
     before = _snapshot(path)
@@ -176,7 +176,7 @@ def test_concurrent_processes_migrate_once(tmp_path: Path) -> None:
 
 
 def test_failed_migration_rolls_back_and_can_be_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.engine.storage import database as module
+    from src.core.storage import database as module
 
     path = tmp_path / 'db'
     db = Database(path)
@@ -200,7 +200,7 @@ def test_failed_migration_rolls_back_and_can_be_retried(tmp_path: Path, monkeypa
 
 
 def _accept_in_process(base: Path, session_id: str, request_id: str, ready: Any, start: Any, results: Any) -> None:
-    from src.engine.storage.accepted_inputs import ImageInput, accept
+    from src.core.storage.accepted_inputs import ImageInput, accept
 
     db = Database(base)
     ready.put(True)
@@ -215,7 +215,7 @@ def _accept_in_process(base: Path, session_id: str, request_id: str, ready: Any,
 def test_concurrent_process_retries_share_one_record(tmp_path: Path) -> None:
     import uuid
 
-    from src.engine.sessions.session_store import SessionStore
+    from src.core.sessions.session_store import SessionStore
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     session = store.create_session()
@@ -252,7 +252,7 @@ def test_concurrent_process_retries_share_one_record(tmp_path: Path) -> None:
 def _legacy_with_history(tmp_path: Path) -> tuple[Path, str]:
     from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
-    from src.engine.sessions.session_store import SessionStore
+    from src.core.sessions.session_store import SessionStore
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'legacy')
     session = store.create_session(title='preserved title')
@@ -281,7 +281,7 @@ def _snapshot(path: Path) -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]],
 def test_schema_failure_rolls_back_actual_ddl_and_preserves_history(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from src.engine.storage import database as module
+    from src.core.storage import database as module
 
     path, session_id = _legacy_with_history(tmp_path)
     before_schema, before_sessions, before_messages = _snapshot(path)
@@ -311,7 +311,7 @@ def test_schema_failure_rolls_back_actual_ddl_and_preserves_history(
 
 
 def _hold_schema(path: Path, held: Any, release: Any, result: Any) -> None:
-    from src.engine.storage import database as module
+    from src.core.storage import database as module
 
     original = module._execute_statements
 
@@ -329,7 +329,7 @@ def _hold_schema(path: Path, held: Any, release: Any, result: Any) -> None:
 
 
 def _compete_schema(path: Path, held: Any, attempted: Any, completed: Any, result: Any) -> None:
-    from src.engine.storage import database as module
+    from src.core.storage import database as module
 
     if not held.wait(10):
         raise TimeoutError('first migrator did not obtain the lock')

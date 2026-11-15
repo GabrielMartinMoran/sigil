@@ -19,32 +19,34 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any
 
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelMessagesTypeAdapter
 
-from src.engine.agents.message_types import input_views
-from src.engine.agents.model_config import AgentModelConfig
-from src.engine.agents.model_defaults import ConfigFileState, ModelDefaultsState
-from src.engine.agents.rollback import PROMPT_KIND, Checkpoint, ForkOutcome, RollbackOutcome, prompt_of_turn
-from src.engine.agents.tree.models.agent_node import AgentNode
-from src.engine.agents.tree.tree import AgentTree
-from src.engine.context.images import image_size
-from src.engine.context.meter.cost import SessionCost
-from src.engine.context.meter.snapshot import ContextSnapshot
-from src.engine.mcp.tool_models.server_status import ServerStatus
-from src.engine.providers.domain.model_capability import ModelCatalog
-from src.engine.roadmap.models.todo_item import TodoItem
-from src.engine.sessions.session_store import Session, SessionSummary
-from src.engine.sessions.titling import shorten
-from src.engine.skills.loaded import loaded_skills
-from src.engine.storage.accepted_inputs import _record
-from src.engine.storage.database import Database
-from src.engine.storage.executions import root_id_for
-from src.engine.tooling.outputs import present_output
-from src.engine.tooling.presentation import human_bytes
-from src.engine.workspace.models.worktree import Workspace
+from src.core.agents.message_types import input_views
+from src.core.agents.model_config import AgentModelConfig
+from src.core.agents.model_defaults import ConfigFileState, ModelDefaultsState
+from src.core.agents.rollback import PROMPT_KIND, Checkpoint, ForkOutcome, RollbackOutcome, prompt_of_turn
+from src.core.agents.tree.agent_tree import AgentTree
+from src.core.agents.tree.models.agent_node import AgentNode
+from src.core.context.images import image_size
+from src.core.context.meter.cost import SessionCost
+from src.core.context.meter.snapshot import ContextSnapshot
+from src.core.mcp.tool_models.server_status import ServerStatus
+from src.core.providers.domain.model_capability import ModelCatalog
+from src.core.roadmap.models.todo_item import TodoItem
+from src.core.sessions.session_store import Session, SessionSummary
+from src.core.sessions.titling import shorten
+from src.core.skills.loaded import loaded_skills
+from src.core.storage.accepted_inputs import _record
+from src.core.storage.database import Database
+from src.core.storage.executions import root_id_for
+from src.core.tooling.outputs import present_output
+from src.core.tooling.presentation import human_bytes
+from src.core.workspace.models.workspace import Workspace
+from src.server.session_not_stored import SessionNotStored
+from src.server.transcript_page import TranscriptPage
 
 MAX_ITEM_CHARS = 200_000
 """Ceiling of one projected text block.
@@ -52,18 +54,6 @@ MAX_ITEM_CHARS = 200_000
 A single tool result is already capped by the engine; this is the backstop for a
 transcript read that would otherwise put a hundred megabytes in one JSON body.
 """
-
-
-class SessionNotStored(LookupError):
-    """The session exists only in memory, so there is no durable row to project.
-
-    ``Composition`` opens a *draft* session — an id and a workspace with nothing
-    saved under it yet — until the first message gives it a title and a row. Asking
-    for its transcript is a legitimate question with a legitimate answer, "nothing
-    yet", and it is not a server failure: the route answers a typed 404 that a client
-    reads as an empty conversation. It stays a `LookupError` so every caller that
-    already treats a missing row that way keeps working.
-    """
 
 
 def _text(value: Any) -> str:
@@ -450,27 +440,6 @@ def transcript(messages: list[ModelMessage], *, reports: Sequence[AgentNode] = (
         for part in getattr(message, 'parts', ()):
             items.extend(_part_views(part, index, message))
     return items
-
-
-@dataclass(frozen=True)
-class TranscriptPage:
-    """One window of a projected transcript, and the cursor that precedes it.
-
-    ``items`` are projected items, unchanged: a page never rewrites one. The item's
-    ``index`` is the message it was built from — the absolute point a click maps to
-    its rollback — and it travels as it is, so a window cannot renumber a
-    conversation.
-
-    ``first_index`` is the absolute position of the first item in the whole
-    transcript, and it doubles as the ``before`` cursor for the chunk just above
-    this page. ``total`` counts transcript items only: a row waiting in the queue is
-    not one, so it neither enters the count nor moves a cursor.
-    """
-
-    items: list[dict[str, Any]]
-    first_index: int
-    has_more: bool
-    total: int
 
 
 def transcript_page(

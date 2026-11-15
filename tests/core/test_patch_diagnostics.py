@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.engine.files.models.file_tool_error import FileToolError
-from src.engine.files.text import apply_string_patch
+from src.core.files.models.file_tool_error import FileToolError
+from src.core.files.text import apply_string_patch
 
 
 def test_should_bound_ambiguous_match_locations_without_losing_the_total() -> None:

@@ -10,8 +10,8 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from textual.widgets import Input, OptionList
 
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
 from src.ui.widgets.command_palette_screen import CommandPaletteScreen
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.text_prompt_screen import TextPromptScreen

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pydantic_ai.messages import ModelRequest, ModelResponse, ThinkingPart, UserPromptPart
 
-from src.engine.context.capability import compatible_model_history
-from src.engine.context.compaction.coordinator import apply, plan
-from src.engine.context.strategy.rewriting import accepts_replayed_reasoning
+from src.core.context.capability import compatible_model_history
+from src.core.context.compaction.coordinator import apply, plan
+from src.core.context.strategy.rewriting import accepts_replayed_reasoning
 
 
 def _thinking(content: str, *, signature: str | None = None, provider: str | None = None) -> ThinkingPart:

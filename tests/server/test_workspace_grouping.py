@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.engine.workspace.models.worktree import Workspace, Worktree
+from src.core.workspace.models.workspace import Workspace
+from src.core.workspace.models.worktree import Worktree
 from src.server import views
 
 
@@ -100,7 +101,7 @@ def test_a_detached_worktree_says_so() -> None:
 def test_a_session_row_says_which_worktree_it_lives_in() -> None:
     """The list of conversations spans worktrees; a row that does not say which one is
     ambiguous, because the title alone does not identify a checkout."""
-    from src.engine.sessions.session_store import SessionSummary
+    from src.core.sessions.session_store import SessionSummary
 
     summary = SessionSummary(
         id='a1b2c3d4',

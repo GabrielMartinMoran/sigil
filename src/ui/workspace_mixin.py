@@ -7,8 +7,9 @@ nothing in memory changes until the workspace on disk is usable.
 
 from __future__ import annotations
 
-from src.engine.workspace.manager import WorkspaceManager, WorkspaceSwitch
-from src.engine.workspace.models.workspace_error import WorkspaceError
+from src.core.workspace.models.workspace_error import WorkspaceError
+from src.core.workspace.models.workspace_switch import WorkspaceSwitch
+from src.core.workspace.workspace_manager import WorkspaceManager
 from src.ui.widgets.chat_log import ChatLog
 
 

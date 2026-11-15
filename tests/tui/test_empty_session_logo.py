@@ -12,9 +12,11 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 from textual.app import App, ComposeResult
 from textual.theme import Theme
 
-from src.engine.themes import ThemeRegistry
-from src.ui.widgets.chat_log import ChatLog, SubagentReport, UserMessage
+from src.core.themes import ThemeRegistry
+from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.empty_logo import LOGO, SMALL_LOGO, logo_lines
+from src.ui.widgets.subagent_report import SubagentReport
+from src.ui.widgets.user_message import UserMessage
 
 INK = next(glyph for glyph in LOGO[0] if glyph != ' ')
 
@@ -38,7 +40,7 @@ def with_themes(app: App, theme: str = 'sigil') -> App:
     return app
 
 
-def test_the_drawing_is_scaled_to_the_space_it_is_given():
+def test_the_drawing_is_scaled_to_the_space_it_is_given() -> None:
     rows = logo_lines(30, 16, '#ff9d00', '#dc3c00')
     assert len(rows) <= 16
     assert max(len(row.plain) for row in rows) <= 30
@@ -46,14 +48,14 @@ def test_the_drawing_is_scaled_to_the_space_it_is_given():
     assert len({row.style for row in rows}) > 1
 
 
-def test_the_largest_variant_that_fits_whole_is_used():
+def test_the_largest_variant_that_fits_whole_is_used() -> None:
     large = logo_lines(100, 60, '#ff9d00', '#dc3c00')
     small = logo_lines(45, 40, '#ff9d00', '#dc3c00')
     assert [row.plain for row in large] == [row.rstrip() for row in LOGO]
     assert [row.plain for row in small] == [row.rstrip() for row in SMALL_LOGO]
 
 
-def test_a_theme_with_one_color_still_gets_a_gradient():
+def test_a_theme_with_one_color_still_gets_a_gradient() -> None:
     """A flat silhouette would lose the depth the mark is drawn for."""
 
     async def run() -> None:
@@ -67,7 +69,7 @@ def test_a_theme_with_one_color_still_gets_a_gradient():
     asyncio.run(run())
 
 
-def test_an_empty_transcript_shows_the_mark_and_a_started_one_does_not():
+def test_an_empty_transcript_shows_the_mark_and_a_started_one_does_not() -> None:
     async def run() -> None:
         app = with_themes(Harness())
         async with app.run_test(size=(80, 30)) as pilot:
@@ -98,7 +100,7 @@ def test_an_empty_transcript_shows_the_mark_and_a_started_one_does_not():
     asyncio.run(run())
 
 
-def test_a_subagent_transcript_never_shows_the_mark():
+def test_a_subagent_transcript_never_shows_the_mark() -> None:
     """The mark belongs to the app's own conversation, not to every ChatLog."""
 
     async def run() -> None:
@@ -110,7 +112,7 @@ def test_a_subagent_transcript_never_shows_the_mark():
     asyncio.run(run())
 
 
-def test_repainting_an_empty_session_from_the_service_brings_the_mark_back():
+def test_repainting_an_empty_session_from_the_service_brings_the_mark_back() -> None:
     """The attached terminal repaints from rows; an empty transcript is not a bug.
 
     `clear()` is what a rebuild starts with, and it puts the mark back because a
@@ -142,7 +144,7 @@ def test_repainting_an_empty_session_from_the_service_brings_the_mark_back():
     asyncio.run(run())
 
 
-def test_a_report_from_the_service_is_painted_as_a_report():
+def test_a_report_from_the_service_is_painted_as_a_report() -> None:
     """A projected report is a card, not a line the reader appears to have typed.
 
     The service persists a subagent's answer as a durable user input, so the item it

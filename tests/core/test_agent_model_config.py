@@ -8,10 +8,10 @@ from typing import Any
 
 import pytest
 
-from src.engine.mcp.config.loader import load_config
+from src.core.mcp.config.loader import load_config
 
 
-def test_agent_model_config_merges_by_name(tmp_path):
+def test_agent_model_config_merges_by_name(tmp_path: Path) -> None:
     local = tmp_path / 'local.json'
     global_config = tmp_path / 'global.json'
     global_config.write_text(
@@ -43,7 +43,7 @@ def test_agent_model_config_merges_by_name(tmp_path):
     assert config.agents['scout'].model == 'fast'
 
 
-def test_invalid_agent_model_config_is_reported(tmp_path):
+def test_invalid_agent_model_config_is_reported(tmp_path: Path) -> None:
     path = tmp_path / 'config.json'
     path.write_text(json.dumps({'agents': {'scout': {'account': 'a', 'model': 'm', 'effort': 'typo'}}}))
 
@@ -53,11 +53,11 @@ def test_invalid_agent_model_config_is_reported(tmp_path):
     assert any('effort' in error for error in config.errors)
 
 
-def test_composition_applies_default_only_for_new_session(tmp_path, monkeypatch):
-    from src.engine.bootstrap import Composition
-    from src.engine.providers.bootstrap import ProviderPaths
-    from src.engine.sessions.session_store import Session
-    from src.engine.settings import load_settings
+def test_composition_applies_default_only_for_new_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.core.bootstrap import Composition
+    from src.core.providers.bootstrap import ProviderPaths
+    from src.core.sessions.session_store import Session
+    from src.core.settings import load_settings
     from tests.support.provider_service import _add, _service
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
@@ -75,7 +75,7 @@ def test_composition_applies_default_only_for_new_session(tmp_path, monkeypatch)
     )
     service = _service(tmp_path)
     _add(service)
-    monkeypatch.setattr('src.engine.bootstrap.build_service', lambda *args, **kwargs: service)
+    monkeypatch.setattr('src.core.bootstrap.build_service', lambda *args, **kwargs: service)
 
     composition = Composition(tmp_path, settings=load_settings({}), provider_paths=ProviderPaths(tmp_path / 'p'))
     assert composition.session.selection.model == 'second/model'
@@ -89,7 +89,7 @@ def test_composition_applies_default_only_for_new_session(tmp_path, monkeypatch)
     assert service.snapshot().thinking == 'low'
 
 
-def test_invalid_project_agent_does_not_fall_back_to_global(tmp_path):
+def test_invalid_project_agent_does_not_fall_back_to_global(tmp_path: Path) -> None:
     local = tmp_path / 'local.json'
     global_config = tmp_path / 'global.json'
     local.write_text(json.dumps({'agents': {'scout': {'account': 'a', 'model': 'm', 'effort': 'wrong'}}}))
@@ -101,7 +101,7 @@ def test_invalid_project_agent_does_not_fall_back_to_global(tmp_path):
     assert 'scout' in config.invalid_agents
 
 
-def test_a_subagent_model_carries_the_window_its_model_reports(tmp_path, monkeypatch):
+def test_a_subagent_model_carries_the_window_its_model_reports(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A configured subagent is budgeted against the window its own model knows.
 
     The catalogue is a network resource: a cold start, an offline machine or a model
@@ -109,10 +109,10 @@ def test_a_subagent_model_carries_the_window_its_model_reports(tmp_path, monkeyp
     as unbudgetable even though the model itself carries the window. The meter and the
     panel already read it from the model, so a subagent must use that same source.
     """
-    from src.engine.bootstrap import Composition
-    from src.engine.providers.bootstrap import ProviderPaths
-    from src.engine.providers.domain.provider_kind import ProviderKind
-    from src.engine.settings import load_settings
+    from src.core.bootstrap import Composition
+    from src.core.providers.bootstrap import ProviderPaths
+    from src.core.providers.domain.provider_kind import ProviderKind
+    from src.core.settings import load_settings
     from tests.support.provider_service import _add, _service
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
@@ -121,7 +121,7 @@ def test_a_subagent_model_carries_the_window_its_model_reports(tmp_path, monkeyp
     config.write_text(json.dumps({'agents': {'scout': {'account': 'oai', 'model': 'gpt-5.1-codex', 'effort': 'high'}}}))
     service = _service(tmp_path)
     _add(service, alias='oai', kind=ProviderKind.OPENAI)
-    monkeypatch.setattr('src.engine.bootstrap.build_service', lambda *args, **kwargs: service)
+    monkeypatch.setattr('src.core.bootstrap.build_service', lambda *args, **kwargs: service)
 
     composition = Composition(tmp_path, settings=load_settings({}), provider_paths=ProviderPaths(tmp_path / 'p'))
 
@@ -138,11 +138,11 @@ def test_a_subagent_model_carries_the_window_its_model_reports(tmp_path, monkeyp
 def test_should_load_the_subagent_account_catalog_before_building_its_model(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, catalog_available: bool
 ) -> None:
-    from src.engine.bootstrap import Composition
-    from src.engine.providers.bootstrap import ProviderPaths
-    from src.engine.providers.catalog.catalog_service import ModelCatalogService
-    from src.engine.providers.domain.provider_kind import ProviderKind
-    from src.engine.settings import load_settings
+    from src.core.bootstrap import Composition
+    from src.core.providers.bootstrap import ProviderPaths
+    from src.core.providers.catalog.catalog_service import ModelCatalogService
+    from src.core.providers.domain.provider_kind import ProviderKind
+    from src.core.settings import load_settings
     from tests.support.provider_service import _add, _service
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
@@ -175,7 +175,7 @@ def test_should_load_the_subagent_account_catalog_before_building_its_model(
         return {'data': [{'id': 'deepseek-v4.1-flash', 'limit': {'context': 1_000_000}}]}
 
     service.catalog = ModelCatalogService(fetch_json=fetch)
-    monkeypatch.setattr('src.engine.bootstrap.build_service', lambda *args, **kwargs: service)
+    monkeypatch.setattr('src.core.bootstrap.build_service', lambda *args, **kwargs: service)
     composition = Composition(tmp_path, settings=load_settings({}), provider_paths=ProviderPaths(tmp_path / 'p'))
 
     selected = asyncio.run(composition.subagent_model('scout'))
@@ -192,9 +192,9 @@ def test_should_load_the_subagent_account_catalog_before_building_its_model(
 
 
 def test_missing_configured_account_leaves_selection_unset(tmp_path: Path) -> None:
-    from src.engine.agents.model_config import AgentModelConfig
-    from src.engine.bootstrap import Composition
-    from src.engine.settings import load_settings
+    from src.core.agents.model_config import AgentModelConfig
+    from src.core.bootstrap import Composition
+    from src.core.settings import load_settings
 
     composition = Composition(tmp_path, settings=load_settings({}))
     try:

@@ -17,8 +17,8 @@ from pathlib import Path
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.status_bar import StatusBar
@@ -52,10 +52,10 @@ def _agent_with_a_blocking_tool(release: asyncio.Event) -> Agent:
     return agent
 
 
-def test_escape_from_the_focused_prompt_asks_then_stops():
+def test_escape_from_the_focused_prompt_asks_then_stops() -> None:
     """The path that matters: typing has the focus, so the prompt reads the key."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release = asyncio.Event()
             app = _app(tmp, _agent_with_a_blocking_tool(release))
@@ -79,10 +79,10 @@ def test_escape_from_the_focused_prompt_asks_then_stops():
     asyncio.run(inner())
 
 
-def test_escape_works_when_the_focus_is_not_in_the_prompt():
+def test_escape_works_when_the_focus_is_not_in_the_prompt() -> None:
     """With no focused widget, the app binding is the one that answers."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release = asyncio.Event()
             app = _app(tmp, _agent_with_a_blocking_tool(release))
@@ -108,10 +108,10 @@ def test_escape_works_when_the_focus_is_not_in_the_prompt():
     asyncio.run(inner())
 
 
-def test_escape_without_a_turn_does_nothing_visible():
+def test_escape_without_a_turn_does_nothing_visible() -> None:
     """No turn, no question: `Esc` stays out of the way."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release = asyncio.Event()
             app = _app(tmp, _agent_with_a_blocking_tool(release))
@@ -123,10 +123,10 @@ def test_escape_without_a_turn_does_nothing_visible():
     asyncio.run(inner())
 
 
-def test_any_other_key_cancels_the_abort_even_with_the_focus_elsewhere():
+def test_any_other_key_cancels_the_abort_even_with_the_focus_elsewhere() -> None:
     """The rule is app wide, not prompt wide: typing anywhere calls it off."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release = asyncio.Event()
             app = _app(tmp, _agent_with_a_blocking_tool(release))

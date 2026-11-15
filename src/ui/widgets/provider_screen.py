@@ -8,26 +8,16 @@ the service. That keeps the destructive paths (remove) and the network paths
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import ClassVar, Literal
+from typing import ClassVar
 
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
-from src.engine.providers.domain.provider_account import ProviderAccount
+from src.core.providers.domain.provider_account import ProviderAccount
+from src.ui.widgets.provider_action import ProviderAction
 from src.ui.widgets.provider_modal import ProviderModal
-
-Action = Literal['add', 'delete', 'rename', 'activate']
-
-
-@dataclass(frozen=True, slots=True)
-class ProviderAction:
-    """What the user chose in the list."""
-
-    action: Action
-    alias: str = ''
 
 
 class ProviderScreen(ProviderModal):

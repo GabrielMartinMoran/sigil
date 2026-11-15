@@ -36,14 +36,16 @@ from typing import Any
 import rich
 from dotenv import load_dotenv
 
-from src.engine.agents.profile.registry import AgentRegistry
-from src.engine.preferences import PreferencesStore
-from src.engine.roadmap.stores import RoadmapStores
-from src.engine.sessions.session_store import Session
-from src.engine.settings import SigilSettings, load_settings
-from src.engine.themes import ThemeRegistry
-from src.ui.app import SigilApp
-from src.ui.service_client import ServiceClient, ServiceClientError, ServiceUnavailable
+from src.core.agents.profile.agent_registry import AgentRegistry
+from src.core.preferences import PreferencesStore
+from src.core.roadmap.roadmap_stores import RoadmapStores
+from src.core.sessions.session_store import Session
+from src.core.settings import SigilSettings, load_settings
+from src.core.themes import ThemeRegistry
+from src.ui.service_client import ServiceClient
+from src.ui.service_client_error import ServiceClientError
+from src.ui.service_unavailable import ServiceUnavailable
+from src.ui.sigil_app import SigilApp
 
 
 def run() -> None:

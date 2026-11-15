@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from src.engine.files.models.file_tool_error import FileToolError
-from src.engine.files.paths import resolve
-from src.engine.sessions.session_store import SessionStore
+from src.core.files.models.file_tool_error import FileToolError
+from src.core.files.paths import resolve
+from src.core.sessions.session_store import SessionStore
 
 
 def test_external_file_access_defaults_to_denied_and_can_be_allowed(
@@ -13,7 +13,7 @@ def test_external_file_access_defaults_to_denied_and_can_be_allowed(
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     monkeypatch.chdir(workspace)
-    monkeypatch.setattr('src.engine.files.paths.temp_dirs', lambda: ())
+    monkeypatch.setattr('src.core.files.paths.temp_dirs', lambda: ())
     external = tmp_path / 'external.txt'
     with pytest.raises(FileToolError):
         resolve(str(external))

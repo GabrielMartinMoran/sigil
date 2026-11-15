@@ -263,21 +263,21 @@ Planning, provider I/O, and accounting have separate responsibilities:
 
 | Path | What it does |
 | --- | --- |
-| `src/engine/context/capability.py` | Hooks the view into each request; asks for a checkpoint when the projection does |
-| `src/engine/context/compaction/coordinator.py` | Pure plan: read the record, compact under pressure, apply |
-| `src/engine/context/compaction/projection.py` | Prepare and finish a request; measures and reports |
-| `src/engine/context/compaction/summary.py` | Pure checkpoint boundary and incremental span selection |
-| `src/engine/context/compaction/summary_generator.py` | Text-only prompt, bounded provider call, response validation |
-| `src/engine/context/compaction/records.py` | Record validation, legacy migration, replay |
-| `src/engine/context/compaction/identity.py` | Shared stable transcript identities |
-| `src/engine/context/compaction/maintenance.py` | Durable auxiliary-request receipts |
-| `src/engine/context/input_estimate.py` | Same-model prefix validation and provider-plus-delta estimates |
-| `src/engine/context/replay.py` | Offline deterministic-policy comparison, without model calls |
-| `src/engine/context/compaction/events.py` | Persisted decision and events |
-| `src/engine/context/strategy/append_only.py` | The default strategy |
-| `src/engine/tooling/compaction.py` | `ToolCompactor` and the generic size policy |
-| `src/engine/tooling/compaction_policies.py` | What each own tool keeps |
-| `src/engine/tooling/compaction_constants.py` | The character budgets behind those declarations |
+| `src/core/context/capability.py` | Hooks the view into each request; asks for a checkpoint when the projection does |
+| `src/core/context/compaction/coordinator.py` | Pure plan: read the record, compact under pressure, apply |
+| `src/core/context/compaction/projection.py` | Prepare and finish a request; measures and reports |
+| `src/core/context/compaction/summary.py` | Pure checkpoint boundary and incremental span selection |
+| `src/core/context/compaction/summary_generator.py` | Text-only prompt, bounded provider call, response validation |
+| `src/core/context/compaction/records.py` | Record validation, legacy migration, replay |
+| `src/core/context/compaction/identity.py` | Shared stable transcript identities |
+| `src/core/context/compaction/maintenance.py` | Durable auxiliary-request receipts |
+| `src/core/context/input_estimate.py` | Same-model prefix validation and provider-plus-delta estimates |
+| `src/core/context/replay.py` | Offline deterministic-policy comparison, without model calls |
+| `src/core/context/compaction/events.py` | Persisted decision and events |
+| `src/core/context/strategy/append_only_strategy.py` | The default strategy |
+| `src/core/tooling/compaction.py` | `ToolCompactor` and the generic size policy |
+| `src/core/tooling/compaction_policies.py` | What each own tool keeps |
+| `src/core/tooling/compaction_constants.py` | The character budgets behind those declarations |
 
 To change what a tool keeps, edit its declaration. To add a tool, declare a
 compactor with its registration: the catalogue check fails otherwise.

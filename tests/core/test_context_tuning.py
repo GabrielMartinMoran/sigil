@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
-from src.engine.bootstrap import build_strategy
-from src.engine.context.budget import ContextBudget
-from src.engine.context.compaction.policy import DEFAULT_POLICY, CompactionPolicy
-from src.engine.context.strategy.append_only import AppendOnlyStrategy
-from src.engine.settings import load_settings
-from src.engine.tooling.compaction_constants import SEMANTIC_COMPACT_CHARS
-from src.engine.tooling.compaction_policies import ALL_COMPACTORS
+import pytest
+
+from src.core.bootstrap import build_strategy
+from src.core.context.compaction.compaction_policy import DEFAULT_POLICY, CompactionPolicy
+from src.core.context.context_budget import ContextBudget
+from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
+from src.core.settings import load_settings
+from src.core.tooling.compaction_constants import SEMANTIC_COMPACT_CHARS
+from src.core.tooling.compaction_policies import ALL_COMPACTORS
 from tests.support.context_compaction_records import history
 
 
-def test_policy_defaults_match_the_documented_thresholds():
+def test_policy_defaults_match_the_documented_thresholds() -> None:
     policy = CompactionPolicy()
     assert policy.trigger_percent == 60
     assert policy.target_percent == 40
@@ -24,17 +26,17 @@ def test_policy_defaults_match_the_documented_thresholds():
     assert DEFAULT_POLICY == policy
 
 
-def test_the_default_strategy_is_append_only():
+def test_the_default_strategy_is_append_only() -> None:
     assert isinstance(build_strategy(load_settings({})), AppendOnlyStrategy)
 
 
-def test_passthrough_remains_available():
-    from src.engine.context.strategy.passthrough import PassthroughStrategy
+def test_passthrough_remains_available() -> None:
+    from src.core.context.strategy.passthrough_strategy import PassthroughStrategy
 
     assert isinstance(build_strategy(load_settings({'SIGIL_CONTEXT_STRATEGY': 'passthrough'})), PassthroughStrategy)
 
 
-def test_the_thresholds_reach_the_strategy():
+def test_the_thresholds_reach_the_strategy() -> None:
     strategy = build_strategy(
         load_settings({'SIGIL_CONTEXT_TRIGGER_PERCENT': '85', 'SIGIL_CONTEXT_TARGET_PERCENT': '70'})
     )
@@ -43,14 +45,14 @@ def test_the_thresholds_reach_the_strategy():
     assert strategy.policy.target_percent == 70
 
 
-def test_a_semantic_budget_change_reaches_the_registered_tool_policy(monkeypatch):
+def test_a_semantic_budget_change_reaches_the_registered_tool_policy(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(SEMANTIC_COMPACT_CHARS, 'process_input', 50)
     args = {'cmds': ['command ' * 1000]}
     reduced = ALL_COMPACTORS['run'].compact_input(args)
     assert len(reduced['cmds'][0]) <= 50
 
 
-def test_an_unknown_window_never_triggers_compaction():
+def test_an_unknown_window_never_triggers_compaction() -> None:
     strategy = AppendOnlyStrategy()
     result = strategy.view(history(12), ContextBudget(window=None))
     assert result.plan is not None

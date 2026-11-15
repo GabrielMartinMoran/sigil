@@ -20,15 +20,16 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from textual.widgets import OptionList
 
-from src.engine.providers.factory.unconfigured import UnconfiguredModel
-from src.engine.sessions.catalog import CatalogEntry
-from src.engine.sessions.session_store import Session, SessionStore
-from src.engine.sessions.titling import TITLE_INSTRUCTION
-from src.engine.workspace.manager import WorkspaceManager
-from src.engine.workspace.models.worktree import Workspace
+from src.core.providers.factory.unconfigured import UnconfiguredModel
+from src.core.sessions.catalog import CatalogEntry
+from src.core.sessions.session_store import Session, SessionStore
+from src.core.sessions.titling import TITLE_INSTRUCTION
+from src.core.workspace.models.workspace import Workspace
+from src.core.workspace.workspace_manager import WorkspaceManager
 from src.ui import window_title
-from src.ui.app import SigilApp
-from src.ui.widgets.session_picker import SessionPicker, session_option
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.session_option import session_option
+from src.ui.widgets.session_picker import SessionPicker
 
 # --- helpers ----------------------------------------------------------------
 
@@ -113,17 +114,17 @@ def _git(cwd: Path, *args: str) -> None:
 # --- window_title: the sequence written to the terminal --------------------
 
 
-def test_the_window_title_names_the_repository_and_the_session():
+def test_the_window_title_names_the_repository_and_the_session() -> None:
     assert window_title.compose('sigil', 'Fix the login form') == 'sigil — Fix the login form'
 
 
-def test_each_half_is_shown_alone_when_the_other_is_missing():
+def test_each_half_is_shown_alone_when_the_other_is_missing() -> None:
     assert window_title.compose('sigil', '') == 'sigil'
     assert window_title.compose('', 'Fix the login form') == 'Fix the login form'
     assert window_title.compose('', '') == ''
 
 
-def test_a_title_from_a_model_cannot_inject_a_control_sequence():
+def test_a_title_from_a_model_cannot_inject_a_control_sequence() -> None:
     """`OSC` ends on BEL: a stray one would hand the rest of the title to the terminal."""
     composed = window_title.compose('sigil', 'evil\x07\x1b]0;pwned\x07 title')
 
@@ -132,7 +133,7 @@ def test_a_title_from_a_model_cannot_inject_a_control_sequence():
     assert 'evil' in composed and 'pwned' in composed
 
 
-def test_the_window_title_is_cut_to_a_terminal_friendly_length():
+def test_the_window_title_is_cut_to_a_terminal_friendly_length() -> None:
     assert len(window_title.compose('sigil', 'x' * 400)) <= window_title.MAX_LENGTH
 
 
@@ -147,13 +148,13 @@ class _RecordingDriver:
         self.writes.append(text)
 
 
-def test_applying_writes_one_osc_sequence():
+def test_applying_writes_one_osc_sequence() -> None:
     driver = _RecordingDriver()
     assert window_title.apply(driver, 'sigil — Fix the login form') is True
     assert driver.writes == ['\x1b]2;sigil — Fix the login form\x07']
 
 
-def test_applying_without_a_driver_or_a_title_writes_nothing():
+def test_applying_without_a_driver_or_a_title_writes_nothing() -> None:
     assert window_title.apply(None, 'sigil') is False
 
     driver = _RecordingDriver()
@@ -161,13 +162,13 @@ def test_applying_without_a_driver_or_a_title_writes_nothing():
     assert driver.writes == []
 
 
-def test_a_headless_run_does_not_try_to_rename_a_window():
+def test_a_headless_run_does_not_try_to_rename_a_window() -> None:
     driver = _RecordingDriver(is_headless=True)
     assert window_title.apply(driver, 'sigil') is False
     assert driver.writes == []
 
 
-def test_a_driver_that_refuses_the_sequence_does_not_raise():
+def test_a_driver_that_refuses_the_sequence_does_not_raise() -> None:
     class Broken(_RecordingDriver):
         def write(self, text: str) -> None:
             raise OSError('the terminal is gone')
@@ -178,8 +179,8 @@ def test_a_driver_that_refuses_the_sequence_does_not_raise():
 # --- the app: naming on the first turn, repainting on every change ---------
 
 
-def test_the_first_turn_names_the_session_and_the_window():
-    async def inner():
+def test_the_first_turn_names_the_session_and_the_window() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, model=FunctionModel(_answer('Fix the login form')))
             async with app.run_test(size=(100, 30)) as pilot:
@@ -193,8 +194,8 @@ def test_the_first_turn_names_the_session_and_the_window():
     asyncio.run(inner())
 
 
-def test_a_second_turn_does_not_rename_the_session():
-    async def inner():
+def test_a_second_turn_does_not_rename_the_session() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             seen: list[list[ModelMessage]] = []
             app = _app(tmp, model=FunctionModel(_answer('Fix the login form', seen)))
@@ -214,8 +215,8 @@ def test_a_second_turn_does_not_rename_the_session():
     asyncio.run(inner())
 
 
-def test_a_steering_message_does_not_rename_anything():
-    async def inner():
+def test_a_steering_message_does_not_rename_anything() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             seen: list[list[ModelMessage]] = []
             app = _app(tmp, model=FunctionModel(_answer('Fix the login form', seen)))
@@ -232,10 +233,10 @@ def test_a_steering_message_does_not_rename_anything():
     asyncio.run(inner())
 
 
-def test_an_empty_answer_leaves_the_session_on_its_first_message():
+def test_an_empty_answer_leaves_the_session_on_its_first_message() -> None:
     """A model that answers nothing must not paint an empty window title."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, model=FunctionModel(_answer('   ')))
             async with app.run_test(size=(100, 30)) as pilot:
@@ -252,10 +253,10 @@ def test_an_empty_answer_leaves_the_session_on_its_first_message():
     asyncio.run(inner())
 
 
-def test_a_failing_title_request_leaves_the_turn_alone():
+def test_a_failing_title_request_leaves_the_turn_alone() -> None:
     """Naming is decoration: a provider that refuses it cannot cost the turn."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, model=FunctionModel(_answer('ok', refuse_naming=True)))
             async with app.run_test(size=(100, 30)) as pilot:
@@ -269,10 +270,10 @@ def test_a_failing_title_request_leaves_the_turn_alone():
     asyncio.run(inner())
 
 
-def test_a_session_without_a_provider_is_left_unnamed():
+def test_a_session_without_a_provider_is_left_unnamed() -> None:
     """First run, no account: the refusal costs a title, not the app."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / 'unconfigured'
             root.mkdir()
@@ -290,10 +291,10 @@ def test_a_session_without_a_provider_is_left_unnamed():
     asyncio.run(inner())
 
 
-def test_two_fast_turns_spend_one_title_request():
+def test_two_fast_turns_spend_one_title_request() -> None:
     """The request is in flight, not answered: a second turn must not re-ask."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             seen: list[list[ModelMessage]] = []
             app = _app(tmp, model=FunctionModel(_answer('Fix the login form', seen)))
@@ -312,10 +313,10 @@ def test_two_fast_turns_spend_one_title_request():
     asyncio.run(inner())
 
 
-def test_an_interrupted_naming_leaves_the_app_usable():
+def test_an_interrupted_naming_leaves_the_app_usable() -> None:
     """Cancelling the naming worker is not an error the app has to survive loudly."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, model=FunctionModel(_answer('Fix the login form')))
             async with app.run_test(size=(100, 30)) as pilot:
@@ -330,8 +331,8 @@ def test_an_interrupted_naming_leaves_the_app_usable():
     asyncio.run(inner())
 
 
-def test_the_window_starts_on_the_repository_before_any_message():
-    async def inner():
+def test_the_window_starts_on_the_repository_before_any_message() -> None:
+    async def inner() -> None:
         root = Path(tmp) / 'my-project'
         root.mkdir(parents=True)
         _git(root, 'init', '-q')
@@ -346,8 +347,8 @@ def test_the_window_starts_on_the_repository_before_any_message():
         asyncio.run(inner())
 
 
-def test_a_linked_worktree_is_distinguishable_from_the_main_one():
-    async def inner():
+def test_a_linked_worktree_is_distinguishable_from_the_main_one() -> None:
+    async def inner() -> None:
         root = Path(tmp) / 'my-project'
         root.mkdir(parents=True)
         _git(root, 'init', '-q')
@@ -366,8 +367,8 @@ def test_a_linked_worktree_is_distinguishable_from_the_main_one():
         asyncio.run(inner())
 
 
-def test_out_of_a_repository_the_folder_names_the_window():
-    async def inner():
+def test_out_of_a_repository_the_folder_names_the_window() -> None:
+    async def inner() -> None:
         root = Path(tmp) / 'scratch'
         root.mkdir()
         app = _app(str(root), workspace_manager=WorkspaceManager(root))
@@ -379,8 +380,8 @@ def test_out_of_a_repository_the_folder_names_the_window():
         asyncio.run(inner())
 
 
-def test_switching_workspace_repaints_the_window_title():
-    async def inner():
+def test_switching_workspace_repaints_the_window_title() -> None:
+    async def inner() -> None:
         plain = Path(tmp) / 'plain'
         plain.mkdir()
         other = Path(tmp) / 'other-project'
@@ -400,8 +401,8 @@ def test_switching_workspace_repaints_the_window_title():
         asyncio.run(inner())
 
 
-def test_another_session_is_another_window_title():
-    async def inner():
+def test_another_session_is_another_window_title() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)) as pilot:
@@ -418,10 +419,10 @@ def test_another_session_is_another_window_title():
     asyncio.run(inner())
 
 
-def test_a_title_that_arrives_after_a_switch_does_not_repaint_the_window():
+def test_a_title_that_arrives_after_a_switch_does_not_repaint_the_window() -> None:
     """The title belongs to the session it names, not to the one now open."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(100, 30)) as pilot:
@@ -448,7 +449,7 @@ def _row_text(entry: CatalogEntry) -> str:
     return session_option(entry).prompt.plain
 
 
-def test_the_picker_starts_with_the_local_last_updated_date():
+def test_the_picker_starts_with_the_local_last_updated_date() -> None:
     from datetime import datetime
 
     updated = '2026-11-09T13:42:00+00:00'
@@ -457,28 +458,28 @@ def test_the_picker_starts_with_the_local_last_updated_date():
     assert _row_text(_entry(session, current=True)).startswith(f'{expected}  ● ')
 
 
-def test_the_picker_handles_an_invalid_update_date():
+def test_the_picker_handles_an_invalid_update_date() -> None:
     session = Session(id='a' * 32, cwd='/repo', updated_at='invalid')
     assert _row_text(_entry(session)).startswith('unknown date')
 
 
-def test_the_picker_shows_the_generated_title():
+def test_the_picker_shows_the_generated_title() -> None:
     session = Session(id='a' * 32, cwd='/repo', title='Fix the login form')
     session.messages = [ModelRequest(parts=[UserPromptPart(content='the login form is broken and ')])]
     assert 'Fix the login form' in _row_text(_entry(session))
 
 
-def test_an_unnamed_session_is_listed_by_its_first_message():
+def test_an_unnamed_session_is_listed_by_its_first_message() -> None:
     session = Session(id='a' * 32, cwd='/repo')
     session.messages = [ModelRequest(parts=[UserPromptPart(content='Try the new parser')])]
     assert 'Try the new parser' in _row_text(_entry(session))
 
 
-def test_an_empty_session_is_listed_as_empty():
+def test_an_empty_session_is_listed_as_empty() -> None:
     assert '(empty)' in _row_text(_entry(Session(id='a' * 32, cwd='/repo')))
 
 
-def test_the_row_keeps_one_line_whatever_the_session_says():
+def test_the_row_keeps_one_line_whatever_the_session_says() -> None:
     session = Session(id='a' * 32, cwd='/repo')
     session.messages = [ModelRequest(parts=[UserPromptPart(content='word ' * 200)])]
     row = _row_text(_entry(session))
@@ -486,13 +487,13 @@ def test_the_row_keeps_one_line_whatever_the_session_says():
     assert row.count('word') <= 13
 
 
-def test_the_picker_still_highlights_the_current_session():
+def test_the_picker_still_highlights_the_current_session() -> None:
     entries = [
         _entry(Session(id='a' * 32, cwd='/repo', title='First')),
         _entry(Session(id='b' * 32, cwd='/repo', title='Second'), current=True),
     ]
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             screen = SessionPicker(entries)

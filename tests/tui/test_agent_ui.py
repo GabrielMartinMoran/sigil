@@ -21,9 +21,9 @@ from pydantic_ai.models.test import TestModel
 from rich.text import Text
 from textual.widgets import OptionList
 
-from src.engine.agents.profile.registry import AgentRegistry
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
+from src.core.agents.profile.agent_registry import AgentRegistry
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
 from src.ui.widgets.agent_picker_screen import AgentPickerScreen
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
@@ -74,8 +74,8 @@ def _chat(app: SigilApp) -> list[str]:
 # --- the status bar ----------------------------------------------------------
 
 
-def test_the_bar_starts_with_the_agent_in_effect():
-    async def inner():
+def test_the_bar_starts_with_the_agent_in_effect() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)):
@@ -84,10 +84,10 @@ def test_the_bar_starts_with_the_agent_in_effect():
     asyncio.run(inner())
 
 
-def test_a_transient_message_does_not_erase_the_agent():
+def test_a_transient_message_does_not_erase_the_agent() -> None:
     """The two halves are independent: Esc asks for attention, the agent stays."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -103,7 +103,7 @@ def test_a_transient_message_does_not_erase_the_agent():
     asyncio.run(inner())
 
 
-def test_the_bar_without_an_agent_paints_only_the_activity():
+def test_the_bar_without_an_agent_paints_only_the_activity() -> None:
     """`_left()` directly: `render()` needs a layout to place the right group."""
     bar = StatusBar()
     assert bar._left().plain == '● Ready'
@@ -114,8 +114,8 @@ def test_the_bar_without_an_agent_paints_only_the_activity():
 # --- the picker --------------------------------------------------------------
 
 
-def test_ctrl_a_opens_the_agent_picker_from_the_prompt():
-    async def inner():
+def test_ctrl_a_opens_the_agent_picker_from_the_prompt() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -127,10 +127,10 @@ def test_ctrl_a_opens_the_agent_picker_from_the_prompt():
     asyncio.run(inner())
 
 
-def test_ctrl_a_does_not_move_the_cursor_instead():
+def test_ctrl_a_does_not_move_the_cursor_instead() -> None:
     """`ctrl+a` is `home` in the `Input`: the picker has to win the key."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -146,8 +146,8 @@ def test_ctrl_a_does_not_move_the_cursor_instead():
     asyncio.run(inner())
 
 
-def test_the_picker_lists_the_profiles_and_marks_the_current_one():
-    async def inner():
+def test_the_picker_lists_the_profiles_and_marks_the_current_one() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -164,8 +164,8 @@ def test_the_picker_lists_the_profiles_and_marks_the_current_one():
     asyncio.run(inner())
 
 
-def test_choosing_in_the_picker_switches_the_agent():
-    async def inner():
+def test_choosing_in_the_picker_switches_the_agent() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -184,8 +184,8 @@ def test_choosing_in_the_picker_switches_the_agent():
     asyncio.run(inner())
 
 
-def test_the_picker_filters_as_you_type():
-    async def inner():
+def test_the_picker_filters_as_you_type() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, names=('wizard', 'reviewer', 'writer'))
             async with app.run_test(size=(120, 40)) as pilot:
@@ -198,8 +198,8 @@ def test_the_picker_filters_as_you_type():
     asyncio.run(inner())
 
 
-def test_escape_closes_the_picker_and_keeps_the_agent():
-    async def inner():
+def test_escape_closes_the_picker_and_keeps_the_agent() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -216,8 +216,8 @@ def test_escape_closes_the_picker_and_keeps_the_agent():
 # --- the command -------------------------------------------------------------
 
 
-def test_the_command_switches_directly():
-    async def inner():
+def test_the_command_switches_directly() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -231,8 +231,8 @@ def test_the_command_switches_directly():
     asyncio.run(inner())
 
 
-def test_an_unknown_name_is_a_notice_not_a_crash():
-    async def inner():
+def test_an_unknown_name_is_a_notice_not_a_crash() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -246,8 +246,8 @@ def test_an_unknown_name_is_a_notice_not_a_crash():
     asyncio.run(inner())
 
 
-def test_the_command_with_no_profiles_says_where_to_put_one():
-    async def inner():
+def test_the_command_with_no_profiles_says_where_to_put_one() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, names=())
             async with app.run_test(size=(120, 40)) as pilot:
@@ -263,8 +263,8 @@ def test_the_command_with_no_profiles_says_where_to_put_one():
 # --- the session -------------------------------------------------------------
 
 
-def test_a_new_session_inherits_the_agent():
-    async def inner():
+def test_a_new_session_inherits_the_agent() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -283,10 +283,10 @@ def test_a_new_session_inherits_the_agent():
     asyncio.run(inner())
 
 
-def test_switching_agent_is_refused_while_a_turn_runs():
+def test_switching_agent_is_refused_while_a_turn_runs() -> None:
     """An agent swap changes the tool set of a run already in flight."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release = asyncio.Event()
             app = _app(tmp)
@@ -320,14 +320,14 @@ def test_switching_agent_is_refused_while_a_turn_runs():
     asyncio.run(inner())
 
 
-def test_selecting_agent_applies_its_model_but_binding_session_does_not(tmp_path):
+def test_selecting_agent_applies_its_model_but_binding_session_does_not(tmp_path: Path) -> None:
     import asyncio
 
     app = _app(str(tmp_path))
     selected = []
     app._on_agent_selected = lambda name: selected.append(name)
 
-    async def run():
+    async def run() -> None:
         async with app.run_test(size=(120, 40)):
             app.apply_agent('reviewer', app.query_one(ChatLog))
             assert selected == ['reviewer']
@@ -337,7 +337,7 @@ def test_selecting_agent_applies_its_model_but_binding_session_does_not(tmp_path
     asyncio.run(run())
 
 
-def test_new_session_binds_the_inherited_agent_so_its_model_resolves(tmp_path):
+def test_new_session_binds_the_inherited_agent_so_its_model_resolves(tmp_path: Path) -> None:
     """`/new` inherits the agent, and binding is where the model is resolved.
 
     The profile travels with the session and the composition applies that profile's
@@ -348,7 +348,7 @@ def test_new_session_binds_the_inherited_agent_so_its_model_resolves(tmp_path):
     bound: list[tuple[str, object]] = []
     app._on_bind_session = lambda session: bound.append((session.agent, session.selection))
 
-    async def run():
+    async def run() -> None:
         async with app.run_test(size=(120, 40)):
             await app.new_session(app.query_one(ChatLog))
             assert [agent for agent, _ in bound] == ['wizard']

@@ -15,7 +15,6 @@ that says "no files" is telling you the truth about a workspace nobody changed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import ClassVar
 
 from rich.text import Text
@@ -24,10 +23,11 @@ from textual.binding import Binding
 from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
-from src.engine.agents.rollback import Checkpoint
+from src.ui.widgets.point import Point
 from src.ui.widgets.provider_modal import ProviderModal
+from src.ui.widgets.rollback_choice import RollbackChoice
+from src.ui.widgets.rollback_options import ROLLBACK_FILES, action_option, point_option
 
-ROLLBACK_FILES = 'rollback_files'
 ROLLBACK_ONLY = 'rollback_only'
 FORK = 'fork'
 BACK = 'back'
@@ -37,48 +37,6 @@ ACTIONS: tuple[tuple[str, str, str], ...] = (
     (ROLLBACK_ONLY, 'Roll back the conversation only', 'leave the workspace as it is now'),
     (FORK, 'Fork here', 'a new session with the same prefix; this one is left whole'),
 )
-
-
-@dataclass(frozen=True, slots=True)
-class RollbackChoice:
-    """What the user picked: a point, and what to do with it."""
-
-    turn_id: str
-    action: str
-    """`rollback_files`, `rollback_only` or `fork`."""
-
-
-@dataclass(frozen=True, slots=True)
-class Point:
-    """One rollback point, as the screen shows it."""
-
-    checkpoint: Checkpoint
-    preview: str
-    """The first line of the prompt that opened the turn."""
-    files: int | None = None
-    """How many files a rollback would touch, or `None` when it is unknown."""
-
-
-def point_option(point: Point, *, index: int) -> Option:
-    """One row: the moment, what was asked, and what a rollback would cost."""
-    line = Text()
-    line.append(f'{index:>2}. ', style='dim')
-    line.append(point.checkpoint.at[11:19], style='bold cyan')
-    line.append('  ')
-    line.append(point.preview or '(empty prompt)', style='')
-    if point.files is not None:
-        if point.files:
-            line.append(f'  · {point.files} file{"" if point.files == 1 else "s"}', style='yellow')
-        else:
-            line.append('  · no files', style='green')
-    return Option(line, id=point.checkpoint.turn_id)
-
-
-def action_option(kind: str, label: str, detail: str) -> Option:
-    line = Text()
-    line.append(label, style='bold red' if kind == ROLLBACK_FILES else 'bold')
-    line.append(f'  — {detail}', style='dim')
-    return Option(line, id=kind)
 
 
 class RollbackScreen(ProviderModal):

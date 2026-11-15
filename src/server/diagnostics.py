@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from src.engine.paths import service_dir
+from src.core.paths import service_dir
 
 MAX_LOG_BYTES = 2 * 1024 * 1024
 # Uvicorn's Python signal handler can record while this thread is already logging.

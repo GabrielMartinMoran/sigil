@@ -10,43 +10,50 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
-from src.engine.agents.model_config import AgentModelConfig
-from src.engine.agents.model_defaults import ConfigScope, ModelDefaultsState
-from src.engine.agents.profile.models.agent_profile import AgentProfile
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.engine.providers.domain.auth_method import AuthMethod
-from src.engine.providers.domain.model_capability import ModelCapability, ModelCatalog
-from src.engine.providers.domain.provider_account import ProviderAccount
-from src.engine.providers.domain.provider_error import (
-    AliasError,
-    ProviderError,
+from src.core.agents.model_config import AgentModelConfig
+from src.core.agents.model_defaults import ConfigScope, ModelDefaultsState
+from src.core.agents.profile.models.agent_profile import AgentProfile
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.providers.domain.auth_method import AuthMethod
+from src.core.providers.domain.model_capability import ModelCapability, ModelCatalog
+from src.core.providers.domain.provider_account import ProviderAccount
+from src.core.providers.domain.provider_error import AliasError, ProviderError
+from src.core.providers.domain.provider_kind import ProviderKind
+from src.core.providers.domain.provider_variant import ProviderVariant
+from src.core.providers.domain.thinking import EFFORT_LEVELS
+from src.core.providers.snapshot import ModelSnapshot
+from src.ui.chat_notice import ChatNotice
+from src.ui.defaults_rows import (
+    _projected_config,
+    _projected_sources,
+    _projected_targets,
+    defaults_rows,
+    defaults_rows_from_service,
+    projected_defaults,
 )
-from src.engine.providers.domain.provider_kind import ProviderKind
-from src.engine.providers.domain.provider_variant import ProviderVariant
-from src.engine.providers.domain.thinking import EFFORT_LEVELS
-from src.engine.providers.snapshot import ModelSnapshot
-from src.ui.messages import ChatNotice
-from src.ui.model_view_mixin import effort_label
-from src.ui.service_client import ServiceClient, ServiceClientError
-from src.ui.turn_mixin import failure_notice
-from src.ui.widgets.account_form_screen import AccountFormScreen, NewAccount
+from src.ui.effort_label import effort_label
+from src.ui.projected_defaults import ProjectedDefaults
+from src.ui.service_client import ServiceClient
+from src.ui.service_client_error import ServiceClientError
+from src.ui.turn_notices import failure_notice
+from src.ui.widgets.account_catalog import AccountCatalog
+from src.ui.widgets.account_form_screen import AccountFormScreen
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.confirm_screen import ConfirmScreen
+from src.ui.widgets.defaults_choice import DefaultsChoice
+from src.ui.widgets.defaults_destinations import DefaultsDestinations
+from src.ui.widgets.defaults_row import DefaultsRow
 from src.ui.widgets.effort_screen import EffortScreen
-from src.ui.widgets.grouped_model_screen import AccountCatalog, GroupedModelChoice, GroupedModelScreen
-from src.ui.widgets.model_defaults_screen import (
-    DefaultsChoice,
-    DefaultsDestinations,
-    DefaultsRow,
-    ModelDefaultsScreen,
-)
-from src.ui.widgets.model_picker_screen import ModelChoice
-from src.ui.widgets.provider_screen import ProviderAction, ProviderScreen
-from src.ui.widgets.sidebar_panel import ModelState
+from src.ui.widgets.grouped_model_choice import GroupedModelChoice
+from src.ui.widgets.grouped_model_screen import GroupedModelScreen
+from src.ui.widgets.model_choice import ModelChoice
+from src.ui.widgets.model_defaults_screen import ModelDefaultsScreen
+from src.ui.widgets.model_state import ModelState
+from src.ui.widgets.new_account import NewAccount
+from src.ui.widgets.provider_action import ProviderAction
+from src.ui.widgets.provider_screen import ProviderScreen
 
 
 def _projected_account(row: Mapping[str, Any]) -> ProviderAccount:
@@ -829,244 +836,9 @@ def _notice(text: str, style: str) -> ChatNotice:
     return ChatNotice(text, style=style)
 
 
-def defaults_rows(
-    state: ModelDefaultsState,
-    *,
-    profiles: Mapping[str, AgentProfile] | None = None,
-    active: str = '',
-    providers: Mapping[str, str] | None = None,
-) -> tuple[DefaultsRow, ...]:
-    """The screen's rows: the default first, then the agents, then the subagents.
-
-    Both roles are listed. `agents.<name>` decides what a profile runs on whether the
-    user picks it or a `summon` starts it, so a subagent is a target with a default of
-    its own — hiding it would leave its model reachable only by editing the file.
-
-    A profile the config names but the registry no longer has is listed last, and
-    marked. An entry for a deleted agent is exactly the one worth clearing, and
-    hiding it would leave `agents.<gone>` in the file with no way out from the TUI.
-    """
-    installed = dict(profiles or {})
-    accounts = dict(providers or {})
-    agents = sorted((item for item in installed.values() if item.role.selectable), key=lambda item: item.name)
-    subagents = sorted((item for item in installed.values() if not item.role.selectable), key=lambda item: item.name)
-    orphans = sorted(name for name in state.agent_names() if name not in installed)
-
-    rows = [
-        DefaultsRow(
-            target=None,
-            label='Default for new conversations',
-            summary=_summary(state.effective(None), state.invalid(None), accounts),
-            sources=state.sources(None),
-            invalid=state.invalid(None),
-        )
-    ]
-    rows.extend(_profile_row(profile, state, accounts, active) for profile in (*agents, *subagents))
-    rows.extend(
-        DefaultsRow(
-            target=name,
-            label=name,
-            summary=_summary(state.effective(name), state.invalid(name), accounts),
-            sources=state.sources(name),
-            invalid=state.invalid(name),
-            installed=False,
-        )
-        for name in orphans
-    )
-    return tuple(rows)
-
-
-def _profile_row(
-    profile: AgentProfile, state: ModelDefaultsState, accounts: Mapping[str, str], active: str
-) -> DefaultsRow:
-    return DefaultsRow(
-        target=profile.name,
-        label=profile.label,
-        summary=_summary(state.effective(profile.name), state.invalid(profile.name), accounts),
-        sources=state.sources(profile.name),
-        invalid=state.invalid(profile.name),
-        active=profile.name == active,
-        role=profile.role,
-    )
-
-
-def _summary(config: AgentModelConfig | None, invalid: bool, accounts: Mapping[str, str]) -> str:
-    """One entry as a reader recognizes it, or why there is nothing to show.
-
-    ``accounts`` maps an alias to its provider. The config stores the alias, and an
-    alias on its own says nothing about who answers the request — so the provider is
-    shown too, and its absence is what tells the user the account is gone.
-    """
-    if invalid:
-        return 'invalid entry: see the config errors below'
-    if config is None:
-        return 'not set'
-    provider = accounts.get(config.account)
-    served_by = f'{config.account} · {provider}' if provider else config.account
-    summary = f'{served_by} · {config.model} · {config.effort}'
-    if accounts and provider is None:
-        summary += f' · account {config.account!r} is not configured'
-    return summary
-
-
-@dataclass(frozen=True, slots=True)
-class ProjectedDefaults:
-    """Where an attached write can go, read from the service's projection.
-
-    The four facts the screen asks about a destination, and nothing about the entries:
-    which files exist, where each one is, whether `SIGIL_CONFIG` replaced the pair, and
-    what could not be parsed. `effective`, `invalid` and `sources` are deliberately
-    absent — those are precedence, and every row arrives carrying the answer the engine
-    already gave, so this process never holds a second copy of that rule.
-    """
-
-    destinations: tuple[ConfigScope, ...]
-    paths: Mapping[ConfigScope, Path]
-    fixed: Path | None = None
-    errors: tuple[str, ...] = ()
-
-    def path_for(self, scope: ConfigScope) -> Path:
-        """The file ``scope`` names."""
-        return self.paths[scope]
-
-
-def projected_defaults(projection: Mapping[str, Any]) -> ProjectedDefaults:
-    """The screen's destination facts, from `GET /api/model-defaults`."""
-    files = [
-        entry
-        for entry in projection.get('files') or ()
-        if isinstance(entry, Mapping) and entry.get('scope') and entry.get('path')
-    ]
-    fixed = projection.get('fixed')
-    return ProjectedDefaults(
-        destinations=tuple(ConfigScope(str(entry['scope'])) for entry in files),
-        paths={ConfigScope(str(entry['scope'])): Path(str(entry['path'])) for entry in files},
-        fixed=Path(str(fixed)) if fixed else None,
-        errors=tuple(str(error) for error in projection.get('errors') or ()),
-    )
-
-
-def defaults_rows_from_service(
-    projection: Mapping[str, Any],
-    *,
-    accounts: Sequence[Mapping[str, Any]] = (),
-    profiles: Sequence[Mapping[str, Any]] = (),
-    active: str = '',
-) -> tuple[DefaultsRow, ...]:
-    """The screen's rows for an attached terminal: the projection, and the profiles.
-
-    Two sources, each answering what only it knows. `/api/model-defaults` says what the
-    files hold and which entry wins per target — ``effective``, ``invalid`` and
-    ``sources`` are read from it, never recomputed, so the precedence stays where the
-    files are. `/api/state` lists the installed profiles, because a profile no file
-    mentions is absent from the defaults projection and it is exactly the row a user
-    opens this screen to set.
-
-    ``accounts`` is the projection's own account list, and it answers one question: does
-    the account this entry names still exist. It is mapped to an empty label on purpose
-    — the projection names the account and not the provider — so a configured entry
-    prints its alias once instead of repeating it.
-    """
-    configured = {str(row.get('alias')): '' for row in accounts if isinstance(row, Mapping) and row.get('configured')}
-    installed = {str(row.get('name')): row for row in profiles if str(row.get('name') or '')}
-    targets = _projected_targets(projection)
-
-    rows = [_projected_row(None, 'Default for new conversations', targets, configured)]
-    for selectable in (True, False):
-        names = sorted(name for name in installed if _projected_role(installed[name]).selectable is selectable)
-        rows.extend(
-            _projected_row(
-                name,
-                name,
-                targets,
-                configured,
-                active=name == active,
-                role=_projected_role(installed[name]),
-            )
-            for name in names
-        )
-    rows.extend(
-        _projected_row(name, name, targets, configured, installed=False)
-        for name in sorted(target for target in targets if target is not None and target not in installed)
-    )
-    return tuple(rows)
-
-
-def _projected_targets(projection: Mapping[str, Any]) -> dict[str | None, Mapping[str, Any]]:
-    """Every target the projection lists, keyed the way a row is addressed."""
-    targets: dict[str | None, Mapping[str, Any]] = {}
-    for entry in projection.get('targets') or ():
-        if isinstance(entry, Mapping):
-            targets[entry.get('target')] = entry
-    return targets
-
-
 def _projected_target(projection: Mapping[str, Any], target: str | None) -> Mapping[str, Any] | None:
     """One target's projected entry, or ``None`` when the service did not list it."""
     return _projected_targets(projection).get(target)
-
-
-def _projected_sources(entry: Mapping[str, Any] | None) -> frozenset[ConfigScope]:
-    """The files that mention one target, as the projection names them."""
-    return frozenset(ConfigScope(str(scope)) for scope in (entry or {}).get('sources') or ())
-
-
-def _projected_config(entry: object) -> AgentModelConfig | None:
-    """One projected `{account, model, effort}` as the value a row is built from."""
-    if not isinstance(entry, Mapping):
-        return None
-    account, model, effort = entry.get('account'), entry.get('model'), entry.get('effort')
-    if not account or not model or not effort:
-        return None
-    return AgentModelConfig(str(account), str(model), str(effort))
-
-
-def _projected_role(row: Mapping[str, Any]) -> AgentRole:
-    """The role `/api/state` reports, read as the agent when this build cannot place it.
-
-    An unknown role would otherwise cost the whole list to a `ValueError` over one row
-    it could still paint, and the selectable role is what such a row meant before roles
-    existed.
-    """
-    try:
-        return AgentRole(str(row.get('role') or AgentRole.AGENT))
-    except ValueError:
-        return AgentRole.AGENT
-
-
-def _projected_row(
-    target: str | None,
-    label: str,
-    targets: Mapping[str | None, Mapping[str, Any]],
-    accounts: Mapping[str, str],
-    *,
-    active: bool = False,
-    installed: bool = True,
-    role: AgentRole = AgentRole.AGENT,
-) -> DefaultsRow:
-    """One row, with the entry the server resolved for its target.
-
-    The summary is `_summary`'s — the same function the in-process rows use — so the two
-    modes cannot word the same entry differently. An unknown entry and an invalid one
-    are two different rows on purpose: the second is a value the file holds and the user
-    has to clear, the first is nothing to show.
-    """
-    entry = targets.get(target)
-    invalid = bool((entry or {}).get('invalid'))
-    return DefaultsRow(
-        target=target,
-        label=label,
-        summary=_summary(
-            _projected_config(None if entry is None else entry.get('effective')),
-            invalid,
-            accounts,
-        ),
-        sources=_projected_sources(entry),
-        invalid=invalid,
-        active=active,
-        installed=installed,
-        role=role,
-    )
 
 
 def _projected_higher_file(projection: Mapping[str, Any], entry: Mapping[str, Any] | None) -> str:

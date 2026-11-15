@@ -146,8 +146,8 @@ and args) and the UI reflects it in the chat. It works the same for sync, async
 and `RunContext` tools.
 
 ```python
-from src.engine.tooling.logging import ToolLoggerHub
-from src.engine.tooling.registrar import ToolRegistrar
+from src.core.tooling.logging import ToolLoggerHub
+from src.core.tooling.registrar import ToolRegistrar
 
 hub = ToolLoggerHub()  # the app adds its sink on mount
 registrar = ToolRegistrar(agent, hub)
@@ -180,7 +180,7 @@ and the previous calls, in emission order, and returns the reason for the
 conflict or `None`.
 
 ```python
-from src.engine.tooling.concurrency import ConcurrencyContext
+from src.core.tooling.concurrency import ConcurrencyContext
 
 
 def no_same_key(ctx: ConcurrencyContext) -> str | None:
@@ -209,7 +209,7 @@ what lets a profile rule on `write` instead of listing every tool that writes,
 and on the path instead of on the tool:
 
 ```python
-from src.engine.tooling.permission import ResourceKind, ToolGroup,
+from src.core.tooling.permission import ResourceKind, ToolGroup,
 ToolPermission
 
 _READ = ToolPermission(groups=(ToolGroup.READ,), resource='path',

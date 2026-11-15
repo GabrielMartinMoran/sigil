@@ -10,9 +10,9 @@ from pathlib import Path
 
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 
-from src.engine.context.budget import ContextBudget
-from src.engine.context.compaction.policy import CompactionPolicy
-from src.engine.context.replay import replay
+from src.core.context.compaction.compaction_policy import CompactionPolicy
+from src.core.context.context_budget import ContextBudget
+from src.core.context.replay import replay
 
 
 def main() -> None:

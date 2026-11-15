@@ -18,15 +18,17 @@ from rich.text import Text
 from textual.app import App
 from textual.widgets import OptionList
 
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.engine.agents.profile.registry import AgentRegistry
-from src.engine.agents.tree.models.node_status import NodeStatus
-from src.engine.agents.tree.store import AgentTreeStore
-from src.engine.agents.tree.summoner import SubagentSummoner
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
-from src.ui.widgets.agent_tree_screen import AgentTreeScreen, TreeAction, node_row, state_of, status_text
+from src.core.agents.profile.agent_registry import AgentRegistry
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.agents.tree.agent_tree_store import AgentTreeStore
+from src.core.agents.tree.models.node_status import NodeStatus
+from src.core.agents.tree.summoner import SubagentSummoner
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.agent_tree_rows import node_row, state_of, status_text
+from src.ui.widgets.agent_tree_screen import AgentTreeScreen
 from src.ui.widgets.chat_log import ChatLog
+from src.ui.widgets.tree_action import TreeAction
 from tests.support.ui import render_text
 
 
@@ -65,7 +67,7 @@ def _running_node(app: SigilApp, *, mode: str = 'sync') -> Any:
 # --- the row and the header know the new state --------------------------------
 
 
-def test_a_node_that_used_up_its_steps_says_so_in_its_row():
+def test_a_node_that_used_up_its_steps_says_so_in_its_row() -> None:
     tree = AgentTreeStore().active
     root = tree.ensure_root('wizard')
     node = tree.add(parent_id=root.id, name='worker', role=AgentRole.SUBAGENT, task='a')
@@ -76,7 +78,7 @@ def test_a_node_that_used_up_its_steps_says_so_in_its_row():
     assert 'out of steps' in row
 
 
-def test_a_row_shows_how_many_times_the_node_ran():
+def test_a_row_shows_how_many_times_the_node_ran() -> None:
     tree = AgentTreeStore().active
     root = tree.ensure_root('wizard')
     node = tree.add(parent_id=root.id, name='worker', role=AgentRole.SUBAGENT, task='a')
@@ -86,7 +88,7 @@ def test_a_row_shows_how_many_times_the_node_ran():
     assert 'run 3' in row
 
 
-def test_the_status_line_counts_the_background():
+def test_the_status_line_counts_the_background() -> None:
     tree = AgentTreeStore().active
     root = tree.ensure_root('wizard')
     tree.add(parent_id=root.id, name='a', role=AgentRole.SUBAGENT, task='x', mode='async')
@@ -101,7 +103,7 @@ def test_the_status_line_counts_the_background():
 # --- the actions --------------------------------------------------------------
 
 
-def test_the_screen_returns_what_to_do_with_the_highlighted_row():
+def test_the_screen_returns_what_to_do_with_the_highlighted_row() -> None:
     tree = AgentTreeStore().active
     root = tree.ensure_root('wizard')
     node = tree.add(parent_id=root.id, name='worker', role=AgentRole.SUBAGENT, task='a')
@@ -124,8 +126,8 @@ def test_the_screen_returns_what_to_do_with_the_highlighted_row():
     assert result.node_id == node.id
 
 
-def test_b_backgrounds_a_running_node():
-    async def inner():
+def test_b_backgrounds_a_running_node() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, summoner=True)
             node = _running_node(app, mode='sync')
@@ -140,8 +142,8 @@ def test_b_backgrounds_a_running_node():
     asyncio.run(inner())
 
 
-def test_k_stops_the_node():
-    async def inner():
+def test_k_stops_the_node() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, summoner=True)
             node = _running_node(app)
@@ -156,8 +158,8 @@ def test_k_stops_the_node():
     asyncio.run(inner())
 
 
-def test_a_refusal_from_the_summoner_is_a_line_and_not_a_crash():
-    async def inner():
+def test_a_refusal_from_the_summoner_is_a_line_and_not_a_crash() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, summoner=True)
             tree = app._agent_tree.active
@@ -177,10 +179,10 @@ def test_a_refusal_from_the_summoner_is_a_line_and_not_a_crash():
     asyncio.run(inner())
 
 
-def test_alt_t_then_b_backgrounds_without_opening_the_node():
+def test_alt_t_then_b_backgrounds_without_opening_the_node() -> None:
     """The whole path: the key, the list, `b` — and the chat stays where it was."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, summoner=True)
             node = _running_node(app, mode='sync')

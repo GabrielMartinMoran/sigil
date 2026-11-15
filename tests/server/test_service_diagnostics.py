@@ -127,7 +127,7 @@ def test_framework_caught_startup_error_is_still_recorded(tmp_path: Path, monkey
     from fastapi.testclient import TestClient
 
     from src.server.app import create_app
-    from src.server.config import ServerConfig
+    from src.server.server_config import ServerConfig
     from tests.support.server_endpoint import _RuntimeStub
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path))

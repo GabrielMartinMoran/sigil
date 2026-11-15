@@ -31,12 +31,12 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.engine.agents.profile.registry import AgentRegistry
-from src.engine.agents.tree.store import AgentTreeStore
-from src.engine.agents.tree.summoner import SubagentSummoner
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
+from src.core.agents.profile.agent_registry import AgentRegistry
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.agents.tree.agent_tree_store import AgentTreeStore
+from src.core.agents.tree.summoner import SubagentSummoner
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
 from src.ui.widgets.agent_tree_screen import AgentTreeScreen
 
 pytestmark = pytest.mark.usefixtures('memory_databases')
@@ -113,7 +113,7 @@ def _other_node(app: SigilApp) -> Any:
     )
 
 
-def test_waking_with_a_subagent_on_screen_hands_only_runnable_work():
+def test_waking_with_a_subagent_on_screen_hands_only_runnable_work() -> None:
     """The case from the screenshot: a report lands while a node is on screen."""
 
     async def inner():
@@ -137,7 +137,7 @@ def test_waking_with_a_subagent_on_screen_hands_only_runnable_work():
     assert still_open is False
 
 
-def test_a_normal_wake_up_hands_only_runnable_work():
+def test_a_normal_wake_up_hands_only_runnable_work() -> None:
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
@@ -153,7 +153,7 @@ def test_a_normal_wake_up_hands_only_runnable_work():
     assert asyncio.run(inner()) == []
 
 
-def test_the_view_toggles_hand_only_runnable_work():
+def test_the_view_toggles_hand_only_runnable_work() -> None:
     """Both ways out of a subagent, and the debug view that shares the space."""
 
     async def inner():
@@ -182,7 +182,7 @@ def test_the_view_toggles_hand_only_runnable_work():
     assert asyncio.run(inner()) == []
 
 
-def test_opening_the_tree_hands_only_runnable_work():
+def test_opening_the_tree_hands_only_runnable_work() -> None:
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)

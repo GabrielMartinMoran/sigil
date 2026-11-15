@@ -6,26 +6,25 @@ objects and the same pure helpers while their import stays one-way:
 
     runtime -> session_runtime -> runtime_support
 
-The values moved here unchanged from ``src/server/runtime.py``. ``runtime.py``
+The values moved here unchanged from ``src/server/server_runtime.py``. ``runtime.py``
 re-exports them, so an importer that already names them there keeps working.
 """
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import os
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, UserPromptPart
 
-from src.engine.attachments.images import MAX_IMAGE_BYTES, ImageError, prepare_image
-from src.engine.context.media_compatibility import PORTABLE_IMAGE_TYPES
-from src.engine.interaction.models.question_answer import QuestionAnswer
-from src.engine.interaction.models.question_item import QuestionItem
-from src.engine.storage.accepted_inputs import AcceptedInput, ImageInput
+from src.core.attachments.image_error import ImageError
+from src.core.attachments.images import MAX_IMAGE_BYTES, prepare_image
+from src.core.context.media_compatibility import PORTABLE_IMAGE_TYPES
+from src.core.storage.accepted_inputs import AcceptedInput, ImageInput
+from src.server.incoming_image import IncomingImage
+from src.server.pending_question import PendingQuestion
 
 OwnershipGuard = Callable[[], None]
 """Validates that this process still owns the store, or raises ``OwnershipError``.
@@ -118,19 +117,6 @@ def _checked_timeout(seconds: float, source: str) -> float:
     return seconds
 
 
-@dataclass(frozen=True, slots=True)
-class IncomingImage:
-    """One image as the client sent it: the type it declared and base64 bytes.
-
-    Nothing here is ever a path. A client sends the picture itself, never a filename
-    the server would open, and the declared type is only a claim: the bytes are
-    decoded and re-encoded before they are trusted.
-    """
-
-    media_type: str
-    data: str
-
-
 def decode_images(images: Sequence[IncomingImage]) -> list[ImageInput]:
     """Validates and normalizes the ordered images of one message.
 
@@ -174,17 +160,6 @@ def _decode_image(number: int, image: IncomingImage) -> ImageInput:
     except ImageError as exc:
         raise ValueError(f'Image {number} could not be read: {exc}') from exc
     return ImageInput(prepared.data, prepared.media_type)
-
-
-@dataclass
-class PendingQuestion:
-    """A question asked by the agent, waiting for an answer from a browser."""
-
-    id: str
-    questions: list[QuestionItem]
-    future: asyncio.Future[list[QuestionAnswer] | None] = field(
-        default_factory=lambda: asyncio.get_event_loop().create_future()
-    )
 
 
 def prompt_matches(part: UserPromptPart, item: AcceptedInput) -> bool:

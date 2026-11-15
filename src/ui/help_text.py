@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from src.engine.commands import Command, CommandOwner, owned_by
+from src.core.commands.catalog import owned_by
+from src.core.commands.command import Command
+from src.core.commands.command_owner import CommandOwner
 from src.ui.command_transport import listing_mark
 
 

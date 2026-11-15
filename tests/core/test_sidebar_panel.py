@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from src.engine.mcp.config.loader import load_config
-from src.engine.mcp.manager.manager import MCPManager
+from pathlib import Path
+
+from src.core.mcp.config.loader import load_config
+from src.core.mcp.manager.mcp_manager import MCPManager
 
 
-def test_mcp_counts_ignores_disabled_servers(tmp_path):
+def test_mcp_counts_ignores_disabled_servers(tmp_path: Path) -> None:
     config = tmp_path / 'config.json'
     config.write_text(
         '{"mcp_servers": {"on": {"command": "npx"}, "off": {"command": "npx", "enabled": false}}}',
@@ -18,7 +20,7 @@ def test_mcp_counts_ignores_disabled_servers(tmp_path):
     assert failed == 0
 
 
-def test_mcp_counts_reports_broken_servers(tmp_path):
+def test_mcp_counts_reports_broken_servers(tmp_path: Path) -> None:
     config = tmp_path / 'config.json'
     # An invalid transport makes the toolset construction fail.
     config.write_text('{"mcp_servers": {"broken": {"url": "not-a-url"}}}', encoding='utf-8')

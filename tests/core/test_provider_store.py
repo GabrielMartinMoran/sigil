@@ -9,15 +9,15 @@ from pathlib import Path
 
 import pytest
 
-from src.engine.providers.domain.provider_account import ProviderAccount
-from src.engine.providers.domain.provider_error import AliasError, CredentialError
-from src.engine.providers.domain.provider_kind import ProviderKind
-from src.engine.providers.domain.secret import ApiKeySecret, OAuthSecret
-from src.engine.providers.domain.selection import Selection
-from src.engine.providers.store.account_store import SqliteAccountStore
-from src.engine.providers.store.atomic import MODE_PRIVATE, read_json, write_json
-from src.engine.providers.store.secret_store import FileSecretStore
-from src.engine.providers.store.state_store import SqliteStateStore
+from src.core.providers.domain.provider_account import ProviderAccount
+from src.core.providers.domain.provider_error import AliasError, CredentialError
+from src.core.providers.domain.provider_kind import ProviderKind
+from src.core.providers.domain.secret import ApiKeySecret, OAuthSecret
+from src.core.providers.domain.selection import Selection
+from src.core.providers.store.atomic import MODE_PRIVATE, read_json, write_json
+from src.core.providers.store.secret_store import FileSecretStore
+from src.core.providers.store.sqlite_account_store import SqliteAccountStore
+from src.core.providers.store.state_store import SqliteStateStore
 
 
 def _mode(path: Path) -> int:
@@ -27,25 +27,25 @@ def _mode(path: Path) -> int:
 # --- atomic -----------------------------------------------------------------
 
 
-def test_write_json_creates_the_parent_directory(tmp_path):
+def test_write_json_creates_the_parent_directory(tmp_path: Path) -> None:
     target = tmp_path / 'nested' / 'file.json'
     write_json(target, {'a': 1})
     assert read_json(target) == {'a': 1}
 
 
-def test_write_json_applies_the_private_mode(tmp_path):
+def test_write_json_applies_the_private_mode(tmp_path: Path) -> None:
     target = tmp_path / 'secret.json'
     write_json(target, {'a': 1}, mode=MODE_PRIVATE)
     assert _mode(target) == MODE_PRIVATE
 
 
-def test_write_json_leaves_no_temporary_file(tmp_path):
+def test_write_json_leaves_no_temporary_file(tmp_path: Path) -> None:
     target = tmp_path / 'file.json'
     write_json(target, {'a': 1})
     assert [p.name for p in tmp_path.iterdir()] == ['file.json']
 
 
-def test_write_json_tightens_a_pre_existing_world_readable_file(tmp_path):
+def test_write_json_tightens_a_pre_existing_world_readable_file(tmp_path: Path) -> None:
     target = tmp_path / 'secret.json'
     target.write_text('{}', encoding='utf-8')
     os.chmod(target, 0o666)
@@ -54,27 +54,27 @@ def test_write_json_tightens_a_pre_existing_world_readable_file(tmp_path):
 
 
 @pytest.mark.parametrize('payload', ['not json', '[1, 2]', ''])
-def test_read_json_returns_none_for_anything_unusable(tmp_path, payload):
+def test_read_json_returns_none_for_anything_unusable(tmp_path: Path, payload) -> None:
     target = tmp_path / 'file.json'
     target.write_text(payload, encoding='utf-8')
     assert read_json(target) is None
 
 
-def test_read_json_returns_none_for_a_missing_file(tmp_path):
+def test_read_json_returns_none_for_a_missing_file(tmp_path: Path) -> None:
     assert read_json(tmp_path / 'nope.json') is None
 
 
 # --- secrets ----------------------------------------------------------------
 
 
-def test_api_key_secret_hides_the_key_from_repr_and_str():
+def test_api_key_secret_hides_the_key_from_repr_and_str() -> None:
     secret = ApiKeySecret(key='sk-super-secret', alias='work')
     assert 'sk-super-secret' not in repr(secret)
     assert 'sk-super-secret' not in str(secret)
     assert 'work' in repr(secret)
 
 
-def test_oauth_secret_hides_the_tokens_but_shows_the_client_and_scope():
+def test_oauth_secret_hides_the_tokens_but_shows_the_client_and_scope() -> None:
     secret = OAuthSecret(
         access_token='ACCESS',
         refresh_token='REFRESH',
@@ -90,25 +90,25 @@ def test_oauth_secret_hides_the_tokens_but_shows_the_client_and_scope():
     assert secret.plan_usage_granted
 
 
-def test_oauth_secret_reports_a_missing_plan_usage_grant():
+def test_oauth_secret_reports_a_missing_plan_usage_grant() -> None:
     secret = OAuthSecret(access_token='a', refresh_token='r', scope='openid')
     assert not secret.plan_usage_granted
 
 
-def test_secret_store_round_trips_an_api_key(tmp_path):
+def test_secret_store_round_trips_an_api_key(tmp_path: Path) -> None:
     store = FileSecretStore(tmp_path / 'credentials.json')
     store.put('acct-1', ApiKeySecret(key='sk-1'))
     assert store.get('acct-1') == ApiKeySecret(key='sk-1')
 
 
-def test_secret_store_round_trips_an_oauth_credential(tmp_path):
+def test_secret_store_round_trips_an_oauth_credential(tmp_path: Path) -> None:
     store = FileSecretStore(tmp_path / 'credentials.json')
     secret = OAuthSecret(access_token='a', refresh_token='r', client_id='c', id_token='i', scope='s')
     store.put('acct-1', secret)
     assert store.get('acct-1') == secret
 
 
-def test_secret_store_file_is_private_and_unique(tmp_path):
+def test_secret_store_file_is_private_and_unique(tmp_path: Path) -> None:
     path = tmp_path / 'credentials.json'
     store = FileSecretStore(path)
     store.put('acct-1', ApiKeySecret(key='sk-1'))
@@ -116,7 +116,7 @@ def test_secret_store_file_is_private_and_unique(tmp_path):
     assert 'sk-1' in path.read_text(encoding='utf-8')
 
 
-def test_secret_store_tightens_a_restored_file(tmp_path):
+def test_secret_store_tightens_a_restored_file(tmp_path: Path) -> None:
     path = tmp_path / 'credentials.json'
     path.write_text(json.dumps({'acct-1': {'type': 'api_key', 'key': 'sk-1'}}), encoding='utf-8')
     os.chmod(path, 0o644)
@@ -124,7 +124,7 @@ def test_secret_store_tightens_a_restored_file(tmp_path):
     assert _mode(path) == MODE_PRIVATE
 
 
-def test_secret_store_ignores_unknown_or_broken_entries(tmp_path):
+def test_secret_store_ignores_unknown_or_broken_entries(tmp_path: Path) -> None:
     path = tmp_path / 'credentials.json'
     path.write_text(
         json.dumps(
@@ -143,7 +143,7 @@ def test_secret_store_ignores_unknown_or_broken_entries(tmp_path):
     assert store.get('missing') is None
 
 
-def test_secret_store_delete_removes_only_that_account(tmp_path):
+def test_secret_store_delete_removes_only_that_account(tmp_path: Path) -> None:
     store = FileSecretStore(tmp_path / 'credentials.json')
     store.put('a', ApiKeySecret(key='1'))
     store.put('b', ApiKeySecret(key='2'))
@@ -153,7 +153,7 @@ def test_secret_store_delete_removes_only_that_account(tmp_path):
     assert store.get('b') == ApiKeySecret(key='2')
 
 
-def test_secret_store_reports_a_write_failure_as_a_domain_error(tmp_path):
+def test_secret_store_reports_a_write_failure_as_a_domain_error(tmp_path: Path) -> None:
     blocker = tmp_path / 'blocked'
     blocker.write_text('', encoding='utf-8')
     store = FileSecretStore(blocker / 'credentials.json')
@@ -164,7 +164,7 @@ def test_secret_store_reports_a_write_failure_as_a_domain_error(tmp_path):
 # --- accounts ---------------------------------------------------------------
 
 
-def test_account_store_round_trips_and_preserves_order(tmp_path):
+def test_account_store_round_trips_and_preserves_order(tmp_path: Path) -> None:
     store = SqliteAccountStore(tmp_path)
     first = ProviderAccount.create('one', ProviderKind.OPENROUTER)
     second = ProviderAccount.create('two', ProviderKind.OPENAI)
@@ -172,11 +172,11 @@ def test_account_store_round_trips_and_preserves_order(tmp_path):
     assert store.load() == (first, second)
 
 
-def test_account_store_returns_empty_when_nothing_was_written(tmp_path):
+def test_account_store_returns_empty_when_nothing_was_written(tmp_path: Path) -> None:
     assert SqliteAccountStore(tmp_path).load() == ()
 
 
-def test_account_store_skips_a_row_it_cannot_read_without_losing_the_rest(tmp_path):
+def test_account_store_skips_a_row_it_cannot_read_without_losing_the_rest(tmp_path: Path) -> None:
     """One bad value is one account lost, not the list: the alias check proves it.
 
     The list still loads, and an account with an unknown `kind` is skipped while the
@@ -194,7 +194,7 @@ def test_account_store_skips_a_row_it_cannot_read_without_losing_the_rest(tmp_pa
     assert [account.alias for account in store.load()] == ['good']
 
 
-def test_account_store_rejects_unknown_kinds_at_load_time(tmp_path):
+def test_account_store_rejects_unknown_kinds_at_load_time(tmp_path: Path) -> None:
     store = SqliteAccountStore(tmp_path)
     store.database.execute(
         "INSERT INTO accounts (id, alias, alias_key, kind, variant, auth) \nVALUES ('x', 'a', 'a', 'gemini', 'v', 'a')"
@@ -202,7 +202,7 @@ def test_account_store_rejects_unknown_kinds_at_load_time(tmp_path):
     assert store.load() == ()
 
 
-def test_account_store_lookup_is_case_insensitive(tmp_path):
+def test_account_store_lookup_is_case_insensitive(tmp_path: Path) -> None:
     store = SqliteAccountStore(tmp_path)
     account = ProviderAccount.create('Work', ProviderKind.OPENROUTER)
     store.save([account])
@@ -212,7 +212,7 @@ def test_account_store_lookup_is_case_insensitive(tmp_path):
     assert store.find_alias('other') is None
 
 
-def test_account_store_alias_uniqueness_ignores_the_account_itself(tmp_path):
+def test_account_store_alias_uniqueness_ignores_the_account_itself(tmp_path: Path) -> None:
     store = SqliteAccountStore(tmp_path)
     account = ProviderAccount.create('work', ProviderKind.OPENROUTER)
     store.save([account])
@@ -221,7 +221,7 @@ def test_account_store_alias_uniqueness_ignores_the_account_itself(tmp_path):
         store.ensure_free_alias('WORK')
 
 
-def test_the_alias_is_unique_in_the_database_too(tmp_path):
+def test_the_alias_is_unique_in_the_database_too(tmp_path: Path) -> None:
     """The check in code is the message; the constraint is the guarantee."""
     import sqlite3
 
@@ -239,7 +239,7 @@ def test_the_alias_is_unique_in_the_database_too(tmp_path):
 # --- state ------------------------------------------------------------------
 
 
-def test_state_store_starts_empty_and_survives_a_restart(tmp_path):
+def test_state_store_starts_empty_and_survives_a_restart(tmp_path: Path) -> None:
     store = SqliteStateStore(tmp_path)
     assert store.last_selection() is None
 
@@ -248,14 +248,14 @@ def test_state_store_starts_empty_and_survives_a_restart(tmp_path):
     assert SqliteStateStore(tmp_path).last_selection() == selection
 
 
-def test_state_store_can_forget_the_selection(tmp_path):
+def test_state_store_can_forget_the_selection(tmp_path: Path) -> None:
     store = SqliteStateStore(tmp_path)
     store.set_last_selection(Selection(account_id='a', model='m'))
     store.set_last_selection(None)
     assert store.last_selection() is None
 
 
-def test_state_store_forget_only_when_the_account_matches(tmp_path):
+def test_state_store_forget_only_when_the_account_matches(tmp_path: Path) -> None:
     store = SqliteStateStore(tmp_path)
     store.set_last_selection(Selection(account_id='a', model='m'))
     store.forget('b')
@@ -264,14 +264,14 @@ def test_state_store_forget_only_when_the_account_matches(tmp_path):
     assert store.last_selection() is None
 
 
-def test_state_store_installation_id_is_stable_and_well_formed(tmp_path):
+def test_state_store_installation_id_is_stable_and_well_formed(tmp_path: Path) -> None:
     first = SqliteStateStore(tmp_path).installation_id()
     second = SqliteStateStore(tmp_path).installation_id()
     assert first == second
     assert first.startswith('urn:uuid:')
 
 
-def test_a_failed_write_is_reported_and_never_raised(tmp_path):
+def test_a_failed_write_is_reported_and_never_raised(tmp_path: Path) -> None:
     """Preferences are a convenience: losing one must not break a turn."""
     store = SqliteStateStore(tmp_path)
     store.set_last_selection(Selection(account_id='a', model='m'))

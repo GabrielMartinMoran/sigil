@@ -10,11 +10,12 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-from src.engine.commands import CommandOwner, match_commands
-from src.engine.preferences import Preferences, PreferencesStore
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
+from src.core.commands.catalog import match_commands
+from src.core.commands.command_owner import CommandOwner
+from src.core.preferences import Preferences, PreferencesStore
+from src.core.sessions.session_store import SessionStore
 from src.ui.help_text import HELP_TEXT
+from src.ui.sigil_app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 from tests.support.ui import render_text
@@ -61,7 +62,7 @@ def test_should_show_status_without_sending_or_mutating(tmp_path: Path, monkeypa
     async def scenario() -> None:
         app = make_app(tmp_path)
         sender = Mock()
-        monkeypatch.setattr('src.ui.app.send_notification', sender)
+        monkeypatch.setattr('src.ui.sigil_app.send_notification', sender)
         monkeypatch.setattr('src.ui.preferences_mixin.notification_command', lambda _: None)
         async with app.run_test():
             await app.handle_command('/alerts')
@@ -82,7 +83,7 @@ def test_should_reject_diagnostic_and_unknown_arguments_without_sending(
     async def scenario() -> None:
         app = make_app(tmp_path)
         sender = Mock()
-        monkeypatch.setattr('src.ui.app.send_notification', sender)
+        monkeypatch.setattr('src.ui.sigil_app.send_notification', sender)
         async with app.run_test() as pilot:
             field = app.query_one(PromptInput)
             field.value = f'/alerts {argument}'

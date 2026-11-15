@@ -11,16 +11,17 @@ from pathlib import Path
 
 import pytest
 
-from src.engine.roadmap.models.todo_item import TodoItem
-from src.engine.roadmap.store import RoadmapStore
-from src.engine.roadmap.tools import RoadmapItemInput, register_roadmap_tools
-from src.engine.sessions.session_store import SessionStore
-from src.engine.storage.roadmap import (
-    RoadmapConflictError,
+from src.core.roadmap.models.roadmap_item_input import RoadmapItemInput
+from src.core.roadmap.models.todo_item import TodoItem
+from src.core.roadmap.roadmap_store import RoadmapStore
+from src.core.roadmap.tools import register_roadmap_tools
+from src.core.sessions.session_store import SessionStore
+from src.core.storage.roadmap import (
     read_revision,
     replace_items,
     restore_plan_from_json,
 )
+from src.core.storage.roadmap_conflict_error import RoadmapConflictError
 
 
 def _session(tmp_path):
@@ -65,7 +66,7 @@ def _tool(store):
     return call
 
 
-def test_set_add_update_remove_clear(tmp_path):
+def test_set_add_update_remove_clear(tmp_path: Path) -> None:
     store = _store(tmp_path)
     tool = _tool(store)
 
@@ -90,7 +91,7 @@ def test_set_add_update_remove_clear(tmp_path):
     assert snap.items == []
 
 
-def test_persistence_roundtrip(tmp_path):
+def test_persistence_roundtrip(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.set_items([TodoItem(title='A', status='done')])
     assert store.persistence_error is None
@@ -103,7 +104,7 @@ def test_persistence_roundtrip(tmp_path):
     assert items[0].status == 'done'
 
 
-def test_the_order_of_the_plan_is_kept(tmp_path):
+def test_the_order_of_the_plan_is_kept(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.set_items([TodoItem(title=title) for title in ('first', 'second', 'third')])
 
@@ -111,14 +112,14 @@ def test_the_order_of_the_plan_is_kept(tmp_path):
     assert [item.title for item in reloaded.snapshot()] == ['first', 'second', 'third']
 
 
-def test_update_unknown_id_raises(tmp_path):
+def test_update_unknown_id_raises(tmp_path: Path) -> None:
     store = _store(tmp_path)
     tool = _tool(store)
     with pytest.raises(ValueError, match='No roadmap item'):
         tool(action='update', item_id='nope', status='done')
 
 
-def test_listener_is_notified(tmp_path):
+def test_listener_is_notified(tmp_path: Path) -> None:
     store = _store(tmp_path)
     calls = []
     store.add_listener(lambda: calls.append(1))
@@ -126,7 +127,7 @@ def test_listener_is_notified(tmp_path):
     assert calls == [1]
 
 
-def test_each_execution_has_its_own_plan(tmp_path):
+def test_each_execution_has_its_own_plan(tmp_path: Path) -> None:
     """A plan belongs to the execution that is executing it, not to the session."""
     session = _session(tmp_path)
     first = RoadmapStore(session.root_id, base_dir=tmp_path)
@@ -138,7 +139,7 @@ def test_each_execution_has_its_own_plan(tmp_path):
     assert second.snapshot() == []
 
 
-def test_binding_moves_the_store_to_another_execution(tmp_path):
+def test_binding_moves_the_store_to_another_execution(tmp_path: Path) -> None:
     session = _session(tmp_path)
     other = _session(tmp_path)
     store = RoadmapStore(session.root_id, base_dir=tmp_path)
@@ -156,7 +157,7 @@ def test_binding_moves_the_store_to_another_execution(tmp_path):
     assert [item.title for item in store.snapshot()] == ['From the second']
 
 
-def test_bind_notifies_listeners(tmp_path):
+def test_bind_notifies_listeners(tmp_path: Path) -> None:
     session = _session(tmp_path)
     store = RoadmapStore(session.root_id, base_dir=tmp_path)
     calls = []
@@ -189,7 +190,7 @@ def test_stale_store_preserves_dirty_items_and_reports_conflict(tmp_path: Path) 
     assert [item.title for item in reopened.snapshot()] == ['baseline', 'first update']
 
 
-def test_a_conflict_does_not_move_the_stored_revision(tmp_path):
+def test_a_conflict_does_not_move_the_stored_revision(tmp_path: Path) -> None:
     """A refused write leaves the rows and the stored revision exactly as they were."""
     store = _store(tmp_path)
     store.set_items([TodoItem(title='A')])
@@ -207,7 +208,7 @@ def test_a_conflict_does_not_move_the_stored_revision(tmp_path):
     assert [item.title for item in store.snapshot()] == ['A']
 
 
-def test_clear_keeps_the_revision_moving_forward(tmp_path):
+def test_clear_keeps_the_revision_moving_forward(tmp_path: Path) -> None:
     """An empty plan is still a plan at a revision, not a plan that never moved."""
     store = _store(tmp_path)
     store.set_items([TodoItem(title='A')])
@@ -225,7 +226,7 @@ def test_clear_keeps_the_revision_moving_forward(tmp_path):
     assert reopened.database.value('SELECT revision FROM roadmap_revisions WHERE execution_id = ?', (execution,)) == 3
 
 
-def test_forget_empties_the_plan_without_resetting_the_revision(tmp_path):
+def test_forget_empties_the_plan_without_resetting_the_revision(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.set_items([TodoItem(title='A')])
     store.forget()
@@ -237,7 +238,7 @@ def test_forget_empties_the_plan_without_resetting_the_revision(tmp_path):
     assert RoadmapStore(execution, base_dir=tmp_path).snapshot() == []
 
 
-def test_restoring_a_plan_moves_the_revision_forward(tmp_path):
+def test_restoring_a_plan_moves_the_revision_forward(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.set_items([TodoItem(title='A')])
     raw = json.dumps([TodoItem(title='B').model_dump()])
@@ -256,7 +257,7 @@ def test_restoring_a_plan_moves_the_revision_forward(tmp_path):
     )
 
 
-def test_a_store_without_an_execution_is_memory_only(tmp_path):
+def test_a_store_without_an_execution_is_memory_only(tmp_path: Path) -> None:
     """Before a session exists there is nothing to key a plan by, so nothing is stored."""
     store = RoadmapStore(base_dir=tmp_path)
     assert store.execution_id is None

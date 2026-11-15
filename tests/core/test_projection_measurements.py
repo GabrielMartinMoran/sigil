@@ -10,10 +10,10 @@ import pytest
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.usage import RequestUsage
 
-from src.engine.context import input_estimate
-from src.engine.context.budget import ContextBudget
-from src.engine.context.compaction.events import POLICY_VERSION, RECORD_KEY
-from src.engine.context.strategy.append_only import AppendOnlyStrategy
+from src.core.context import input_estimate
+from src.core.context.compaction.events import POLICY_VERSION, RECORD_KEY
+from src.core.context.context_budget import ContextBudget
+from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 
 
 def measured_history() -> list[ModelMessage]:
@@ -80,10 +80,10 @@ def test_should_preserve_pressure_decisions_without_reusing_stale_estimates(
 ) -> None:
     from pydantic_ai.messages import ThinkingPart, ToolCallPart, ToolReturnPart
 
-    from src.engine.context.compaction.measurements import ProjectionMeasurements
-    from src.engine.context.input_estimate import InputEstimate
-    from src.engine.context.strategy import append_only
-    from src.engine.context.tokens import estimate_messages_tokens
+    from src.core.context.compaction.projection_measurements import ProjectionMeasurements
+    from src.core.context.input_estimate import InputEstimate
+    from src.core.context.strategy import append_only_strategy as append_only
+    from src.core.context.tokens import estimate_messages_tokens
 
     class UncachedMeasurements(ProjectionMeasurements):
         def tokens(self, messages: Sequence[ModelMessage]) -> int:

@@ -57,12 +57,6 @@ SCROLL_LINES = 5
 """Lines one `ctrl+↑` / `ctrl+↓` moves: enough to read back, not a full page."""
 
 
-class ReadOnlyScroll(VerticalScroll):
-    """A scrolling surface that never asks for the keyboard."""
-
-    can_focus = False
-
-
 def current_pane(screen: Screen) -> VerticalScroll | None:
     """The conversation pane on screen, or ``None`` when there is none."""
     for holder_selector, pane_selector in PANES:

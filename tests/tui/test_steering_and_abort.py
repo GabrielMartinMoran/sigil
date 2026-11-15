@@ -17,14 +17,16 @@ import tempfile
 import time
 from pathlib import Path
 
+import pytest
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-from src.engine.sessions.session_store import SessionStore
-from src.engine.shell import running as running_commands
-from src.engine.shell.runner import execute_command
-from src.ui.app import SigilApp
-from src.ui.widgets.chat_log import AssistantBlock, ChatLog
+from src.core.sessions.session_store import SessionStore
+from src.core.shell import running as running_commands
+from src.core.shell.runner import execute_command
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.assistant_block import AssistantBlock
+from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.command_menu import CommandMenu
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.status_bar import StatusBar
@@ -64,10 +66,10 @@ def _chat_texts(app: SigilApp) -> list[str]:
 # --- steering --------------------------------------------------------------
 
 
-def test_a_message_typed_mid_turn_is_injected_into_the_running_agent():
+def test_a_message_typed_mid_turn_is_injected_into_the_running_agent() -> None:
     """The queued message reaches the model before it decides what comes next."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             seen: list[list[str]] = []
             release = asyncio.Event()
@@ -108,14 +110,14 @@ def test_a_message_typed_mid_turn_is_injected_into_the_running_agent():
     asyncio.run(inner())
 
 
-def test_the_queued_message_lands_after_the_tool_results():
+def test_the_queued_message_lands_after_the_tool_results() -> None:
     """The seam matters: the agent finishes its tool batch, then reads the note.
 
     Injecting mid-tool would answer a call that has no result yet, which
     pydantic-ai refuses; injecting at the end would make it a separate turn.
     """
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release = asyncio.Event()
 
@@ -153,14 +155,14 @@ def test_the_queued_message_lands_after_the_tool_results():
     asyncio.run(inner())
 
 
-def test_a_message_that_arrives_as_the_agent_finishes_gives_it_one_more_step():
+def test_a_message_that_arrives_as_the_agent_finishes_gives_it_one_more_step() -> None:
     """The other seam: queued at the end, read instead of closing the run.
 
     Without this, a correction typed while the model was writing its last answer
     would sit in the queue until the user sent something else.
     """
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from pydantic_ai.messages import ModelMessage
             from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -204,17 +206,17 @@ def test_a_message_that_arrives_as_the_agent_finishes_gives_it_one_more_step():
     asyncio.run(inner())
 
 
-def test_a_message_that_misses_the_last_seam_comes_back_to_the_prompt():
+def test_a_message_that_misses_the_last_seam_comes_back_to_the_prompt() -> None:
     """No silent loss: an unread message returns to the prompt, with a notice."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             agent = Agent(TestModel(custom_output_text='done'), instructions='x')
             app = _make_app(tmp, agent)
             async with app.run_test(size=(100, 40)):
                 # What `_take_undelivered` sees after a turn whose queue closed
                 # before the message could be delivered.
-                from src.ui.turn_mixin import Steer
+                from src.ui.steer import Steer
 
                 widget = await app.query_one(ChatLog).add_user('late', queued=True)
                 app._steering.append(Steer(text='late', widget=widget))
@@ -226,8 +228,8 @@ def test_a_message_that_misses_the_last_seam_comes_back_to_the_prompt():
     asyncio.run(inner())
 
 
-def test_the_queued_line_loses_its_mark_once_the_run_reads_it():
-    async def inner():
+def test_the_queued_line_loses_its_mark_once_the_run_reads_it() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release = asyncio.Event()
 
@@ -260,8 +262,8 @@ def test_the_queued_line_loses_its_mark_once_the_run_reads_it():
     asyncio.run(inner())
 
 
-def test_commands_that_would_swap_the_session_are_refused_mid_turn():
-    async def inner():
+def test_commands_that_would_swap_the_session_are_refused_mid_turn() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release = asyncio.Event()
 
@@ -297,7 +299,7 @@ def test_commands_that_would_swap_the_session_are_refused_mid_turn():
     asyncio.run(inner())
 
 
-def test_the_menu_enter_is_refused_too_not_only_the_typed_path():
+def test_the_menu_enter_is_refused_too_not_only_the_typed_path() -> None:
     """`Enter` on `/new` with the menu open is a second door into the commands.
 
     The guard used to live in `on_input_submitted` only, and the menu calls
@@ -306,7 +308,7 @@ def test_the_menu_enter_is_refused_too_not_only_the_typed_path():
     point both paths go through.
     """
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release = asyncio.Event()
 
@@ -346,7 +348,7 @@ def test_the_menu_enter_is_refused_too_not_only_the_typed_path():
     asyncio.run(inner())
 
 
-def test_load_is_refused_mid_turn_and_never_opens_the_picker():
+def test_load_is_refused_mid_turn_and_never_opens_the_picker() -> None:
     """A refused `/load` does not open the session picker, and does not crash.
 
     The picker is a modal: opening one while a turn trusts the worker that
@@ -354,7 +356,7 @@ def test_load_is_refused_mid_turn_and_never_opens_the_picker():
     resolves. A refusal has to stop before the screen, not after it.
     """
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release = asyncio.Event()
 
@@ -393,14 +395,14 @@ def test_load_is_refused_mid_turn_and_never_opens_the_picker():
     asyncio.run(inner())
 
 
-def test_a_turn_never_writes_its_history_into_a_session_opened_under_it():
+def test_a_turn_never_writes_its_history_into_a_session_opened_under_it() -> None:
     """The safety net behind the guard: the run saves to the session it started on.
 
     Even if a command slipped through, the conversation that was just loaded
     must not be overwritten by the turn of the one it replaced.
     """
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release = asyncio.Event()
 
@@ -434,14 +436,14 @@ def test_a_turn_never_writes_its_history_into_a_session_opened_under_it():
     asyncio.run(inner())
 
 
-def test_quit_does_not_raise_from_the_command_dispatch():
+def test_quit_does_not_raise_from_the_command_dispatch() -> None:
     """`/quit` is a plain function and used to be `await`ed anyway.
 
     That `TypeError` came out as a worker failure: the app closed, and the log
     showed a crash on the way out.
     """
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(tmp, Agent(TestModel(custom_output_text='ok'), instructions='x'))
             async with app.run_test() as pilot:
@@ -455,8 +457,8 @@ def test_quit_does_not_raise_from_the_command_dispatch():
 # --- abort -----------------------------------------------------------------
 
 
-def test_the_first_esc_asks_and_the_second_one_stops_the_turn():
-    async def inner():
+def test_the_first_esc_asks_and_the_second_one_stops_the_turn() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release = asyncio.Event()
 
@@ -492,8 +494,8 @@ def test_the_first_esc_asks_and_the_second_one_stops_the_turn():
     asyncio.run(inner())
 
 
-def test_any_other_key_cancels_the_abort_request():
-    async def inner():
+def test_any_other_key_cancels_the_abort_request() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release = asyncio.Event()
 
@@ -532,11 +534,11 @@ def test_any_other_key_cancels_the_abort_request():
     asyncio.run(inner())
 
 
-def test_the_abort_request_expires_on_its_own(monkeypatch):
+def test_the_abort_request_expires_on_its_own(monkeypatch: pytest.MonkeyPatch) -> None:
     """Three seconds pass: the question goes away, the agent keeps working."""
     import src.ui.turn_mixin as turnmod
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release = asyncio.Event()
 
@@ -573,10 +575,10 @@ def test_the_abort_request_expires_on_its_own(monkeypatch):
     asyncio.run(inner())
 
 
-def test_the_second_esc_still_stops_the_turn_when_the_window_is_open():
+def test_the_second_esc_still_stops_the_turn_when_the_window_is_open() -> None:
     """The guard is a deadline, not a flag: it survives the round trip to the bar."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release = asyncio.Event()
 
@@ -608,7 +610,7 @@ def test_the_second_esc_still_stops_the_turn_when_the_window_is_open():
     asyncio.run(inner())
 
 
-def test_two_messages_sent_back_to_back_do_not_start_two_turns():
+def test_two_messages_sent_back_to_back_do_not_start_two_turns() -> None:
     """The second one arrives before the worker starts: it steers, it does not race.
 
     `_turn_active` is set when the message is accepted, not when the worker gets
@@ -616,7 +618,7 @@ def test_two_messages_sent_back_to_back_do_not_start_two_turns():
     turn on top of the first.
     """
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release = asyncio.Event()
 
@@ -654,10 +656,10 @@ def test_two_messages_sent_back_to_back_do_not_start_two_turns():
     asyncio.run(inner())
 
 
-def test_an_aborted_turn_is_saved_and_the_next_message_still_works():
+def test_an_aborted_turn_is_saved_and_the_next_message_still_works() -> None:
     """Stopping is not breaking: the history on disk is valid and the chat goes on."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release = asyncio.Event()
 
@@ -706,7 +708,7 @@ def test_an_aborted_turn_is_saved_and_the_next_message_still_works():
 PID_FILE = 'sigil-abort-test.pid'
 
 
-def test_aborting_kills_the_shell_commands_the_turn_spawned():
+def test_aborting_kills_the_shell_commands_the_turn_spawned() -> None:
     """A command in flight does not outlive the abort: its process group dies.
 
     Cancelling the asyncio task is not enough: the command runs in a worker
@@ -714,7 +716,7 @@ def test_aborting_kills_the_shell_commands_the_turn_spawned():
     timeout and the agent would look stopped while a build kept churning.
     """
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             pid_file = Path(tmp) / PID_FILE
             agent = Agent(TestModel(call_tools=['run'], custom_output_text='done'), instructions='x')
@@ -749,10 +751,10 @@ def test_aborting_kills_the_shell_commands_the_turn_spawned():
     asyncio.run(inner())
 
 
-def test_quitting_mid_turn_stops_the_run_and_kills_its_commands():
+def test_quitting_mid_turn_stops_the_run_and_kills_its_commands() -> None:
     """`Ctrl+Q` is the exit: it does not leave a run and a build behind."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release = asyncio.Event()
             agent = Agent(TestModel(call_tools=['hold'], custom_output_text='done'), instructions='x')
@@ -798,7 +800,7 @@ def _alive(pid: int) -> bool:
     return True
 
 
-def test_the_model_shortcut_is_refused_mid_turn_as_well():
+def test_the_model_shortcut_is_refused_mid_turn_as_well() -> None:
     """`ctrl+m` reaches the picker without going through `handle_command`.
 
     The command is refused at the dispatch, but the shortcut is its own path:
@@ -806,7 +808,7 @@ def test_the_model_shortcut_is_refused_mid_turn_as_well():
     of a running turn.
     """
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release = asyncio.Event()
 
@@ -835,7 +837,7 @@ def test_the_model_shortcut_is_refused_mid_turn_as_well():
 
 
 def test_abort_uses_injected_shell_owner(tmp_path: Path) -> None:
-    from src.engine.shell.running import RunningCommands
+    from src.core.shell.running import RunningCommands
 
     first, second = RunningCommands(), RunningCommands()
     store = SessionStore(cwd=str(tmp_path), base_dir=tmp_path / 'sessions')

@@ -25,14 +25,15 @@ sentence that grows and shrinks with the branch name.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 from rich.text import Text
 from textual.widgets import Static
 
-from src.engine.workspace.diff import DiffStat
+from src.core.workspace.models.diff_stat import DiffStat
 from src.ui.palette import color
+from src.ui.widgets.activity_state import ActivityState
+from src.ui.widgets.workspace_badge import WorkspaceBadge
 
 SPINNER_FRAMES = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 """Braille frames: one column each, so the bar does not jitter as it spins."""
@@ -45,24 +46,6 @@ IDLE_MARK = '●'
 
 MIN_GAP = 2
 """Columns kept between the left and right groups before the right one is dropped."""
-
-
-@dataclass(frozen=True, slots=True)
-class ActivityState:
-    """Whether a turn is running and what it is doing right now."""
-
-    running: bool = False
-    label: str = ''
-    elapsed: float = 0.0
-
-
-@dataclass(frozen=True, slots=True)
-class WorkspaceBadge:
-    """The tree the agent is working in."""
-
-    label: str = ''
-    branch: str | None = None
-    is_worktree: bool = False
 
 
 class StatusBar(Static):

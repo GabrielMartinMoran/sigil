@@ -25,11 +25,11 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 
-from src.engine.roadmap.models.todo_item import TodoItem
-from src.engine.roadmap.stores import RoadmapStores
-from src.engine.sessions.session_store import SessionStore
-from src.engine.workspace.manager import WorkspaceManager
-from src.ui.app import SigilApp
+from src.core.roadmap.models.todo_item import TodoItem
+from src.core.roadmap.roadmap_stores import RoadmapStores
+from src.core.sessions.session_store import SessionStore
+from src.core.workspace.workspace_manager import WorkspaceManager
+from src.ui.sigil_app import SigilApp
 from src.ui.widgets.sidebar_panel import SidebarPanel
 from src.ui.widgets.status_bar import StatusBar
 
@@ -84,7 +84,9 @@ def _panel(app: SigilApp) -> str:
 # --- the roadmap -------------------------------------------------------------
 
 
-def test_loading_a_saved_session_brings_back_its_own_plan(monkeypatch, tmp_path, repo):
+def test_loading_a_saved_session_brings_back_its_own_plan(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, repo
+) -> None:
     """`/load` re-reads the plan from disk, not from the store it was holding."""
     monkeypatch.chdir(repo)
 
@@ -111,7 +113,9 @@ def test_loading_a_saved_session_brings_back_its_own_plan(monkeypatch, tmp_path,
     assert 'Plan of the saved session' in text
 
 
-def test_new_after_loading_a_session_starts_an_empty_plan(monkeypatch, tmp_path, repo):
+def test_new_after_loading_a_session_starts_an_empty_plan(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, repo
+) -> None:
     """The plan on screen belongs to the conversation on screen, not to the last one."""
 
     async def inner():
@@ -136,7 +140,9 @@ def test_new_after_loading_a_session_starts_an_empty_plan(monkeypatch, tmp_path,
     assert 'Old plan from before' not in text
 
 
-def test_the_panel_shows_the_plan_of_the_session_being_viewed(monkeypatch, tmp_path, repo):
+def test_the_panel_shows_the_plan_of_the_session_being_viewed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, repo
+) -> None:
     """Loading a session replaces the plan, in both directions."""
 
     async def inner():
@@ -166,7 +172,7 @@ def test_the_panel_shows_the_plan_of_the_session_being_viewed(monkeypatch, tmp_p
 # --- the worktree badge ------------------------------------------------------
 
 
-def test_creating_a_worktree_repaints_the_status_bar(monkeypatch, tmp_path, repo):
+def test_creating_a_worktree_repaints_the_status_bar(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, repo) -> None:
     """The bar says which tree the agent is writing to, from the first second."""
 
     monkeypatch.chdir(repo)

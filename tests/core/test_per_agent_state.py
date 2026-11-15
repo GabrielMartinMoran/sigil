@@ -21,16 +21,16 @@ from pathlib import Path
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import FunctionModel
 
-from src.engine.agents.agent import create_agent
-from src.engine.agents.tree.summoner import SigilDeps
-from src.engine.roadmap.stores import RoadmapStores
-from src.engine.sessions.session_store import SessionStore
-from src.engine.skills.loaded import loaded_skills
-from src.engine.skills.registry import SkillRegistry
+from src.core.agents.agent import create_agent
+from src.core.agents.tree.summoner import SigilDeps
+from src.core.roadmap.roadmap_stores import RoadmapStores
+from src.core.sessions.session_store import SessionStore
+from src.core.skills.loaded import loaded_skills
+from src.core.skills.skill_registry import SkillRegistry
 
 
 def _item(title: str):
-    from src.engine.roadmap.models.todo_item import TodoItem
+    from src.core.roadmap.models.todo_item import TodoItem
 
     return TodoItem(title=title)
 
@@ -44,7 +44,7 @@ def _session(tmp_path: Path):
     return _store(tmp_path).create_session()
 
 
-def test_each_node_gets_its_own_plan(tmp_path: Path):
+def test_each_node_gets_its_own_plan(tmp_path: Path) -> None:
     session = _session(tmp_path)
     stores = RoadmapStores(session_id=session.id, base_dir=tmp_path)
 
@@ -61,7 +61,7 @@ def test_each_node_gets_its_own_plan(tmp_path: Path):
     assert second.snapshot() == []
 
 
-def test_the_root_plan_belongs_to_the_root_execution(tmp_path: Path):
+def test_the_root_plan_belongs_to_the_root_execution(tmp_path: Path) -> None:
     """No sentinel and no `NULL`: the root has an id like any other execution."""
     session = _session(tmp_path)
     stores = RoadmapStores(session_id=session.id, base_dir=tmp_path)
@@ -72,7 +72,7 @@ def test_the_root_plan_belongs_to_the_root_execution(tmp_path: Path):
     assert stores.execution_id_of(None) == session.root_id
 
 
-def test_a_plan_written_by_a_node_is_read_back_by_that_node(tmp_path: Path):
+def test_a_plan_written_by_a_node_is_read_back_by_that_node(tmp_path: Path) -> None:
     store = _store(tmp_path)
     session = store.create_session()
     # A node whose execution the session already knows, which is the real order: the
@@ -91,7 +91,7 @@ def test_a_plan_written_by_a_node_is_read_back_by_that_node(tmp_path: Path):
     assert second.for_node(None).snapshot() == []
 
 
-def test_a_plan_written_before_its_execution_exists_is_flushed(tmp_path: Path):
+def test_a_plan_written_before_its_execution_exists_is_flushed(tmp_path: Path) -> None:
     """A subagent lives in the tree before it is a row; ``flush`` closes the gap."""
     session = _session(tmp_path)
     flushes: list[int] = []
@@ -108,7 +108,7 @@ def test_a_plan_written_before_its_execution_exists_is_flushed(tmp_path: Path):
     assert orphan.persistence_error is not None
 
 
-def test_switching_session_drops_the_plans_of_the_old_one(tmp_path: Path):
+def test_switching_session_drops_the_plans_of_the_old_one(tmp_path: Path) -> None:
     first = _session(tmp_path)
     second = _session(tmp_path)
     stores = RoadmapStores(session_id=first.id, base_dir=tmp_path)
@@ -120,7 +120,7 @@ def test_switching_session_drops_the_plans_of_the_old_one(tmp_path: Path):
     assert stores.for_node(None).execution_id == second.root_id
 
 
-def test_discarding_a_node_removes_its_plan(tmp_path: Path):
+def test_discarding_a_node_removes_its_plan(tmp_path: Path) -> None:
     store = _store(tmp_path)
     session = store.create_session()
     store.database.execute(
@@ -139,7 +139,7 @@ def test_discarding_a_node_removes_its_plan(tmp_path: Path):
     assert store.database.value('SELECT count(*) FROM roadmap_items WHERE execution_id = ?', ('aaaa1111',)) == 0
 
 
-def test_the_store_notifies_through_the_registry(tmp_path: Path):
+def test_the_store_notifies_through_the_registry(tmp_path: Path) -> None:
     session = _session(tmp_path)
     stores = RoadmapStores(session_id=session.id, base_dir=tmp_path)
     heard: list[int] = []
@@ -163,7 +163,7 @@ def _load_call(name: str, *, call_id: str = 'call-1', outcome: str = 'success') 
     ]
 
 
-def test_the_set_is_derived_per_execution_not_per_session():
+def test_the_set_is_derived_per_execution_not_per_session() -> None:
     """Two executions of the same session have their own sets, by construction.
 
     There is no shared registry to keep in step: each one is a walk over its own
@@ -177,17 +177,17 @@ def test_the_set_is_derived_per_execution_not_per_session():
     assert loaded_skills([]) == ()
 
 
-def test_the_load_order_is_the_order_of_the_calls():
+def test_the_load_order_is_the_order_of_the_calls() -> None:
     history = _load_call('beta', call_id='b') + _load_call('alpha', call_id='a')
     assert loaded_skills(history) == ('beta', 'alpha')
 
 
-def test_a_failed_load_is_not_in_the_set():
+def test_a_failed_load_is_not_in_the_set() -> None:
     """`ToolErrorRecovery` returns a failure as a `ToolReturnPart` with `outcome`."""
     assert loaded_skills(_load_call('ghost', outcome='failed')) == ()
 
 
-def test_a_call_without_its_return_does_not_count():
+def test_a_call_without_its_return_does_not_count() -> None:
     """An interrupted call never delivered the body, so the body is not in effect."""
     from pydantic_ai.messages import ModelResponse, ToolCallPart
 
@@ -195,7 +195,7 @@ def test_a_call_without_its_return_does_not_count():
     assert loaded_skills(history) == ()
 
 
-def test_a_resumed_history_keeps_the_skills_it_had_loaded(tmp_path: Path):
+def test_a_resumed_history_keeps_the_skills_it_had_loaded(tmp_path: Path) -> None:
     """The bug this design removes: a resumed session lost the set and said nothing.
 
     The instructions used to drop from 73,892 to 29,476 characters across a restart
@@ -212,7 +212,7 @@ def test_a_resumed_history_keeps_the_skills_it_had_loaded(tmp_path: Path):
     assert '# Alpha body' in root_text
 
 
-def test_a_subagent_does_not_see_the_skills_of_its_parent(tmp_path: Path):
+def test_a_subagent_does_not_see_the_skills_of_its_parent(tmp_path: Path) -> None:
     """The block is instructions: the ones for another task do not belong here."""
     write_skill(tmp_path, 'alpha', body='# Alpha body')
     write_skill(tmp_path, 'beta', body='# Beta body')

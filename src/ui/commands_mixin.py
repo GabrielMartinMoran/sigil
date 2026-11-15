@@ -7,19 +7,24 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from src.engine.context.meter.render import render_report
-from src.engine.mcp.tool_models.server_status import ServerStatus
-from src.engine.sessions.catalog import CatalogEntry, catalog
-from src.engine.sessions.session_store import Session, SessionSummary
-from src.engine.workspace.arguments import UsageError, parse_new_args
-from src.engine.workspace.models.workspace_error import WorkspaceError
-from src.engine.workspace.models.worktree import Workspace, Worktree
-from src.ui.command_transport import TransportState, transport_for, unavailable_notice
+from src.core.context.meter.render import render_report
+from src.core.mcp.tool_models.server_status import ServerStatus
+from src.core.sessions.catalog import CatalogEntry, catalog
+from src.core.sessions.session_store import Session, SessionSummary
+from src.core.workspace.arguments import parse_new_args
+from src.core.workspace.models.usage_error import UsageError
+from src.core.workspace.models.workspace import Workspace
+from src.core.workspace.models.workspace_error import WorkspaceError
+from src.core.workspace.models.worktree import Worktree
+from src.ui.chat_notice import ChatNotice
+from src.ui.command_transport import transport_for, unavailable_notice
 from src.ui.help_text import KEYS_TEXT, help_text
-from src.ui.messages import ChatNotice
-from src.ui.service_client import ServiceClient, ServiceClientError
+from src.ui.render_service_context import render_service_context
+from src.ui.service_client import ServiceClient
+from src.ui.service_client_error import ServiceClientError
 from src.ui.session_refresh import bind_refreshed_session, render_refreshed_session, session_view
-from src.ui.turn_mixin import failure_notice
+from src.ui.transport_state import TransportState
+from src.ui.turn_notices import failure_notice
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.mcp_screen import MCPScreen
 from src.ui.widgets.prompt_input import PromptInput
@@ -83,70 +88,6 @@ state could not be read — and refuses anyway, because a command that changes t
 session must not proceed on a guess about whether one is running.
 """
 """What a refused command says. It names the way out, so the refusal is not a dead end."""
-
-
-def _tokens(value: Any) -> str:
-    """A token count the service sent, or a plain statement that it did not."""
-    return f'{value:,}' if isinstance(value, int) else 'not reported by the service'
-
-
-def _percent(value: Any) -> str:
-    return f'{value:.0f}%' if isinstance(value, (int, float)) else 'not reported'
-
-
-def render_service_context(context: Mapping[str, Any], workspace: Mapping[str, Any] | None = None) -> str:
-    """The `/context` report, built from the numbers the service measured.
-
-    Nothing here is measured locally: the session belongs to the service, and one
-    conversation cannot have two meters that disagree. A datum the service did not
-    send is named as absent rather than printed as a zero, because a zero is a
-    claim about the session and this terminal is in no position to make it. That is
-    also why a cold session reads `0 (0%)` and never `?`: the service sends the real
-    zero for a session that has not made a request yet.
-
-    The scope section of the old report is absent, not empty: no endpoint projects
-    the active directories or the instruction files (see docs/architecture.md).
-    """
-    budget = context.get('budget') or {}
-    cost = context.get('cost') or {}
-    lines = ['Context (from the service)']
-    lines.append(f'  window           : {_tokens(context.get("window"))}')
-    used = context.get('used')
-    if used is None:
-        lines.append('  used             : the service reported no projection')
-    else:
-        lines.append(f'  used             : {used:,} ({_percent(context.get("percent"))})')
-    lines.append(f'  measured         : {_tokens(context.get("measured"))}')
-    lines.append(f'  projected        : {_tokens(context.get("projected"))}')
-
-    lines.append('')
-    lines.append('Cost')
-    total = cost.get('total')
-    if total is None:
-        lines.append('  total            : not priced yet')
-    else:
-        suffix = ' (at list price)' if cost.get('approximate') else ''
-        lines.append(f'  total            : {total}{suffix}')
-    lines.append(f'  requests         : {_tokens(cost.get("requests"))}')
-
-    lines.append('')
-    lines.append('Budget')
-    lines.append(f'  tools            : {_tokens(budget.get("tools"))}')
-    lines.append(f'  instructions     : {_tokens(budget.get("instructions"))}')
-    lines.append(f'  output reserve   : {_tokens(budget.get("output_reserve"))}')
-    lines.append(f'  safety reserve   : {_tokens(budget.get("safety_reserve"))}')
-    lines.append(f'  available        : {_tokens(budget.get("available_for_history"))}')
-
-    if workspace:
-        worktree = workspace.get('worktree') or {}
-        lines.append('')
-        lines.append('Workspace')
-        lines.append(f'  name             : {workspace.get("label") or "(unnamed)"}')
-        lines.append(f'  root             : {workspace.get("root") or "(not reported)"}')
-        lines.append(f'  branch           : {workspace.get("branch") or "(none)"}')
-        if worktree:
-            lines.append(f'  worktree         : {"main" if worktree.get("is_main") else "linked"}')
-    return '\n'.join(lines)
 
 
 def _catalog_entry(row: Mapping[str, Any], *, current: str) -> CatalogEntry:
@@ -666,7 +607,7 @@ class CommandsMixin:
         if callable(reset):
             reset()
 
-    def _restore_session_model(self, session) -> None:
+    def _restore_session_model(self, session: Session) -> None:
         """Re-applies the model the conversation was using.
 
         A session keeps its selection on purpose: resuming a conversation on a

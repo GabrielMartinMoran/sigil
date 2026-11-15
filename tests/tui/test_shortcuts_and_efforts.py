@@ -21,13 +21,13 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from textual.widgets import OptionList
 
-from src.engine.providers.bootstrap import ProviderPaths, build_service
-from src.engine.providers.catalog.probe import ProbeResult
-from src.engine.providers.domain.model_capability import ModelCapability, ModelCatalog
-from src.engine.providers.domain.provider_kind import ProviderKind
-from src.engine.providers.factory.unconfigured import UnconfiguredModel
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
+from src.core.providers.bootstrap import ProviderPaths, build_service
+from src.core.providers.catalog.probe import ProbeResult
+from src.core.providers.domain.model_capability import ModelCapability, ModelCatalog
+from src.core.providers.domain.provider_kind import ProviderKind
+from src.core.providers.factory.unconfigured import UnconfiguredModel
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
 from src.ui.widgets.effort_screen import EffortScreen
 from src.ui.widgets.grouped_model_screen import GroupedModelScreen
 from src.ui.widgets.model_picker_screen import ModelPickerScreen
@@ -62,7 +62,7 @@ class FakeCatalog:
         self._cache[account.id] = self._catalog
         return self._catalog
 
-    def invalidate(self, account_id=None):
+    def invalidate(self, account_id=None) -> None:
         if account_id is None:
             self._cache.clear()
         else:
@@ -99,8 +99,8 @@ def _app(tmp: str, service=None) -> SigilApp:
 # --- the shortcuts ----------------------------------------------------------
 
 
-def test_ctrl_m_opens_the_model_picker():
-    async def inner():
+def test_ctrl_m_opens_the_model_picker() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             service = await _prepared(Path(tmp), ProviderKind.OPENCODE, 'ds')
             app = _app(tmp, service)
@@ -113,8 +113,8 @@ def test_ctrl_m_opens_the_model_picker():
     asyncio.run(inner())
 
 
-def test_ctrl_l_opens_the_effort_picker():
-    async def inner():
+def test_ctrl_l_opens_the_effort_picker() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             service = await _prepared(Path(tmp), ProviderKind.OPENCODE, 'ds')
             app = _app(tmp, service)
@@ -133,7 +133,7 @@ def test_enter_still_sends_a_message_with_the_shortcuts_wired(monkeypatch: pytes
 
     monkeypatch.setattr(pydantic_ai.models, 'ALLOW_MODEL_REQUESTS', False)
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             service = await _prepared(Path(tmp), ProviderKind.OPENCODE, 'ds')
             app = _app(tmp, service)
@@ -153,8 +153,8 @@ def test_enter_still_sends_a_message_with_the_shortcuts_wired(monkeypatch: pytes
     asyncio.run(inner())
 
 
-def test_ctrl_m_does_not_swallow_the_typed_text():
-    async def inner():
+def test_ctrl_m_does_not_swallow_the_typed_text() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             service = await _prepared(Path(tmp), ProviderKind.OPENCODE, 'ds')
             app = _app(tmp, service)
@@ -170,7 +170,7 @@ def test_ctrl_m_does_not_swallow_the_typed_text():
     asyncio.run(inner())
 
 
-def test_the_app_no_longer_binds_the_broken_alt_shortcuts():
+def test_the_app_no_longer_binds_the_broken_alt_shortcuts() -> None:
     """The pickers that used to live on `alt+p` / `alt+m` stayed on `ctrl+…`.
 
     `ctrl+t` belongs to the tree of agents now, as a view toggle next to `alt+d`:
@@ -184,15 +184,15 @@ def test_the_app_no_longer_binds_the_broken_alt_shortcuts():
     assert 'alt+d' in bindings and 'ctrl+t' in bindings
 
 
-def test_the_shortcuts_are_not_app_level_ctrl_bindings():
+def test_the_shortcuts_are_not_app_level_ctrl_bindings() -> None:
     """A global `ctrl+m` would claim Enter on a terminal without the kitty protocol."""
     bindings = {binding.key for binding in SigilApp.BINDINGS}
     assert 'ctrl+m' not in bindings
     assert 'ctrl+l' not in bindings
 
 
-def test_the_effort_picker_offers_the_real_levels_of_the_model():
-    async def inner():
+def test_the_effort_picker_offers_the_real_levels_of_the_model() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             service = await _prepared(Path(tmp), ProviderKind.OPENCODE, 'ds')
             app = _app(tmp, service)
@@ -208,7 +208,7 @@ def test_the_effort_picker_offers_the_real_levels_of_the_model():
     asyncio.run(inner())
 
 
-def test_a_cold_start_fetches_the_catalogue_once(tmp_path):
+def test_a_cold_start_fetches_the_catalogue_once(tmp_path: Path) -> None:
     """The other half of the bug: the picker was empty until `/model` was opened."""
     asyncio.run(_service(tmp_path).add_api_key(ProviderKind.OPENCODE, 'ds', 'sk-test'))
 
@@ -216,7 +216,7 @@ def test_a_cold_start_fetches_the_catalogue_once(tmp_path):
     restarted = _service(tmp_path, catalog=catalog, session_id='other')
     assert restarted.snapshot().efforts == ('low', 'high', 'max')
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, restarted)
             async with app.run_test(size=(120, 40)):
@@ -226,12 +226,12 @@ def test_a_cold_start_fetches_the_catalogue_once(tmp_path):
     asyncio.run(inner())
 
 
-def test_a_second_start_does_not_refetch_when_the_cache_is_warm(tmp_path):
+def test_a_second_start_does_not_refetch_when_the_cache_is_warm(tmp_path: Path) -> None:
     asyncio.run(_service(tmp_path).add_api_key(ProviderKind.OPENCODE, 'ds', 'sk-test'))
 
     service = _service(tmp_path, session_id='other')
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, service)
             async with app.run_test(size=(120, 40)):

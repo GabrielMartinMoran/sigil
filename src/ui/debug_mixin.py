@@ -9,15 +9,15 @@ from pydantic_ai.messages import ModelMessage
 from textual import work
 from textual.css.query import NoMatches
 
-from src.engine.context.meter.debug import DebugReport, build_debug_report
-from src.engine.context.meter.debug_render import render_debug_report
-from src.engine.context.meter.debug_wire import DebugSnapshot
-from src.engine.context.meter.node_debug import node_debug_report
-from src.engine.context.meter.request import RequestSnapshot
-from src.ui.service_client import ServiceClientError
+from src.core.context.meter.debug import DebugReport, build_debug_report
+from src.core.context.meter.debug_render import render_debug_report
+from src.core.context.meter.debug_snapshot import DebugSnapshot
+from src.core.context.meter.node_debug import node_debug_report
+from src.core.context.meter.request import RequestSnapshot
+from src.ui.service_client_error import ServiceClientError
+from src.ui.widgets.agent_debug_view import AgentDebugView
 from src.ui.widgets.agent_view import AgentView
 from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.debug_view import AgentDebugView
 from src.ui.widgets.prompt_input import PromptInput
 
 _EMPTY_REQUEST = RequestSnapshot()

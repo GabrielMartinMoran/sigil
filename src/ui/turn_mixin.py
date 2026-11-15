@@ -17,7 +17,7 @@ Three responsibilities share this file because they share one object: the run.
 - **Surviving a crash.** The history is checkpointed as the turn advances, so a
   process that dies mid-turn leaves a session whose last message can be a tool
   call with no result behind it. That history is repaired before it reaches the
-  agent (see ``src.engine.sessions.recovery``), because pydantic-ai refuses a new
+  agent (see ``src.core.sessions.recovery``), because pydantic-ai refuses a new
   prompt on top of it — permanently.
 """
 
@@ -26,7 +26,6 @@ from __future__ import annotations
 import base64
 import time
 from contextlib import AbstractContextManager, nullcontext
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai import Agent
@@ -48,36 +47,31 @@ from textual import work
 from textual.css.query import NoMatches
 from textual.widgets import Static
 
-from src.engine.agents.message_types import MessageTypes, origin
-from src.engine.agents.step_budget import StepBudget
-from src.engine.agents.tree.reports import report_view
-from src.engine.agents.turn_timing import TurnTimings
-from src.engine.attachments.content import user_content
-from src.engine.attachments.image_attachment import ImageAttachment
-from src.engine.files.paths import execution_workspace
-from src.engine.providers.domain.thinking import settings_value as thinking_settings
-from src.engine.sessions.recovery import recover_history
-from src.ui.desktop_notifications import Attention
-from src.ui.messages import ChatNotice
-from src.ui.service_client import (
-    OutgoingImage,
-    PayloadTooLarge,
-    RequestRejected,
-    ServiceBusy,
-    ServiceClient,
-    ServiceClientError,
-    ServiceUnavailable,
-    TurnRequest,
-    Unauthorized,
-    UnexpectedResponse,
-)
+from src.core.agents.message_types import MessageTypes, origin
+from src.core.agents.step_budget import StepBudget
+from src.core.agents.tree.reports import report_view
+from src.core.agents.turn_timing import TurnTimings
+from src.core.attachments.content import user_content
+from src.core.attachments.image_attachment import ImageAttachment
+from src.core.files.paths import execution_workspace
+from src.core.providers.domain.thinking import settings_value as thinking_settings
+from src.core.sessions.recovery import recover_history
+from src.ui.attention import Attention
+from src.ui.chat_notice import ChatNotice
+from src.ui.outgoing_image import OutgoingImage
+from src.ui.service_busy import ServiceBusy
+from src.ui.service_client import ServiceClient
+from src.ui.service_client_error import ServiceClientError
 from src.ui.session_refresh import render_refreshed_session, session_view
+from src.ui.steer import Steer
+from src.ui.turn_notices import failure_notice, pending_request
+from src.ui.turn_request import TurnRequest
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.status_bar import StatusBar
 
 if TYPE_CHECKING:
-    from src.engine.agents.rollback import Rollback
+    from src.core.agents.rollback import Rollback
 
 CHECKPOINT_INTERVAL = 1.0
 """Minimum seconds between checkpoints during a turn (the final save is mandatory)."""
@@ -98,112 +92,14 @@ SERVICE_STOP_GROUP = 'service-stop'
 """Worker group of the stop request."""
 
 
-def pending_request(previous: TurnRequest | None, text: str, images: tuple[OutgoingImage, ...]) -> TurnRequest:
-    """The request to put on the wire: the failed one again, or a new message.
-
-    The durable queue deduplicates by request id, so the id belongs to the content and
-    not to the attempt. Sending the same text and images after a refusal is the same
-    message and reuses its id; changing either is a different message and must not,
-    because one id for two bodies is a conflict the service refuses. The decision is
-    made here, once, and nothing on the server second-guesses it.
-    """
-    if previous is not None and previous.text == text and previous.images == images:
-        return previous
-    return TurnRequest(text=text, images=images)
-
-
-_BACK_IN_PROMPT = ' What you typed is back in the prompt.'
 """Said once, so the sentences above can end with it without repeating themselves."""
 
-_BUSY_MARKERS = ('turn is running', 'turn is in progress', 'a turn is running')
 """How the service words a busy refusal, lowercased.
 
 `/api/session/open` and `/api/rollback` answer `409` for other reasons too — a turn
 this session cannot reach, a session that does not exist. The marker is what tells
 those apart without matching a whole sentence that may be reworded.
 """
-
-
-def _is_busy_reason(reason: str) -> bool:
-    """Whether a `409` sentence is the service saying a turn is in the way."""
-    text = reason.lower()
-    return any(marker in text for marker in _BUSY_MARKERS)
-
-
-def failure_notice(exc: ServiceClientError) -> str:
-    """What the screen says about a refusal: the reason, then the way out.
-
-    One function, because the difference between these failures is the whole reason
-    the client raises typed ones: a terminal that printed them all the same way would
-    have paid for the vocabulary and thrown it away. No sentence carries a traceback,
-    and none stops at the reason — a person who cannot act on the message has learned
-    nothing they can use.
-    """
-    if isinstance(exc, ServiceBusy):
-        reason = str(exc).strip()
-        if reason and not _is_busy_reason(reason):
-            # Not every `409` means a turn is in the way: the routes use it for
-            # anything the session cannot do *now*, including a turn it cannot
-            # reach. Saying "still working" over that sentence would be inventing
-            # a cause, so the server's own words are the answer.
-            return f'The service refused this: {reason}'
-        detail = f' The service said: {reason}' if reason else ''
-        return (
-            f'The agent is still working on this session.{detail} Wait for the turn to finish, or press Esc '
-            'twice to stop it. What you typed is back in the prompt.'
-        )
-    if isinstance(exc, Unauthorized):
-        return (
-            'The service refused this terminal: its run token is not the one this service published. '
-            'Restart Sigil so it attaches to the running service.'
-        )
-    if isinstance(exc, PayloadTooLarge):
-        return (
-            'That message is over the size the service accepts, images included. Remove an image or shorten '
-            'the text, and send it again.'
-        )
-    if isinstance(exc, RequestRejected):
-        return f'The service refused this message: {exc}'
-    if isinstance(exc, ServiceUnavailable):
-        if exc.launch_code == 'service_starting':
-            return 'The service is still starting. Try again in a moment.' + _BACK_IN_PROMPT
-        # The exception already opens with "No Sigil service answered at …": repeating
-        # it here read as two failures instead of one.
-        return f'{exc} Start it with `sigil server`, or check that it is still running.' + _BACK_IN_PROMPT
-    if isinstance(exc, UnexpectedResponse):
-        return (
-            'The service answered something this terminal cannot read. Restart Sigil; if it happens again, '
-            'the terminal and the service are different versions.'
-        )
-    return f'The service could not take this message: {exc}'
-
-
-@dataclass
-class Steer:
-    """A message typed while a turn runs, waiting to be delivered to it.
-
-    ``enqueue_id`` is ``None`` for the few milliseconds between the submit and
-    the run being ready: the message is already accepted, and it is handed to the
-    run as soon as it exists (see ``_flush_steering``).
-    """
-
-    text: str
-    attachments: tuple[ImageAttachment, ...] = field(default=())
-    widget: Static | None = None
-    enqueue_id: str | None = None
-    delivered: bool = field(default=False)
-
-    def enqueued(self) -> tuple[str, ...]:
-        """The message as ``enqueue`` wants it: text first, then each image.
-
-        One argument per item, because ``enqueue`` gathers adjacent content into a
-        single ``UserPromptPart``. A list passed as one argument is a list, not a
-        multimodal prompt.
-        """
-        if not self.attachments:
-            return (self.text,)
-        ordered = sorted(self.attachments, key=lambda attachment: attachment.number)
-        return (self.text, *(attachment.to_content() for attachment in ordered))
 
 
 class TurnMixin:

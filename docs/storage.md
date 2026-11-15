@@ -839,7 +839,7 @@ sounds while a database is being inspected.
 
 `synchronous = FULL` asks SQLite to synchronize committed WAL writes. Protection
 against power loss depends on the local filesystem and hardware honoring those
-requests. See `src/engine/storage/database.py` for connection settings.
+requests. See `src/core/storage/database.py` for connection settings.
 
 One connection per process, `check_same_thread=False` and a `threading.Lock`,
 because the app already moves work to threads with `asyncio.to_thread` and one
@@ -894,24 +894,24 @@ it is at `2` as of the context measurement described in [Schema steps](#schema-s
 
 | Module | Change |
 | --- | --- |
-| `src/engine/storage/` | **new**: `database` (connection, pragmas, transactions, the shared instance per file), `schema` (the DDL and `user_version`), `blobs` (content-addressed, with the collector), `history` (a transcript as rows) and `executions` (the agents of a session, the root included) |
-| `src/engine/sessions/session_store.py` | same public methods, backed by the database; `list_sessions()` returns summaries; `load()` builds the session from its root execution and `save()` writes the root's messages. Once the core exists it is **internal to it**: a client calls `SessionService`, never the store |
-| `src/engine/sessions/catalog.py` | one query across workspaces instead of a store and a folder scan per worktree |
-| `src/engine/sessions/recovery.py` | unchanged logic; the repaired tail is what the delta write rewrites |
-| `src/engine/agents/turn_map.py` | **new**: the only module that names `run_id`. `turn_id_of(message)` for a reader, and the turn row the writer inserts. Everything else asks the domain |
-| `src/engine/agents/rollback.py`, `snapshots.py` | ✅ `Rollback`, `Checkpoints` and the git snapshot — see [rollback](rollback.md) |
-| `src/engine/storage/maintenance.py` | ✅ the blob collector, checkpoint retention, `PRAGMA optimize` and the one-way export |
-| `src/engine/context/strategy/rewriting.py`, `images_cache.py` | stop reading `run_id` from payloads: the turn comes from `messages.turn_id`. `the round` becomes `the turn` in the prose, `image_rounds` becomes `image_turns` |
-| `src/engine/context/strategy/turns.py` | `split_turns` becomes `split_prompts`, which is what it has always cut |
-| `src/engine/skills/loads.py` | **deleted**: `SkillLoads` stops existing. `loaded_skills(messages)` in `skills/loaded.py` becomes a function over a transcript, not a registry |
-| `src/engine/skills/tools.py` | `load_skill` stops writing to a registry; the call in the log is the record |
+| `src/core/storage/` | **new**: `database` (connection, pragmas, transactions, the shared instance per file), `schema` (the DDL and `user_version`), `blobs` (content-addressed, with the collector), `history` (a transcript as rows) and `executions` (the agents of a session, the root included) |
+| `src/core/sessions/session_store.py` | same public methods, backed by the database; `list_sessions()` returns summaries; `load()` builds the session from its root execution and `save()` writes the root's messages. Once the core exists it is **internal to it**: a client calls `SessionService`, never the store |
+| `src/core/sessions/catalog.py` | one query across workspaces instead of a store and a folder scan per worktree |
+| `src/core/sessions/recovery.py` | unchanged logic; the repaired tail is what the delta write rewrites |
+| `src/core/agents/turn_map.py` | **new**: the only module that names `run_id`. `turn_id_of(message)` for a reader, and the turn row the writer inserts. Everything else asks the domain |
+| `src/core/agents/rollback.py`, `snapshots.py` | ✅ `Rollback`, `Checkpoints` and the git snapshot — see [rollback](rollback.md) |
+| `src/core/storage/maintenance.py` | ✅ the blob collector, checkpoint retention, `PRAGMA optimize` and the one-way export |
+| `src/core/context/strategy/rewriting.py`, `images_cache.py` | stop reading `run_id` from payloads: the turn comes from `messages.turn_id`. `the round` becomes `the turn` in the prose, `image_rounds` becomes `image_turns` |
+| `src/core/context/strategy/turns.py` | `split_turns` becomes `split_prompts`, which is what it has always cut |
+| `src/core/skills/loads.py` | **deleted**: `SkillLoads` stops existing. `loaded_skills(messages)` in `skills/loaded.py` becomes a function over a transcript, not a registry |
+| `src/core/skills/tools.py` | `load_skill` stops writing to a registry; the call in the log is the record |
 | `src/ui/commands_mixin.py`, `workspace_mixin.py`, `tree_mixin.py` | the three `reset()` calls disappear; the sidebar reads `loaded_skills(execution_id)` from the core |
-| `src/engine/agents/tree/store.py` | unchanged in behaviour; `save` persists executions with the session. The root is no longer special: `Tree.root()` reads the execution with no parent |
-| `src/engine/roadmap/persistence.py`, `stores.py` | ✅ rows instead of files (`persistence.py` deleted); the per-execution registry stays, and the root's plan is keyed by the root's id instead of a sentinel |
-| `src/engine/providers/store/` | ✅ `FileAccountStore` → `SqliteAccountStore` and `FileStateStore` → `SqliteStateStore`, on `accounts` and `app_state`. `SecretStore` untouched: credentials stay a `0600` file |
-| `src/engine/paths.py` | unchanged: the database path is resolved by `storage.database_path()` from `sigil_home()`. The old session directories stay on disk, unread and undeleted |
+| `src/core/agents/tree/agent_tree_store.py` | unchanged in behaviour; `save` persists executions with the session. The root is no longer special: `Tree.root()` reads the execution with no parent |
+| `src/core/roadmap/persistence.py`, `stores.py` | ✅ rows instead of files (`persistence.py` deleted); the per-execution registry stays, and the root's plan is keyed by the root's id instead of a sentinel |
+| `src/core/providers/store/` | ✅ `FileAccountStore` → `SqliteAccountStore` and `FileStateStore` → `SqliteStateStore`, on `accounts` and `app_state`. `SecretStore` untouched: credentials stay a `0600` file |
+| `src/core/paths.py` | unchanged: the database path is resolved by `storage.database_path()` from `sigil_home()`. The old session directories stay on disk, unread and undeleted |
 | `src/ui/commands_mixin.py` | `catalog()` returns summaries; `load_session` unchanged otherwise |
-| `src/engine/settings.py` | `keep_recent_turns` → `keep_recent_prompts` and `image_rounds` → `image_turns`, because each counted a different unit under the same sentence. The environment variables keep their published names. `keep_recent_prompts` was later removed with prompt dropping; only `image_turns` remains |
+| `src/core/settings.py` | `keep_recent_turns` → `keep_recent_prompts` and `image_rounds` → `image_turns`, because each counted a different unit under the same sentence. The environment variables keep their published names. `keep_recent_prompts` was later removed with prompt dropping; only `image_turns` remains |
 | `src/ui/widgets/session_picker.py` | reads the summary fields it already uses |
 | `tests/` | the store tests move to a temporary database; the round-trip test becomes the contract |
 
@@ -934,7 +934,7 @@ evidence, and it belongs in `tests/` before the feature ships.
 The third one is the containment of the foreign word, and it is a one-line test:
 
 ```bash
-grep -rn 'run_id' src/engine --include='*.py' | grep -v 'agents/turn_map.py'
+grep -rn 'run_id' src/core --include='*.py' | grep -v 'agents/turn_map.py'
 ```
 
 It must return nothing. If it returns something, some module learned the
@@ -1390,12 +1390,12 @@ delivery was checkpointed independently of the input state.
 Delivery and recovery rows retain `destination_id` if a destination session is
 deleted. Their `destination_session_id` foreign key becomes null, marking the
 destination unavailable. Deleting the original session cascades to its input
-facts and recovery links. See `src/engine/storage/schema.py` for constraints.
+facts and recovery links. See `src/core/storage/schema.py` for constraints.
 
 Initialization holds the SQLite writer lock while checking the version, applying
 complete statements, and stamping the version in one transaction. Newer versions
 are rejected. Queue payloads and transition rules are defined in
-`src/engine/storage/accepted_inputs.py`; the behavior contract is in
+`src/core/storage/accepted_inputs.py`; the behavior contract is in
 `specs/features/application/durable_session_queue.feature`.
 
 Step 2 exists because the two numbers the context meter measures per request — the

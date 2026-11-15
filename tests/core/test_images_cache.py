@@ -19,7 +19,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from src.engine.context.images_cache import ImageVerdict, decide, occurrences
+from src.core.context.images_cache import ImageVerdict, decide, occurrences
 
 # --- helpers ---------------------------------------------------------------
 
@@ -77,7 +77,7 @@ def _position_of_viewed(messages: list) -> tuple[int, int, int]:
 # --- occurrences -----------------------------------------------------------
 
 
-def test_an_image_is_stamped_with_the_round_that_carried_it():
+def test_an_image_is_stamped_with_the_round_that_carried_it() -> None:
     messages = _flat(
         _round('r1', 'aca esta', _image('img_aaaaaaaa')),
         _round('r2'),
@@ -90,7 +90,7 @@ def test_an_image_is_stamped_with_the_round_that_carried_it():
     assert found[0].turn == 'r1'
 
 
-def test_a_message_without_run_id_ages_by_turn():
+def test_a_message_without_run_id_ages_by_turn() -> None:
     """A session saved before `run_id` existed must not keep images forever."""
     messages = [
         ModelRequest(parts=[UserPromptPart(content=['a', _image('img_aaaaaaaa')])]),
@@ -107,7 +107,7 @@ def test_a_message_without_run_id_ages_by_turn():
 # --- the turn window ------------------------------------------------------
 
 
-def test_the_round_in_progress_always_travels():
+def test_the_round_in_progress_always_travels() -> None:
     messages = _flat(_round('r1', 'aca esta', _image('img_aaaaaaaa')))
 
     verdicts = decide(messages, turn_window=1, max_tokens=None)
@@ -115,7 +115,7 @@ def test_the_round_in_progress_always_travels():
     assert set(verdicts.values()) == {ImageVerdict.KEEP}
 
 
-def test_an_image_older_than_the_window_is_expired():
+def test_an_image_older_than_the_window_is_expired() -> None:
     messages = _flat(
         _round('r1', 'aca esta', _image('img_aaaaaaaa')),
         _round('r2'),
@@ -127,7 +127,7 @@ def test_an_image_older_than_the_window_is_expired():
     assert set(verdicts.values()) == {ImageVerdict.EXPIRED}
 
 
-def test_the_window_counts_from_the_newest_copy():
+def test_the_window_counts_from_the_newest_copy() -> None:
     """Fetching a picture again is what moves it forward: it is relevant again."""
     messages = _flat(
         _round('r1', 'aca esta', _image('img_aaaaaaaa')),
@@ -141,7 +141,7 @@ def test_the_window_counts_from_the_newest_copy():
     assert verdicts[_position_of_viewed(messages)] is ImageVerdict.KEEP
 
 
-def test_a_short_window_still_keeps_the_round_in_progress():
+def test_a_short_window_still_keeps_the_round_in_progress() -> None:
     """`turn_window=0` is not a way to keep nothing: the current turn always travels."""
     messages = _flat(_round('r1', 'aca esta', _image('img_aaaaaaaa')))
 
@@ -153,7 +153,7 @@ def test_a_short_window_still_keeps_the_round_in_progress():
 # --- the same picture twice ------------------------------------------------
 
 
-def test_two_copies_of_one_picture_charge_once():
+def test_two_copies_of_one_picture_charge_once() -> None:
     messages = _flat(
         _round('r1', 'aca esta', _image('img_aaaaaaaa')),
         _viewed('r2', 'img_aaaaaaaa'),
@@ -165,7 +165,7 @@ def test_two_copies_of_one_picture_charge_once():
     assert list(verdicts.values()).count(ImageVerdict.SUPERSEDED) == 1
 
 
-def test_the_superseded_one_is_the_oldest():
+def test_the_superseded_one_is_the_oldest() -> None:
     messages = _flat(
         _round('r1', 'aca esta', _image('img_aaaaaaaa')),
         _viewed('r2', 'img_aaaaaaaa'),
@@ -179,7 +179,7 @@ def test_the_superseded_one_is_the_oldest():
 # --- the pixel cap ---------------------------------------------------------
 
 
-def test_the_cap_drops_the_oldest_until_the_pixels_fit():
+def test_the_cap_drops_the_oldest_until_the_pixels_fit() -> None:
     # Each is ~1,296 tokens at 1000x1000.
     messages = _flat(
         _round('r1', 'uno', _image('img_aaaaaaaa', 1000)),
@@ -193,7 +193,7 @@ def test_the_cap_drops_the_oldest_until_the_pixels_fit():
     assert list(verdicts.values()).count(ImageVerdict.OVER_BUDGET) == 1
 
 
-def test_without_a_cap_the_window_is_the_only_limit():
+def test_without_a_cap_the_window_is_the_only_limit() -> None:
     turns = [_round(f'r{n}', f'turno {n}', _image(f'img_{n:08x}', 1000)) for n in range(3)]
 
     verdicts = decide(_flat(*turns), turn_window=10, max_tokens=None)
@@ -201,5 +201,5 @@ def test_without_a_cap_the_window_is_the_only_limit():
     assert set(verdicts.values()) == {ImageVerdict.KEEP}
 
 
-def test_no_images_means_no_work():
+def test_no_images_means_no_work() -> None:
     assert decide(_flat(_round('r1')), turn_window=3, max_tokens=None) == {}

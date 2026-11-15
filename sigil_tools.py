@@ -8,11 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from src.engine.tooling.compaction import ToolCompactor, compact_json, compact_text
-from src.engine.tooling.concurrency import ConcurrencyContext, ConcurrencyGuard
-from src.engine.tooling.outputs import OutputPresenter, ToolOutput
-from src.engine.tooling.permission import ResourceKind, ToolGroup, ToolPermission
-from src.engine.tooling.presentation import Describe, ToolSummary
+from src.core.tooling.compaction import ToolCompactor, compact_json, compact_text
+from src.core.tooling.concurrency import ConcurrencyContext, ConcurrencyGuard
+from src.core.tooling.outputs import OutputPresenter, ToolOutput
+from src.core.tooling.permission import ResourceKind, ToolGroup, ToolPermission
+from src.core.tooling.presentation import Describe, ToolSummary
 
 
 @dataclass(frozen=True, slots=True)

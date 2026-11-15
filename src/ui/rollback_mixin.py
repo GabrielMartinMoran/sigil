@@ -13,22 +13,22 @@ from typing import Any
 
 from textual.css.query import NoMatches
 
-from src.engine.agents.rollback import Checkpoint, RollbackError, prompt_of_turn
-from src.engine.attachments.image_attachment import ImageAttachment, new_image_id
-from src.engine.attachments.tokens import numbers_in
-from src.engine.context.images import image_size
-from src.engine.sessions.titling import shorten
-from src.ui.service_client import ServiceClient, ServiceClientError
-from src.ui.turn_mixin import failure_notice
+from src.core.agents.rollback import Checkpoint, Rollback, RollbackError, prompt_of_turn
+from src.core.attachments.image_attachment import ImageAttachment
+from src.core.attachments.image_metadata import new_image_id
+from src.core.attachments.tokens import numbers_in
+from src.core.context.images import image_size
+from src.core.sessions.titling import shorten
+from src.ui.rollback_requested import RollbackRequested
+from src.ui.service_client import ServiceClient
+from src.ui.service_client_error import ServiceClientError
+from src.ui.turn_notices import failure_notice
 from src.ui.widgets.chat_log import ChatLog
+from src.ui.widgets.point import Point
 from src.ui.widgets.prompt_input import PromptInput
-from src.ui.widgets.rollback_screen import (
-    FORK,
-    ROLLBACK_FILES,
-    Point,
-    RollbackChoice,
-    RollbackScreen,
-)
+from src.ui.widgets.rollback_choice import RollbackChoice
+from src.ui.widgets.rollback_options import ROLLBACK_FILES
+from src.ui.widgets.rollback_screen import FORK, RollbackScreen
 
 
 def _turn_for_seq(rows: Sequence[Mapping[str, Any]], seq: int | None) -> str | None:
@@ -234,7 +234,7 @@ class RollbackMixin:
         if (isinstance(prompt, str) and prompt.strip()) or images:
             self._restore_prompt((prompt if isinstance(prompt, str) else '', images))
 
-    def on_rollback_requested(self, message) -> None:
+    def on_rollback_requested(self, message: RollbackRequested) -> None:
         """A user message was clicked: open the same screen, on that instant.
 
         In a worker and not directly: the handler runs in the message pump, and
@@ -349,7 +349,7 @@ class RollbackMixin:
         The cost is the same diff the restore would apply, so the screen is telling the
         truth rather than estimating: a rollback that says "3 files" touches three.
         """
-        from src.ui.widgets.rollback_screen import Point
+        from src.ui.widgets.point import Point
 
         points: list[Point] = []
         for checkpoint in rollback.points(session_id):
@@ -363,7 +363,7 @@ class RollbackMixin:
             )
         return points
 
-    def _file_cost(self, rollback, target_commit: str | None) -> int | None:
+    def _file_cost(self, rollback: Rollback, target_commit: str | None) -> int | None:
         """How many files a restore to ``target_commit`` would touch, or ``None``."""
         snapshots = getattr(rollback, 'snapshots', None)
         if target_commit is None or snapshots is None or not snapshots.available:

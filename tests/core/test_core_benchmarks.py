@@ -8,10 +8,10 @@ from unittest.mock import patch
 import pytest
 
 from scripts.benchmark_core import drain_candidate, history, memoized_view, range_candidate, whole_candidate
-from src.engine.context.budget import ContextBudget
-from src.engine.context.strategy.append_only import AppendOnlyStrategy
-from src.engine.files.tools import _read_line_range, _read_whole
-from src.engine.shell.runner import execute_command
+from src.core.context.context_budget import ContextBudget
+from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
+from src.core.files.tools import _read_line_range, _read_whole
+from src.core.shell.runner import execute_command
 
 
 @pytest.mark.parametrize('data', [b'hello\nworld\n', b'hello\r\nworld', 'multibyte: ñ'.encode(), b'\x00\xffbinary'])
@@ -40,14 +40,14 @@ def test_should_preserve_projection_when_memoizing_one_request(window: int) -> N
 
 @pytest.mark.parametrize('command', ['printf benchmark', 'head -c 1048576 /dev/zero', 'printf error >&2; exit 3'])
 def test_should_preserve_captured_process_output_when_using_bounded_wait(command: str, tmp_path: Path) -> None:
-    with patch('src.engine.shell.environment._cache', {}):
+    with patch('src.core.shell.environment._cache', {}):
         expected = execute_command(command, cwd=tmp_path)
-        with patch('src.engine.shell.runner.drain', drain_candidate):
+        with patch('src.core.shell.runner.drain', drain_candidate):
             assert execute_command(command, cwd=tmp_path) == expected
 
 
 def test_should_timeout_when_process_closes_streams_without_exiting(tmp_path: Path) -> None:
-    with patch('src.engine.shell.environment._cache', {}), patch('src.engine.shell.runner.drain', drain_candidate):
+    with patch('src.core.shell.environment._cache', {}), patch('src.core.shell.runner.drain', drain_candidate):
         result = execute_command('exec 1>&- 2>&-; sleep 5', timeout_seconds=1, cwd=tmp_path)
     assert result.returncode == 124
     assert result.timed_out

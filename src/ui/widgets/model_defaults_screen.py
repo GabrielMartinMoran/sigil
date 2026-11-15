@@ -13,9 +13,7 @@ there is one picker in the app and not two.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
-from pathlib import Path
-from typing import ClassVar, Protocol
+from typing import ClassVar
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -23,8 +21,11 @@ from textual.binding import Binding
 from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
-from src.engine.agents.model_defaults import ConfigScope
-from src.engine.agents.profile.models.agent_role import AgentRole
+from src.core.agents.model_defaults import ConfigScope
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.ui.widgets.defaults_choice import DefaultsChoice
+from src.ui.widgets.defaults_destinations import DefaultsDestinations
+from src.ui.widgets.defaults_row import DefaultsRow
 from src.ui.widgets.provider_modal import ProviderModal
 
 SCOPE_TITLES: dict[ConfigScope, str] = {
@@ -41,69 +42,6 @@ The two roles are kept apart because they behave differently: an agent is the on
 session runs as, a subagent only ever answers a summons, and a person choosing a
 default for the second is choosing what its own runs use, not what to talk to.
 """
-
-
-class DefaultsDestinations(Protocol):
-    """Where a write can go, which is all the screen asks about a destination.
-
-    The screen paints one line about the target file and refuses to clear an entry a
-    file does not set, so it needs four facts: which files exist, where each one is,
-    whether ``SIGIL_CONFIG`` replaced the pair, and what could not be parsed.
-
-    It is a protocol and not `ModelDefaultsState` because the two modes answer it from
-    different places. In process the state is read from the files; attached it is the
-    service's projection, and the screen must not reach for the engine's reader to
-    paint what the service already resolved. What is deliberately *not* here is
-    ``effective``/``invalid``/``sources``: those are precedence, and each row arrives
-    already carrying the answer the engine gave.
-    """
-
-    @property
-    def destinations(self) -> tuple[ConfigScope, ...]:
-        """The files a write may go to, in precedence order."""
-        ...
-
-    @property
-    def fixed(self) -> Path | None:
-        """The single explicit path, when ``SIGIL_CONFIG`` replaced the pair."""
-        ...
-
-    @property
-    def errors(self) -> tuple[str, ...]:
-        """What the files could not parse, in the order the screen lists it."""
-        ...
-
-    def path_for(self, scope: ConfigScope) -> Path:
-        """The file ``scope`` names."""
-        ...
-
-
-@dataclass(frozen=True, slots=True)
-class DefaultsRow:
-    """One target: the default for new conversations, or an installed profile."""
-
-    target: str | None
-    label: str
-    summary: str
-    sources: frozenset[ConfigScope] = frozenset()
-    invalid: bool = False
-    active: bool = False
-    installed: bool = True
-    role: AgentRole = AgentRole.AGENT
-    """Which kind of profile this is, for the section it is listed under.
-
-    ``installed`` and the role answer different questions: a name in the config with
-    no profile behind it has no role, and it is the one row worth clearing.
-    """
-
-
-@dataclass(frozen=True, slots=True)
-class DefaultsChoice:
-    """What the screen returns: which target, in which file, and what to do."""
-
-    row: DefaultsRow
-    scope: ConfigScope
-    clear: bool = False
 
 
 class ModelDefaultsScreen(ProviderModal):

@@ -12,15 +12,18 @@ import asyncio
 
 from textual.app import App
 
-from src.engine.providers.domain.auth_method import AuthMethod
-from src.engine.providers.domain.model_capability import ModelCapability, ModelCatalog
-from src.engine.providers.domain.provider_account import ProviderAccount
-from src.engine.providers.domain.provider_kind import ProviderKind
-from src.engine.providers.domain.provider_variant import ProviderVariant
-from src.ui.widgets.account_form_screen import AccountFormScreen, NewAccount
+from src.core.providers.domain.auth_method import AuthMethod
+from src.core.providers.domain.model_capability import ModelCapability, ModelCatalog
+from src.core.providers.domain.provider_account import ProviderAccount
+from src.core.providers.domain.provider_kind import ProviderKind
+from src.core.providers.domain.provider_variant import ProviderVariant
+from src.ui.widgets.account_form_screen import AccountFormScreen
 from src.ui.widgets.confirm_screen import ConfirmScreen
-from src.ui.widgets.model_picker_screen import ModelChoice, ModelPickerScreen
-from src.ui.widgets.provider_screen import ProviderAction, ProviderScreen
+from src.ui.widgets.model_choice import ModelChoice
+from src.ui.widgets.model_picker_screen import ModelPickerScreen
+from src.ui.widgets.new_account import NewAccount
+from src.ui.widgets.provider_action import ProviderAction
+from src.ui.widgets.provider_screen import ProviderScreen
 from src.ui.widgets.text_prompt_screen import TextPromptScreen
 
 CATALOG = ModelCatalog(
@@ -56,40 +59,40 @@ def _screen_result(screen, keys: tuple[str, ...] = ('escape',)):
     return asyncio.run(inner())
 
 
-def test_provider_screen_lists_accounts_with_the_active_marker():
+def test_provider_screen_lists_accounts_with_the_active_marker() -> None:
     account = ProviderAccount.create('work', ProviderKind.OPENROUTER).with_model('a/b')
     screen = ProviderScreen([account], active_id=account.id)
     assert '●' in screen._options()[0].prompt
     assert 'a/b' in screen._options()[0].prompt
 
 
-def test_provider_screen_marks_an_inactive_account():
+def test_provider_screen_marks_an_inactive_account() -> None:
     screen = ProviderScreen([ProviderAccount.create('work', ProviderKind.OPENROUTER)])
     assert '○' in screen._options()[0].prompt
 
 
-def test_escape_closes_the_provider_list_without_an_action():
+def test_escape_closes_the_provider_list_without_an_action() -> None:
     assert _screen_result(ProviderScreen([]), ('escape',)) is None
 
 
-def test_a_opens_the_add_flow():
+def test_a_opens_the_add_flow() -> None:
     result = _screen_result(ProviderScreen([]), ('a',))
     assert result == ProviderAction('add')
 
 
-def test_enter_does_not_activate_the_highlighted_account():
+def test_enter_does_not_activate_the_highlighted_account() -> None:
     account = ProviderAccount.create('work', ProviderKind.OPENROUTER)
     result = _screen_result(ProviderScreen([account]), ('enter',))
     assert result is None
 
 
-def test_d_requests_removal_of_the_highlighted_account():
+def test_d_requests_removal_of_the_highlighted_account() -> None:
     account = ProviderAccount.create('work', ProviderKind.OPENROUTER)
     result = _screen_result(ProviderScreen([account]), ('d',))
     assert result == ProviderAction('delete', 'work')
 
 
-def test_r_requests_a_rename():
+def test_r_requests_a_rename() -> None:
     account = ProviderAccount.create('work', ProviderKind.OPENROUTER)
     result = _screen_result(ProviderScreen([account]), ('r',))
     assert result == ProviderAction('rename', 'work')
@@ -98,7 +101,7 @@ def test_r_requests_a_rename():
 # --- add form ---------------------------------------------------------------
 
 
-def test_form_skips_the_variant_step_for_openrouter_and_asks_for_the_alias():
+def test_form_skips_the_variant_step_for_openrouter_and_asks_for_the_alias() -> None:
     screen = AccountFormScreen()
     keys = ('enter',)  # OpenRouter is the first option
     _screen_result(screen, keys)
@@ -106,28 +109,28 @@ def test_form_skips_the_variant_step_for_openrouter_and_asks_for_the_alias():
     assert screen._kind is ProviderKind.OPENROUTER
 
 
-def test_form_asks_for_the_variant_on_opencode():
+def test_form_asks_for_the_variant_on_opencode() -> None:
     screen = AccountFormScreen()
     _screen_result(screen, ('down', 'enter'))
     assert screen._step == 'variant'
     assert screen._kind is ProviderKind.OPENCODE
 
 
-def test_form_asks_for_the_auth_method_on_openai():
+def test_form_asks_for_the_auth_method_on_openai() -> None:
     screen = AccountFormScreen()
     # OpenRouter, OpenCode, OpenAI → the third entry.
     _screen_result(screen, ('down', 'down', 'enter'))
     assert screen._step == 'auth'
 
 
-def test_form_escape_steps_back_and_then_closes():
+def test_form_escape_steps_back_and_then_closes() -> None:
     screen = AccountFormScreen()
     _screen_result(screen, ('down', 'enter', 'escape', 'escape'))
     # Step went variant → provider, then the second Esc closed it.
     assert screen._step == 'provider'
 
 
-def test_form_builds_the_value_object_after_the_alias_and_key():
+def test_form_builds_the_value_object_after_the_alias_and_key() -> None:
     screen = AccountFormScreen()
     result = _screen_result(screen, ('enter', 'w', 'o', 'r', 'k', 'enter', 's', 'k', '-', '1', 'enter'))
     assert result == NewAccount(
@@ -139,7 +142,7 @@ def test_form_builds_the_value_object_after_the_alias_and_key():
     )
 
 
-def test_form_refuses_an_empty_alias():
+def test_form_refuses_an_empty_alias() -> None:
     screen = AccountFormScreen()
     _screen_result(screen, ('enter', 'enter'))
     assert screen._step == 'alias'
@@ -152,11 +155,11 @@ def _picker(keys: tuple[str, ...]):
     return _screen_result(ModelPickerScreen(CATALOG, account_label='work', current='openai/gpt-4o-mini'), keys)
 
 
-def test_picker_returns_the_highlighted_model():
+def test_picker_returns_the_highlighted_model() -> None:
     assert _picker(('enter',)) == ModelChoice(model='anthropic/claude-sonnet-4.6')
 
 
-def test_picker_marks_the_current_model():
+def test_picker_marks_the_current_model() -> None:
     screen = ModelPickerScreen(CATALOG, current='openai/gpt-4o-mini')
     rows = [_row_text(model) for model in screen._catalog.models]
     assert any('●' in row for row in rows)
@@ -168,23 +171,23 @@ def _row_text(model):
     return _row(model, current='openai/gpt-4o-mini')
 
 
-def test_picker_filters_as_you_type():
+def test_picker_filters_as_you_type() -> None:
     screen = ModelPickerScreen(CATALOG)
     _screen_result(screen, ('g', 'p', 't', 'enter'))
     assert screen._visible and screen._visible[0].name == 'openai/gpt-4o-mini'
 
 
-def test_picker_offers_the_typed_text_when_nothing_matches():
+def test_picker_offers_the_typed_text_when_nothing_matches() -> None:
     screen = ModelPickerScreen(CATALOG)
     result = _screen_result(screen, ('z', 'z', 'z', 'enter'))
     assert result == ModelChoice(model='zzz', from_catalog=False)
 
 
-def test_picker_escape_cancels():
+def test_picker_escape_cancels() -> None:
     assert _picker(('escape',)) is None
 
 
-def test_picker_shows_the_catalogue_error_in_the_status_line():
+def test_picker_shows_the_catalogue_error_in_the_status_line() -> None:
     broken = ModelCatalog(models=CATALOG.models, source='static', error='offline')
     screen = ModelPickerScreen(broken)
     _screen_result(screen, ('escape',))
@@ -194,36 +197,36 @@ def test_picker_shows_the_catalogue_error_in_the_status_line():
 # --- confirm ----------------------------------------------------------------
 
 
-def test_confirm_defaults_to_the_safe_answer():
+def test_confirm_defaults_to_the_safe_answer() -> None:
     assert _screen_result(ConfirmScreen('Remove it?'), ('enter',)) is False
 
 
-def test_confirm_returns_true_only_when_chosen_explicitly():
+def test_confirm_returns_true_only_when_chosen_explicitly() -> None:
     assert _screen_result(ConfirmScreen('Remove it?'), ('up', 'enter')) is True
 
 
-def test_confirm_escape_is_a_no():
+def test_confirm_escape_is_a_no() -> None:
     assert _screen_result(ConfirmScreen('Remove it?'), ('escape',)) is False
 
 
 # --- text prompt ------------------------------------------------------------
 
 
-def test_text_prompt_returns_the_typed_value():
+def test_text_prompt_returns_the_typed_value() -> None:
     assert _screen_result(TextPromptScreen(title='Rename'), ('n', 'e', 'w', 'enter')) == 'new'
 
 
-def test_text_prompt_prefills_the_current_value():
+def test_text_prompt_prefills_the_current_value() -> None:
     screen = TextPromptScreen(title='Rename', value='old')
     assert _screen_result(screen, ('enter',)) == 'old'
 
 
-def test_text_prompt_refuses_an_empty_value():
+def test_text_prompt_refuses_an_empty_value() -> None:
     screen = TextPromptScreen(title='Rename')
     _screen_result(screen, ('enter',))
     # Still on screen: the empty value was rejected, not returned.
     assert screen.is_mounted
 
 
-def test_text_prompt_escape_cancels():
+def test_text_prompt_escape_cancels() -> None:
     assert _screen_result(TextPromptScreen(title='Rename'), ('escape',)) is None

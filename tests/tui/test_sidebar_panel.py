@@ -19,16 +19,19 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
 
-from src.engine.context.meter.cost import SessionCost
-from src.engine.mcp.config.loader import load_config
-from src.engine.mcp.manager.manager import MCPManager
-from src.engine.roadmap.models.todo_item import TodoItem
-from src.engine.roadmap.store import RoadmapStore
-from src.engine.roadmap.stores import RoadmapStores
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
+from src.core.context.meter.cost import SessionCost
+from src.core.mcp.config.loader import load_config
+from src.core.mcp.manager.mcp_manager import MCPManager
+from src.core.roadmap.models.todo_item import TodoItem
+from src.core.roadmap.roadmap_store import RoadmapStore
+from src.core.roadmap.roadmap_stores import RoadmapStores
+from src.core.sessions.session_store import SessionStore
 from src.ui.sidebar_mixin import SidebarMixin
-from src.ui.widgets.sidebar_panel import ContextState, MCPServerState, ModelState, SidebarPanel
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.context_state import ContextState
+from src.ui.widgets.mcp_server_state import MCPServerState
+from src.ui.widgets.model_state import ModelState
+from src.ui.widgets.sidebar_panel import SidebarPanel
 from src.ui.widgets.status_bar import StatusBar
 
 
@@ -42,34 +45,34 @@ def _configured() -> SidebarPanel:
     return panel
 
 
-def test_panel_without_skills_says_so():
+def test_panel_without_skills_says_so() -> None:
     text = _panel()._build().plain
     assert 'Loaded skills' in text
     assert 'none yet' in text
 
 
-def test_panel_hides_the_context_until_a_model_is_configured():
+def test_panel_hides_the_context_until_a_model_is_configured() -> None:
     """No model, no window, no percentage: the line does not appear at all."""
     panel = _panel()
     panel._context_state = ContextState(percent=12.0, used=24_000, window=200_000)
     assert 'context:' not in panel._build().plain
 
 
-def test_panel_shows_the_percentage_and_the_compacted_pair():
+def test_panel_shows_the_percentage_and_the_compacted_pair() -> None:
     panel = _configured()
     panel._context_state = ContextState(percent=66.0, used=132_000, window=200_000)
     text = panel._build().plain
     assert 'context: 66% (132K / 200K)' in text
 
 
-def test_panel_rounds_the_percentage_to_whole_numbers():
+def test_panel_rounds_the_percentage_to_whole_numbers() -> None:
     panel = _configured()
     panel._context_state = ContextState(percent=12.4, used=24_800, window=200_000)
     assert '12%' in panel._build().plain
     assert '12.4%' not in panel._build().plain
 
 
-def test_panel_shows_a_question_mark_without_a_window():
+def test_panel_shows_a_question_mark_without_a_window() -> None:
     panel = _configured()
     panel._context_state = ContextState(percent=None, used=None, window=None)
     text = panel._build().plain
@@ -78,7 +81,7 @@ def test_panel_shows_a_question_mark_without_a_window():
     assert '(' not in text
 
 
-def test_panel_omits_the_pair_when_only_the_window_is_known():
+def test_panel_omits_the_pair_when_only_the_window_is_known() -> None:
     panel = _configured()
     panel._context_state = ContextState(percent=None, used=None, window=200_000)
     text = panel._build().plain
@@ -87,7 +90,7 @@ def test_panel_omits_the_pair_when_only_the_window_is_known():
     assert '?' + ' (' not in text
 
 
-def test_panel_escalates_the_context_colour():
+def test_panel_escalates_the_context_colour() -> None:
     panel = _configured()
 
     def colour(percent: float) -> set[str | None]:
@@ -99,7 +102,7 @@ def test_panel_escalates_the_context_colour():
     assert 'bold red' in colour(93.0)
 
 
-def test_the_context_is_the_last_line_of_the_model_section():
+def test_the_context_is_the_last_line_of_the_model_section() -> None:
     """The budget belongs to the window of that model: one heading for it cost two rows."""
     panel = _configured()
     panel._skills = ('clean-code',)
@@ -109,7 +112,7 @@ def test_the_context_is_the_last_line_of_the_model_section():
     assert text.index('effort: high') < text.index('context: 66%') < text.index('Loaded skills')
 
 
-def test_the_cost_rides_under_the_context_line():
+def test_the_cost_rides_under_the_context_line() -> None:
     """Same history, different unit: how full the window is, and what it cost."""
     panel = _configured()
     panel._context_state = ContextState(
@@ -122,7 +125,7 @@ def test_the_cost_rides_under_the_context_line():
     assert text.index('context: 66%') < text.index('cost: $0.04') < text.index('Loaded skills')
 
 
-def test_a_reported_total_carries_no_marks():
+def test_a_reported_total_carries_no_marks() -> None:
     """OpenRouter charges what it reports: the number is an invoice, not a guess."""
     panel = _configured()
     panel._context_state = ContextState(
@@ -131,7 +134,7 @@ def test_a_reported_total_carries_no_marks():
     assert 'cost: $1.20' in panel._build().plain
 
 
-def test_an_estimated_total_carries_a_tilde():
+def test_an_estimated_total_carries_a_tilde() -> None:
     """A list price is not a charge: a reseller or a plan can bill something else."""
     panel = _configured()
     panel._context_state = ContextState(
@@ -140,7 +143,7 @@ def test_an_estimated_total_carries_a_tilde():
     assert 'cost: ~$0.04' in panel._build().plain
 
 
-def test_a_partial_total_carries_a_plus():
+def test_a_partial_total_carries_a_plus() -> None:
     """A request nothing could price turns the total into a floor."""
     panel = _configured()
     panel._context_state = ContextState(
@@ -152,7 +155,7 @@ def test_a_partial_total_carries_a_plus():
     assert 'cost: $0.04+' in panel._build().plain
 
 
-def test_both_marks_together():
+def test_both_marks_together() -> None:
     panel = _configured()
     panel._context_state = ContextState(
         percent=10.0,
@@ -163,7 +166,7 @@ def test_both_marks_together():
     assert 'cost: ~$0.04+' in panel._build().plain
 
 
-def test_a_session_that_could_not_be_priced_at_all_shows_a_question_mark():
+def test_a_session_that_could_not_be_priced_at_all_shows_a_question_mark() -> None:
     panel = _configured()
     panel._context_state = ContextState(
         percent=10.0,
@@ -174,14 +177,14 @@ def test_a_session_that_could_not_be_priced_at_all_shows_a_question_mark():
     assert 'cost: ?' in panel._build().plain
 
 
-def test_a_session_with_nothing_sent_costs_zero():
+def test_a_session_with_nothing_sent_costs_zero() -> None:
     """A real zero, not `?`: nothing went out, so nothing is unknown."""
     panel = _configured()
     panel._context_state = ContextState(percent=0.0, used=0, window=200_000, cost=SessionCost(total=Decimal(0)))
     assert 'cost: $0' in panel._build().plain
 
 
-def test_the_cost_is_hidden_until_a_model_is_configured():
+def test_the_cost_is_hidden_until_a_model_is_configured() -> None:
     """A bill for a window that does not exist yet is a number that means nothing."""
     panel = _panel()
     panel._context_state = ContextState(
@@ -193,7 +196,7 @@ def test_the_cost_is_hidden_until_a_model_is_configured():
     assert 'cost:' not in panel._build().plain
 
 
-def test_the_roadmap_is_the_last_section_of_the_panel(tmp_path):
+def test_the_roadmap_is_the_last_section_of_the_panel(tmp_path: Path) -> None:
     """One panel: the plan closes the same list the model, skills and MCP are in."""
     # No execution: a memory-only store, which is all the panel needs to paint.
     store = RoadmapStore(base_dir=tmp_path)
@@ -207,12 +210,12 @@ def test_the_roadmap_is_the_last_section_of_the_panel(tmp_path):
     assert text.index('Roadmap') < text.index('Ship it')
 
 
-def test_the_panel_without_a_store_does_not_announce_a_roadmap():
+def test_the_panel_without_a_store_does_not_announce_a_roadmap() -> None:
     """No store, no plan: the section stays away instead of reading `No roadmap.`"""
     assert 'Roadmap' not in _panel()._build().plain
 
 
-def test_a_section_the_service_did_not_report_says_unknown():
+def test_a_section_the_service_did_not_report_says_unknown() -> None:
     """Attached, an absent section is a gap, not an empty one.
 
     `none yet`, `No tasks yet.` and `not configured` are all claims about the
@@ -233,7 +236,7 @@ def test_a_section_the_service_did_not_report_says_unknown():
     assert 'not configured' not in text
 
 
-def test_the_roadmap_the_service_projects_wins_over_a_local_store(tmp_path):
+def test_the_roadmap_the_service_projects_wins_over_a_local_store(tmp_path: Path) -> None:
     """One plan, and the service owns it.
 
     The local store reads the same SQLite file once, at construction. The service
@@ -252,7 +255,7 @@ def test_the_roadmap_the_service_projects_wins_over_a_local_store(tmp_path):
     assert 'Local plan' not in text
 
 
-def test_an_empty_projection_is_no_tasks_and_not_unknown():
+def test_an_empty_projection_is_no_tasks_and_not_unknown() -> None:
     """An empty list is a fact the service asserted: the plan is empty."""
     panel = _panel()
     panel.update_roadmap([])
@@ -263,18 +266,18 @@ def test_an_empty_projection_is_no_tasks_and_not_unknown():
     assert 'did not report' not in text
 
 
-def test_the_workspace_is_not_repeated_in_the_panel():
+def test_the_workspace_is_not_repeated_in_the_panel() -> None:
     """The status bar carries it; a second copy would spend four rows on the same fact."""
     assert 'Workspace' not in _panel()._build().plain
 
 
-def test_status_bar_starts_at_rest():
+def test_status_bar_starts_at_rest() -> None:
     bar = StatusBar()
     assert bar.plain() == '● Ready'
 
 
-def test_status_bar_carries_the_workspace_badge():
-    from src.ui.widgets.status_bar import WorkspaceBadge
+def test_status_bar_carries_the_workspace_badge() -> None:
+    from src.ui.widgets.workspace_badge import WorkspaceBadge
 
     bar = StatusBar()
     bar.set_workspace(WorkspaceBadge(label='fix-login', branch='sigil/fix-login', is_worktree=True))
@@ -283,7 +286,7 @@ def test_status_bar_carries_the_workspace_badge():
     assert 'sigil/fix-login' in text
 
 
-def test_panel_lists_loaded_skills():
+def test_panel_lists_loaded_skills() -> None:
     panel = _panel()
     panel._skills = ('clean-code', 'vscode')
     text = panel._build().plain
@@ -291,13 +294,13 @@ def test_panel_lists_loaded_skills():
     assert 'vscode' in text
 
 
-def test_panel_hides_mcp_section_without_servers():
+def test_panel_hides_mcp_section_without_servers() -> None:
     panel = _panel()
     panel._mcp_known = True
     assert 'MCP' not in panel._build().plain
 
 
-def test_panel_shows_count_inline_with_title():
+def test_panel_shows_count_inline_with_title() -> None:
     panel = _panel()
     panel._mcp_known = True
     panel._servers = (
@@ -310,7 +313,7 @@ def test_panel_shows_count_inline_with_title():
     assert 'playwright' in text
 
 
-def test_panel_marks_failures_with_a_cross():
+def test_panel_marks_failures_with_a_cross() -> None:
     panel = _panel()
     panel._mcp_known = True
     panel._servers = (
@@ -323,7 +326,7 @@ def test_panel_marks_failures_with_a_cross():
     assert ' • github' in text
 
 
-def test_panel_lists_only_failures_when_none_ok():
+def test_panel_lists_only_failures_when_none_ok() -> None:
     panel = _panel()
     panel._mcp_known = True
     panel._servers = (MCPServerState(name='broken', ok=False),)
@@ -332,7 +335,7 @@ def test_panel_lists_only_failures_when_none_ok():
     assert '•' not in text
 
 
-def test_mcp_and_skills_share_the_same_bullet():
+def test_mcp_and_skills_share_the_same_bullet() -> None:
     """Both lists are the same kind of list, so they hang off the same mark.
 
     A wider glyph on one of them reads as a different level of the hierarchy, and
@@ -348,7 +351,7 @@ def test_mcp_and_skills_share_the_same_bullet():
     assert ' • github' in lines
 
 
-def test_panel_colors_ok_green_and_failures_red():
+def test_panel_colors_ok_green_and_failures_red() -> None:
     panel = _panel()
     panel._mcp_known = True
     panel._servers = (
@@ -360,14 +363,14 @@ def test_panel_colors_ok_green_and_failures_red():
     assert 'bold red' in styles
 
 
-def test_the_panel_reads_the_bill_from_the_session_history():
+def test_the_panel_reads_the_bill_from_the_session_history() -> None:
     """The whole seam: history → `context_state` → panel.
 
     The panel test above pins the rendering; this one pins that the number reaches
     it, which is the part a refactor of `context_state` would break.
     """
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             app = SigilApp(
@@ -393,10 +396,10 @@ def test_the_panel_reads_the_bill_from_the_session_history():
     asyncio.run(inner())
 
 
-def test_sidebar_reflects_loaded_skills():
+def test_sidebar_reflects_loaded_skills() -> None:
     """The panel reads the set from the transcript on screen, not from a registry."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             session = store.create_session()
@@ -421,7 +424,7 @@ def test_sidebar_reflects_loaded_skills():
     asyncio.run(inner())
 
 
-def test_the_mcp_section_survives_the_startup_capability_fetch(tmp_path):
+def test_the_mcp_section_survives_the_startup_capability_fetch(tmp_path: Path) -> None:
     """The regression: the probe and the capability fetch are both exclusive workers.
 
     They shared the default worker group, so `resolve_model_capabilities` cancelled
@@ -433,7 +436,7 @@ def test_the_mcp_section_survives_the_startup_capability_fetch(tmp_path):
     config.write_text('{"mcp_servers": {"ghost": {"command": "definitely-not-a-binary"}}}', encoding='utf-8')
     manager = MCPManager(load_config([config], environ={}).servers)
 
-    async def inner():
+    async def inner() -> None:
         store = SessionStore(cwd=str(tmp_path), base_dir=tmp_path / 'sessions')
         app = SigilApp(
             agent=Agent(TestModel(custom_output_text='ok'), instructions='x'),
@@ -456,7 +459,7 @@ def test_the_mcp_section_survives_the_startup_capability_fetch(tmp_path):
     asyncio.run(inner())
 
 
-def test_the_mcp_probe_does_not_share_the_turn_worker_group():
+def test_the_mcp_probe_does_not_share_the_turn_worker_group() -> None:
     """A turn is `exclusive` in the default group; the probe must not be in it.
 
     The group is asserted on the worker the decorator returns, because that is where
@@ -466,7 +469,7 @@ def test_the_mcp_probe_does_not_share_the_turn_worker_group():
     """
     assert SidebarMixin.__dict__['refresh_mcp_status'].__wrapped__ is not None
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             app = SigilApp(
@@ -480,14 +483,14 @@ def test_the_mcp_probe_does_not_share_the_turn_worker_group():
     asyncio.run(inner())
 
 
-def test_status_bar_displays_agent_name_without_prefix():
+def test_status_bar_displays_agent_name_without_prefix() -> None:
     bar = StatusBar()
     bar.set_agent('wizard')
     assert bar.plain().startswith('wizard')
     assert 'agent wizard' not in bar.plain()
 
 
-def test_project_name_appears_at_the_start_of_status_bar():
+def test_project_name_appears_at_the_start_of_status_bar() -> None:
     bar = StatusBar()
     bar.set_project('sigil')
     bar.set_agent('wizard')
@@ -496,7 +499,7 @@ def test_project_name_appears_at_the_start_of_status_bar():
     assert bar.plain().startswith('sigil  ·  wizard')
 
 
-def test_the_in_process_sidebar_still_reads_its_local_plan(tmp_path):
+def test_the_in_process_sidebar_still_reads_its_local_plan(tmp_path: Path) -> None:
     """No client: the panel keeps reading this process's own store, untouched.
 
     The attached path is additive. An app built with an agent and a store has no
@@ -504,7 +507,7 @@ def test_the_in_process_sidebar_still_reads_its_local_plan(tmp_path):
     already has.
     """
 
-    async def inner():
+    async def inner() -> None:
         store = SessionStore(cwd=str(tmp_path), base_dir=tmp_path / 'sessions')
         session = store.create_session()
         roadmaps = RoadmapStores(session.id, base_dir=tmp_path)

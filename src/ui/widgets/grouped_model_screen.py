@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 from typing import ClassVar
 
 from rich.text import Text
@@ -12,38 +11,10 @@ from textual.binding import Binding
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from src.engine.providers.domain.model_capability import ModelCapability, ModelCatalog
+from src.core.providers.domain.model_capability import ModelCapability
+from src.ui.widgets.account_catalog import AccountCatalog
+from src.ui.widgets.grouped_model_choice import GroupedModelChoice
 from src.ui.widgets.provider_modal import ProviderModal
-
-
-@dataclass(frozen=True, slots=True)
-class AccountCatalog:
-    account_id: str
-    alias: str
-    catalog: ModelCatalog
-    provider: str = ''
-    """What the account talks to — ``"OpenRouter"``, ``"OpenCode Go"``.
-
-    The alias is a name the user chose and it is the only handle the service takes;
-    the provider is what answers. A list that shows one without the other asks the
-    reader to remember which is which.
-    """
-
-    @property
-    def display_name(self) -> str:
-        return f'{self.alias} · {self.provider}' if self.provider else self.alias
-
-
-@dataclass(frozen=True, slots=True)
-class GroupedModelChoice:
-    account_id: str
-    alias: str
-    model: ModelCapability
-    provider: str = ''
-
-    @property
-    def display_name(self) -> str:
-        return f'{self.alias} · {self.provider}' if self.provider else self.alias
 
 
 class GroupedModelScreen(ProviderModal):

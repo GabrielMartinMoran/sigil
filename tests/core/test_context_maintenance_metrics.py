@@ -11,11 +11,11 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.context.meter.debug import build_debug_report
-from src.engine.context.meter.debug_render import render_debug_report
-from src.engine.context.meter.request import RequestSnapshot
-from src.engine.context.strategy.append_only import AppendOnlyStrategy
+from src.core.context.meter.context_meter import ContextMeter
+from src.core.context.meter.debug import build_debug_report
+from src.core.context.meter.debug_render import render_debug_report
+from src.core.context.meter.request import RequestSnapshot
+from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 from tests.support.context_compaction_records import history, pressured_window, run_recorded
 
 
@@ -25,7 +25,7 @@ def report(messages: list, *, window: int = 100000):
     return build_debug_report(messages, snapshot=meter.snapshot(messages), request=RequestSnapshot(), view_result=view)
 
 
-def test_unknown_reasoning_size_and_thresholds_are_visible_without_content():
+def test_unknown_reasoning_size_and_thresholds_are_visible_without_content() -> None:
     messages = [
         ModelRequest(parts=[UserPromptPart(content='PRIVATE text')]),
         ModelResponse(parts=[ThinkingPart(content='', signature='SECRET signature')]),
@@ -38,7 +38,7 @@ def test_unknown_reasoning_size_and_thresholds_are_visible_without_content():
     assert 'SECRET' not in text and 'PRIVATE' not in text
 
 
-def test_projected_events_do_not_masquerade_as_observed_turn_history():
+def test_projected_events_do_not_masquerade_as_observed_turn_history() -> None:
     messages = history(30)
     window = pressured_window(messages)
     projected = report(messages, window=window)
@@ -50,7 +50,7 @@ def test_projected_events_do_not_masquerade_as_observed_turn_history():
     assert 'recorded: step 30' in render_debug_report(recorded)
 
 
-def test_generic_exceptions_are_content_free_and_visible():
+def test_generic_exceptions_are_content_free_and_visible() -> None:
     messages = [
         ModelResponse(parts=[ToolCallPart(tool_name='foreign', args={}, tool_call_id='c')]),
         ModelRequest(

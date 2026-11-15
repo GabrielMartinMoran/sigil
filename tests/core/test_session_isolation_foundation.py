@@ -8,9 +8,9 @@ from typing import Any
 from pydantic_ai.models.test import TestModel
 from pytest import MonkeyPatch
 
-from src.engine.bootstrap import Composition
-from src.engine.providers.bootstrap import ProviderPaths
-from src.engine.settings import SigilSettings
+from src.core.bootstrap import Composition
+from src.core.providers.bootstrap import ProviderPaths
+from src.core.settings import SigilSettings
 
 
 def _profile(root: Path, name: str, body: str, *, subagent: bool = False) -> None:
@@ -97,7 +97,7 @@ def test_compositions_use_own_roots_after_another_switch(tmp_path: Path, monkeyp
 
 
 def test_permission_path_matching_uses_composition_root(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
-    from src.engine.agents.profile.permissions import parse_permissions
+    from src.core.agents.profile.permissions import parse_permissions
 
     root = tmp_path / 'project'
     root.mkdir()
@@ -151,8 +151,8 @@ def test_image_tools_follow_composition_root_and_switch(tmp_path: Path, monkeypa
 def test_conflict_guard_resolves_relative_and_absolute_paths_in_given_root(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
-    from src.engine.files.conflicts import same_file_conflict
-    from src.engine.tooling.concurrency import ConcurrencyContext, SiblingCall
+    from src.core.files.conflicts import same_file_conflict
+    from src.core.tooling.concurrency import ConcurrencyContext, SiblingCall
 
     root = tmp_path / 'project'
     root.mkdir()
@@ -165,7 +165,7 @@ def test_conflict_guard_resolves_relative_and_absolute_paths_in_given_root(
 
 
 def test_registry_preserves_active_and_explicit_roots(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
-    from src.engine.agents.profile.registry import AgentRegistry
+    from src.core.agents.profile.agent_registry import AgentRegistry
 
     first, second = tmp_path / 'first', tmp_path / 'second'
     first.mkdir()
@@ -255,7 +255,7 @@ def test_shell_tools_use_each_composition_root(tmp_path: Path, monkeypatch: Monk
 
 
 def test_shell_cancellation_is_selective_during_spawn(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
-    from src.engine.shell import runner
+    from src.core.shell import runner
 
     first, second = tmp_path / 'first', tmp_path / 'second'
     first.mkdir()
@@ -324,7 +324,7 @@ def test_shell_cancellation_is_selective_during_spawn(tmp_path: Path, monkeypatc
         release_first.set()
         for process in processes.values():
             if process.poll() is None:
-                from src.engine.shell.process import kill_process_group
+                from src.core.shell.process import kill_process_group
 
                 kill_process_group(process)
         a.close()
@@ -339,8 +339,8 @@ def test_shell_cancel_stops_child_group_without_stopping_other_composition(
     import shlex
     import sys
 
-    from src.engine.shell import runner
-    from src.engine.shell.process import kill_process_group
+    from src.core.shell import runner
+    from src.core.shell.process import kill_process_group
 
     first, second = tmp_path / 'first', tmp_path / 'second'
     first.mkdir()
@@ -545,7 +545,7 @@ def _write_skill(root: Path, name: str) -> None:
 def test_two_executions_resolve_their_own_roots_without_moving_the_process(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
-    from src.engine.files.paths import execution_workspace
+    from src.core.files.paths import execution_workspace
 
     first, second, outside = (tmp_path / name for name in ('first', 'second', 'outside'))
     for root in (first, second, outside):
@@ -580,7 +580,7 @@ def test_two_executions_resolve_their_own_roots_without_moving_the_process(
 def test_child_tasks_and_threads_keep_the_spawning_root_after_the_parent_leaves(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
-    from src.engine.files.paths import execution_workspace, workspace_root
+    from src.core.files.paths import execution_workspace, workspace_root
 
     first, second, outside = (tmp_path / name for name in ('first', 'second', 'outside'))
     for root in (first, second, outside):
@@ -612,7 +612,7 @@ def test_child_tasks_and_threads_keep_the_spawning_root_after_the_parent_leaves(
 
 
 def test_a_cancelled_execution_restores_the_previous_root(tmp_path: Path) -> None:
-    from src.engine.files.paths import execution_workspace, workspace_root
+    from src.core.files.paths import execution_workspace, workspace_root
 
     outer, bound = tmp_path / 'outer', tmp_path / 'bound'
     outer.mkdir()
@@ -646,9 +646,9 @@ def test_registered_tool_callbacks_follow_the_bound_root(tmp_path: Path, monkeyp
     from pydantic_ai import RunContext
     from pydantic_ai.models.test import TestModel
 
-    from src.engine.files.conflicts import same_file_conflict
-    from src.engine.files.paths import execution_workspace
-    from src.engine.tooling.concurrency import ConcurrencyContext, SiblingCall
+    from src.core.files.conflicts import same_file_conflict
+    from src.core.files.paths import execution_workspace
+    from src.core.tooling.concurrency import ConcurrencyContext, SiblingCall
 
     composed, bound, outside = (tmp_path / name for name in ('composed', 'bound', 'outside'))
     for root in (composed, bound, outside):

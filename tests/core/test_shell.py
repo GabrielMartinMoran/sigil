@@ -11,15 +11,15 @@ from pathlib import Path
 
 import pytest
 
-from src.engine.shell.guard import SELF_GUARD_ENV
-from src.engine.shell.limits import MAX_OUTPUT_BYTES
-from src.engine.shell.runner import execute_command, execute_commands
-from src.engine.shell.tools import register_shell_tools
+from src.core.shell.guard import SELF_GUARD_ENV
+from src.core.shell.limits import MAX_OUTPUT_BYTES
+from src.core.shell.runner import execute_command, execute_commands
+from src.core.shell.tools import register_shell_tools
 
 # --- 1. Simple command --------------------------------------------------------
 
 
-def test_simple_command_pwd():
+def test_simple_command_pwd() -> None:
     result = execute_command('pwd')
     assert result.returncode == 0
     assert result.stdout.strip() == os.getcwd()
@@ -29,7 +29,7 @@ def test_simple_command_pwd():
 # --- 2. Command with arguments ------------------------------------------------
 
 
-def test_command_with_arguments(tmp_path):
+def test_command_with_arguments(tmp_path: Path) -> None:
     (tmp_path / 'a.txt').write_text('hi')
     result = execute_command(f'ls -la {tmp_path}')
     assert result.returncode == 0
@@ -39,7 +39,7 @@ def test_command_with_arguments(tmp_path):
 # --- 3. Paths with spaces -----------------------------------------------------
 
 
-def test_path_with_spaces(tmp_path):
+def test_path_with_spaces(tmp_path: Path) -> None:
     spaced = tmp_path / 'dir with spaces'
     spaced.mkdir()
     (spaced / 'file name.txt').write_text('data')
@@ -51,7 +51,7 @@ def test_path_with_spaces(tmp_path):
 # --- 4. stdout and stderr capture ---------------------------------------------
 
 
-def test_captures_stdout_and_stderr_separately():
+def test_captures_stdout_and_stderr_separately() -> None:
     result = execute_command('echo out; echo err >&2')
     assert result.returncode == 0
     assert result.stdout.strip() == 'out'
@@ -61,7 +61,7 @@ def test_captures_stdout_and_stderr_separately():
 # --- 5. Exit code -------------------------------------------------------------
 
 
-def test_exit_code_is_returned():
+def test_exit_code_is_returned() -> None:
     result = execute_command('exit 3')
     assert result.returncode == 3
     assert not result.timed_out
@@ -70,7 +70,7 @@ def test_exit_code_is_returned():
 # --- 6. Nonexistent command ---------------------------------------------------
 
 
-def test_nonexistent_command_does_not_raise():
+def test_nonexistent_command_does_not_raise() -> None:
     result = execute_command('this_command_does_not_exist_12345')
     assert result.returncode == 127
     assert result.stderr
@@ -80,7 +80,7 @@ def test_nonexistent_command_does_not_raise():
 # --- 7. A process waiting on stdin does not block ------------------------------
 
 
-def test_stdin_closed_does_not_block():
+def test_stdin_closed_does_not_block() -> None:
     start = time.monotonic()
     result = execute_command('cat', timeout_seconds=5)
     assert not result.timed_out
@@ -91,7 +91,7 @@ def test_stdin_closed_does_not_block():
 # --- 8. Timeout terminates the process ----------------------------------------
 
 
-def test_timeout_terminates_process():
+def test_timeout_terminates_process() -> None:
     start = time.monotonic()
     result = execute_command('sleep 10', timeout_seconds=1)
     assert result.timed_out
@@ -102,7 +102,7 @@ def test_timeout_terminates_process():
 # --- 9. Timeout leaves no live children ---------------------------------------
 
 
-def test_timeout_kills_children():
+def test_timeout_kills_children() -> None:
     start = time.monotonic()
     result = execute_command('sleep 30 & wait', timeout_seconds=1)
     assert result.timed_out
@@ -113,7 +113,7 @@ def test_timeout_kills_children():
 # --- 10. Output limit ---------------------------------------------------------
 
 
-def test_output_is_truncated():
+def test_output_is_truncated() -> None:
     result = execute_command("head -c 200000 /dev/zero | tr '\\0' 'a'", timeout_seconds=10)
     assert result.stdout_truncated
     assert len(result.stdout.encode('utf-8')) <= MAX_OUTPUT_BYTES
@@ -122,14 +122,14 @@ def test_output_is_truncated():
 # --- 11. State distinction ----------------------------------------------------
 
 
-def test_empty_command_is_rejected():
+def test_empty_command_is_rejected() -> None:
     result = execute_command('   ')
     assert result.returncode == 2
     assert not result.timed_out
 
 
-def test_timeout_vs_normal_are_distinguishable(monkeypatch):
-    from src.engine.shell import runner
+def test_timeout_vs_normal_are_distinguishable(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.core.shell import runner
 
     monkeypatch.setattr(runner, '_clamp_timeout', lambda _: 0.05)
     normal = execute_command('true')
@@ -142,7 +142,7 @@ def test_timeout_vs_normal_are_distinguishable(monkeypatch):
 
 
 class _DummyAgent:
-    def __init__(self):
+    def __init__(self) -> None:
         self.registered = {}
         self.options: dict[str, dict[str, object]] = {}
 
@@ -152,7 +152,7 @@ class _DummyAgent:
         return func
 
 
-def test_register_shell_tools_registers_run():
+def test_register_shell_tools_registers_run() -> None:
     agent = _DummyAgent()
     register_shell_tools(agent)
 
@@ -165,19 +165,19 @@ def test_register_shell_tools_registers_run():
 # --- Self-protection ----------------------------------------------------------
 
 
-def test_child_process_gets_guard_env():
+def test_child_process_gets_guard_env() -> None:
     result = execute_command(f'echo "${SELF_GUARD_ENV}"')
     assert result.returncode == 0
     assert result.stdout.strip() == '1'
 
 
-def test_refuses_self_invocation():
+def test_refuses_self_invocation() -> None:
     result = execute_command('./sigil')
     assert result.returncode == 126
     assert 'nested Sigil' in result.stderr
 
 
-def test_refuses_uv_run_main():
+def test_refuses_uv_run_main() -> None:
     result = execute_command('uv run ./main.py')
     assert result.returncode == 126
 
@@ -185,11 +185,11 @@ def test_refuses_uv_run_main():
 # --- 13. Parallel execution ----------------------------------------------------
 
 
-def test_execute_commands_runs_in_parallel(monkeypatch):
+def test_execute_commands_runs_in_parallel(monkeypatch: pytest.MonkeyPatch) -> None:
     from threading import Barrier
 
-    from src.engine.shell import runner
-    from src.engine.shell.runner import RunToolOutput
+    from src.core.shell import runner
+    from src.core.shell.models.run_tool_output import RunToolOutput
 
     barrier = Barrier(3, timeout=3)
 
@@ -203,12 +203,12 @@ def test_execute_commands_runs_in_parallel(monkeypatch):
     assert all(result.returncode == 0 for result in results)
 
 
-def test_execute_commands_preserve_order():
+def test_execute_commands_preserve_order() -> None:
     results = asyncio.run(execute_commands(['echo first', 'echo second', 'echo third']))
     assert [r.stdout.strip() for r in results] == ['first', 'second', 'third']
 
 
-def test_execute_commands_errors_do_not_break_others():
+def test_execute_commands_errors_do_not_break_others() -> None:
     results = asyncio.run(execute_commands(['exit 3', 'echo ok', 'this_command_does_not_exist_12345']))
     assert results[0].returncode == 3
     assert results[1].returncode == 0
@@ -216,19 +216,19 @@ def test_execute_commands_errors_do_not_break_others():
     assert results[2].returncode == 127
 
 
-def test_execute_commands_empty_list():
+def test_execute_commands_empty_list() -> None:
     assert asyncio.run(execute_commands([])) == []
 
 
 @pytest.mark.parametrize('requested, expected', [(-1, 1), (0, 1), (1, 1), (60, 60), (120, 120), (121, 120)])
 def test_timeout_policy_clamps_to_the_public_bounds(requested: int, expected: int) -> None:
-    from src.engine.shell.runner import _clamp_timeout
+    from src.core.shell.runner import _clamp_timeout
 
     assert _clamp_timeout(requested) == expected
 
 
 def test_execute_commands_timeout_is_per_command(monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.engine.shell import runner
+    from src.core.shell import runner
 
     # Keep real processes and deadline handling; the public one-second minimum is
     # covered separately, including the unpatched termination tests above.
@@ -242,7 +242,7 @@ def test_execute_commands_timeout_is_per_command(monkeypatch: pytest.MonkeyPatch
 
 
 def test_cancelled_admission_does_not_start_a_late_process() -> None:
-    from src.engine.shell.running import RunningCommands
+    from src.core.shell.running import RunningCommands
 
     owner = RunningCommands()
     generation = owner.generation()
@@ -255,8 +255,10 @@ def test_cancelled_admission_does_not_start_a_late_process() -> None:
     assert execute_command('echo next', owner=owner).stdout.strip() == 'next'
 
 
-def test_the_run_tool_uses_the_execution_root_without_moving_the_process(tmp_path, monkeypatch):
-    from src.engine.files.paths import execution_workspace, workspace_root
+def test_the_run_tool_uses_the_execution_root_without_moving_the_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.core.files.paths import execution_workspace, workspace_root
 
     bound, outside = tmp_path / 'bound', tmp_path / 'outside'
     bound.mkdir()
@@ -273,7 +275,7 @@ def test_the_run_tool_uses_the_execution_root_without_moving_the_process(tmp_pat
 
 
 def test_should_wait_for_exit_without_selecting_closed_streams(monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.engine.shell import process as processes
+    from src.core.shell import process as processes
 
     process = processes.spawn('printf done', cwd=None, extra_env=None)
     read_available = processes._read_available
@@ -295,7 +297,7 @@ def test_should_wait_for_exit_without_selecting_closed_streams(monkeypatch: pyte
 
 
 def test_should_apply_deadline_when_child_closes_streams(monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.engine.shell import runner
+    from src.core.shell import runner
 
     monkeypatch.setattr(runner, '_clamp_timeout', lambda _: 0.05)
     result = execute_command('exec 1>&- 2>&-; sleep 10')

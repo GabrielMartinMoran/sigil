@@ -16,10 +16,10 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 
-from src.engine.attachments.image_attachment import ImageAttachment
-from src.engine.sessions.session_store import SessionStore
-from src.engine.storage.database import Database, database_path
-from src.ui.app import SigilApp
+from src.core.attachments.image_attachment import ImageAttachment
+from src.core.sessions.session_store import SessionStore
+from src.core.storage.database import Database, database_path
+from src.ui.sigil_app import SigilApp
 from tests.support.ui import wait_for_turn
 
 

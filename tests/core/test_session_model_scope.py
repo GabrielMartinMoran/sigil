@@ -12,12 +12,15 @@ Two rules, and they are the reason this file exists:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
-from src.engine.bootstrap import Composition
-from src.engine.mcp.config.loader import load_config
-from src.engine.providers.bootstrap import ProviderPaths
-from src.engine.sessions.session_store import SessionStore
-from src.engine.settings import load_settings
+import pytest
+
+from src.core.bootstrap import Composition
+from src.core.mcp.config.loader import load_config
+from src.core.providers.bootstrap import ProviderPaths
+from src.core.sessions.session_store import SessionStore
+from src.core.settings import load_settings
 from tests.support.provider_service import _add, _service
 
 # --- the config block --------------------------------------------------------
@@ -30,7 +33,7 @@ def _write(root, data: dict, name: str = 'config.json'):
     return path
 
 
-def test_default_model_is_read_with_its_effort(tmp_path):
+def test_default_model_is_read_with_its_effort(tmp_path: Path) -> None:
     path = _write(tmp_path, {'default_model': {'account': 'work', 'model': 'second/model', 'effort': 'high'}})
 
     config = load_config([path], environ={})
@@ -41,7 +44,7 @@ def test_default_model_is_read_with_its_effort(tmp_path):
     assert config.default_model.effort == 'high'
 
 
-def test_the_project_default_model_wins_over_the_global_one(tmp_path):
+def test_the_project_default_model_wins_over_the_global_one(tmp_path: Path) -> None:
     local = _write(tmp_path, {'default_model': {'account': 'work', 'model': 'new', 'effort': 'low'}}, 'local.json')
     global_config = _write(
         tmp_path, {'default_model': {'account': 'work', 'model': 'old', 'effort': 'high'}}, 'global.json'
@@ -52,7 +55,7 @@ def test_the_project_default_model_wins_over_the_global_one(tmp_path):
     assert config.default_model.model == 'new'
 
 
-def test_a_file_that_sets_no_default_leaves_the_other_one_standing(tmp_path):
+def test_a_file_that_sets_no_default_leaves_the_other_one_standing(tmp_path: Path) -> None:
     local = _write(tmp_path, {'agents': {}}, 'local.json')
     global_config = _write(
         tmp_path, {'default_model': {'account': 'work', 'model': 'old', 'effort': 'high'}}, 'global.json'
@@ -63,7 +66,7 @@ def test_a_file_that_sets_no_default_leaves_the_other_one_standing(tmp_path):
     assert config.default_model.model == 'old'
 
 
-def test_a_bad_default_model_is_reported_and_falls_back_one_file(tmp_path):
+def test_a_bad_default_model_is_reported_and_falls_back_one_file(tmp_path: Path) -> None:
     local = _write(tmp_path, {'default_model': {'account': 'work', 'model': 'new'}}, 'local.json')
     global_config = _write(
         tmp_path, {'default_model': {'account': 'work', 'model': 'old', 'effort': 'high'}}, 'global.json'
@@ -86,7 +89,7 @@ def _composition(tmp_path, monkeypatch, config: dict | None = None) -> tuple[Com
         _write(tmp_path, config)
     service = _service(tmp_path)
     _add(service)
-    monkeypatch.setattr('src.engine.bootstrap.build_service', lambda *args, **kwargs: service)
+    monkeypatch.setattr('src.core.bootstrap.build_service', lambda *args, **kwargs: service)
     composition = Composition(tmp_path, settings=load_settings({}), provider_paths=ProviderPaths(tmp_path / 'p'))
     return composition, service
 
@@ -95,7 +98,7 @@ def _reopen(tmp_path) -> Composition:
     return Composition(tmp_path, settings=load_settings({}), provider_paths=ProviderPaths(tmp_path / 'p'))
 
 
-def test_the_agent_model_beats_the_default_model(tmp_path, monkeypatch):
+def test_the_agent_model_beats_the_default_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     composition, _ = _composition(
         tmp_path,
         monkeypatch,
@@ -109,7 +112,7 @@ def test_the_agent_model_beats_the_default_model(tmp_path, monkeypatch):
     assert composition.session.selection.thinking == 'low'
 
 
-def test_the_default_model_beats_the_last_one_used(tmp_path, monkeypatch):
+def test_the_default_model_beats_the_last_one_used(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     composition, service = _composition(
         tmp_path, monkeypatch, {'default_model': {'account': 'work', 'model': 'second/model', 'effort': 'high'}}
     )
@@ -123,7 +126,7 @@ def test_the_default_model_beats_the_last_one_used(tmp_path, monkeypatch):
     assert _reopen(tmp_path).session.selection.model == 'second/model'
 
 
-def test_the_last_one_used_is_the_last_resort(tmp_path, monkeypatch):
+def test_the_last_one_used_is_the_last_resort(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     composition, service = _composition(tmp_path, monkeypatch)
     assert composition.session.selection.model == 'first/model'
 
@@ -137,7 +140,9 @@ def test_the_last_one_used_is_the_last_resort(tmp_path, monkeypatch):
 # --- the change stays in its session ----------------------------------------
 
 
-def test_changing_the_model_reaches_only_the_session_it_changed_in(tmp_path, monkeypatch):
+def test_changing_the_model_reaches_only_the_session_it_changed_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     composition, service = _composition(tmp_path, monkeypatch)
     store = SessionStore(cwd=str(tmp_path), base_dir=tmp_path / 'sessions')
 
@@ -165,7 +170,9 @@ def test_changing_the_model_reaches_only_the_session_it_changed_in(tmp_path, mon
     assert store.load(first.id).selection.model == 'first/model'
 
 
-def test_a_session_without_a_model_gets_the_default_and_keeps_it(tmp_path, monkeypatch):
+def test_a_session_without_a_model_gets_the_default_and_keeps_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     composition, _ = _composition(
         tmp_path, monkeypatch, {'default_model': {'account': 'work', 'model': 'second/model', 'effort': 'high'}}
     )

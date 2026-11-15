@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from src.engine.sessions.session_store import SessionStore
-from src.engine.storage.accepted_inputs import (
+from src.core.sessions.session_store import SessionStore
+from src.core.storage.accepted_inputs import (
     AcceptedInputs,
     DeliveryConfirmation,
     DeliveryConflictError,
@@ -62,7 +62,7 @@ def test_failed_acceptance_does_not_materialize_draft(tmp_path: Path) -> None:
 
 
 def test_state_transitions_and_session_scoped_identifiers(tmp_path: Path) -> None:
-    from src.engine.storage.accepted_inputs import AcceptedInputs
+    from src.core.storage.accepted_inputs import AcceptedInputs
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'db')
     first = store.draft_session()
@@ -100,7 +100,7 @@ def test_injected_enqueue_failure_rolls_back_draft(tmp_path: Path) -> None:
 
 
 def test_canonical_encoding_preserves_unicode_order_and_content() -> None:
-    from src.engine.storage.accepted_inputs import _canonical
+    from src.core.storage.accepted_inputs import _canonical
 
     first = ImageInput(b'first\x00', 'image/png')
     second = ImageInput(b'second', 'image/jpeg')
@@ -113,7 +113,7 @@ def test_canonical_encoding_preserves_unicode_order_and_content() -> None:
 
 
 def test_multiple_images_retry_uses_persisted_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.engine.storage import accepted_inputs as module
+    from src.core.storage import accepted_inputs as module
 
     ids = iter(['img_first', 'img_second', 'img_unwanted'])
     monkeypatch.setattr(module, 'new_image_id', lambda: next(ids))
@@ -158,7 +158,7 @@ def test_invalid_request_ids_do_not_persist(tmp_path: Path, identifier: str) -> 
 
 
 def test_transition_rollback_preserves_prior_state(tmp_path: Path) -> None:
-    from src.engine.storage.accepted_inputs import AcceptedInputs
+    from src.core.storage.accepted_inputs import AcceptedInputs
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'db')
     session = store.draft_session()
@@ -180,7 +180,7 @@ def test_transition_rollback_preserves_prior_state(tmp_path: Path) -> None:
 def test_invalid_transitions_leave_state_unchanged(tmp_path: Path, start: str, end: str) -> None:
     from typing import cast
 
-    from src.engine.storage.accepted_inputs import AcceptedInputs, InputState
+    from src.core.storage.accepted_inputs import AcceptedInputs, InputState
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'db')
     session = store.draft_session()
@@ -212,7 +212,7 @@ def test_invalid_transitions_leave_state_unchanged(tmp_path: Path, start: str, e
 def test_all_approved_transitions(tmp_path: Path, path: tuple[str, ...], target: str) -> None:
     from typing import cast
 
-    from src.engine.storage.accepted_inputs import AcceptedInputs, InputState
+    from src.core.storage.accepted_inputs import AcceptedInputs, InputState
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'db')
     session = store.draft_session()
@@ -250,7 +250,7 @@ def test_direct_transition_to_delivered_is_rejected_with_and_without_conn(tmp_pa
 def test_a_checkpoint_writes_transcript_and_delivery_together(tmp_path: Path) -> None:
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
-    from src.engine.storage.database import Database, database_path
+    from src.core.storage.database import Database, database_path
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'db')
     session = store.draft_session()
@@ -484,7 +484,7 @@ def test_persisted_payload_and_fingerprint_are_versioned(tmp_path: Path) -> None
     import hashlib
     import json
 
-    from src.engine.storage.accepted_inputs import _canonical
+    from src.core.storage.accepted_inputs import _canonical
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'db')
     session = store.draft_session()
@@ -500,7 +500,7 @@ def test_persisted_payload_and_fingerprint_are_versioned(tmp_path: Path) -> None
 
 
 def test_digest_collision_cannot_hide_different_content(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.engine.storage import accepted_inputs as module
+    from src.core.storage import accepted_inputs as module
 
     class ConstantDigest:
         def hexdigest(self) -> str:
@@ -520,7 +520,7 @@ def test_digest_collision_cannot_hide_different_content(tmp_path: Path, monkeypa
 
 
 def test_distinct_requests_with_identical_text_are_distinct_messages(tmp_path: Path) -> None:
-    from src.engine.storage.accepted_inputs import AcceptedInputs
+    from src.core.storage.accepted_inputs import AcceptedInputs
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'db')
     session = store.draft_session()
@@ -542,7 +542,7 @@ def test_the_open_row_question_is_answered_from_a_partial_index(tmp_path: Path) 
     SQLite reports for the query the runtime actually runs — `OPEN_INPUTS_SQL`, not a
     copy of it — rather than the intention behind the index.
     """
-    from src.engine.storage.accepted_inputs import OPEN_INPUTS_SQL
+    from src.core.storage.accepted_inputs import OPEN_INPUTS_SQL
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'db')
     plan = ' '.join(str(row['detail']) for row in store.database.query(f'EXPLAIN QUERY PLAN {OPEN_INPUTS_SQL}'))

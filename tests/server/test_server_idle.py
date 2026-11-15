@@ -33,21 +33,19 @@ import httpx
 import pytest
 from pydantic_ai.models.test import TestModel
 
-from src.engine.bootstrap import Composition
-from src.engine.settings import load_settings
-from src.engine.storage.accepted_inputs import AcceptedInputs, DeliveryConfirmation, confirm_delivery
-from src.engine.storage.database import database_path
-from src.server.app import GracefulStop
+from src.core.bootstrap import Composition
+from src.core.settings import load_settings
+from src.core.storage.accepted_inputs import AcceptedInputs, DeliveryConfirmation, confirm_delivery
+from src.core.storage.database import database_path
 from src.server.cli import build_parser
-from src.server.endpoint import read_endpoint
-from src.server.events import EventHub
-from src.server.launch import live_endpoint
-from src.server.runtime import (
-    IDLE_POLL_INTERVAL,
-    IdleShutdown,
-    PendingQuestion,
-    ServerRuntime,
-)
+from src.server.endpoint_file import read_endpoint
+from src.server.event_hub import EventHub
+from src.server.graceful_stop import GracefulStop
+from src.server.idle_shutdown import IdleShutdown
+from src.server.pending_question import PendingQuestion
+from src.server.runtime_support import IDLE_POLL_INTERVAL
+from src.server.server_runtime import ServerRuntime
+from src.server.service_launch import live_endpoint
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -67,7 +65,7 @@ EXIT_DEADLINE = 60.0
 
 
 def _paths(tmp_path: Path):
-    from src.engine.providers.bootstrap import ProviderPaths
+    from src.core.providers.bootstrap import ProviderPaths
 
     home = tmp_path / '.sigil'
     home.mkdir(exist_ok=True)
@@ -487,15 +485,16 @@ sys.path.insert(0, {root!r})
 import uvicorn
 from pydantic_ai.models.test import TestModel
 
-from src.engine.bootstrap import Composition
-from src.engine.settings import load_settings
-from src.server.app import GracefulStop, create_app
+from src.core.bootstrap import Composition
+from src.core.settings import load_settings
+from src.server.graceful_stop import GracefulStop
+from src.server.app import create_app
 from src.server.cli import listening_socket
-from src.server.config import ServerConfig
-from src.server.endpoint import EndpointPublisher
-from src.server.events import EventHub
-from src.server.ownership import ServerOwnership
-from src.server.runtime import ServerRuntime
+from src.server.server_config import ServerConfig
+from src.server.endpoint_publisher import EndpointPublisher
+from src.server.event_hub import EventHub
+from src.server.server_ownership import ServerOwnership
+from src.server.server_runtime import ServerRuntime
 
 composition = Composition(
     {workspace!r},
@@ -534,7 +533,8 @@ import sys
 
 sys.path.insert(0, {root!r})
 
-from src.server.ownership import OwnershipError, ServerOwnership
+from src.server.ownership_error import OwnershipError
+from src.server.server_ownership import ServerOwnership
 
 try:
     ServerOwnership({database!r}).acquire()

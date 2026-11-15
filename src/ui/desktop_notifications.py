@@ -10,28 +10,11 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass
-from enum import StrEnum
 
-from src.ui.window_title import compose
+from src.ui.attention import Attention
+from src.ui.notification_context import NotificationContext
 
 DELIVERY_TIMEOUT = 3
-
-
-class Attention(StrEnum):
-    FINISHED = 'Turn finished. Your response is ready.'
-    FAILED = 'Turn failed. Open Sigil for details.'
-    QUESTION = 'A question is waiting for your answer.'
-
-
-@dataclass(frozen=True, slots=True)
-class NotificationContext:
-    project: str = ''
-    conversation: str = ''
-
-    @property
-    def title(self) -> str:
-        return compose(self.project, self.conversation) or 'Sigil'
 
 
 EMPTY_CONTEXT = NotificationContext()

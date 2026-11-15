@@ -20,8 +20,8 @@ from pydantic_ai.messages import BinaryImage, ModelMessage, ModelRequest, ModelR
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 
-from src.engine.attachments.tools import image_id_for, is_url, register_image_tools
-from src.engine.files.models.file_tool_error import FileToolError
+from src.core.attachments.tools import image_id_for, is_url, register_image_tools
+from src.core.files.models.file_tool_error import FileToolError
 
 # --- helpers ---------------------------------------------------------------
 
@@ -77,24 +77,24 @@ def _older_round(identifier: str) -> list[ModelMessage]:
         ('', False),
     ],
 )
-def test_a_url_is_told_apart_from_a_path(source, expected):
+def test_a_url_is_told_apart_from_a_path(source, expected) -> None:
     assert is_url(source) is expected
 
 
-def test_an_id_is_stable_for_the_same_source():
+def test_an_id_is_stable_for_the_same_source() -> None:
     """The same URL is the same picture: asking twice must not mint a second id."""
     assert image_id_for('https://example.com/a.png') == image_id_for('https://example.com/a.png')
     assert image_id_for('https://example.com/a.png') != image_id_for('https://example.com/b.png')
 
 
-def test_an_id_looks_like_the_ones_the_cache_understands():
+def test_an_id_looks_like_the_ones_the_cache_understands() -> None:
     assert image_id_for('/tmp/shot.png').startswith('img_')
 
 
 # --- from the session ------------------------------------------------------
 
 
-def test_an_image_from_the_session_comes_back_as_an_image():
+def test_an_image_from_the_session_comes_back_as_an_image() -> None:
     result = _call(_older_round('img_aaaaaaaa'), 'img_aaaaaaaa')
 
     assert isinstance(result, ToolReturn)
@@ -104,7 +104,7 @@ def test_an_image_from_the_session_comes_back_as_an_image():
     assert only.is_image
 
 
-def test_the_answer_is_a_short_line_and_the_pixels_travel_beside_it():
+def test_the_answer_is_a_short_line_and_the_pixels_travel_beside_it() -> None:
     result = _call(_older_round('img_aaaaaaaa'), 'img_aaaaaaaa')
 
     assert isinstance(result.return_value, str)
@@ -112,7 +112,7 @@ def test_the_answer_is_a_short_line_and_the_pixels_travel_beside_it():
     assert len(result.return_value) < 120
 
 
-def test_the_picture_is_the_one_that_was_pasted():
+def test_the_picture_is_the_one_that_was_pasted() -> None:
     """The bytes are re-encoded on the way out; the picture has to be the same one."""
     image = _image('img_aaaaaaaa')
     history = [
@@ -128,13 +128,13 @@ def test_the_picture_is_the_one_that_was_pasted():
     assert returned.media_type.startswith('image/')
 
 
-def test_an_unknown_id_raises_a_tool_error():
+def test_an_unknown_id_raises_a_tool_error() -> None:
     with pytest.raises(FileToolError) as error:
         _call(_carrying('img_aaaaaaaa'), 'img_deadbeef')
     assert 'img_deadbeef' in str(error.value)
 
 
-def test_an_empty_source_raises_a_tool_error():
+def test_an_empty_source_raises_a_tool_error() -> None:
     with pytest.raises(FileToolError):
         _call(_carrying('img_aaaaaaaa'), '   ')
 
@@ -142,7 +142,7 @@ def test_an_empty_source_raises_a_tool_error():
 # --- the loop guard --------------------------------------------------------
 
 
-def test_a_picture_the_round_already_carries_is_not_sent_again():
+def test_a_picture_the_round_already_carries_is_not_sent_again() -> None:
     """The loop guard: asking twice in a round costs one sentence, not the pixels."""
     history = [
         *_carrying('img_aaaaaaaa'),
@@ -157,7 +157,7 @@ def test_a_picture_the_round_already_carries_is_not_sent_again():
     assert 'already attached' in result.return_value
 
 
-def test_a_picture_from_a_finished_round_is_sent_again():
+def test_a_picture_from_a_finished_round_is_sent_again() -> None:
     """A new round starts clean: the guard is per round, not forever."""
     history = [
         *_carrying('img_aaaaaaaa', run='r1'),
@@ -173,7 +173,7 @@ def test_a_picture_from_a_finished_round_is_sent_again():
 # --- from a path -----------------------------------------------------------
 
 
-def test_an_image_is_loaded_from_a_path(tmp_path):
+def test_an_image_is_loaded_from_a_path(tmp_path: Path) -> None:
     target = tmp_path / 'shot.png'
     target.write_bytes(_png())
 
@@ -191,7 +191,7 @@ def test_an_image_is_loaded_from_a_path(tmp_path):
     assert only.identifier.startswith('img_')
 
 
-def test_a_path_that_is_not_an_image_says_so(tmp_path):
+def test_a_path_that_is_not_an_image_says_so(tmp_path: Path) -> None:
     target = tmp_path / 'notes.txt'
     target.write_text('hola')
 
@@ -200,7 +200,7 @@ def test_a_path_that_is_not_an_image_says_so(tmp_path):
     assert 'not an image' in str(error.value)
 
 
-def test_a_path_outside_the_workspace_is_refused():
+def test_a_path_outside_the_workspace_is_refused() -> None:
     with pytest.raises(FileToolError) as error:
         _call([], '/etc/hosts')
     assert 'outside the workspace' in str(error.value)
@@ -208,7 +208,7 @@ def test_a_path_outside_the_workspace_is_refused():
 
 @pytest.mark.parametrize('source', ['img_aaaaaaaa', '[Image #1]', 'https://example.com/image.png'])
 def test_should_skip_loading_and_decoding_an_attached_source(source: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.engine.attachments import tools
+    from src.core.attachments import tools
 
     identifier = image_id_for(source) if is_url(source) else source
     history = _carrying(identifier)
@@ -242,7 +242,7 @@ def test_should_skip_path_io_for_an_attached_image(tmp_path: Path, monkeypatch: 
 def test_should_check_path_authorization_even_for_an_attached_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from src.engine.files import paths
+    from src.core.files import paths
 
     workspace = tmp_path / 'workspace'
     workspace.mkdir()

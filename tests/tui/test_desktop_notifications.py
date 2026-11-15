@@ -8,7 +8,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from src.ui.desktop_notifications import Attention, notification_command, send_notification
+from src.ui.attention import Attention
+from src.ui.desktop_notifications import notification_command, send_notification
 
 
 @pytest.mark.parametrize('event', list(Attention))
@@ -79,7 +80,7 @@ def test_should_deliver_literal_arguments_through_real_subprocess(
 
 
 def test_should_include_project_and_title_without_unsafe_applescript_interpolation() -> None:
-    from src.ui.desktop_notifications import NotificationContext
+    from src.ui.notification_context import NotificationContext
 
     context = NotificationContext('repo:worktree', 'Title "quoted"\nnext \\ end')
     linux = notification_command(Attention.QUESTION, context, platform='linux', which=lambda name: name)
@@ -92,7 +93,7 @@ def test_should_include_project_and_title_without_unsafe_applescript_interpolati
 
 
 def test_should_fall_back_without_exposing_message_content() -> None:
-    from src.ui.desktop_notifications import NotificationContext
+    from src.ui.notification_context import NotificationContext
 
     command = notification_command(
         Attention.FINISHED, NotificationContext('', ''), platform='linux', which=lambda name: name

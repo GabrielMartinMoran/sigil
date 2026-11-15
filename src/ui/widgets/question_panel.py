@@ -22,9 +22,9 @@ from textual.containers import VerticalScroll
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from src.engine.interaction.models.question_answer import QuestionAnswer
-from src.engine.interaction.models.question_item import QuestionItem
-from src.engine.interaction.models.question_option import QuestionOption
+from src.core.interaction.models.question_answer import QuestionAnswer
+from src.core.interaction.models.question_item import QuestionItem
+from src.core.interaction.models.question_option import QuestionOption
 from src.ui.widgets.reading import SCROLL_DOWN_KEY, SCROLL_LINES, SCROLL_UP_KEY, current_pane, scroll_pane
 
 CUSTOM_ID = '__custom__'

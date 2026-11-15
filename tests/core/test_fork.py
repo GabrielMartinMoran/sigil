@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
-from src.engine.agents.rollback import Rollback, RollbackError
-from src.engine.roadmap.models.todo_item import TodoItem
-from src.engine.roadmap.stores import RoadmapStores
-from src.engine.sessions.session_store import SessionStore
-from src.engine.storage.database import Database, database_path
+from src.core.agents.rollback import Rollback, RollbackError
+from src.core.roadmap.models.todo_item import TodoItem
+from src.core.roadmap.roadmap_stores import RoadmapStores
+from src.core.sessions.session_store import SessionStore
+from src.core.storage.database import Database, database_path
 
 
 def _turn(index: int) -> list:
@@ -26,7 +28,7 @@ def _session(tmp_path):
     return store, store.create_session()
 
 
-def test_a_fork_copies_the_prefix_and_leaves_the_original(tmp_path):
+def test_a_fork_copies_the_prefix_and_leaves_the_original(tmp_path: Path) -> None:
     store, session = _session(tmp_path)
     session.messages = _turn(0) + _turn(1) + _turn(2)
     store.save(session)
@@ -46,7 +48,7 @@ def test_a_fork_copies_the_prefix_and_leaves_the_original(tmp_path):
     assert outcome.turns_copied == 1
 
 
-def test_a_fork_is_a_session_of_its_own(tmp_path):
+def test_a_fork_is_a_session_of_its_own(tmp_path: Path) -> None:
     store, session = _session(tmp_path)
     session.messages = _turn(0) + _turn(1)
     session.title = 'the original'
@@ -65,7 +67,7 @@ def test_a_fork_is_a_session_of_its_own(tmp_path):
     assert forked.root_id == forked.tree.root.id
 
 
-def test_the_fork_keeps_the_plan_of_the_instant_it_branched(tmp_path):
+def test_the_fork_keeps_the_plan_of_the_instant_it_branched(tmp_path: Path) -> None:
     store, session = _session(tmp_path)
     plans = RoadmapStores(session_id=session.id, base_dir=tmp_path / 'home')
     session.messages = _turn(0)
@@ -89,7 +91,7 @@ def test_the_fork_keeps_the_plan_of_the_instant_it_branched(tmp_path):
     assert [item.title for item in plans.root.snapshot()] == ['step one', 'step two']
 
 
-def test_a_fork_does_not_touch_the_workspace(tmp_path):
+def test_a_fork_does_not_touch_the_workspace(tmp_path: Path) -> None:
     """Nothing is being undone, so there is nothing to rewind. That is the difference."""
     store, session = _session(tmp_path)
     workspace = tmp_path / 'ws'
@@ -104,7 +106,7 @@ def test_a_fork_does_not_touch_the_workspace(tmp_path):
     assert (workspace / 'file.txt').read_text() == 'written during the turn'
 
 
-def test_the_fork_shares_the_blobs_of_the_original(tmp_path):
+def test_the_fork_shares_the_blobs_of_the_original(tmp_path: Path) -> None:
     """Content addressing means a fork does not duplicate a single instruction block."""
     store, session = _session(tmp_path)
     session.messages = _turn(0) + _turn(1)
@@ -118,7 +120,7 @@ def test_the_fork_shares_the_blobs_of_the_original(tmp_path):
     assert after == before
 
 
-def test_forking_a_turn_that_does_not_exist_is_refused(tmp_path):
+def test_forking_a_turn_that_does_not_exist_is_refused(tmp_path: Path) -> None:
     store, session = _session(tmp_path)
     session.messages = _turn(0)
     store.save(session)
@@ -127,7 +129,7 @@ def test_forking_a_turn_that_does_not_exist_is_refused(tmp_path):
         Rollback(store, workspace=store.cwd).fork_to(session.id, 'nope')
 
 
-def test_the_fork_can_be_rolled_back_and_written_to(tmp_path):
+def test_the_fork_can_be_rolled_back_and_written_to(tmp_path: Path) -> None:
     """The copy is independent: writing to one must not move the other."""
     store, session = _session(tmp_path)
     session.messages = _turn(0) + _turn(1)

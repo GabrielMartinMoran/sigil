@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.engine.agents.profile.registry import AgentRegistry
+from src.core.agents.profile.agent_registry import AgentRegistry
 
 FRONTMATTER = '---\nname: {name}\ndescription: {description}\n{extra}---\n{body}\n'
 

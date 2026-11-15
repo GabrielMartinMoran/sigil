@@ -12,7 +12,6 @@ guessing a name that does not exist would leave the session with no behaviour.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import ClassVar
 
 from textual.app import ComposeResult
@@ -20,33 +19,10 @@ from textual.binding import Binding
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from src.engine.agents.profile.models.agent_profile import AgentProfile
+from src.core.agents.profile.models.agent_profile import AgentProfile
+from src.ui.widgets.agent_choice import AgentChoice
+from src.ui.widgets.agent_picker_row import AgentPickerRow
 from src.ui.widgets.provider_modal import ProviderModal
-
-
-@dataclass(frozen=True, slots=True)
-class AgentChoice:
-    """The profile the user picked."""
-
-    name: str
-
-
-@dataclass(frozen=True, slots=True)
-class AgentPickerRow:
-    """Display data only: remote profiles do not imply local filesystem paths."""
-
-    name: str
-    description: str
-    source: str
-    permissions: str
-
-    @property
-    def label(self) -> str:
-        return self.name.replace('-', ' ').replace('_', ' ').title()
-
-    @classmethod
-    def from_profile(cls, profile: AgentProfile) -> AgentPickerRow:
-        return cls(profile.name, profile.description, profile.source, profile.permissions.describe())
 
 
 class AgentPickerScreen(ProviderModal):

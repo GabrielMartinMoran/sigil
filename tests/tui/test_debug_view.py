@@ -10,13 +10,14 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-from src.engine.context.capability import ContextViewCapability
-from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.context.strategy.append_only import AppendOnlyStrategy
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
+from src.core.context.capability import ContextViewCapability
+from src.core.context.meter.context_meter import ContextMeter
+from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.agent_debug_view import AgentDebugView
 from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.debug_view import AgentDebugView, build_debug_body, build_debug_header
+from src.ui.widgets.debug_body import build_debug_body, build_debug_header
 from src.ui.widgets.prompt_input import PromptInput
 from tests.support.ui import wait_for_turn
 
@@ -45,7 +46,7 @@ def _header_text(app: SigilApp) -> str:
 
 def _report_text(app: SigilApp) -> str:
     """The view body is painted as tables: to assert, the report is rendered."""
-    from src.engine.context.meter.debug_render import render_debug_report
+    from src.core.context.meter.debug_render import render_debug_report
 
     report = app.query_one(AgentDebugView).last_report
     assert report is not None
@@ -57,9 +58,9 @@ def _chat_text(app: SigilApp) -> str:
     return '\n'.join(getattr(child.render(), 'plain', '') for child in chat.children if callable(child.render))
 
 
-def test_alt_d_replaces_chat_with_debug_view(monkeypatch):
+def test_alt_d_replaces_chat_with_debug_view(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(tmp)
             async with app.run_test() as pilot:
@@ -86,9 +87,9 @@ def test_alt_d_replaces_chat_with_debug_view(monkeypatch):
     asyncio.run(inner())
 
 
-def test_debug_view_renders_agent_side_sections(monkeypatch):
+def test_debug_view_renders_agent_side_sections(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(tmp)
             async with app.run_test() as pilot:
@@ -112,9 +113,9 @@ def test_debug_view_renders_agent_side_sections(monkeypatch):
     asyncio.run(inner())
 
 
-def test_debug_command_toggles_and_text_mode(monkeypatch):
+def test_debug_command_toggles_and_text_mode(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(tmp)
             async with app.run_test() as pilot:
@@ -134,9 +135,9 @@ def test_debug_command_toggles_and_text_mode(monkeypatch):
     asyncio.run(inner())
 
 
-def test_debug_command_rejects_bad_argument(monkeypatch):
+def test_debug_command_rejects_bad_argument(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(tmp)
             async with app.run_test() as pilot:
@@ -148,10 +149,10 @@ def test_debug_command_rejects_bad_argument(monkeypatch):
     asyncio.run(inner())
 
 
-def test_report_without_request_does_not_raise(monkeypatch):
+def test_report_without_request_does_not_raise(monkeypatch: pytest.MonkeyPatch) -> None:
     """With no request run, the view paints anyway (no tool data)."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(tmp)
             async with app.run_test() as pilot:
@@ -168,10 +169,10 @@ def test_report_without_request_does_not_raise(monkeypatch):
     asyncio.run(inner())
 
 
-def test_refresh_is_coalesced_while_streaming(monkeypatch):
+def test_refresh_is_coalesced_while_streaming(monkeypatch: pytest.MonkeyPatch) -> None:
     """Several refreshes in a burst produce a single repaint."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(tmp)
             async with app.run_test() as pilot:
@@ -181,7 +182,7 @@ def test_refresh_is_coalesced_while_streaming(monkeypatch):
                 paints = 0
                 original = app._flush_debug
 
-                def counting_flush():
+                def counting_flush() -> None:
                     nonlocal paints
                     paints += 1
                     original()
@@ -200,9 +201,9 @@ def test_refresh_is_coalesced_while_streaming(monkeypatch):
     asyncio.run(inner())
 
 
-def test_closing_cancels_a_pending_refresh(monkeypatch):
+def test_closing_cancels_a_pending_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(tmp)
             async with app.run_test() as pilot:
@@ -220,10 +221,10 @@ def test_closing_cancels_a_pending_refresh(monkeypatch):
     asyncio.run(inner())
 
 
-def test_header_and_body_are_plain_renderables():
+def test_header_and_body_are_plain_renderables() -> None:
     """The widget builders are pure: they do not need a mounted app."""
-    from src.engine.context.meter.debug import build_debug_report
-    from src.engine.context.meter.request import snapshot_request
+    from src.core.context.meter.debug import build_debug_report
+    from src.core.context.meter.request import snapshot_request
 
     meter = ContextMeter(window=1_000)
     report = build_debug_report([], snapshot=meter.snapshot([]), request=snapshot_request(None), model='m')
@@ -254,11 +255,11 @@ def test_should_expose_real_turn_node_timings_in_debug_text() -> None:
     asyncio.run(scenario())
 
 
-def test_rendered_debug_tables_do_not_contain_message_content():
+def test_rendered_debug_tables_do_not_contain_message_content() -> None:
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
-    from src.engine.context.meter.debug import build_debug_report
-    from src.engine.context.meter.request import snapshot_request
+    from src.core.context.meter.debug import build_debug_report
+    from src.core.context.meter.request import snapshot_request
     from tests.support.ui import render_text
 
     messages = [ModelRequest(parts=[UserPromptPart(content='private-debug-sentinel')])]
@@ -269,10 +270,10 @@ def test_rendered_debug_tables_do_not_contain_message_content():
         assert 'History composition' in body
 
 
-def test_dynamic_instruction_rows_are_highlighted_without_coloring_static_rows():
-    from src.engine.context.meter.debug import build_debug_report
-    from src.engine.context.meter.request import InstructionRow, RequestSnapshot
-    from src.ui.widgets.debug_view import _fixed_cost_table
+def test_dynamic_instruction_rows_are_highlighted_without_coloring_static_rows() -> None:
+    from src.core.context.meter.debug import build_debug_report
+    from src.core.context.meter.request import InstructionRow, RequestSnapshot
+    from src.ui.widgets.debug_body import _fixed_cost_table
 
     report = build_debug_report(
         [],
@@ -290,7 +291,7 @@ def test_dynamic_instruction_rows_are_highlighted_without_coloring_static_rows()
     assert table.rows[1].style == '#ffaf5f'
 
 
-def test_debug_refresh_uses_live_history_instead_of_stale_session():
+def test_debug_refresh_uses_live_history_instead_of_stale_session() -> None:
     from pydantic_ai.messages import ModelResponse, TextPart
     from pydantic_ai.usage import RequestUsage
 
@@ -298,7 +299,7 @@ def test_debug_refresh_uses_live_history_instead_of_stale_session():
         def all_messages(self):
             return [ModelResponse(parts=[TextPart('ok')], usage=RequestUsage(input_tokens=100, output_tokens=10))]
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(tmp)
             async with app.run_test() as pilot:
@@ -312,9 +313,9 @@ def test_debug_refresh_uses_live_history_instead_of_stale_session():
 
 
 def test_should_roundtrip_content_free_report_without_losing_styled_tables() -> None:
-    from src.engine.context.meter.debug import build_debug_report
-    from src.engine.context.meter.debug_wire import DEBUG_REPORT_ADAPTER
-    from src.engine.context.meter.request import InstructionRow, RequestSnapshot
+    from src.core.context.meter.debug import build_debug_report
+    from src.core.context.meter.debug_snapshot import DEBUG_REPORT_ADAPTER
+    from src.core.context.meter.request import InstructionRow, RequestSnapshot
     from tests.support.ui import render_text
 
     report = build_debug_report(
@@ -331,7 +332,7 @@ def test_should_roundtrip_content_free_report_without_losing_styled_tables() -> 
 def test_should_dispatch_debug_events_without_requiring_a_mounted_chat() -> None:
     from types import SimpleNamespace
 
-    from src.ui.service_client import ServiceEvent
+    from src.ui.service_event import ServiceEvent
 
     refreshes: list[bool] = []
     host = SimpleNamespace(refresh_debug=lambda: refreshes.append(True))

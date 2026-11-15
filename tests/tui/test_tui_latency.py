@@ -8,9 +8,11 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
 
-from src.engine.workspace.diff import DiffStat
+import pytest
+
+from src.core.workspace.models.diff_stat import DiffStat
 from src.ui.activity_mixin import ActivityMixin
-from src.ui.widgets.status_bar import WorkspaceBadge
+from src.ui.widgets.workspace_badge import WorkspaceBadge
 
 
 class DiffView(ActivityMixin):
@@ -35,7 +37,7 @@ async def _refresh(view: DiffView) -> None:
     await ActivityMixin.refresh_diff.__wrapped__(view)
 
 
-def test_should_read_git_off_the_ui_thread(monkeypatch) -> None:
+def test_should_read_git_off_the_ui_thread(monkeypatch: pytest.MonkeyPatch) -> None:
     threads: list[int] = []
     diff = DiffStat(added=2)
 
@@ -52,7 +54,7 @@ def test_should_read_git_off_the_ui_thread(monkeypatch) -> None:
     assert view.badge_threads and view.badge_threads[0] != threading.get_ident()
 
 
-def test_should_coalesce_polls_and_discard_a_stale_workspace(monkeypatch) -> None:
+def test_should_coalesce_polls_and_discard_a_stale_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
     started = threading.Event()
     release = threading.Event()
     calls: list[str] = []
@@ -84,7 +86,7 @@ def test_should_coalesce_polls_and_discard_a_stale_workspace(monkeypatch) -> Non
     asyncio.run(scenario())
 
 
-def test_should_retry_the_status_read_after_a_git_failure(monkeypatch) -> None:
+def test_should_retry_the_status_read_after_a_git_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     view = DiffView()
     read_badge = Mock(side_effect=[RuntimeError('Git unavailable'), WorkspaceBadge(branch='recovered')])
     monkeypatch.setattr(view, 'workspace_badge', read_badge)

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from src.engine.storage.schema import SCHEMA, USER_VERSION
+from src.core.storage.schema import SCHEMA, USER_VERSION
 
 DOC = Path(__file__).resolve().parents[2] / 'docs' / 'storage.md'
 
@@ -42,7 +42,7 @@ def _describe(sql: str) -> tuple[dict[str, set[str]], dict[str, list[str]]]:
 
 
 @pytest.mark.parametrize('kind', ['table', 'index', 'trigger'])
-def test_the_document_publishes_the_objects_the_code_creates(kind: str):
+def test_the_document_publishes_the_objects_the_code_creates(kind: str) -> None:
     documented, _ = _describe(_documented_ddl())
     code, _ = _describe(SCHEMA)
 
@@ -50,7 +50,7 @@ def test_the_document_publishes_the_objects_the_code_creates(kind: str):
     assert code[kind] - documented[kind] == set(), f'{kind} only in the code'
 
 
-def test_the_document_publishes_the_columns_the_code_creates():
+def test_the_document_publishes_the_columns_the_code_creates() -> None:
     """A published column that does not exist is worse than no column at all."""
     _, documented = _describe(_documented_ddl())
     _, code = _describe(SCHEMA)
@@ -63,7 +63,7 @@ def test_the_document_publishes_the_columns_the_code_creates():
     assert drift == {}, f'columns drifted between the document and the code: {drift}'
 
 
-def test_the_schema_is_applied_whole_and_versioned():
+def test_the_schema_is_applied_whole_and_versioned() -> None:
     connection = sqlite3.connect(Path(tempfile.mkdtemp()) / 'version.db', isolation_level=None)
     connection.executescript(SCHEMA)
     connection.execute(f'PRAGMA user_version = {USER_VERSION}')

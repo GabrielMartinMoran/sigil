@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from src.engine.files import paths
-from src.engine.files.models.file_tool_error import FileToolError
-from src.engine.files.paths import resolve as resolve_path
-from src.engine.files.tools import register_file_tools
+from src.core.files import paths
+from src.core.files.models.file_tool_error import FileToolError
+from src.core.files.paths import resolve as resolve_path
+from src.core.files.tools import register_file_tools
 
 
 class DummyAgent:
@@ -35,7 +35,7 @@ def _tools():
     return agent.tools
 
 
-def test_write_and_read_roundtrip(tmp_path, monkeypatch):
+def test_write_and_read_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     tools = _tools()
     result = tools['write_file'](path='notes.txt', content='hello\n')
@@ -49,7 +49,7 @@ def test_write_and_read_roundtrip(tmp_path, monkeypatch):
     assert read.size == 6
 
 
-def test_read_line_range(tmp_path, monkeypatch):
+def test_read_line_range(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     Path('a.txt').write_text('one\ntwo\nthree\n')
     tools = _tools()
@@ -60,7 +60,7 @@ def test_read_line_range(tmp_path, monkeypatch):
     assert read.total_lines == 3
 
 
-def test_read_binary_returns_base64(tmp_path, monkeypatch):
+def test_read_binary_returns_base64(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     Path('bin.dat').write_bytes(b'\x00\x01\x02')
     tools = _tools()
@@ -69,7 +69,7 @@ def test_read_binary_returns_base64(tmp_path, monkeypatch):
     assert read.encoding == 'base64'
 
 
-def test_patch_string_mode(tmp_path, monkeypatch):
+def test_patch_string_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     Path('a.txt').write_text('one\ntwo\nthree\n')
     tools = _tools()
@@ -79,7 +79,7 @@ def test_patch_string_mode(tmp_path, monkeypatch):
     assert Path('a.txt').read_text() == 'one\nTWO\nthree\n'
 
 
-def test_patch_requires_unique_match(tmp_path, monkeypatch):
+def test_patch_requires_unique_match(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     Path('a.txt').write_text('x\nx\n')
     tools = _tools()
@@ -87,7 +87,7 @@ def test_patch_requires_unique_match(tmp_path, monkeypatch):
         tools['patch_file'](path='a.txt', old_string='x', new_string='y')
 
 
-def test_patch_replace_all(tmp_path, monkeypatch):
+def test_patch_replace_all(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     Path('a.txt').write_text('x\nx\n')
     tools = _tools()
@@ -96,7 +96,7 @@ def test_patch_replace_all(tmp_path, monkeypatch):
     assert Path('a.txt').read_text() == 'y\ny\n'
 
 
-def test_patch_line_mode(tmp_path, monkeypatch):
+def test_patch_line_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     Path('a.txt').write_text('one\ntwo\nthree\n')
     tools = _tools()
@@ -105,7 +105,7 @@ def test_patch_line_mode(tmp_path, monkeypatch):
     assert Path('a.txt').read_text() == 'one\nTWO\nthree\n'
 
 
-def test_patch_line_mode_validates_expected_text(tmp_path, monkeypatch):
+def test_patch_line_mode_validates_expected_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     Path('a.txt').write_text('one\ntwo\nthree\n')
     tools = _tools()
@@ -113,7 +113,9 @@ def test_patch_line_mode_validates_expected_text(tmp_path, monkeypatch):
         tools['patch_file'](path='a.txt', start_line=2, end_line=2, new_string='X', expected_text='wrong')
 
 
-def test_patch_line_mode_accepts_expected_text_without_trailing_newline(tmp_path, monkeypatch):
+def test_patch_line_mode_accepts_expected_text_without_trailing_newline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     Path('a.txt').write_text('one\ntwo\nthree\n')
     tools = _tools()
@@ -121,7 +123,7 @@ def test_patch_line_mode_accepts_expected_text_without_trailing_newline(tmp_path
     assert Path('a.txt').read_text() == 'one\nTWO\nthree\n'
 
 
-def test_patch_rejects_expected_text_in_string_mode(tmp_path, monkeypatch):
+def test_patch_rejects_expected_text_in_string_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     Path('a.txt').write_text('one\ntwo\n')
     tools = _tools()
@@ -129,7 +131,7 @@ def test_patch_rejects_expected_text_in_string_mode(tmp_path, monkeypatch):
         tools['patch_file'](path='a.txt', old_string='two', new_string='TWO', expected_text='two')
 
 
-def test_patch_preserves_crlf(tmp_path, monkeypatch):
+def test_patch_preserves_crlf(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     Path('a.txt').write_bytes(b'one\r\ntwo\r\nthree\r\n')
     tools = _tools()
@@ -140,7 +142,7 @@ def test_patch_preserves_crlf(tmp_path, monkeypatch):
     assert Path('a.txt').read_bytes() == b'one\r\nTWO\r\nTHREE\r\n'
 
 
-def test_patch_line_mode_keeps_missing_trailing_newline(tmp_path, monkeypatch):
+def test_patch_line_mode_keeps_missing_trailing_newline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     Path('a.txt').write_text('one\ntwo')
     tools = _tools()
@@ -148,7 +150,7 @@ def test_patch_line_mode_keeps_missing_trailing_newline(tmp_path, monkeypatch):
     assert Path('a.txt').read_text() == 'one\nTWO'
 
 
-def test_read_line_range_preserves_crlf(tmp_path, monkeypatch):
+def test_read_line_range_preserves_crlf(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     Path('a.txt').write_bytes(b'one\r\ntwo\r\nthree\r\n')
     tools = _tools()
@@ -157,7 +159,7 @@ def test_read_line_range_preserves_crlf(tmp_path, monkeypatch):
     assert read.total_lines == 3
 
 
-def test_read_truncated_utf8_is_not_reported_as_binary(tmp_path, monkeypatch):
+def test_read_truncated_utf8_is_not_reported_as_binary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     # 'ñ' is two bytes; a byte limit that lands between them must not turn a
     # text file into base64.
@@ -170,7 +172,7 @@ def test_read_truncated_utf8_is_not_reported_as_binary(tmp_path, monkeypatch):
     assert read.content == 'aaaaaaaaaa'
 
 
-def test_patch_rejects_path_outside_workspace(tmp_path, monkeypatch):
+def test_patch_rejects_path_outside_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """`..` cannot be used to leave the allowed trees."""
     _scratch(monkeypatch, tmp_path)
     # The sandbox of the test lives under `/tmp`, so the workspace would be
@@ -201,7 +203,7 @@ def _scratch(monkeypatch, tmp_path) -> Path:
     return scratch
 
 
-def test_write_file_creates_a_file_in_the_os_temp_directory(tmp_path, monkeypatch):
+def test_write_file_creates_a_file_in_the_os_temp_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     scratch = _scratch(monkeypatch, tmp_path)
     tools = _tools()
 
@@ -212,7 +214,9 @@ def test_write_file_creates_a_file_in_the_os_temp_directory(tmp_path, monkeypatc
     assert (scratch / 'notes.txt').read_text() == 'scratch\n'
 
 
-def test_write_file_creates_parent_directories_in_the_os_temp_directory(tmp_path, monkeypatch):
+def test_write_file_creates_parent_directories_in_the_os_temp_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     scratch = _scratch(monkeypatch, tmp_path)
     tools = _tools()
 
@@ -221,7 +225,7 @@ def test_write_file_creates_parent_directories_in_the_os_temp_directory(tmp_path
     assert (scratch / 'deep' / 'dir' / 'a.txt').read_text() == 'x'
 
 
-def test_read_file_reads_a_file_in_the_os_temp_directory(tmp_path, monkeypatch):
+def test_read_file_reads_a_file_in_the_os_temp_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     scratch = _scratch(monkeypatch, tmp_path)
     (scratch / 'log.txt').write_text('one\ntwo\n')
     tools = _tools()
@@ -230,7 +234,7 @@ def test_read_file_reads_a_file_in_the_os_temp_directory(tmp_path, monkeypatch):
     assert tools['read_file'](path=str(scratch / 'log.txt'), start_line=2, end_line=2).content == 'two\n'
 
 
-def test_patch_file_edits_a_file_in_the_os_temp_directory(tmp_path, monkeypatch):
+def test_patch_file_edits_a_file_in_the_os_temp_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     scratch = _scratch(monkeypatch, tmp_path)
     (scratch / 'log.txt').write_text('one\ntwo\n')
     tools = _tools()
@@ -241,7 +245,7 @@ def test_patch_file_edits_a_file_in_the_os_temp_directory(tmp_path, monkeypatch)
     assert (scratch / 'log.txt').read_text() == 'one\nTWO\n'
 
 
-def test_the_temp_directory_follows_tmpdir(tmp_path, monkeypatch):
+def test_the_temp_directory_follows_tmpdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``TMPDIR`` is the temp directory of the session, not a hard-coded ``/tmp``."""
     custom = tmp_path / 'custom-tmp'
     custom.mkdir()
@@ -257,7 +261,7 @@ def test_the_temp_directory_follows_tmpdir(tmp_path, monkeypatch):
     assert resolve_path(str(custom / 'a.txt')) == (custom / 'a.txt').resolve()
 
 
-def test_the_real_os_temp_directory_is_allowed(tmp_path, monkeypatch):
+def test_the_real_os_temp_directory_is_allowed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The path a shell redirect lands on has to be usable by the file tools."""
     monkeypatch.chdir(tmp_path)
     real = Path(tempfile.gettempdir()).resolve()
@@ -270,7 +274,7 @@ def test_the_real_os_temp_directory_is_allowed(tmp_path, monkeypatch):
 
 
 @pytest.mark.skipif(os.name == 'nt', reason='/tmp is a POSIX convention')
-def test_tmp_is_allowed_even_when_tmpdir_points_somewhere_else(tmp_path, monkeypatch):
+def test_tmp_is_allowed_even_when_tmpdir_points_somewhere_else(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """`/tmp` is where a command writes when nobody exports ``TMPDIR``."""
     custom = tmp_path / 'custom-tmp'
     custom.mkdir()
@@ -281,7 +285,7 @@ def test_tmp_is_allowed_even_when_tmpdir_points_somewhere_else(tmp_path, monkeyp
     assert resolve_path('/tmp/sigil-file-tools-probe.txt') == Path('/tmp/sigil-file-tools-probe.txt').resolve()
 
 
-def test_a_sibling_of_the_temp_directory_is_still_refused(tmp_path, monkeypatch):
+def test_a_sibling_of_the_temp_directory_is_still_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The allowance is the temp tree, not its parent: `..` does not climb out."""
     _scratch(monkeypatch, tmp_path)
     # See above: `tmp_path` lives under `/tmp`, which would otherwise cover the
@@ -294,7 +298,7 @@ def test_a_sibling_of_the_temp_directory_is_still_refused(tmp_path, monkeypatch)
     assert not (tmp_path / 'escaped.txt').exists()
 
 
-def test_write_creates_parent_directories(tmp_path, monkeypatch):
+def test_write_creates_parent_directories(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     tools = _tools()
     result = tools['write_file'](path='a/b/c.txt', content='x')
@@ -311,7 +315,7 @@ def _agent_with_files():
     return agent
 
 
-def test_mutating_file_tools_declare_a_concurrency_guard():
+def test_mutating_file_tools_declare_a_concurrency_guard() -> None:
     """Writes are not serialized blindly: they declare when they clash."""
     tools = _agent_with_files()._function_toolset.tools
 
@@ -338,7 +342,7 @@ def _run_two_calls(tmp_path, monkeypatch, calls):
     from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-    from src.engine.agents.tool_errors import ToolErrorRecovery
+    from src.core.agents.tool_errors import ToolErrorRecovery
 
     monkeypatch.chdir(tmp_path)
 
@@ -363,7 +367,7 @@ def _tool_returns(result):
     ]
 
 
-def test_two_patches_on_the_same_file_conflict(tmp_path, monkeypatch):
+def test_two_patches_on_the_same_file_conflict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The first goes through; the second fails instead of stomping on it silently."""
     Path(tmp_path / 'a.txt').write_text('one\ntwo\nthree\n')
 
@@ -383,7 +387,7 @@ def test_two_patches_on_the_same_file_conflict(tmp_path, monkeypatch):
     assert 'separate step' in str(returns[1].content)
 
 
-def test_patch_and_write_on_the_same_file_conflict(tmp_path, monkeypatch):
+def test_patch_and_write_on_the_same_file_conflict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     Path(tmp_path / 'a.txt').write_text('one\n')
 
     result = _run_two_calls(
@@ -399,7 +403,7 @@ def test_patch_and_write_on_the_same_file_conflict(tmp_path, monkeypatch):
     assert [part.outcome for part in _tool_returns(result)] == ['success', 'failed']
 
 
-def test_patches_on_different_files_run_in_parallel(tmp_path, monkeypatch):
+def test_patches_on_different_files_run_in_parallel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     Path(tmp_path / 'a.txt').write_text('one\n')
     Path(tmp_path / 'b.txt').write_text('two\n')
 
@@ -417,7 +421,7 @@ def test_patches_on_different_files_run_in_parallel(tmp_path, monkeypatch):
     assert [part.outcome for part in _tool_returns(result)] == ['success', 'success']
 
 
-def test_reading_a_file_does_not_conflict_with_editing_it(tmp_path, monkeypatch):
+def test_reading_a_file_does_not_conflict_with_editing_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     Path(tmp_path / 'a.txt').write_text('one\n')
 
     result = _run_two_calls(
@@ -433,7 +437,9 @@ def test_reading_a_file_does_not_conflict_with_editing_it(tmp_path, monkeypatch)
     assert [part.outcome for part in _tool_returns(result)] == ['success', 'success']
 
 
-def test_external_access_follows_current_session_for_all_file_tools(tmp_path, monkeypatch):
+def test_external_access_follows_current_session_for_all_file_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     monkeypatch.chdir(workspace)
@@ -465,19 +471,19 @@ def test_external_access_follows_current_session_for_all_file_tools(tmp_path, mo
 # --- execution workspace ------------------------------------------------------
 
 
-def test_unbound_root_is_the_process_directory(tmp_path, monkeypatch):
+def test_unbound_root_is_the_process_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     assert paths.workspace_root() == tmp_path.resolve()
 
 
-def test_a_composition_fallback_is_used_when_nothing_is_bound(tmp_path, monkeypatch):
+def test_a_composition_fallback_is_used_when_nothing_is_bound(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fallback = tmp_path / 'composed'
     fallback.mkdir()
     monkeypatch.chdir(tmp_path)
     assert paths.workspace_root(fallback) == fallback
 
 
-def test_nested_bindings_restore_the_previous_root(tmp_path):
+def test_nested_bindings_restore_the_previous_root(tmp_path: Path) -> None:
     outer, inner = tmp_path / 'outer', tmp_path / 'inner'
     outer.mkdir()
     inner.mkdir()
@@ -493,7 +499,7 @@ def test_nested_bindings_restore_the_previous_root(tmp_path):
     assert paths.workspace_root() == Path.cwd().resolve()
 
 
-def test_an_explicit_root_is_not_reinterpreted_as_a_fallback(tmp_path):
+def test_an_explicit_root_is_not_reinterpreted_as_a_fallback(tmp_path: Path) -> None:
     bound, explicit = tmp_path / 'bound', tmp_path / 'explicit'
     bound.mkdir()
     explicit.mkdir()
@@ -508,7 +514,7 @@ def test_an_explicit_root_is_not_reinterpreted_as_a_fallback(tmp_path):
 def test_should_read_only_requested_bytes_plus_truncation_probe(limit: int) -> None:
     import io
 
-    from src.engine.files.tools import _read_whole
+    from src.core.files.tools import _read_whole
 
     requests: list[int] = []
 
@@ -533,7 +539,7 @@ def test_should_read_only_requested_bytes_plus_truncation_probe(limit: int) -> N
 
 
 def test_should_slice_range_without_allocating_all_lines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.engine.files import tools
+    from src.core.files import tools
 
     target = tmp_path / 'lines.txt'
     target.write_bytes(b'one\r\ntwo\r\nthree\r\n')
@@ -552,8 +558,8 @@ def test_should_slice_range_without_allocating_all_lines(tmp_path: Path, monkeyp
 def test_should_preserve_legacy_range_normalization(
     tmp_path: Path, text: str, first: int | None, last: int | None
 ) -> None:
-    from src.engine.files.text import split_lines
-    from src.engine.files.tools import _read_line_range
+    from src.core.files.text import split_lines
+    from src.core.files.tools import _read_line_range
 
     target = tmp_path / 'lines.txt'
     target.write_bytes(text.encode())
@@ -572,7 +578,7 @@ def test_should_preserve_legacy_range_normalization(
 def test_should_match_split_line_boundaries_for_small_documents() -> None:
     from itertools import product
 
-    from src.engine.files.text import count_lines, line_boundary, split_lines
+    from src.core.files.text import count_lines, line_boundary, split_lines
 
     for length in range(6):
         for characters in product('a\n\r', repeat=length):
@@ -585,7 +591,7 @@ def test_should_match_split_line_boundaries_for_small_documents() -> None:
 
 @pytest.mark.parametrize('limit', [-100, -1, 8])
 def test_should_preserve_legacy_byte_slice_for_negative_and_exact_limits(tmp_path: Path, limit: int) -> None:
-    from src.engine.files.tools import _read_whole
+    from src.core.files.tools import _read_whole
 
     target = tmp_path / 'input'
     raw = b'abcdefgh'
@@ -596,7 +602,7 @@ def test_should_preserve_legacy_byte_slice_for_negative_and_exact_limits(tmp_pat
 
 
 def test_should_reject_invalid_utf8_even_outside_the_selected_lines(tmp_path: Path) -> None:
-    from src.engine.files.tools import _read_line_range
+    from src.core.files.tools import _read_line_range
 
     target = tmp_path / 'input'
     target.write_bytes(b'first\n\xff\n')

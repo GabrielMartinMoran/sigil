@@ -2,13 +2,13 @@
 
 from dataclasses import replace
 
-from src.engine.context.compaction.events import CompactionEvent
-from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.context.meter.debug import DebugTurn, build_debug_report
-from src.engine.context.meter.debug_render import render_debug_report
-from src.engine.context.meter.debug_wire import DEBUG_REPORT_ADAPTER
-from src.engine.context.meter.request import RequestSnapshot
-from src.engine.context.strategy.append_only import AppendOnlyStrategy
+from src.core.context.compaction.events import CompactionEvent
+from src.core.context.meter.context_meter import ContextMeter
+from src.core.context.meter.debug import DebugTurn, build_debug_report
+from src.core.context.meter.debug_render import render_debug_report
+from src.core.context.meter.debug_snapshot import DEBUG_REPORT_ADAPTER
+from src.core.context.meter.request import RequestSnapshot
+from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 
 
 def test_should_roundtrip_recorded_and_proposed_compaction_with_immutable_maps() -> None:

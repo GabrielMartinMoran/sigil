@@ -17,14 +17,17 @@ from typing import Any
 
 from textual.css.query import NoMatches
 
-from src.engine.agents.profile.models.agent_not_found import AgentNotFound
-from src.engine.agents.profile.models.agent_profile import AgentProfile
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.engine.providers.domain.provider_error import ProviderError
-from src.ui.messages import ChatNotice
-from src.ui.service_client import ServiceClient, ServiceClientError
-from src.ui.turn_mixin import failure_notice
-from src.ui.widgets.agent_picker_screen import AgentChoice, AgentPickerRow, AgentPickerScreen
+from src.core.agents.profile.models.agent_not_found import AgentNotFound
+from src.core.agents.profile.models.agent_profile import AgentProfile
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.providers.domain.provider_error import ProviderError
+from src.ui.chat_notice import ChatNotice
+from src.ui.service_client import ServiceClient
+from src.ui.service_client_error import ServiceClientError
+from src.ui.turn_notices import failure_notice
+from src.ui.widgets.agent_choice import AgentChoice
+from src.ui.widgets.agent_picker_row import AgentPickerRow
+from src.ui.widgets.agent_picker_screen import AgentPickerScreen
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.status_bar import StatusBar
 

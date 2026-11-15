@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
-from src.engine.providers.catalog.probe import ProbeResult
-from src.engine.providers.domain.provider_error import (
+from src.core.providers.catalog.probe import ProbeResult
+from src.core.providers.domain.provider_error import (
     AccountNotFound,
     AliasError,
     BusyError,
@@ -17,11 +18,11 @@ from src.engine.providers.domain.provider_error import (
     ProviderError,
     SecretRejectedError,
 )
-from src.engine.providers.domain.provider_kind import ProviderKind
-from src.engine.providers.domain.provider_variant import ProviderVariant
-from src.engine.providers.domain.secret import ApiKeySecret, OAuthSecret
-from src.engine.providers.domain.selection import Selection
-from src.engine.providers.store.secret_store import FileSecretStore
+from src.core.providers.domain.provider_kind import ProviderKind
+from src.core.providers.domain.provider_variant import ProviderVariant
+from src.core.providers.domain.secret import ApiKeySecret, OAuthSecret
+from src.core.providers.domain.selection import Selection
+from src.core.providers.store.secret_store import FileSecretStore
 from tests.support.provider_service import (
     _add,
     _Flow,
@@ -33,7 +34,7 @@ from tests.support.provider_service import (
 # --- adding -----------------------------------------------------------------
 
 
-def test_add_api_key_stores_the_account_and_selects_a_model(tmp_path):
+def test_add_api_key_stores_the_account_and_selects_a_model(tmp_path: Path) -> None:
     service = _service(tmp_path)
     snapshot = _add(service)
 
@@ -43,7 +44,7 @@ def test_add_api_key_stores_the_account_and_selects_a_model(tmp_path):
     assert len(service.list_accounts()) == 1
 
 
-def test_add_api_key_persists_the_secret_privately(tmp_path):
+def test_add_api_key_persists_the_secret_privately(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     path = tmp_path / 'providers' / 'credentials.json'
@@ -51,7 +52,7 @@ def test_add_api_key_persists_the_secret_privately(tmp_path):
     assert 'sk-test' in path.read_text(encoding='utf-8')
 
 
-def test_add_api_key_rejects_a_bad_alias_before_any_network_call(tmp_path):
+def test_add_api_key_rejects_a_bad_alias_before_any_network_call(tmp_path: Path) -> None:
     calls: list[str] = []
 
     async def probe(account, key):
@@ -64,14 +65,14 @@ def test_add_api_key_rejects_a_bad_alias_before_any_network_call(tmp_path):
     assert calls == []
 
 
-def test_add_api_key_rejects_a_duplicate_alias_ignoring_case(tmp_path):
+def test_add_api_key_rejects_a_duplicate_alias_ignoring_case(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service, 'Work')
     with pytest.raises(AliasError):
         asyncio.run(service.add_api_key(ProviderKind.OPENROUTER, 'work', 'sk-other'))
 
 
-def test_add_api_key_does_not_persist_a_rejected_credential(tmp_path):
+def test_add_api_key_does_not_persist_a_rejected_credential(tmp_path: Path) -> None:
     service = _service(tmp_path, probe=_reject)
     with pytest.raises(SecretRejectedError):
         asyncio.run(service.add_api_key(ProviderKind.OPENROUTER, 'work', 'sk-bad'))
@@ -80,7 +81,7 @@ def test_add_api_key_does_not_persist_a_rejected_credential(tmp_path):
     assert not (tmp_path / 'providers' / 'accounts.json').exists()
 
 
-def test_add_api_key_records_a_warning_when_the_probe_could_not_decide(tmp_path):
+def test_add_api_key_records_a_warning_when_the_probe_could_not_decide(tmp_path: Path) -> None:
     async def unknown(account, key):
         return ProbeResult('unknown', 'network is down')
 
@@ -92,13 +93,13 @@ def test_add_api_key_records_a_warning_when_the_probe_could_not_decide(tmp_path)
     assert service.last_probe(account.id).outcome == 'unknown'
 
 
-def test_add_api_key_rejects_a_key_with_spaces(tmp_path):
+def test_add_api_key_rejects_a_key_with_spaces(tmp_path: Path) -> None:
     service = _service(tmp_path)
     with pytest.raises(CredentialError):
         asyncio.run(service.add_api_key(ProviderKind.OPENROUTER, 'work', 'sk test'))
 
 
-def test_add_api_key_accepts_several_accounts_of_the_same_kind(tmp_path):
+def test_add_api_key_accepts_several_accounts_of_the_same_kind(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service, 'personal')
     _add(service, 'work')
@@ -106,7 +107,7 @@ def test_add_api_key_accepts_several_accounts_of_the_same_kind(tmp_path):
     assert [account.alias for account in service.list_accounts()] == ['work', 'personal']
 
 
-def test_add_api_key_handles_the_opencode_variants(tmp_path):
+def test_add_api_key_handles_the_opencode_variants(tmp_path: Path) -> None:
     service = _service(tmp_path)
     snapshot = asyncio.run(service.add_api_key(ProviderKind.OPENCODE, 'go', 'sk-test', variant=ProviderVariant.GO))
     assert snapshot.account.variant is ProviderVariant.GO
@@ -116,7 +117,7 @@ def test_add_api_key_handles_the_opencode_variants(tmp_path):
 # --- listing ----------------------------------------------------------------
 
 
-def test_account_views_put_the_active_one_first(tmp_path):
+def test_account_views_put_the_active_one_first(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service, 'first')
     _add(service, 'second')
@@ -131,7 +132,7 @@ def test_account_views_put_the_active_one_first(tmp_path):
 # --- selection --------------------------------------------------------------
 
 
-def test_select_swaps_the_routers_target_and_keeps_the_router_itself(tmp_path):
+def test_select_swaps_the_routers_target_and_keeps_the_router_itself(tmp_path: Path) -> None:
     """The router is what the agent holds: it must not be replaced.
 
     Replacing it would leave the agent pointing at the old object, which is
@@ -151,7 +152,7 @@ def test_select_swaps_the_routers_target_and_keeps_the_router_itself(tmp_path):
     assert router.current.model_name == 'second/model'
 
 
-def test_the_agent_keeps_the_router_so_a_switch_reaches_the_next_request(tmp_path):
+def test_the_agent_keeps_the_router_so_a_switch_reaches_the_next_request(tmp_path: Path) -> None:
     """End of the original bug: the agent was built with the concrete model."""
     from pydantic_ai import Agent
 
@@ -165,7 +166,7 @@ def test_the_agent_keeps_the_router_so_a_switch_reaches_the_next_request(tmp_pat
     assert agent.model.context_window == 200_000
 
 
-def test_select_records_the_model_on_the_account(tmp_path):
+def test_select_records_the_model_on_the_account(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     service.select('work', 'second/model')
@@ -173,7 +174,7 @@ def test_select_records_the_model_on_the_account(tmp_path):
     assert service.list_accounts()[0].last_model == 'second/model'
 
 
-def test_select_falls_back_to_default_when_the_model_rejects_the_level(tmp_path):
+def test_select_falls_back_to_default_when_the_model_rejects_the_level(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     service.select('work', 'first/model', 'high')
@@ -185,14 +186,14 @@ def test_select_falls_back_to_default_when_the_model_rejects_the_level(tmp_path)
     assert snapshot.thinking == 'default'
 
 
-def test_select_rejects_an_unknown_reasoning_level(tmp_path):
+def test_select_rejects_an_unknown_reasoning_level(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     with pytest.raises(ProviderError):
         service.select('work', 'first/model', 'ludicrous')
 
 
-def test_select_refuses_while_a_turn_is_running(tmp_path):
+def test_select_refuses_while_a_turn_is_running(tmp_path: Path) -> None:
     busy = {'now': False}
     service = _service(tmp_path, busy=False)
     service.is_busy = lambda: busy['now']
@@ -202,13 +203,13 @@ def test_select_refuses_while_a_turn_is_running(tmp_path):
         service.select('work', 'second/model')
 
 
-def test_select_of_an_unknown_alias_raises(tmp_path):
+def test_select_of_an_unknown_alias_raises(tmp_path: Path) -> None:
     service = _service(tmp_path)
     with pytest.raises(AccountNotFound):
         service.select('nope', 'm')
 
 
-def test_select_allows_a_model_no_catalogue_described(tmp_path):
+def test_select_allows_a_model_no_catalogue_described(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     snapshot = service.select('work', 'custom/model-from-the-future')
@@ -218,7 +219,7 @@ def test_select_allows_a_model_no_catalogue_described(tmp_path):
 # --- effort -----------------------------------------------------------------
 
 
-def test_set_thinking_updates_the_selection(tmp_path):
+def test_set_thinking_updates_the_selection(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     service.select('work', 'second/model')
@@ -226,7 +227,7 @@ def test_set_thinking_updates_the_selection(tmp_path):
     assert service.set_thinking('max').thinking == 'max'
 
 
-def test_set_thinking_rejects_a_level_the_model_does_not_accept(tmp_path):
+def test_set_thinking_rejects_a_level_the_model_does_not_accept(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     service.select('work', 'first/model')
@@ -235,13 +236,13 @@ def test_set_thinking_rejects_a_level_the_model_does_not_accept(tmp_path):
     assert 'low/high' in str(error.value)
 
 
-def test_set_thinking_without_a_selection_is_a_domain_error(tmp_path):
+def test_set_thinking_without_a_selection_is_a_domain_error(tmp_path: Path) -> None:
     service = _service(tmp_path)
     with pytest.raises(NoAccountError):
         service.set_thinking('high')
 
 
-def test_set_thinking_accepts_off_and_default(tmp_path):
+def test_set_thinking_accepts_off_and_default(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     assert service.set_thinking('off').thinking == 'off'
@@ -251,7 +252,7 @@ def test_set_thinking_accepts_off_and_default(tmp_path):
 # --- removal ----------------------------------------------------------------
 
 
-def test_remove_deletes_the_account_and_its_credential(tmp_path):
+def test_remove_deletes_the_account_and_its_credential(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service, 'one')
     _add(service, 'two')
@@ -263,14 +264,14 @@ def test_remove_deletes_the_account_and_its_credential(tmp_path):
     assert service.secrets.get(account.id) is None
 
 
-def test_remove_refuses_to_leave_no_accounts(tmp_path):
+def test_remove_refuses_to_leave_no_accounts(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     with pytest.raises(LastAccountError):
         service.remove('work')
 
 
-def test_removing_the_active_account_activates_the_first_remaining(tmp_path):
+def test_removing_the_active_account_activates_the_first_remaining(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service, 'one')
     _add(service, 'two')
@@ -282,7 +283,7 @@ def test_removing_the_active_account_activates_the_first_remaining(tmp_path):
     assert service.snapshot().model == 'first/model'
 
 
-def test_renaming_keeps_the_active_selection_working(tmp_path):
+def test_renaming_keeps_the_active_selection_working(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service, 'before')
     service.rename('before', 'after')
@@ -291,7 +292,7 @@ def test_renaming_keeps_the_active_selection_working(tmp_path):
     assert service.snapshot().model == 'first/model'
 
 
-def test_rename_rejects_a_taken_alias(tmp_path):
+def test_rename_rejects_a_taken_alias(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service, 'one')
     _add(service, 'two')
@@ -302,7 +303,7 @@ def test_rename_rejects_a_taken_alias(tmp_path):
 # --- resolution -------------------------------------------------------------
 
 
-def test_resolve_prefers_the_session_selection(tmp_path):
+def test_resolve_prefers_the_session_selection(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service, 'one')
     _add(service, 'two')
@@ -314,13 +315,13 @@ def test_resolve_prefers_the_session_selection(tmp_path):
     assert resolved.model == 'second/model'
 
 
-def test_resolve_falls_back_to_the_stored_selection(tmp_path):
+def test_resolve_falls_back_to_the_stored_selection(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     assert service.resolve() == service.state.last_selection()
 
 
-def test_resolve_ignores_a_session_pointing_at_a_removed_account(tmp_path):
+def test_resolve_ignores_a_session_pointing_at_a_removed_account(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service, 'one')
     _add(service, 'two')
@@ -331,7 +332,7 @@ def test_resolve_ignores_a_session_pointing_at_a_removed_account(tmp_path):
     assert resolved.account_id != gone
 
 
-def test_resolve_falls_back_to_an_account_that_remembers_a_model(tmp_path):
+def test_resolve_falls_back_to_an_account_that_remembers_a_model(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     service.state.set_last_selection(None)
@@ -341,12 +342,12 @@ def test_resolve_falls_back_to_an_account_that_remembers_a_model(tmp_path):
     assert resolved.model == 'first/model'
 
 
-def test_resolve_returns_nothing_when_no_account_exists(tmp_path):
+def test_resolve_returns_nothing_when_no_account_exists(tmp_path: Path) -> None:
     service = _service(tmp_path)
     assert service.resolve() is None
 
 
-def test_apply_points_the_router_at_a_selection(tmp_path):
+def test_apply_points_the_router_at_a_selection(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service, 'one')
     _add(service, 'two')
@@ -362,7 +363,7 @@ def test_apply_points_the_router_at_a_selection(tmp_path):
 # --- snapshot ---------------------------------------------------------------
 
 
-def test_snapshot_is_empty_before_anything_is_configured(tmp_path):
+def test_snapshot_is_empty_before_anything_is_configured(tmp_path: Path) -> None:
     service = _service(tmp_path)
     snapshot = service.snapshot()
     assert not snapshot.is_configured
@@ -370,7 +371,7 @@ def test_snapshot_is_empty_before_anything_is_configured(tmp_path):
     assert not service.is_configured()
 
 
-def test_snapshot_reports_the_window_and_efforts_of_the_active_model(tmp_path):
+def test_snapshot_reports_the_window_and_efforts_of_the_active_model(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     snapshot = service.snapshot()
@@ -379,7 +380,7 @@ def test_snapshot_reports_the_window_and_efforts_of_the_active_model(tmp_path):
     assert snapshot.label == 'work:first/model'
 
 
-def test_add_oauth_stores_the_credential_and_selects_a_model(tmp_path):
+def test_add_oauth_stores_the_credential_and_selects_a_model(tmp_path: Path) -> None:
     service = _service(tmp_path)
     flow = _Flow(_oauth_secret())
 
@@ -392,7 +393,7 @@ def test_add_oauth_stores_the_credential_and_selects_a_model(tmp_path):
     assert stored.access_token == 'at'
 
 
-def test_add_oauth_refuses_an_account_that_did_not_grant_plan_usage(tmp_path):
+def test_add_oauth_refuses_an_account_that_did_not_grant_plan_usage(tmp_path: Path) -> None:
     service = _service(tmp_path)
     flow = _Flow(_oauth_secret(scope='openid profile'))
 
@@ -402,13 +403,13 @@ def test_add_oauth_refuses_an_account_that_did_not_grant_plan_usage(tmp_path):
     assert service.list_accounts() == ()
 
 
-def test_add_oauth_is_only_offered_for_openai(tmp_path):
+def test_add_oauth_is_only_offered_for_openai(tmp_path: Path) -> None:
     service = _service(tmp_path)
     with pytest.raises(ProviderError):
         asyncio.run(service.add_oauth(ProviderKind.OPENROUTER, 'nope', _Flow(_oauth_secret())))
 
 
-def test_add_api_key_is_not_offered_for_oauth_only_paths(tmp_path):
+def test_add_api_key_is_not_offered_for_oauth_only_paths(tmp_path: Path) -> None:
     service = _service(tmp_path)
     # OpenAI accepts both; OpenRouter only keys. The guard is on the method.
     with pytest.raises(ProviderError):
@@ -418,20 +419,20 @@ def test_add_api_key_is_not_offered_for_oauth_only_paths(tmp_path):
 # --- catalog ----------------------------------------------------------------
 
 
-def test_catalog_for_uses_the_active_account(tmp_path):
+def test_catalog_for_uses_the_active_account(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     catalog = asyncio.run(service.catalog_for())
     assert catalog.find('first/model') is not None
 
 
-def test_catalog_for_an_unknown_alias_raises(tmp_path):
+def test_catalog_for_an_unknown_alias_raises(tmp_path: Path) -> None:
     service = _service(tmp_path)
     with pytest.raises(AccountNotFound):
         asyncio.run(service.catalog_for('nope'))
 
 
-def test_catalog_for_without_an_account_raises(tmp_path):
+def test_catalog_for_without_an_account_raises(tmp_path: Path) -> None:
     service = _service(tmp_path)
     with pytest.raises(NoAccountError):
         asyncio.run(service.catalog_for())
@@ -445,7 +446,7 @@ def test_catalog_for_without_an_account_raises(tmp_path):
 # request was never made with a credential at all.
 
 
-def test_a_plan_account_reads_its_catalogue_with_the_oauth_token(tmp_path):
+def test_a_plan_account_reads_its_catalogue_with_the_oauth_token(tmp_path: Path) -> None:
     service = _service(tmp_path)
     flow = _Flow(_oauth_secret(access_token='the-plan-token'))
     asyncio.run(service.add_oauth(ProviderKind.OPENAI, 'plan', flow))
@@ -454,7 +455,7 @@ def test_a_plan_account_reads_its_catalogue_with_the_oauth_token(tmp_path):
     assert service._api_key_for(account) == 'the-plan-token'
 
 
-def test_an_api_key_account_reads_its_catalogue_with_the_key(tmp_path):
+def test_an_api_key_account_reads_its_catalogue_with_the_key(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     account = service.accounts.load()[0]
@@ -462,7 +463,7 @@ def test_an_api_key_account_reads_its_catalogue_with_the_key(tmp_path):
     assert service._api_key_for(account) == 'sk-test'
 
 
-def test_an_account_without_a_secret_has_nothing_to_send(tmp_path):
+def test_an_account_without_a_secret_has_nothing_to_send(tmp_path: Path) -> None:
     service = _service(tmp_path)
     flow = _Flow(_oauth_secret())
     asyncio.run(service.add_oauth(ProviderKind.OPENAI, 'plan', flow))
@@ -472,7 +473,7 @@ def test_an_account_without_a_secret_has_nothing_to_send(tmp_path):
     assert service._api_key_for(account) is None
 
 
-def test_secret_is_missing_produces_a_domain_error(tmp_path):
+def test_secret_is_missing_produces_a_domain_error(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     account = service.list_accounts()[0]
@@ -482,7 +483,7 @@ def test_secret_is_missing_produces_a_domain_error(tmp_path):
         service.select('work', 'first/model')
 
 
-def test_api_key_is_stored_as_a_key_secret(tmp_path):
+def test_api_key_is_stored_as_a_key_secret(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     account = service.list_accounts()[0]
@@ -491,7 +492,7 @@ def test_api_key_is_stored_as_a_key_secret(tmp_path):
     assert secret.key == 'sk-test'
 
 
-def test_apply_restores_reasoning_for_uncached_model(tmp_path):
+def test_apply_restores_reasoning_for_uncached_model(tmp_path: Path) -> None:
     service = _service(tmp_path)
     account = _add(service).account
     saved = Selection(
@@ -504,7 +505,7 @@ def test_apply_restores_reasoning_for_uncached_model(tmp_path):
     assert service.set_thinking('low').thinking == 'low'
 
 
-def test_build_agent_model_does_not_change_active_selection(tmp_path):
+def test_build_agent_model_does_not_change_active_selection(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     before = service.snapshot()
@@ -517,7 +518,7 @@ def test_build_agent_model_does_not_change_active_selection(tmp_path):
     assert service.snapshot().selection == before.selection
 
 
-def test_explicit_agent_effort_is_preserved_for_unknown_model(tmp_path):
+def test_explicit_agent_effort_is_preserved_for_unknown_model(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
 

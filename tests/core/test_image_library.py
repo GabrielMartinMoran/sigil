@@ -12,8 +12,8 @@ import io
 from PIL import Image
 from pydantic_ai.messages import BinaryImage, ModelRequest, UserPromptPart
 
-from src.engine.attachments.image_attachment import new_image_id
-from src.engine.attachments.library import find_image, image_ids, is_image_id
+from src.core.attachments.image_metadata import new_image_id
+from src.core.attachments.library import find_image, image_ids, is_image_id
 
 # --- helpers ---------------------------------------------------------------
 
@@ -35,26 +35,26 @@ def _prompt(*content: object) -> ModelRequest:
 # --- ids -------------------------------------------------------------------
 
 
-def test_a_minted_id_is_recognisable_and_short():
+def test_a_minted_id_is_recognisable_and_short() -> None:
     image_id = new_image_id()
 
     assert is_image_id(image_id)
     assert len(image_id) <= 20
 
 
-def test_minted_ids_do_not_repeat():
+def test_minted_ids_do_not_repeat() -> None:
     ids = {new_image_id() for _ in range(500)}
 
     assert len(ids) == 500
 
 
-def test_the_marker_of_a_prompt_is_not_an_id():
+def test_the_marker_of_a_prompt_is_not_an_id() -> None:
     """`[Image #1]` is per turn and repeats: it cannot name a picture for a tool."""
     assert not is_image_id('[Image #1]')
     assert not is_image_id('')
 
 
-def test_the_id_survives_the_session_file():
+def test_the_id_survives_the_session_file() -> None:
     """The whole design rests on this: an id that does not persist names nothing."""
     from pydantic_ai.messages import ModelMessagesTypeAdapter
 
@@ -70,7 +70,7 @@ def test_the_id_survives_the_session_file():
 # --- finding one -----------------------------------------------------------
 
 
-def test_an_image_is_found_by_its_id():
+def test_an_image_is_found_by_its_id() -> None:
     messages = [_prompt('mira', _image('img_aaaaaaaa')), _prompt('otra', _image('img_bbbbbbbb'))]
 
     found = find_image(messages, 'img_bbbbbbbb')
@@ -79,14 +79,14 @@ def test_an_image_is_found_by_its_id():
     assert found.identifier == 'img_bbbbbbbb'
 
 
-def test_an_unknown_id_finds_nothing():
+def test_an_unknown_id_finds_nothing() -> None:
     messages = [_prompt('mira', _image('img_aaaaaaaa'))]
 
     assert find_image(messages, 'img_deadbeef') is None
     assert find_image(messages, '') is None
 
 
-def test_the_index_reports_every_id_once():
+def test_the_index_reports_every_id_once() -> None:
     messages = [_prompt('mira', _image('img_aaaaaaaa'), _image('img_bbbbbbbb'))]
 
     index = image_ids(messages)
@@ -94,7 +94,7 @@ def test_the_index_reports_every_id_once():
     assert set(index) == {'img_aaaaaaaa', 'img_bbbbbbbb'}
 
 
-def test_a_repeated_identifier_resolves_to_the_newest_image():
+def test_a_repeated_identifier_resolves_to_the_newest_image() -> None:
     """A legacy session saved `[Image #1]` as the identifier, once per turn.
 
     Ambiguous input must not crash the tool: the newest match is the best guess and
@@ -110,7 +110,7 @@ def test_a_repeated_identifier_resolves_to_the_newest_image():
     assert found.data == newest.data
 
 
-def test_messages_without_images_are_ignored():
+def test_messages_without_images_are_ignored() -> None:
     """A prompt saved before images existed stores its text as a plain string."""
     messages = [ModelRequest(parts=[UserPromptPart(content='solo texto')])]
 

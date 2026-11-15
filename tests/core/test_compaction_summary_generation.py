@@ -5,8 +5,8 @@ import asyncio
 import pytest
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 
-from src.engine.context.budget import ContextBudget
-from src.engine.context.compaction.summary_generator import generate_summary
+from src.core.context.compaction.summary_generator import generate_summary
+from src.core.context.context_budget import ContextBudget
 from tests.support.compaction_summary_generation import (
     FakeModel,
 )

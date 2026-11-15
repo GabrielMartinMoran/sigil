@@ -21,8 +21,11 @@ from typing import Any
 
 from textual import work
 
-from src.engine.workspace.diff import DiffStat, worktree_diff
-from src.ui.widgets.status_bar import ActivityState, StatusBar, WorkspaceBadge
+from src.core.workspace.diff import worktree_diff
+from src.core.workspace.models.diff_stat import DiffStat
+from src.ui.widgets.activity_state import ActivityState
+from src.ui.widgets.status_bar import StatusBar
+from src.ui.widgets.workspace_badge import WorkspaceBadge
 
 DIFF_REFRESH_INTERVAL = 1.5
 """Seconds between diff polls. Faster than a human writes, slower than a busy loop."""

@@ -3,7 +3,7 @@
 import asyncio
 from pathlib import Path
 
-from src.engine.providers.domain.model_capability import ModelCapability, ModelCatalog
+from src.core.providers.domain.model_capability import ModelCapability, ModelCatalog
 from tests.support.provider_service import _add, _seed_catalog, _service
 
 

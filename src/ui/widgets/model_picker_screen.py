@@ -15,8 +15,6 @@ the list looks frozen.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import ClassVar
 
 from textual.app import ComposeResult
@@ -24,20 +22,13 @@ from textual.binding import Binding
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from src.engine.providers.domain.model_capability import ModelCapability, ModelCatalog
+from src.core.providers.domain.model_capability import ModelCapability, ModelCatalog
+from src.ui.widgets.model_choice import ModelChoice
 from src.ui.widgets.provider_modal import ProviderModal
 
 FREE_TEXT_ID = '__free_text__'
 
 MOVES: dict[str, int] = {'up': -1, 'down': 1, 'pageup': -5, 'pagedown': 5}
-
-
-@dataclass(frozen=True, slots=True)
-class ModelChoice:
-    """The model the user picked."""
-
-    model: str
-    from_catalog: bool = True
 
 
 class ModelPickerScreen(ProviderModal):
@@ -184,8 +175,3 @@ def _row(model: ModelCapability, *, current: str) -> str:
     if model.display_name != model.name:
         name = f'{name} [dim]({model.name})[/dim]'
     return f'{marker}{name}\n    {window} · {efforts}'
-
-
-def render_models(catalog: ModelCatalog) -> Sequence[str]:
-    """Plain rows, for `/model --list` and for tests."""
-    return [f'{model.name} ({model.window_label}, {model.efforts_label})' for model in catalog.models]

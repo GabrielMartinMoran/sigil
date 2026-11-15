@@ -26,7 +26,6 @@ scrollbar in a column that is 34 characters wide.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import Any
 
 from rich.text import Text
@@ -34,13 +33,16 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
 
-from src.engine.context.meter.cost import SessionCost
-from src.engine.roadmap.models.todo_item import TodoItem
-from src.engine.roadmap.store import RoadmapStore
+from src.core.context.meter.cost import SessionCost
+from src.core.roadmap.models.todo_item import TodoItem
+from src.core.roadmap.roadmap_store import RoadmapStore
 from src.ui.money_format import compact_usd
 from src.ui.palette import color
 from src.ui.token_format import compact_tokens
-from src.ui.widgets.reading import ReadOnlyScroll
+from src.ui.widgets.context_state import ContextState
+from src.ui.widgets.mcp_server_state import MCPServerState
+from src.ui.widgets.model_state import ModelState
+from src.ui.widgets.read_only_scroll import ReadOnlyScroll
 
 LIST_MARK = '•'
 """The mark of a list entry, shared by the skills and the MCP servers.
@@ -71,43 +73,6 @@ UNREPORTED = 'the service did not report it'
 missing key supports none of them, and a zero would be worse: it reads as a
 measurement the service never made.
 """
-
-
-@dataclass(frozen=True, slots=True)
-class MCPServerState:
-    """State of an MCP server for the panel."""
-
-    name: str
-    ok: bool
-
-
-@dataclass(frozen=True, slots=True)
-class ModelState:
-    """What the panel shows about the active model."""
-
-    alias: str = ''
-    provider: str = ''
-    auth: str = ''
-    model: str = ''
-    effort: str = 'default'
-
-
-@dataclass(frozen=True, slots=True)
-class ContextState:
-    """How much of the window the next request is going to take, and what it cost.
-
-    ``used`` is the **projected** number, not the measured one: the panel answers
-    "does the next request fit?", and the measured value describes a request that
-    already happened.
-
-    ``cost`` is the bill of the whole session, not of that request: it only moves
-    forward, and it is the number a reader compares against their balance.
-    """
-
-    percent: float | None = None
-    used: int | None = None
-    window: int | None = None
-    cost: SessionCost | None = None
 
 
 class SidebarPanel(Vertical):

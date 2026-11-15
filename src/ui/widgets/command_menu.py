@@ -5,7 +5,7 @@ from __future__ import annotations
 from textual.widgets import OptionList
 from textual.widgets.option_list import Option
 
-from src.engine.commands import Command
+from src.core.commands.command import Command
 from src.ui.command_transport import listing_mark
 
 

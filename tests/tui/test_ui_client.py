@@ -31,6 +31,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -53,60 +54,65 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
 from textual.widgets import OptionList
 
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.engine.agents.tree.models.node_status import NodeStatus
-from src.engine.attachments.images import prepare_image
-from src.engine.bootstrap import Composition
-from src.engine.commands import CommandOwner, owned_by
-from src.engine.context.meter.debug import DebugReport
-from src.engine.context.meter.debug_wire import DebugSnapshot
-from src.engine.interaction.models.question_item import QuestionItem
-from src.engine.interaction.models.question_option import QuestionOption
-from src.engine.mcp.config.loader import load_config
-from src.engine.mcp.deferred import build_manager
-from src.engine.mcp.manager.manager import MCPManager
-from src.engine.preferences import (
-    DEFAULT_TRANSCRIPT_WINDOW,
-    Preferences,
-)
-from src.engine.providers.bootstrap import ProviderPaths
-from src.engine.roadmap.models.todo_item import TodoItem
-from src.engine.sessions.session_store import Session
-from src.engine.settings import load_settings
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.agents.tree.models.node_status import NodeStatus
+from src.core.attachments.images import prepare_image
+from src.core.bootstrap import Composition
+from src.core.commands.catalog import owned_by
+from src.core.commands.command_owner import CommandOwner
+from src.core.context.meter.debug import DebugReport
+from src.core.context.meter.debug_snapshot import DebugSnapshot
+from src.core.interaction.models.question_item import QuestionItem
+from src.core.interaction.models.question_option import QuestionOption
+from src.core.mcp.config.loader import load_config
+from src.core.mcp.deferred import build_manager
+from src.core.mcp.manager.mcp_manager import MCPManager
+from src.core.preferences import DEFAULT_TRANSCRIPT_WINDOW, Preferences
+from src.core.providers.bootstrap import ProviderPaths
+from src.core.roadmap.models.todo_item import TodoItem
+from src.core.sessions.session_store import Session
+from src.core.settings import load_settings
 from src.server.app import create_app
-from src.server.config import ServerConfig
-from src.server.endpoint import Endpoint, EndpointPublisher
-from src.server.events import Event, EventHub
+from src.server.endpoint import Endpoint
+from src.server.endpoint_publisher import EndpointPublisher
+from src.server.event import Event
+from src.server.event_hub import EventHub
 from src.server.launch import Launch
-from src.server.runtime import ServerRuntime
+from src.server.server_config import ServerConfig
+from src.server.server_runtime import ServerRuntime
 from src.ui import command_transport
-from src.ui.app import SigilApp
-from src.ui.command_transport import TRANSPORT, Transport, TransportState
-from src.ui.commands_mixin import BUSY_UNKNOWN, render_service_context
+from src.ui.command_transport import TRANSPORT
+from src.ui.commands_mixin import BUSY_UNKNOWN
+from src.ui.outgoing_image import OutgoingImage
+from src.ui.payload_too_large import PayloadTooLarge
+from src.ui.render_service_context import render_service_context
+from src.ui.request_rejected import RequestRejected
 from src.ui.rollback_mixin import _turn_for_seq
-from src.ui.service_client import (
-    OutgoingImage,
-    PayloadTooLarge,
-    RequestRejected,
-    ServiceBusy,
-    ServiceClient,
-    ServiceUnavailable,
-    TurnRequest,
-    Unauthorized,
-)
+from src.ui.service_busy import ServiceBusy
+from src.ui.service_client import ServiceClient
+from src.ui.service_unavailable import ServiceUnavailable
+from src.ui.sigil_app import SigilApp
 from src.ui.token_format import compact_tokens
+from src.ui.transport import Transport
+from src.ui.transport_state import TransportState
 from src.ui.tree_mixin import _nodes_from_tree
-from src.ui.turn_mixin import ABORT_HINT, failure_notice, pending_request
-from src.ui.widgets.agent_tree_screen import AgentTreeScreen, TreeAction
+from src.ui.turn_mixin import ABORT_HINT
+from src.ui.turn_notices import failure_notice, pending_request
+from src.ui.turn_request import TurnRequest
+from src.ui.unauthorized import Unauthorized
+from src.ui.widgets.agent_debug_view import AgentDebugView
+from src.ui.widgets.agent_tree_screen import AgentTreeScreen
 from src.ui.widgets.agent_view import AgentView
-from src.ui.widgets.chat_log import ChatLog, ToolCallBlock, format_tool_args
-from src.ui.widgets.debug_view import AgentDebugView
+from src.ui.widgets.chat_log import ChatLog
+from src.ui.widgets.chat_text import format_tool_args
 from src.ui.widgets.mcp_screen import MCPScreen
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.question_panel import QuestionPanel
 from src.ui.widgets.rollback_screen import RollbackScreen
 from src.ui.widgets.sidebar_panel import SidebarPanel
 from src.ui.widgets.status_bar import StatusBar
+from src.ui.widgets.tool_call_block import ToolCallBlock
+from src.ui.widgets.tree_action import TreeAction
 from tests.support.agents import write_profile
 from tests.support.provider_service import _add, _service
 from tests.support.server_parity import _busy
@@ -162,7 +168,7 @@ def _composition(
     monkeypatch.setenv('SIGIL_CONFIG', str(config))
     service = _service(tmp_path)
     _add(service)
-    monkeypatch.setattr('src.engine.bootstrap.build_service', lambda *args, **kwargs: service)
+    monkeypatch.setattr('src.core.bootstrap.build_service', lambda *args, **kwargs: service)
     write_profile(tmp_path / '.sigil' / 'agents', 'reviewer', description='Reviews code.')
     composition = Composition(
         root or tmp_path,
@@ -397,13 +403,21 @@ def _terminal(client: ServiceClient, session: Session, *, preferences: Preferenc
 # --- reading the screen ------------------------------------------------------
 
 
-async def _until(pilot: Any, predicate: Callable[[], bool], *, what: str, attempts: int = 600) -> None:
-    """Pauses the app until the predicate holds, and fails naming what never happened."""
-    for _ in range(attempts):
-        if predicate():
-            return
+async def _until(pilot: Any, predicate: Callable[[], bool], *, what: str, timeout: float = 10.0) -> None:
+    """Pauses the app until the predicate holds, and fails naming what never happened.
+
+    The deadline is wall-clock, not a number of pauses: under a loaded machine the
+    worker that fetches the page can take far longer than an idle one, and counting
+    iterations would turn that slowness into a failure. The pause still drives the
+    message pump, and the short sleep gives the I/O task the loop back.
+    """
+
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            raise AssertionError(f'the terminal never showed {what}')
         await pilot.pause()
-    raise AssertionError(f'the terminal never showed {what}')
+        await asyncio.sleep(0.005)
 
 
 def _block_text(widget: Any) -> str:
@@ -1933,7 +1947,7 @@ class _Chooser:
 
 
 def test_model_switch_changes_the_services_model(composition: Composition, tmp_path: Path) -> None:
-    from src.engine.providers.domain.model_capability import ModelCapability
+    from src.core.providers.domain.model_capability import ModelCapability
     from tests.support.ui_service_client import _Catalog, _with_catalog
 
     async def inner() -> None:
@@ -3486,7 +3500,7 @@ def test_a_row_the_service_painted_wears_the_theme_and_follows_a_switch(
     """
     from rich.color import Color
 
-    from src.ui.widgets.chat_log import AssistantBlock
+    from src.ui.widgets.assistant_block import AssistantBlock
 
     composition = _composition(tmp_path, monkeypatch, output='## Heading\n\nbody')
 
@@ -3551,7 +3565,7 @@ def test_the_attached_defaults_screen_paints_what_the_service_reads(composition:
     set` here would be the client answering from a state it does not hold, and a
     profile missing from the list is exactly the default the user came to set.
     """
-    from src.engine.agents.model_defaults import ConfigScope
+    from src.core.agents.model_defaults import ConfigScope
     from src.ui.widgets.model_defaults_screen import ModelDefaultsScreen
 
     config = Path(os.environ['SIGIL_CONFIG'])
@@ -4178,7 +4192,7 @@ def test_a_transcript_with_nothing_above_asks_for_nothing(composition: Compositi
 
 
 def test_cut_stream_relaunches_service_and_reports_one_outage(composition: Composition, tmp_path: Path) -> None:
-    from src.server.launch import ServiceDied
+    from src.server.service_died import ServiceDied
 
     async def inner() -> None:
         async with _service_under_test(composition, tmp_path) as (runtime, transport, _attached):
@@ -4298,7 +4312,7 @@ def test_should_coalesce_service_debug_reads_skip_unchanged_paints_and_stop_when
 def test_should_clear_stale_service_debug_after_a_read_failure(
     composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from src.ui.service_client import UnexpectedResponse
+    from src.ui.unexpected_response import UnexpectedResponse
 
     async def scenario() -> None:
         async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
@@ -4351,9 +4365,9 @@ def test_debug_follows_selected_subagent_and_returns_to_it(composition: Composit
     from pydantic_ai.messages import ModelResponse, TextPart
     from pydantic_ai.usage import RequestUsage
 
-    from src.engine.agents.profile.models.agent_role import AgentRole
+    from src.core.agents.profile.models.agent_role import AgentRole
+    from src.ui.widgets.agent_debug_view import AgentDebugView
     from src.ui.widgets.agent_view import AgentView
-    from src.ui.widgets.debug_view import AgentDebugView
 
     async def scenario() -> None:
         async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):

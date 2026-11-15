@@ -7,9 +7,9 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent, ModelRequest, ModelResponse, UserPromptPart
 from pydantic_ai.models.test import TestModel
 
-from src.engine.agents.rollback import Checkpoints, Rollback, prompt_of_turn
-from src.engine.sessions.session_store import SessionStore
-from src.engine.storage.database import Database, database_path
+from src.core.agents.rollback import Checkpoints, Rollback, prompt_of_turn
+from src.core.sessions.session_store import SessionStore
+from src.core.storage.database import Database, database_path
 
 TEXT = 'describe this image'
 

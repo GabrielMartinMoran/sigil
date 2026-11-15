@@ -2,16 +2,17 @@
 
 import asyncio
 import os
+from pathlib import Path
 
 import pytest
 
-from src.engine.skills import rendering
-from src.engine.skills.models.skill_not_found import SkillNotFound
-from src.engine.skills.models.skill_parse_error import SkillParseError
-from src.engine.skills.models.skill_resource_error import SkillResourceError
-from src.engine.skills.parser import parse_skill_metadata, split_frontmatter
-from src.engine.skills.registry import SkillRegistry
-from src.engine.skills.tools import register_skill_tools
+from src.core.skills import rendering
+from src.core.skills.models.skill_not_found import SkillNotFound
+from src.core.skills.models.skill_parse_error import SkillParseError
+from src.core.skills.models.skill_resource_error import SkillResourceError
+from src.core.skills.parser import parse_skill_metadata, split_frontmatter
+from src.core.skills.skill_registry import SkillRegistry
+from src.core.skills.tools import register_skill_tools
 from tests.support.skills import (
     DummyAgent,
     write_skill,
@@ -20,35 +21,35 @@ from tests.support.skills import (
 # --- Parser -------------------------------------------------------------------
 
 
-def test_split_frontmatter_returns_body():
+def test_split_frontmatter_returns_body() -> None:
     data, body = split_frontmatter('---\nname: demo\ndescription: hi\n---\n\n# Title\n')
     assert data == {'name': 'demo', 'description': 'hi'}
     assert body.strip() == '# Title'
 
 
-def test_split_frontmatter_handles_crlf_and_bom():
+def test_split_frontmatter_handles_crlf_and_bom() -> None:
     data, body = split_frontmatter('\ufeff---\r\nname: demo\r\ndescription: hi\r\n---\r\nbody')
     assert data['name'] == 'demo'
     assert body == 'body'
 
 
-def test_split_frontmatter_requires_block():
+def test_split_frontmatter_requires_block() -> None:
     with pytest.raises(SkillParseError):
         split_frontmatter('# no frontmatter')
 
 
-def test_split_frontmatter_rejects_unterminated_block():
+def test_split_frontmatter_rejects_unterminated_block() -> None:
     with pytest.raises(SkillParseError):
         split_frontmatter('---\nname: demo\n')
 
 
-def test_parse_metadata_validates_name(tmp_path):
+def test_parse_metadata_validates_name(tmp_path: Path) -> None:
     skill_dir = write_skill(tmp_path, 'Bad_Name')
     with pytest.raises(SkillParseError):
         parse_skill_metadata(skill_dir / 'SKILL.md', source='project')
 
 
-def test_parse_metadata_requires_description(tmp_path):
+def test_parse_metadata_requires_description(tmp_path: Path) -> None:
     skill_dir = tmp_path / 'demo'
     skill_dir.mkdir()
     (skill_dir / 'SKILL.md').write_text('---\nname: demo\n---\nbody', encoding='utf-8')
@@ -56,7 +57,7 @@ def test_parse_metadata_requires_description(tmp_path):
         parse_skill_metadata(skill_dir / 'SKILL.md', source='project')
 
 
-def test_parse_metadata_keeps_unknown_keys_and_flags(tmp_path):
+def test_parse_metadata_keeps_unknown_keys_and_flags(tmp_path: Path) -> None:
     skill_dir = write_skill(
         tmp_path,
         'demo',
@@ -73,7 +74,7 @@ def test_parse_metadata_keeps_unknown_keys_and_flags(tmp_path):
 # --- Registry -----------------------------------------------------------------
 
 
-def test_registry_discovers_and_project_shadows_global(tmp_path):
+def test_registry_discovers_and_project_shadows_global(tmp_path: Path) -> None:
     project = tmp_path / 'project'
     global_root = tmp_path / 'global'
     write_skill(project, 'shared', description='project version')
@@ -88,14 +89,14 @@ def test_registry_discovers_and_project_shadows_global(tmp_path):
     assert registry.get('only-global').source == 'global'
 
 
-def test_registry_ignores_dirs_without_skill_md(tmp_path):
+def test_registry_ignores_dirs_without_skill_md(tmp_path: Path) -> None:
     (tmp_path / 'not-a-skill').mkdir()
     write_skill(tmp_path, 'real')
     registry = SkillRegistry([('project', tmp_path)])
     assert [skill.name for skill in registry.list()] == ['real']
 
 
-def test_registry_records_invalid_skill_without_breaking_others(tmp_path):
+def test_registry_records_invalid_skill_without_breaking_others(tmp_path: Path) -> None:
     write_skill(tmp_path, 'good')
     bad = tmp_path / 'bad'
     bad.mkdir()
@@ -108,7 +109,7 @@ def test_registry_records_invalid_skill_without_breaking_others(tmp_path):
     assert 'bad' in registry.errors[0]
 
 
-def test_registry_discovers_symlinked_skill(tmp_path):
+def test_registry_discovers_symlinked_skill(tmp_path: Path) -> None:
     real = tmp_path / 'real'
     write_skill(real, 'linked')
     root = tmp_path / 'root'
@@ -119,7 +120,7 @@ def test_registry_discovers_symlinked_skill(tmp_path):
     assert registry.get('linked') is not None
 
 
-def test_registry_lookup_by_directory_alias(tmp_path):
+def test_registry_lookup_by_directory_alias(tmp_path: Path) -> None:
     skill_dir = tmp_path / 'dir-name'
     skill_dir.mkdir()
     (skill_dir / 'SKILL.md').write_text('---\nname: canonical\ndescription: hi\n---\nbody', encoding='utf-8')
@@ -128,7 +129,7 @@ def test_registry_lookup_by_directory_alias(tmp_path):
     assert registry.get('dir-name').name == 'canonical'
 
 
-def test_registry_unknown_skill_raises(tmp_path):
+def test_registry_unknown_skill_raises(tmp_path: Path) -> None:
     registry = SkillRegistry([('project', tmp_path)])
     with pytest.raises(SkillNotFound):
         registry.load('missing')
@@ -137,7 +138,7 @@ def test_registry_unknown_skill_raises(tmp_path):
 # --- Loading and resources ----------------------------------------------------
 
 
-def test_load_returns_body_and_resources(tmp_path):
+def test_load_returns_body_and_resources(tmp_path: Path) -> None:
     write_skill(
         tmp_path,
         'demo',
@@ -162,14 +163,14 @@ def test_load_returns_body_and_resources(tmp_path):
 
 
 @pytest.mark.parametrize('bad_path', ['../SKILL.md', '/etc/passwd', 'scripts/../../x', '..'])
-def test_read_resource_blocks_traversal(tmp_path, bad_path):
+def test_read_resource_blocks_traversal(tmp_path: Path, bad_path) -> None:
     write_skill(tmp_path, 'demo', files={'scripts/run.py': 'print(1)'})
     registry = SkillRegistry([('project', tmp_path)])
     with pytest.raises(SkillResourceError):
         registry.read_resource('demo', bad_path)
 
 
-def test_read_resource_returns_text(tmp_path):
+def test_read_resource_returns_text(tmp_path: Path) -> None:
     write_skill(tmp_path, 'demo', files={'references/guide.md': '# Guide'})
     registry = SkillRegistry([('project', tmp_path)])
     data, truncated, size = registry.read_resource('demo', 'references/guide.md')
@@ -178,7 +179,7 @@ def test_read_resource_returns_text(tmp_path):
     assert size == len(b'# Guide')
 
 
-def test_read_resource_truncates(tmp_path):
+def test_read_resource_truncates(tmp_path: Path) -> None:
     write_skill(tmp_path, 'demo', files={'big.txt': 'abcdef'})
     registry = SkillRegistry([('project', tmp_path)])
     data, truncated, size = registry.read_resource('demo', 'big.txt', max_bytes=3)
@@ -187,7 +188,7 @@ def test_read_resource_truncates(tmp_path):
     assert size == 6
 
 
-def test_read_resource_missing_raises(tmp_path):
+def test_read_resource_missing_raises(tmp_path: Path) -> None:
     write_skill(tmp_path, 'demo')
     registry = SkillRegistry([('project', tmp_path)])
     with pytest.raises(SkillResourceError):
@@ -197,7 +198,7 @@ def test_read_resource_missing_raises(tmp_path):
 # --- Tools --------------------------------------------------------------------
 
 
-def test_tools_are_registered_and_list_filters(tmp_path):
+def test_tools_are_registered_and_list_filters(tmp_path: Path) -> None:
     write_skill(tmp_path, 'alpha', description='Handles alpha tasks')
     write_skill(tmp_path, 'beta', description='Handles beta tasks')
     registry = SkillRegistry([('project', tmp_path)])
@@ -209,7 +210,7 @@ def test_tools_are_registered_and_list_filters(tmp_path):
     assert [skill.name for skill in agent.registered['list_skills']('beta')] == ['beta']
 
 
-def test_load_skill_tool_returns_ack_without_the_body(tmp_path):
+def test_load_skill_tool_returns_ack_without_the_body(tmp_path: Path) -> None:
     """The body does not travel in the result: it is injected as an instruction block.
 
     The tool registers nothing: the call itself is the record, and the set is
@@ -232,11 +233,11 @@ def test_load_skill_tool_returns_ack_without_the_body(tmp_path):
     assert 'references/a.md' not in block
 
 
-def test_loading_twice_is_one_skill_in_the_projection(tmp_path):
+def test_loading_twice_is_one_skill_in_the_projection(tmp_path: Path) -> None:
     """Two calls for the same skill are one entry: the set is a set of names."""
     from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 
-    from src.engine.skills.loaded import loaded_skills
+    from src.core.skills.loaded import loaded_skills
 
     history = [
         ModelResponse(parts=[ToolCallPart(tool_name='load_skill', args={'name': 'demo'}, tool_call_id='c1')]),
@@ -247,12 +248,12 @@ def test_loading_twice_is_one_skill_in_the_projection(tmp_path):
     assert loaded_skills(history) == ('demo',)
 
 
-def test_render_loaded_skills_is_empty_without_names(tmp_path):
+def test_render_loaded_skills_is_empty_without_names(tmp_path: Path) -> None:
     registry = SkillRegistry([('project', tmp_path)])
     assert rendering.render_loaded_skills(registry, ()) == ''
 
 
-def test_read_skill_resource_tool_decodes_binary(tmp_path):
+def test_read_skill_resource_tool_decodes_binary(tmp_path: Path) -> None:
     payload = b'\x00\x01\x02\xff'
     write_skill(tmp_path, 'demo', files={'assets/blob.bin': payload})
     registry = SkillRegistry([('project', tmp_path)])
@@ -266,7 +267,7 @@ def test_read_skill_resource_tool_decodes_binary(tmp_path):
     assert result.size == len(payload)
 
 
-def test_render_available_skills_excludes_disabled(tmp_path):
+def test_render_available_skills_excludes_disabled(tmp_path: Path) -> None:
     write_skill(tmp_path, 'visible', description='Visible skill')
     write_skill(tmp_path, 'hidden', description='Hidden skill', frontmatter='disable-model-invocation: true\n')
     registry = SkillRegistry([('project', tmp_path)])
@@ -276,14 +277,14 @@ def test_render_available_skills_excludes_disabled(tmp_path):
     assert 'name="hidden"' not in rendered
 
 
-def test_render_available_skills_empty(tmp_path):
+def test_render_available_skills_empty(tmp_path: Path) -> None:
     assert rendering.render_available_skills(SkillRegistry([('project', tmp_path)])) == ''
 
 
 # --- Script execution ---------------------------------------------------------
 
 
-def test_run_python_script_uses_skill_cwd(tmp_path):
+def test_run_python_script_uses_skill_cwd(tmp_path: Path) -> None:
     write_skill(
         tmp_path,
         'demo',
@@ -300,7 +301,7 @@ def test_run_python_script_uses_skill_cwd(tmp_path):
     assert 'arg=world' in result.stdout
 
 
-def test_run_bash_script(tmp_path):
+def test_run_bash_script(tmp_path: Path) -> None:
     write_skill(tmp_path, 'demo', files={'scripts/hello.sh': 'echo "hello $1"\n'})
     registry = SkillRegistry([('project', tmp_path)])
     agent = DummyAgent()
@@ -312,7 +313,7 @@ def test_run_bash_script(tmp_path):
     assert result.stdout.strip() == 'hello bash'
 
 
-def test_run_script_reports_failure(tmp_path):
+def test_run_script_reports_failure(tmp_path: Path) -> None:
     write_skill(tmp_path, 'demo', files={'scripts/fail.py': 'import sys\nsys.exit(3)\n'})
     registry = SkillRegistry([('project', tmp_path)])
     agent = DummyAgent()
@@ -322,7 +323,7 @@ def test_run_script_reports_failure(tmp_path):
     assert result.returncode == 3
 
 
-def test_run_script_blocks_outside_skill(tmp_path):
+def test_run_script_blocks_outside_skill(tmp_path: Path) -> None:
     write_skill(tmp_path, 'demo')
     registry = SkillRegistry([('project', tmp_path)])
     agent = DummyAgent()
@@ -332,7 +333,7 @@ def test_run_script_blocks_outside_skill(tmp_path):
         asyncio.run(agent.registered['run_skill_script']('demo', '../outside.py'))
 
 
-def test_run_script_missing_raises(tmp_path):
+def test_run_script_missing_raises(tmp_path: Path) -> None:
     write_skill(tmp_path, 'demo')
     registry = SkillRegistry([('project', tmp_path)])
     agent = DummyAgent()
@@ -345,8 +346,8 @@ def test_run_script_missing_raises(tmp_path):
 # --- Default roots ------------------------------------------------------------
 
 
-def test_default_roots_env_override(monkeypatch, tmp_path):
-    from src.engine.skills.discovery import ENV_SKILLS_DIRS, default_roots
+def test_default_roots_env_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from src.core.skills.discovery import ENV_SKILLS_DIRS, default_roots
 
     first = tmp_path / 'one'
     second = tmp_path / 'two'
@@ -354,7 +355,7 @@ def test_default_roots_env_override(monkeypatch, tmp_path):
     assert default_roots() == [('custom', first), ('custom', second)]
 
 
-def test_script_named_main_py_is_allowed(tmp_path):
+def test_script_named_main_py_is_allowed(tmp_path: Path) -> None:
     write_skill(tmp_path, 'demo', files={'scripts/main.py': "print('main ok')\n"})
     registry = SkillRegistry([('project', tmp_path)])
     agent = DummyAgent()
@@ -365,13 +366,13 @@ def test_script_named_main_py_is_allowed(tmp_path):
     assert result.stdout.strip() == 'main ok'
 
 
-def test_metadata_field_is_preserved(tmp_path):
+def test_metadata_field_is_preserved(tmp_path: Path) -> None:
     skill_dir = write_skill(tmp_path, 'demo', frontmatter='metadata:\n  version: "2.0"\n  author: me\n')
     metadata = parse_skill_metadata(skill_dir / 'SKILL.md', source='project')
     assert metadata.metadata == {'version': '2.0', 'author': 'me'}
 
 
-def test_tools_generate_valid_agent_schemas(tmp_path):
+def test_tools_generate_valid_agent_schemas(tmp_path: Path) -> None:
     from pydantic_ai import Agent
     from pydantic_ai.models.test import TestModel
 
@@ -384,7 +385,7 @@ def test_tools_generate_valid_agent_schemas(tmp_path):
     assert result.output
 
 
-def test_registry_refresh_discovers_new_skill(tmp_path):
+def test_registry_refresh_discovers_new_skill(tmp_path: Path) -> None:
     registry = SkillRegistry([('project', tmp_path)])
     assert registry.list() == []
 
@@ -394,7 +395,7 @@ def test_registry_refresh_discovers_new_skill(tmp_path):
     assert [skill.name for skill in registry.list()] == ['late']
 
 
-def test_list_skills_tool_refreshes(tmp_path):
+def test_list_skills_tool_refreshes(tmp_path: Path) -> None:
     registry = SkillRegistry([('project', tmp_path)])
     agent = DummyAgent()
     register_skill_tools(agent, registry)
@@ -404,7 +405,7 @@ def test_list_skills_tool_refreshes(tmp_path):
     assert [skill.name for skill in agent.registered['list_skills']()] == ['late']
 
 
-def test_global_skill_resources_and_script_are_available(tmp_path):
+def test_global_skill_resources_and_script_are_available(tmp_path: Path) -> None:
     project = tmp_path / 'project'
     global_root = tmp_path / 'global'
     project.mkdir()
@@ -434,7 +435,7 @@ def test_global_skill_resources_and_script_are_available(tmp_path):
     assert result.stdout.strip() == 'global instructions'
 
 
-def test_catalogue_order_is_stable_across_root_and_creation_order(tmp_path):
+def test_catalogue_order_is_stable_across_root_and_creation_order(tmp_path: Path) -> None:
     project, global_root = tmp_path / 'project', tmp_path / 'global'
     write_skill(global_root, 'zulu')
     write_skill(project, 'middle')
@@ -445,10 +446,10 @@ def test_catalogue_order_is_stable_across_root_and_creation_order(tmp_path):
     assert rendering.render_available_skills(registry.refresh()) == first
 
 
-def test_read_resource_is_rendered_in_skill_instructions_and_follows_rollback(tmp_path):
+def test_read_resource_is_rendered_in_skill_instructions_and_follows_rollback(tmp_path: Path) -> None:
     from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 
-    from src.engine.skills.loaded import loaded_resources
+    from src.core.skills.loaded import loaded_resources
 
     write_skill(tmp_path, 'demo', files={'references/doc.md': 'first version'})
     registry = SkillRegistry([('project', tmp_path)])

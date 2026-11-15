@@ -18,15 +18,15 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from rich.text import Text
 
-from src.engine.preferences import PreferencesStore
-from src.engine.sessions.session_store import SessionStore
-from src.engine.shell.models.run_tool_output import RunToolOutput
-from src.engine.tooling.presentation import (
-    ToolSummary,
-)
-from src.ui.app import SigilApp
-from src.ui.widgets.chat_log import ChatLog, ToolCallBlock, ToolGroupHeader
+from src.core.preferences import PreferencesStore
+from src.core.sessions.session_store import SessionStore
+from src.core.shell.models.run_tool_output import RunToolOutput
+from src.core.tooling.presentation import ToolSummary
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.rows import fit
+from src.ui.widgets.tool_call_block import ToolCallBlock
+from src.ui.widgets.tool_group_header import ToolGroupHeader
 from tests.support.ui import ChatApp
 
 OK = RunToolOutput(returncode=0, stdout='.........\n9 passed in 0.45s\n')
@@ -40,7 +40,7 @@ FAILED = RunToolOutput(
 # --- the row ---------------------------------------------------------------
 
 
-def test_fit_puts_the_right_half_flush_and_clips_the_left():
+def test_fit_puts_the_right_half_flush_and_clips_the_left() -> None:
     left = Text('  │ write tests/test_roadmap.py')
     right = Text('42 lines · 1.2 KB')
     row = fit(left, right, 60)
@@ -48,14 +48,14 @@ def test_fit_puts_the_right_half_flush_and_clips_the_left():
     assert row.plain.endswith('42 lines · 1.2 KB')
 
 
-def test_fit_drops_the_right_half_rather_than_leaving_a_stub():
+def test_fit_drops_the_right_half_rather_than_leaving_a_stub() -> None:
     row = fit(Text('  │ write tests/test_roadmap.py'), Text('9 passed in 0.45s'), 20)
     assert '9 passed' not in row.plain
     assert row.cell_len <= 20
 
 
-def test_the_block_shows_the_summary_and_the_duration_instead_of_a_repr():
-    async def inner():
+def test_the_block_shows_the_summary_and_the_duration_instead_of_a_repr() -> None:
+    async def inner() -> None:
         app = ChatApp()
         async with app.run_test(size=(100, 30)) as pilot:
             chat = app.query_one(ChatLog)
@@ -87,10 +87,10 @@ def test_the_block_shows_the_summary_and_the_duration_instead_of_a_repr():
     asyncio.run(inner())
 
 
-def test_a_failed_result_is_red_and_marks_the_outcome_as_failed():
+def test_a_failed_result_is_red_and_marks_the_outcome_as_failed() -> None:
     """A bad result is a visible failure even when the invocation returned."""
 
-    async def inner():
+    async def inner() -> None:
         app = ChatApp()
         async with app.run_test(size=(100, 30)) as pilot:
             chat = app.query_one(ChatLog)
@@ -109,7 +109,7 @@ def test_a_failed_result_is_red_and_marks_the_outcome_as_failed():
     asyncio.run(inner())
 
 
-def test_the_header_follows_the_width_and_drops_the_outcome_when_there_is_no_room():
+def test_the_header_follows_the_width_and_drops_the_outcome_when_there_is_no_room() -> None:
     """The right edge stays flush, and the right half goes before the left becomes a stub.
 
     The side panel takes 34 columns, so the block in a 70-column terminal is about 34
@@ -117,7 +117,7 @@ def test_the_header_follows_the_width_and_drops_the_outcome_when_there_is_no_roo
     result is dropped, never squeezed — half a clipped sentence reads like a whole one.
     """
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             app = SigilApp(
@@ -177,7 +177,7 @@ async def _batch(chat: ChatLog, calls: list[tuple[str, dict]]) -> None:
         await chat.add_tool_call(name, args)
 
 
-def test_a_batch_gets_one_header_and_a_single_call_does_not():
+def test_a_batch_gets_one_header_and_a_single_call_does_not() -> None:
     """A batch is a run of calls with no answer in between, and it stays open.
 
     The header is created with the first call — there is no way to know a second one is
@@ -186,7 +186,7 @@ def test_a_batch_gets_one_header_and_a_single_call_does_not():
     returned does not, because the model's step is not over.
     """
 
-    async def inner():
+    async def inner() -> None:
         app = ChatApp()
         async with app.run_test(size=(120, 30)) as pilot:
             chat = app.query_one(ChatLog)
@@ -216,8 +216,8 @@ def test_a_batch_gets_one_header_and_a_single_call_does_not():
     asyncio.run(inner())
 
 
-def test_the_header_counts_what_is_left_and_then_stops_counting():
-    async def inner():
+def test_the_header_counts_what_is_left_and_then_stops_counting() -> None:
+    async def inner() -> None:
         app = ChatApp()
         async with app.run_test(size=(120, 30)) as pilot:
             chat = app.query_one(ChatLog)
@@ -241,10 +241,10 @@ def test_the_header_counts_what_is_left_and_then_stops_counting():
     asyncio.run(inner())
 
 
-def test_the_header_says_how_many_calls_raised():
+def test_the_header_says_how_many_calls_raised() -> None:
     """A raised call is counted; a bad result is not, and shows on its own row."""
 
-    async def inner():
+    async def inner() -> None:
         app = ChatApp()
         async with app.run_test(size=(120, 30)) as pilot:
             chat = app.query_one(ChatLog)
@@ -260,10 +260,10 @@ def test_the_header_says_how_many_calls_raised():
     asyncio.run(inner())
 
 
-def test_text_between_calls_starts_a_new_batch():
+def test_text_between_calls_starts_a_new_batch() -> None:
     """The grouping is inference, and this is the rule: a run of calls with no answer."""
 
-    async def inner():
+    async def inner() -> None:
         app = ChatApp()
         async with app.run_test(size=(120, 30)) as pilot:
             chat = app.query_one(ChatLog)
@@ -321,8 +321,8 @@ def test_a_tool_without_a_presenter_says_that_there_is_output() -> None:
     assert body and '2 lines' in body[0]
 
 
-def test_tools_expanded_repaints_what_is_already_on_screen_and_is_remembered():
-    async def inner():
+def test_tools_expanded_repaints_what_is_already_on_screen_and_is_remembered() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             prefs = PreferencesStore(path=Path(tmp) / 'ui.json')

@@ -12,7 +12,6 @@ service call, the probe and the error reporting, so `Esc` can always get out.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import ClassVar, Literal
 
 from textual.app import ComposeResult
@@ -20,27 +19,16 @@ from textual.binding import Binding
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from src.engine.providers.domain.auth_method import AuthMethod, auth_methods_for
-from src.engine.providers.domain.provider_kind import ProviderKind
-from src.engine.providers.domain.provider_variant import ProviderVariant, variants_for
+from src.core.providers.domain.auth_method import AuthMethod, auth_methods_for
+from src.core.providers.domain.provider_kind import ProviderKind
+from src.core.providers.domain.provider_variant import ProviderVariant, variants_for
+from src.ui.widgets.new_account import NewAccount
 from src.ui.widgets.provider_modal import ProviderModal
 
 Step = Literal['provider', 'variant', 'auth', 'alias', 'secret']
 
 KEY_ENTRY = 'key'
 BROWSER_ENTRY = 'browser'
-
-
-@dataclass(frozen=True, slots=True)
-class NewAccount:
-    """What the form collected."""
-
-    kind: ProviderKind
-    variant: ProviderVariant
-    auth: AuthMethod
-    alias: str
-    api_key: str = ''
-    """Empty when ``auth`` is ``OAUTH``."""
 
 
 class AccountFormScreen(ProviderModal):

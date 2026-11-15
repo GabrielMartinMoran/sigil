@@ -6,7 +6,7 @@ from typing import ClassVar
 from rich.color import Color
 from rich.console import Console
 
-from src.ui.widgets.chat_log import LinkedMarkdown
+from src.ui.widgets.linked_markdown import LinkedMarkdown
 
 
 class App:
@@ -27,7 +27,7 @@ class Widget:
     app = App()
 
 
-def test_markdown_palette_covers_tables_quotes_links_and_code_without_leaking():
+def test_markdown_palette_covers_tables_quotes_links_and_code_without_leaking() -> None:
     console = Console(file=StringIO(), force_terminal=True, width=80)
     default_style = console.get_style('markdown.h2')
     markdown = LinkedMarkdown(

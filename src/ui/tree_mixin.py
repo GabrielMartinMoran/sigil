@@ -36,20 +36,24 @@ from typing import Any
 from textual.app import ScreenStackError
 from textual.css.query import NoMatches
 
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.engine.agents.tree.models.agent_node import AgentNode
-from src.engine.agents.tree.models.node_status import NodeStatus
-from src.engine.skills.loaded import loaded_skills
-from src.ui.messages import NodeOpened, TreeChanged
-from src.ui.service_client import ServiceClient, ServiceClientError
-from src.ui.subagent_reports import WAKE_PROMPT
-from src.ui.turn_mixin import failure_notice
-from src.ui.widgets.agent_tree_screen import AgentTreeScreen, TreeAction
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.agents.tree.models.agent_node import AgentNode
+from src.core.agents.tree.models.node_status import NodeStatus
+from src.core.agents.tree.reports import WAKE_PROMPT
+from src.core.skills.loaded import loaded_skills
+from src.ui.node_opened import NodeOpened
+from src.ui.service_client import ServiceClient
+from src.ui.service_client_error import ServiceClientError
+from src.ui.tree_changed import TreeChanged
+from src.ui.turn_notices import failure_notice
+from src.ui.widgets.agent_tree_screen import AgentTreeScreen
 from src.ui.widgets.agent_view import AgentView
-from src.ui.widgets.chat_log import ChatLog, SummonBlock
+from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.sidebar_panel import SidebarPanel
 from src.ui.widgets.status_bar import StatusBar
+from src.ui.widgets.summon_block import SummonBlock
+from src.ui.widgets.tree_action import TreeAction
 
 NO_TREE_NOTICE = 'This session has no agents yet: send a message and the tree starts with it.'
 """What the tree shortcut says when the app was built without a tree."""

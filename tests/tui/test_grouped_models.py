@@ -8,9 +8,10 @@ from pathlib import Path
 from textual.app import App, ComposeResult
 from textual.widgets import Input
 
-from src.engine.preferences import PreferencesStore
-from src.engine.providers.domain.model_capability import ModelCapability, ModelCatalog
-from src.ui.widgets.grouped_model_screen import AccountCatalog, GroupedModelScreen
+from src.core.preferences import PreferencesStore
+from src.core.providers.domain.model_capability import ModelCapability, ModelCatalog
+from src.ui.widgets.account_catalog import AccountCatalog
+from src.ui.widgets.grouped_model_screen import GroupedModelScreen
 
 
 def test_should_filter_models_by_provider_and_toggle_favourite(tmp_path: Path) -> None:

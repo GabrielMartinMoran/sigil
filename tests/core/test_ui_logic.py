@@ -1,13 +1,13 @@
 """Tests for the pure UI logic (command registry and effort wording)."""
 
-from src.engine.commands import match_commands
+from src.core.commands.catalog import match_commands
 
 
-def test_match_commands_requires_slash():
+def test_match_commands_requires_slash() -> None:
     assert match_commands('hello') == []
 
 
-def test_match_commands_filters_by_prefix():
+def test_match_commands_filters_by_prefix() -> None:
     """Everything matches `/`; the order groups session commands before client ones.
 
     The palette is one list, but it is two kinds of thing: what the domain answers and
@@ -44,11 +44,11 @@ def test_match_commands_filters_by_prefix():
     assert match_commands('/zzz') == []
 
 
-def test_match_commands_ignores_argument():
+def test_match_commands_ignores_argument() -> None:
     assert [c.name for c in match_commands('/load something')] == ['/load']
 
 
-def test_match_commands_covers_the_provider_commands():
+def test_match_commands_covers_the_provider_commands() -> None:
     assert [c.name for c in match_commands('/prov')] == ['/provider']
     assert [c.name for c in match_commands('/mod')] == ['/model']
     assert [c.name for c in match_commands('/eff')] == ['/effort']

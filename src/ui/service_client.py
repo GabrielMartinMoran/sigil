@@ -52,11 +52,8 @@ and a client that repeated them would eventually disagree with it.
 from __future__ import annotations
 
 import asyncio
-import codecs
 import json
-import uuid
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Self
 from urllib.parse import quote
@@ -64,11 +61,28 @@ from urllib.parse import quote
 import httpx
 from pydantic import ValidationError
 
-from src.engine.context.meter.debug_wire import DEBUG_SNAPSHOT_ADAPTER, DebugSnapshot
-from src.engine.storage.database import database_path
+from src.core.context.meter.debug_snapshot import DEBUG_SNAPSHOT_ADAPTER, DebugSnapshot
+from src.core.storage.database import database_path
 from src.server.diagnostics import record
 from src.server.endpoint import Endpoint
-from src.server.launch import DEFAULT_READY_TIMEOUT, Launch, LaunchError, ensure_service
+from src.server.launch import Launch
+from src.server.launch_error import LaunchError
+from src.server.service_launch import DEFAULT_READY_TIMEOUT, ensure_service
+from src.ui.no_history_yet import NoHistoryYet
+from src.ui.outgoing_image import OutgoingImage
+from src.ui.payload_too_large import PayloadTooLarge
+from src.ui.request_rejected import RequestRejected
+from src.ui.service_busy import ServiceBusy
+from src.ui.service_client_error import ServiceClientError
+from src.ui.service_event import ServiceEvent
+from src.ui.service_unavailable import ServiceUnavailable
+from src.ui.sse_decoder import SseDecoder
+from src.ui.sse_frame import SseFrame
+from src.ui.status_errors import STATUS_ERRORS
+from src.ui.stream_interrupted import StreamInterrupted
+from src.ui.turn_request import TurnRequest
+from src.ui.unauthorized import Unauthorized
+from src.ui.unexpected_response import UnexpectedResponse
 
 DEFAULT_TIMEOUT = 30.0
 """Seconds one request may take.
@@ -82,241 +96,9 @@ what says it is alive.
 REDACTED = '[redacted]'
 """What a message says instead of the token, when the service echoed it."""
 
+
 STATUS_ERRORS: dict[int, type[ServiceClientError]]
 """The statuses this client can name, filled once the classes below exist."""
-
-
-class ServiceClientError(Exception):
-    """The base of every failure this client reports.
-
-    ``code`` is a stable identifier so a caller can branch on the kind without
-    parsing prose, the same contract `src/server/launch.py` keeps.
-    """
-
-    code = 'service_error'
-
-
-class ServiceUnavailable(ServiceClientError):
-    """No service answered, or none could be started.
-
-    ``launch_code`` carries the launcher's own identifier when the failure came
-    from `src/server/launch.py` — ``service_starting`` means "retry in a moment",
-    ``service_died`` means "the start-up failed, read the message" — so the screen
-    can say which of the two it is without matching text.
-    """
-
-    code = 'service_unavailable'
-
-    def __init__(self, message: str, *, launch_code: str | None = None) -> None:
-        super().__init__(message)
-        self.launch_code = launch_code
-
-
-class Unauthorized(ServiceClientError):
-    """The run token was refused: this client is talking to another run."""
-
-    code = 'unauthorized'
-
-
-class ServiceBusy(ServiceClientError):
-    """The request was well formed and cannot be applied while the session is busy."""
-
-    code = 'busy'
-
-
-class RequestRejected(ServiceClientError):
-    """The request names something the service will not accept; a different one would."""
-
-    code = 'rejected'
-
-
-class PayloadTooLarge(ServiceClientError):
-    """The body passed the service's command ceiling and was refused unread."""
-
-    code = 'too_large'
-
-
-class NoHistoryYet(ServiceClientError):
-    """The service has no durable row for this session yet: nothing has been said.
-
-    A conversation that was never saved has no transcript to paint, and that is a
-    normal state, not a failure. The screen shows an empty transcript and keeps
-    listening; a sentence about an unreadable reply would be a lie about a service
-    that answered a correct 404.
-    """
-
-    code = 'no_history_yet'
-
-
-class UnexpectedResponse(ServiceClientError):
-    """The reply is not the shape this client knows: not JSON, or a status it cannot name."""
-
-    code = 'unexpected_response'
-
-
-class StreamInterrupted(ServiceClientError):
-    """The event stream ended without the client closing it.
-
-    ``last_event_id`` is the cursor to reconnect from: passing it to
-    `ServiceClient.events` asks the service for what was missed, which is the whole
-    reason the stream carries sequence numbers.
-    """
-
-    code = 'stream_interrupted'
-
-    def __init__(self, message: str, *, last_event_id: int | None) -> None:
-        super().__init__(message)
-        self.last_event_id = last_event_id
-
-
-STATUS_ERRORS = {
-    400: RequestRejected,
-    401: Unauthorized,
-    409: ServiceBusy,
-    413: PayloadTooLarge,
-}
-
-
-@dataclass(frozen=True, slots=True)
-class OutgoingImage:
-    """One picture of a message, in the order the text marks it.
-
-    ``media_type`` is what the client claims the bytes are and ``data`` is their
-    base64 payload, exactly the shape `/api/turn` accepts. A position is not a
-    field: the list's order is the ``[Image #n]`` number, which is why
-    `TurnRequest` keeps a tuple.
-    """
-
-    media_type: str
-    data: str
-
-
-@dataclass(frozen=True, slots=True)
-class TurnRequest:
-    """One message to send, with the identity a retry has to reuse.
-
-    The id is generated here, on the client, because the queue's deduplication is
-    keyed by it: a retry that let the service invent a second id would be a second
-    message, which is the failure the durable queue exists to prevent. Retrying the
-    same instance is therefore the correct retry, and a new instance is a new
-    message.
-    """
-
-    text: str
-    images: tuple[OutgoingImage, ...] = ()
-    request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-
-    def payload(self) -> dict[str, Any]:
-        """The body `/api/turn` takes, with the images in their order."""
-        return {
-            'text': self.text,
-            'request_id': self.request_id,
-            'images': [{'media_type': image.media_type, 'data': image.data} for image in self.images],
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class SseFrame:
-    """One event as the SSE protocol defines it, before any JSON is read.
-
-    ``data`` is the joined `data:` lines and nothing is interpreted: the protocol
-    is a text format and this type says so.
-    """
-
-    id: str | None = None
-    event: str | None = None
-    data: str = ''
-
-
-@dataclass(frozen=True, slots=True)
-class ServiceEvent:
-    """One event the service published, ready to apply to the screen.
-
-    ``id`` is the service's sequence number, which is the cursor of a reconnect. It
-    is ``None`` when the frame carried no usable `id`, and a frame without one does
-    not advance the cursor.
-    """
-
-    id: int | None
-    type: str
-    data: dict[str, Any]
-
-
-class SseDecoder:
-    """Reads server-sent events one chunk at a time.
-
-    A chunk boundary is not an event boundary: a read can end in the middle of a
-    field, of a line, of an event, or of a multi-byte character, and a decoder that
-    assumed otherwise would lose or mangle an event exactly when the network was
-    busy. So bytes are accumulated, whole lines are consumed, and a frame is
-    returned only when its blank line arrives. An event cut before that line is
-    held and never emitted: an incomplete frame is a broken event, not a short one.
-
-    The parser follows the protocol for the fields this service sends (`id`,
-    `event`, `data`) and ignores the rest, including comment lines — the service's
-    `: keep-alive` heartbeat is a comment, and it must not become an event. The
-    last id is deliberately *not* carried into a frame that has none: the cursor
-    here is per event, and inventing one would make a reconnect skip an event.
-    """
-
-    def __init__(self) -> None:
-        self._decoder = codecs.getincrementaldecoder('utf-8')('replace')
-        self._buffer = ''
-        self._id: str | None = None
-        self._event: str | None = None
-        self._data: list[str] = []
-
-    def feed(self, chunk: bytes) -> list[SseFrame]:
-        """Every frame the chunk completed, in order. Possibly none."""
-        self._buffer += self._decoder.decode(chunk)
-        frames: list[SseFrame] = []
-        while (line := self._take_line()) is not None:
-            frame = self._consume(line)
-            if frame is not None:
-                frames.append(frame)
-        return frames
-
-    def _take_line(self) -> str | None:
-        """The next whole line, or ``None`` while the rest is still incomplete.
-
-        A trailing ``\\r`` may be the first half of ``\\r\\n``, so it waits for the
-        next read instead of being read as a line and an empty line.
-        """
-        for index, character in enumerate(self._buffer):
-            if character == '\n':
-                line, self._buffer = self._buffer[:index], self._buffer[index + 1 :]
-                return line.removesuffix('\r')
-            if character == '\r':
-                if index + 1 == len(self._buffer):
-                    return None
-                step = 2 if self._buffer[index + 1] == '\n' else 1
-                line, self._buffer = self._buffer[:index], self._buffer[index + step :]
-                return line
-        return None
-
-    def _consume(self, line: str) -> SseFrame | None:
-        if not line:
-            return self._dispatch()
-        if line.startswith(':'):
-            return None
-        name, _, value = line.partition(':')
-        value = value.removeprefix(' ')
-        if name == 'id':
-            self._id = value
-        elif name == 'event':
-            self._event = value
-        elif name == 'data':
-            self._data.append(value)
-        return None
-
-    def _dispatch(self) -> SseFrame | None:
-        if not self._data:
-            self._id = self._event = None
-            return None
-        frame = SseFrame(id=self._id, event=self._event, data='\n'.join(self._data))
-        self._id = self._event = None
-        self._data = []
-        return frame
 
 
 async def _start_service(
@@ -333,6 +115,52 @@ async def _start_service(
         return await asyncio.to_thread(launch, database=database, endpoint_path=endpoint_path, wait=wait)
     except LaunchError as exc:
         raise ServiceUnavailable(f'The Sigil service is not available: {exc}', launch_code=exc.code) from exc
+
+
+def _error_detail(response: httpx.Response) -> str | None:
+    """The message the service put in its error body, when it put one there.
+
+    Every refusal the routes produce is ``{"error": "..."}``; anything else is read
+    as absent so the caller still gets a typed failure with the status in it.
+    """
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    if isinstance(payload, dict) and isinstance(payload.get('error'), str):
+        return str(payload['error'])
+    return None
+
+
+def _cursor(raw: str | None) -> int | None:
+    """A sequence number, or ``None`` when the frame's id is not one."""
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+__all__ = [
+    'DEFAULT_TIMEOUT',
+    'REDACTED',
+    'NoHistoryYet',
+    'OutgoingImage',
+    'PayloadTooLarge',
+    'RequestRejected',
+    'ServiceBusy',
+    'ServiceClient',
+    'ServiceClientError',
+    'ServiceEvent',
+    'ServiceUnavailable',
+    'SseDecoder',
+    'SseFrame',
+    'StreamInterrupted',
+    'TurnRequest',
+    'Unauthorized',
+    'UnexpectedResponse',
+]
 
 
 class ServiceClient:
@@ -934,49 +762,3 @@ class ServiceClient:
         log gets a redacted line instead of a live credential.
         """
         return message.replace(self._token, REDACTED) if self._token else message
-
-
-def _error_detail(response: httpx.Response) -> str | None:
-    """The message the service put in its error body, when it put one there.
-
-    Every refusal the routes produce is ``{"error": "..."}``; anything else is read
-    as absent so the caller still gets a typed failure with the status in it.
-    """
-    try:
-        payload = response.json()
-    except ValueError:
-        return None
-    if isinstance(payload, dict) and isinstance(payload.get('error'), str):
-        return str(payload['error'])
-    return None
-
-
-def _cursor(raw: str | None) -> int | None:
-    """A sequence number, or ``None`` when the frame's id is not one."""
-    if raw is None:
-        return None
-    try:
-        return int(raw)
-    except ValueError:
-        return None
-
-
-__all__ = [
-    'DEFAULT_TIMEOUT',
-    'REDACTED',
-    'NoHistoryYet',
-    'OutgoingImage',
-    'PayloadTooLarge',
-    'RequestRejected',
-    'ServiceBusy',
-    'ServiceClient',
-    'ServiceClientError',
-    'ServiceEvent',
-    'ServiceUnavailable',
-    'SseDecoder',
-    'SseFrame',
-    'StreamInterrupted',
-    'TurnRequest',
-    'Unauthorized',
-    'UnexpectedResponse',
-]

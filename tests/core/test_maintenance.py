@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
-from src.engine.sessions.session_store import SessionStore
-from src.engine.storage.blobs import ABANDONED, IMAGE
-from src.engine.storage.database import Database, database_path
-from src.engine.storage.maintenance import (
+from src.core.sessions.session_store import SessionStore
+from src.core.storage.blobs import ABANDONED, IMAGE
+from src.core.storage.database import Database, database_path
+from src.core.storage.maintenance import (
     backup,
     collect_blobs,
     drop_old_checkpoints,
@@ -34,13 +34,13 @@ def store(tmp_path: Path) -> SessionStore:
     return SessionStore(cwd=tmp_path / 'ws', base_dir=base)
 
 
-def test_the_collector_removes_instructions_nothing_points_at(store: SessionStore):
+def test_the_collector_removes_instructions_nothing_points_at(store: SessionStore) -> None:
     orphan = store.blobs.put_text('a skill nobody uses any more')
     assert collect_blobs(store.database, store.blobs) == 1
     assert store.database.value('SELECT count(*) FROM blobs WHERE id = ?', (orphan,)) == 0
 
 
-def test_the_collector_leaves_images_alone(store: SessionStore):
+def test_the_collector_leaves_images_alone(store: SessionStore) -> None:
     """An image is referenced from inside a payload, which the collector cannot see.
 
     Deleting it would remove pixels `view_image` still needs, so they are collected by
@@ -53,7 +53,7 @@ def test_the_collector_leaves_images_alone(store: SessionStore):
     assert store.database.value('SELECT count(*) FROM blobs WHERE id = ?', (image,)) == 1
 
 
-def test_the_collector_keeps_what_a_checkpoint_needs(store: SessionStore):
+def test_the_collector_keeps_what_a_checkpoint_needs(store: SessionStore) -> None:
     """A rollback restores a plan from a blob and undoes itself from another."""
     session = store.create_session()
     session.messages = _turn(0)
@@ -67,7 +67,7 @@ def test_the_collector_keeps_what_a_checkpoint_needs(store: SessionStore):
     assert store.database.value('SELECT count(*) FROM blobs WHERE id = ?', (abandoned,)) == 1
 
 
-def test_a_session_can_be_exported_and_read(store: SessionStore):
+def test_a_session_can_be_exported_and_read(store: SessionStore) -> None:
     session = store.create_session()
     session.messages = _turn(0) + _turn(1)
     session.title = 'A session'
@@ -85,12 +85,12 @@ def test_a_session_can_be_exported_and_read(store: SessionStore):
     assert len(root['turns']) == 2
 
 
-def test_an_unknown_session_cannot_be_exported(store: SessionStore):
+def test_an_unknown_session_cannot_be_exported(store: SessionStore) -> None:
     with pytest.raises(KeyError):
         export_session(store.database, store.blobs, 'nope')
 
 
-def test_a_backup_is_a_consistent_copy(store: SessionStore, tmp_path: Path):
+def test_a_backup_is_a_consistent_copy(store: SessionStore, tmp_path: Path) -> None:
     session = store.create_session()
     session.messages = _turn(0)
     store.save(session)
@@ -102,7 +102,7 @@ def test_a_backup_is_a_consistent_copy(store: SessionStore, tmp_path: Path):
     assert copy.value('SELECT count(*) FROM messages') == 2
 
 
-def test_old_checkpoints_are_dropped_but_the_undo_is_kept(store: SessionStore):
+def test_old_checkpoints_are_dropped_but_the_undo_is_kept(store: SessionStore) -> None:
     session = store.create_session()
     session.messages = [message for index in range(10) for message in _turn(index)]
     store.save(session)
@@ -115,7 +115,7 @@ def test_old_checkpoints_are_dropped_but_the_undo_is_kept(store: SessionStore):
     assert store.database.value("SELECT count(*) FROM checkpoints WHERE reason = 'before_rollback'") == undo
 
 
-def test_a_pass_reports_what_it_did(store: SessionStore):
+def test_a_pass_reports_what_it_did(store: SessionStore) -> None:
     store.blobs.put_text('nobody points here')
     session = store.create_session()
     session.messages = [message for index in range(8) for message in _turn(index)]
@@ -129,7 +129,7 @@ def test_a_pass_reports_what_it_did(store: SessionStore):
     assert report.reclaimed >= 0
 
 
-def test_maintenance_can_run_twice(store: SessionStore):
+def test_maintenance_can_run_twice(store: SessionStore) -> None:
     """It runs on idle, so it has to be idempotent and cheap."""
     session = store.create_session()
     session.messages = _turn(0)

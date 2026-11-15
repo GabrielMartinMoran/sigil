@@ -19,17 +19,17 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from src.engine.context.budget import ContextBudget
-from src.engine.context.capability import ContextViewCapability
-from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
-from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.context.meter.render import render_report
-from src.engine.context.scope import ScopeSink, ScopeTracker
-from src.engine.context.strategy.append_only import AppendOnlyStrategy
-from src.engine.context.strategy.passthrough import PassthroughStrategy
-from src.engine.context.strategy.turns import split_prompts
-from src.engine.context.tokens import estimate_tokens, measured_tokens, projected_tokens
-from src.engine.context.working_set import render_working_set, touched_files
+from src.core.context.capability import ContextViewCapability
+from src.core.context.context_budget import ContextBudget
+from src.core.context.instructions.workspace_instructions import WorkspaceInstructions
+from src.core.context.meter.context_meter import ContextMeter
+from src.core.context.meter.render import render_report
+from src.core.context.scope import ScopeSink, ScopeTracker
+from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
+from src.core.context.strategy.passthrough_strategy import PassthroughStrategy
+from src.core.context.strategy.turns import split_prompts
+from src.core.context.tokens import estimate_tokens, measured_tokens, projected_tokens
+from src.core.context.working_set import render_working_set, touched_files
 
 # --- helpers ---------------------------------------------------------------
 
@@ -72,24 +72,24 @@ def _turn(index: int, *, result_chars: int = 100, thinking: str | None = None) -
 # --- tokens ----------------------------------------------------------------
 
 
-def test_estimate_tokens_is_zero_for_empty():
+def test_estimate_tokens_is_zero_for_empty() -> None:
     assert estimate_tokens('') == 0
     assert estimate_tokens('a') == 1
     assert estimate_tokens('a' * 400) == 100
 
 
-def test_measured_tokens_uses_last_response():
+def test_measured_tokens_uses_last_response() -> None:
     messages = [*_turn(1), *_turn(2)]
     measured = measured_tokens(messages)
     assert measured is not None
     assert measured >= 0
 
 
-def test_measured_tokens_none_without_response():
+def test_measured_tokens_none_without_response() -> None:
     assert measured_tokens([_user('hello')]) is None
 
 
-def test_projected_tokens_adds_trailing_messages():
+def test_projected_tokens_adds_trailing_messages() -> None:
     base = _turn(1)
     measured = measured_tokens(base)
     assert measured is not None
@@ -100,7 +100,7 @@ def test_projected_tokens_adds_trailing_messages():
     assert projected > measured
 
 
-def test_projected_tokens_estimates_when_no_response():
+def test_projected_tokens_estimates_when_no_response() -> None:
     projected = projected_tokens([_user('hello world')])
     assert projected is not None and projected > 0
 
@@ -113,7 +113,7 @@ def _with_instructions(text: str, instructions: str) -> ModelRequest:
     return ModelRequest(parts=[UserPromptPart(content=text)], instructions=instructions)
 
 
-def test_estimate_ignores_replayed_instructions():
+def test_estimate_ignores_replayed_instructions() -> None:
     """A saved request keeps its instructions, but they are not resent with the history.
 
     pydantic-ai sends the instructions of the request being made
@@ -122,7 +122,7 @@ def test_estimate_ignores_replayed_instructions():
     three-turn conversation weigh 12x what it actually sent, and the surplus pushed
     the history over the budget, so whole turns were discarded.
     """
-    from src.engine.context.tokens import estimate_message_tokens
+    from src.core.context.tokens import estimate_message_tokens
 
     prompt = _user('hello')
     with_instructions = _with_instructions('hello', 'x' * 40_000)
@@ -130,9 +130,9 @@ def test_estimate_ignores_replayed_instructions():
     assert estimate_message_tokens(with_instructions) == estimate_message_tokens(prompt)
 
 
-def test_estimate_history_does_not_grow_with_replayed_instructions():
+def test_estimate_history_does_not_grow_with_replayed_instructions() -> None:
     """Ten turns weigh the same whether or not their requests recorded instructions."""
-    from src.engine.context.tokens import estimate_messages_tokens
+    from src.core.context.tokens import estimate_messages_tokens
 
     plain = [_turn(index) for index in range(10)]
     replayed = [
@@ -149,9 +149,9 @@ def test_estimate_history_does_not_grow_with_replayed_instructions():
     assert estimate_messages_tokens(flat_replayed) == estimate_messages_tokens(flat_plain)
 
 
-def test_projected_tokens_ignores_replayed_instructions():
+def test_projected_tokens_ignores_replayed_instructions() -> None:
     """The panel's number does not take the instructions of past requests into account."""
-    from src.engine.context.tokens import projected_tokens
+    from src.core.context.tokens import projected_tokens
 
     body = 'system prompt ' * 1_500
     messages: list[ModelMessage] = [
@@ -172,7 +172,7 @@ def test_projected_tokens_ignores_replayed_instructions():
 # --- budget ----------------------------------------------------------------
 
 
-def test_budget_subtracts_fixed_costs():
+def test_budget_subtracts_fixed_costs() -> None:
     budget = ContextBudget(window=100_000, tools=5_000, instructions=2_000, output_reserve=8_000)
     assert budget.fixed == 7_000
     assert budget.available_for_history == 85_000
@@ -180,13 +180,13 @@ def test_budget_subtracts_fixed_costs():
     assert budget.fits(90_000) is False
 
 
-def test_budget_without_window_has_no_limit():
+def test_budget_without_window_has_no_limit() -> None:
     budget = ContextBudget(window=None)
     assert budget.available_for_history is None
     assert budget.fits(10**9) is None
 
 
-def test_budget_never_negative():
+def test_budget_never_negative() -> None:
     budget = ContextBudget(window=1_000, tools=900, instructions=900, output_reserve=8_000)
     assert budget.available_for_history == 0
 
@@ -194,14 +194,14 @@ def test_budget_never_negative():
 # --- turns -----------------------------------------------------------------
 
 
-def test_split_prompts_groups_by_user_prompt():
+def test_split_prompts_groups_by_user_prompt() -> None:
     messages = [*_turn(1), *_turn(2), *_turn(3)]
     turns = split_prompts(messages)
     assert len(turns) == 3
     assert all(len(turn) == 4 for turn in turns)
 
 
-def test_split_prompts_keeps_leading_messages_without_prompt():
+def test_split_prompts_keeps_leading_messages_without_prompt() -> None:
     messages = [_assistant('loose'), *_turn(1)]
     turns = split_prompts(messages)
     assert len(turns) == 2
@@ -211,14 +211,14 @@ def test_split_prompts_keeps_leading_messages_without_prompt():
 # --- strategies ------------------------------------------------------------
 
 
-def test_passthrough_returns_everything():
+def test_passthrough_returns_everything() -> None:
     messages = [*_turn(1), *_turn(2)]
     result = PassthroughStrategy().view(messages, ContextBudget(window=None))
     assert result.messages == messages
     assert not result.changed
 
 
-def test_append_only_keeps_tool_call_and_return_paired():
+def test_append_only_keeps_tool_call_and_return_paired() -> None:
     """Un `ToolReturnPart` sin su `ToolCallPart` es un 400 del provider."""
     messages = [*_turn(1, result_chars=20_000), *_pad(30), *_turn(2)]
     result = AppendOnlyStrategy().view(messages, ContextBudget(window=None))
@@ -242,14 +242,14 @@ def test_append_only_keeps_tool_call_and_return_paired():
 # --- scope -----------------------------------------------------------------
 
 
-def test_scope_always_contains_root():
+def test_scope_always_contains_root() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         tracker = ScopeTracker(tmp)
         assert tracker.scopes() == (Path(tmp).resolve(),)
         assert tracker.relative_scopes() == ('.',)
 
 
-def test_scope_adds_child_chain():
+def test_scope_adds_child_chain() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / 'a' / 'b').mkdir(parents=True)
@@ -260,7 +260,7 @@ def test_scope_adds_child_chain():
         assert relative == ('.', 'a', 'a/b')
 
 
-def test_scope_ignores_siblings_until_touched():
+def test_scope_ignores_siblings_until_touched() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / 'a').mkdir()
@@ -273,21 +273,21 @@ def test_scope_ignores_siblings_until_touched():
         assert 'b' in tracker.relative_scopes()
 
 
-def test_scope_ignores_paths_outside_workspace():
+def test_scope_ignores_paths_outside_workspace() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         tracker = ScopeTracker(tmp)
         tracker.observe('read_file', {'path': '/etc/passwd'})
         assert tracker.relative_scopes() == ('.',)
 
 
-def test_scope_ignores_tools_without_paths():
+def test_scope_ignores_tools_without_paths() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         tracker = ScopeTracker(tmp)
         assert tracker.observe('web_search', {'query': 'x'}) is False
         assert tracker.observe('run', {'cmds': ['ls']}) is False
 
 
-def test_scope_reset_returns_to_root():
+def test_scope_reset_returns_to_root() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / 'a').mkdir()
@@ -297,7 +297,7 @@ def test_scope_reset_returns_to_root():
         assert tracker.relative_scopes() == ('.',)
 
 
-def test_scope_sink_feeds_tracker():
+def test_scope_sink_feeds_tracker() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / 'a').mkdir()
@@ -317,7 +317,7 @@ def test_scope_sink_feeds_tracker():
 # --- workspace blocks ------------------------------------------------------
 
 
-def test_workspace_prefers_agents_over_claude():
+def test_workspace_prefers_agents_over_claude() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / 'AGENTS.md').write_text('agents')
@@ -328,7 +328,7 @@ def test_workspace_prefers_agents_over_claude():
         assert files[0].content == 'agents'
 
 
-def test_workspace_falls_back_to_claude():
+def test_workspace_falls_back_to_claude() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / 'CLAUDE.md').write_text('claude')
@@ -338,7 +338,7 @@ def test_workspace_falls_back_to_claude():
         assert files[0].content == 'claude'
 
 
-def test_workspace_orders_parent_before_child():
+def test_workspace_orders_parent_before_child() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / 'a').mkdir()
@@ -349,7 +349,7 @@ def test_workspace_orders_parent_before_child():
         assert [file.content for file in files] == ['root', 'child']
 
 
-def test_workspace_block_uses_rewrite_policy():
+def test_workspace_block_uses_rewrite_policy() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / 'AGENTS.md').write_text('root')
@@ -359,12 +359,12 @@ def test_workspace_block_uses_rewrite_policy():
         assert block.on_change == 'rewrite'
 
 
-def test_workspace_block_is_none_without_files():
+def test_workspace_block_is_none_without_files() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         assert WorkspaceInstructions(tmp).block([Path(tmp)]) is None
 
 
-def test_workspace_truncates_large_files():
+def test_workspace_truncates_large_files() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / 'AGENTS.md').write_text('x' * 5_000)
@@ -374,7 +374,7 @@ def test_workspace_truncates_large_files():
         assert len(files[0].content) == 1_000
 
 
-def test_workspace_respects_total_limit():
+def test_workspace_respects_total_limit() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / 'a').mkdir()
@@ -385,7 +385,7 @@ def test_workspace_respects_total_limit():
         assert sum(len(file.content) for file in files) <= 1_000
 
 
-def test_workspace_cache_invalidates_on_change():
+def test_workspace_cache_invalidates_on_change() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         path = root / 'AGENTS.md'
@@ -400,7 +400,7 @@ def test_workspace_cache_invalidates_on_change():
 # --- meter -----------------------------------------------------------------
 
 
-def test_meter_snapshot_and_report():
+def test_meter_snapshot_and_report() -> None:
     meter = ContextMeter(window=100_000, output_reserve=1_000)
     meter.set_overhead(instructions=500, tools=1_500)
     messages = [*_turn(1), *_turn(2)]
@@ -422,7 +422,7 @@ def test_meter_snapshot_and_report():
     assert 'Turns' in text
 
 
-def test_the_report_carries_the_bill_of_the_session():
+def test_the_report_carries_the_bill_of_the_session() -> None:
     """`/context` shows the money next to the tokens: one is the window, the other its price."""
     messages = [
         _user('hi'),
@@ -446,7 +446,7 @@ def test_the_report_carries_the_bill_of_the_session():
     assert 'floor' not in text
 
 
-def test_the_report_marks_an_estimated_total():
+def test_the_report_marks_an_estimated_total() -> None:
     messages = [ModelResponse(parts=[TextPart(content='ok')], usage=RequestUsage(input_tokens=10, output_tokens=1))]
     messages[0].usage.cost = Decimal('0.0005')
 
@@ -455,7 +455,7 @@ def test_the_report_marks_an_estimated_total():
     assert 'total            : $0.0005 (at list price)' in text
 
 
-def test_the_report_marks_a_total_that_is_a_floor():
+def test_the_report_marks_a_total_that_is_a_floor() -> None:
     messages = [ModelResponse(parts=[TextPart(content='ok')])]
 
     text = render_report(ContextMeter(window=200_000).report(messages))
@@ -464,7 +464,7 @@ def test_the_report_marks_a_total_that_is_a_floor():
     assert 'floor' in text
 
 
-def test_meter_ignores_invalid_window():
+def test_meter_ignores_invalid_window() -> None:
     meter = ContextMeter(window=0)
     assert meter.window is None
     meter.set_window(-5)
@@ -474,7 +474,7 @@ def test_meter_ignores_invalid_window():
 # --- capability ------------------------------------------------------------
 
 
-def test_capability_is_not_destructive():
+def test_capability_is_not_destructive() -> None:
     """The view changes the request, not the persistent history."""
     from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.test import TestModel
@@ -510,7 +510,7 @@ def test_capability_is_not_destructive():
 
 def _pydantic_turn(index: int, *, content_chars: int = 200_000) -> list[ModelMessage]:
     """A turn whose tool result is a pydantic model, like every Sigil tool."""
-    from src.engine.files.models.file_content import FileContent
+    from src.core.files.models.file_content import FileContent
 
     payload = FileContent(
         path=f'f{index}.py',
@@ -528,9 +528,9 @@ def _pydantic_turn(index: int, *, content_chars: int = 200_000) -> list[ModelMes
     ]
 
 
-def test_tool_return_text_uses_model_response_str():
+def test_tool_return_text_uses_model_response_str() -> None:
     """The size is measured on what the model sees, not on the Python repr."""
-    from src.engine.context.tokens import tool_return_text
+    from src.core.context.tokens import tool_return_text
 
     turn = _pydantic_turn(1, content_chars=5_000)
     part = next(
@@ -548,7 +548,7 @@ def test_tool_return_text_uses_model_response_str():
 # --- working set -----------------------------------------------------------
 
 
-def test_touched_files_collects_paths_from_path_tools():
+def test_touched_files_collects_paths_from_path_tools() -> None:
     messages = [
         _user('read and edit'),
         _tool_call('read_file', {'path': 'src/a.py'}, 'c1'),
@@ -562,7 +562,7 @@ def test_touched_files_collects_paths_from_path_tools():
     assert files[0].written is True
 
 
-def test_touched_files_ignores_tools_without_paths():
+def test_touched_files_ignores_tools_without_paths() -> None:
     messages = [
         _user('run something'),
         _tool_call('run', {'command': 'ls'}, 'c1'),
@@ -573,7 +573,7 @@ def test_touched_files_ignores_tools_without_paths():
     assert touched_files(messages) == []
 
 
-def test_touched_files_orders_by_most_recent_interaction():
+def test_touched_files_orders_by_most_recent_interaction() -> None:
     messages = [
         _user('one'),
         _tool_call('read_file', {'path': 'a.py'}, 'c1'),
@@ -591,7 +591,7 @@ def test_touched_files_orders_by_most_recent_interaction():
     assert files[0].tools == ('read_file', 'patch_file')
 
 
-def test_touched_files_normalizes_relative_prefixes():
+def test_touched_files_normalizes_relative_prefixes() -> None:
     messages = [
         _user('read'),
         _tool_call('read_file', {'path': './src/a.py'}, 'c1'),
@@ -603,7 +603,7 @@ def test_touched_files_normalizes_relative_prefixes():
     assert [file.path for file in files] == ['src/a.py']
 
 
-def test_touched_files_parses_json_string_args():
+def test_touched_files_parses_json_string_args() -> None:
     """pydantic-ai leaves `args` as a string when the model did not validate the schema."""
     messages = [
         _user('read'),
@@ -613,7 +613,7 @@ def test_touched_files_parses_json_string_args():
     assert [file.path for file in touched_files(messages)] == ['a.py']
 
 
-def test_touched_files_ignores_unparseable_args():
+def test_touched_files_ignores_unparseable_args() -> None:
     messages = [
         _user('read'),
         ModelResponse(parts=[ToolCallPart(tool_name='read_file', args='{not json', tool_call_id='c1')]),
@@ -622,7 +622,7 @@ def test_touched_files_ignores_unparseable_args():
     assert touched_files(messages) == []
 
 
-def test_touched_files_respects_limit():
+def test_touched_files_respects_limit() -> None:
     messages = [_user('muchos')]
     for index in range(5):
         messages.append(_tool_call('read_file', {'path': f'f{index}.py'}, f'c{index}'))
@@ -631,5 +631,5 @@ def test_touched_files_respects_limit():
     assert [file.path for file in files] == ['f4.py', 'f3.py']
 
 
-def test_render_working_set_is_empty_without_files():
+def test_render_working_set_is_empty_without_files() -> None:
     assert render_working_set([]) == ''

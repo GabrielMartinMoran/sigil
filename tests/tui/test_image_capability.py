@@ -14,20 +14,21 @@ from __future__ import annotations
 
 import asyncio
 import io
+from pathlib import Path
 
 from PIL import Image
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
 import src.ui.widgets.prompt_input as prompt_module
-from src.engine.providers.domain.model_capability import ModelCapability
-from src.engine.providers.domain.provider_account import ProviderAccount
-from src.engine.providers.domain.provider_kind import ProviderKind
-from src.engine.providers.domain.provider_variant import ProviderVariant
-from src.engine.providers.domain.selection import Selection
-from src.engine.providers.snapshot import ModelSnapshot
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
+from src.core.providers.domain.model_capability import ModelCapability
+from src.core.providers.domain.provider_account import ProviderAccount
+from src.core.providers.domain.provider_kind import ProviderKind
+from src.core.providers.domain.provider_variant import ProviderVariant
+from src.core.providers.domain.selection import Selection
+from src.core.providers.snapshot import ModelSnapshot
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 from tests.support.ui import render_text
@@ -76,7 +77,7 @@ def _composer(app: SigilApp) -> PromptInput:
     return app.query_one(PromptInput)
 
 
-def test_a_text_only_model_refuses_the_paste_and_names_the_way_out(tmp_path):
+def test_a_text_only_model_refuses_the_paste_and_names_the_way_out(tmp_path: Path) -> None:
     async def inner() -> None:
         app = _app(tmp_path, service=Service(images=False, model='text-small'))
         async with app.run_test() as pilot:
@@ -96,7 +97,7 @@ def test_a_text_only_model_refuses_the_paste_and_names_the_way_out(tmp_path):
     asyncio.run(inner())
 
 
-def test_a_multimodal_model_accepts_the_paste(tmp_path):
+def test_a_multimodal_model_accepts_the_paste(tmp_path: Path) -> None:
     async def inner() -> None:
         app = _app(tmp_path, service=Service(images=True, model='vision'))
         async with app.run_test() as pilot:
@@ -113,7 +114,7 @@ def test_a_multimodal_model_accepts_the_paste(tmp_path):
     asyncio.run(inner())
 
 
-def test_with_no_model_configured_the_paste_is_allowed(tmp_path):
+def test_with_no_model_configured_the_paste_is_allowed(tmp_path: Path) -> None:
     """The turn will fail on the missing credential; that is the message worth giving."""
 
     async def inner() -> None:

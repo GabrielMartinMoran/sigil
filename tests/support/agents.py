@@ -26,7 +26,7 @@ def write_profile(
 
 
 def _builtin_root() -> Path:
-    from src.engine.agents.profile.discovery import BUILTIN_DIRNAME
+    from src.core.agents.profile.discovery import BUILTIN_DIRNAME
 
     return BUILTIN_DIRNAME
 

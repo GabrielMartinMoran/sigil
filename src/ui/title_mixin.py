@@ -5,7 +5,7 @@ active session:
 
 - **Naming.** The first message of a session is sent, once, to the model the
   conversation already runs on, and its answer becomes the title
-  (``src.engine.sessions.titling``). It happens on a worker while the turn runs,
+  (``src.core.sessions.titling``). It happens on a worker while the turn runs,
   so the answer the user is waiting for never waits on a name for the tab.
 - **Painting.** The terminal window shows ``<repository> — <session title>``
   (``src.ui.window_title``), repainted on the events that change either half:
@@ -27,7 +27,7 @@ from typing import Any
 from textual import work
 from textual.worker import Worker
 
-from src.engine.sessions.titling import first_user_message, generate_title
+from src.core.sessions.titling import first_user_message, generate_title
 from src.ui import window_title
 
 MAX_NAMING_ATTEMPTS = 2

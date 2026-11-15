@@ -6,9 +6,9 @@ from __future__ import annotations
 def test_should_publish_formatted_live_output_not_the_raw_logging_preview() -> None:
     from types import SimpleNamespace
 
-    from src.engine.tooling.events import ToolCallEvent
-    from src.engine.tooling.presentation import ToolSummary
-    from src.server.events import EventHub
+    from src.core.tooling.events import ToolCallEvent
+    from src.core.tooling.presentation import ToolSummary
+    from src.server.event_hub import EventHub
     from src.server.session_runtime import SessionRuntime
 
     hub = EventHub()

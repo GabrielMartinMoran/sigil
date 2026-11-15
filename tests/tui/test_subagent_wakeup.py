@@ -25,13 +25,13 @@ from unittest.mock import Mock
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.engine.agents.profile.registry import AgentRegistry
-from src.engine.agents.tree.store import AgentTreeStore
-from src.engine.agents.tree.summoner import SubagentSummoner
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
-from src.ui.desktop_notifications import Attention
+from src.core.agents.profile.agent_registry import AgentRegistry
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.agents.tree.agent_tree_store import AgentTreeStore
+from src.core.agents.tree.summoner import SubagentSummoner
+from src.core.sessions.session_store import SessionStore
+from src.ui.attention import Attention
+from src.ui.sigil_app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
 
 
@@ -70,7 +70,7 @@ def _finished_node(app: SigilApp, *, result: str = 'I read the tree.') -> Any:
 # --- the app side ------------------------------------------------------------
 
 
-def test_a_finished_subagent_wakes_the_session():
+def test_a_finished_subagent_wakes_the_session() -> None:
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, with_summoner=True)
@@ -92,7 +92,7 @@ def test_a_finished_subagent_wakes_the_session():
     assert node.delivered is True, 'the woken turn consumed the report'
 
 
-def test_three_reports_in_a_row_produce_one_wake_up():
+def test_three_reports_in_a_row_produce_one_wake_up() -> None:
     """A squad reports within a second: one turn reads all three."""
 
     async def inner():
@@ -126,10 +126,10 @@ def test_three_reports_in_a_row_produce_one_wake_up():
     assert all(node.delivered for node in nodes)
 
 
-def test_a_wake_up_does_not_steal_a_turn_the_user_started():
+def test_a_wake_up_does_not_steal_a_turn_the_user_started() -> None:
     """If the user typed first, that turn drains the reports at its top."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, with_summoner=True)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -146,7 +146,7 @@ def test_a_wake_up_does_not_steal_a_turn_the_user_started():
     asyncio.run(inner())
 
 
-def test_the_chat_says_the_turn_was_woken_and_not_typed():
+def test_the_chat_says_the_turn_was_woken_and_not_typed() -> None:
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, with_summoner=True)
@@ -169,8 +169,9 @@ def test_the_chat_says_the_turn_was_woken_and_not_typed():
 # --- the visual block --------------------------------------------------------
 
 
-def test_a_summon_renders_as_a_spawn_and_not_as_a_tool_call():
-    from src.ui.widgets.chat_log import SummonBlock, block_for
+def test_a_summon_renders_as_a_spawn_and_not_as_a_tool_call() -> None:
+    from src.ui.widgets.block_for import block_for
+    from src.ui.widgets.summon_block import SummonBlock
 
     block = block_for(
         'summon',
@@ -189,8 +190,8 @@ def test_a_summon_renders_as_a_spawn_and_not_as_a_tool_call():
     assert '{"agent"' not in text
 
 
-def test_a_resumed_summon_says_so():
-    from src.ui.widgets.chat_log import SummonBlock
+def test_a_resumed_summon_says_so() -> None:
+    from src.ui.widgets.summon_block import SummonBlock
 
     block = SummonBlock('summon', {'agent': 'scout', 'task': 'keep going', 'agent_id': 'abcdef1234'})
     text = _text_of(block)
@@ -199,9 +200,9 @@ def test_a_resumed_summon_says_so():
     assert 'Scout (#abcdef12)' in text
 
 
-def test_a_resume_paints_the_id_once():
+def test_a_resume_paints_the_id_once() -> None:
     """The header carries the id of a resume; the meta line does not repeat it."""
-    from src.ui.widgets.chat_log import SummonBlock
+    from src.ui.widgets.summon_block import SummonBlock
 
     block = SummonBlock('summon', {'task': 'keep going', 'agent_id': 'abcdef1234', 'mode': 'async'})
     block.set_result('#abcdef1234 (Scout) is working in the background.')
@@ -211,23 +212,23 @@ def test_a_resume_paints_the_id_once():
     assert 'async · working' in block._meta_line().plain
 
 
-def test_an_exhausted_subagent_reads_as_out_of_steps():
-    from src.ui.widgets.chat_log import SummonBlock
+def test_an_exhausted_subagent_reads_as_out_of_steps() -> None:
+    from src.ui.widgets.summon_block import SummonBlock
 
     block = SummonBlock('summon', {'agent': 'scout', 'task': 'go', 'mode': 'sync'})
     block.set_result('[subagent Scout (scout #abcd1234, sync) out of steps]\npartial')
     assert 'out of steps' in _text_of(block)
 
 
-def test_a_refused_summon_reads_as_refused():
-    from src.ui.widgets.chat_log import SummonBlock
+def test_a_refused_summon_reads_as_refused() -> None:
+    from src.ui.widgets.summon_block import SummonBlock
 
     block = SummonBlock('summon', {'agent': 'nobody', 'task': 'go'})
     block.set_error('Unknown subagent')
     assert 'refused' in _text_of(block)
 
 
-def test_the_notification_waits_for_the_last_subagent():
+def test_the_notification_waits_for_the_last_subagent() -> None:
     """The end of the turn is not the end of the work: the last report is.
 
     The turn that dispatched the squad ends while the subagent keeps working, and
@@ -262,8 +263,9 @@ def test_the_notification_waits_for_the_last_subagent():
     app.notify_attention.assert_called_once_with(Attention.FINISHED)
 
 
-def test_a_plain_tool_is_still_a_plain_block():
-    from src.ui.widgets.chat_log import ToolCallBlock, block_for
+def test_a_plain_tool_is_still_a_plain_block() -> None:
+    from src.ui.widgets.block_for import block_for
+    from src.ui.widgets.tool_call_block import ToolCallBlock
 
     assert type(block_for('read_file', {'path': 'x'}, classes='tool-call')) is ToolCallBlock
 

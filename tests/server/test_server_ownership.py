@@ -8,14 +8,16 @@ from pathlib import Path
 
 import pytest
 
-from src.server.ownership import OwnershipError, ServerOwnership
+from src.server.ownership_error import OwnershipError
+from src.server.server_ownership import ServerOwnership
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def _other_process(database: Path) -> subprocess.CompletedProcess[str]:
     script = (
-        'from src.server.ownership import OwnershipError, ServerOwnership\n'
+        'from src.server.ownership_error import OwnershipError\n'
+        'from src.server.server_ownership import ServerOwnership\n'
         f'try:\n    ServerOwnership({str(database)!r}).acquire()\n'
         "except OwnershipError as exc:\n    print('REFUSED', exc)\n"
         "else:\n    print('ACQUIRED')\n"

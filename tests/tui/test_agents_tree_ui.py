@@ -22,14 +22,16 @@ from pydantic_ai.models.test import TestModel
 from rich.text import Text
 from textual.widgets import OptionList
 
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.engine.agents.profile.registry import AgentRegistry
-from src.engine.agents.tree.store import AgentTreeStore
-from src.engine.agents.tree.summoner import SubagentSummoner
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
-from src.ui.widgets.agent_tree_screen import AgentTreeScreen, node_row, status_text
-from src.ui.widgets.agent_view import AgentView, build_agent_header, elapsed_text
+from src.core.agents.profile.agent_registry import AgentRegistry
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.agents.tree.agent_tree_store import AgentTreeStore
+from src.core.agents.tree.summoner import SubagentSummoner
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.agent_tree_rows import node_row, status_text
+from src.ui.widgets.agent_tree_screen import AgentTreeScreen
+from src.ui.widgets.agent_view import AgentView
+from src.ui.widgets.agent_view_text import build_agent_header, elapsed_text
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.prompt_input import PromptInput
 from tests.support.ui import render_text, wait_until
@@ -75,7 +77,7 @@ def _fill(app: SigilApp, *, running: str = '') -> Any:
 # --- the node view -----------------------------------------------------------
 
 
-def test_the_header_says_where_the_node_is_and_how_it_went():
+def test_the_header_says_where_the_node_is_and_how_it_went() -> None:
     tree = AgentTreeStore().active
     root = tree.ensure_root('wizard')
     node = tree.add(parent_id=root.id, name='deep-researcher', role=AgentRole.SUBAGENT, task='read\n  the  tree')
@@ -92,7 +94,7 @@ def test_the_header_says_where_the_node_is_and_how_it_went():
     assert 'read the tree' not in text
 
 
-def test_a_failed_node_shows_why():
+def test_a_failed_node_shows_why() -> None:
     tree = AgentTreeStore().active
     root = tree.ensure_root('wizard')
     node = tree.add(parent_id=root.id, name='worker', role=AgentRole.SUBAGENT, task='go')
@@ -103,7 +105,7 @@ def test_a_failed_node_shows_why():
     assert 'the provider exploded' in text
 
 
-def test_elapsed_is_short_and_readable():
+def test_elapsed_is_short_and_readable() -> None:
     assert elapsed_text(0.4) == '0.4s'
     assert elapsed_text(75) == '1m15s'
     assert elapsed_text(3700) == '1h01m'
@@ -112,7 +114,7 @@ def test_elapsed_is_short_and_readable():
 # --- the tree screen ---------------------------------------------------------
 
 
-def test_a_row_indents_by_depth_and_names_the_state():
+def test_a_row_indents_by_depth_and_names_the_state() -> None:
     tree = AgentTreeStore().active
     root = tree.ensure_root('wizard')
     node = tree.add(parent_id=root.id, name='researcher', role=AgentRole.SUBAGENT, task='read it')
@@ -125,7 +127,7 @@ def test_a_row_indents_by_depth_and_names_the_state():
     assert 'Reader' in line
 
 
-def test_the_status_line_counts_the_subagents_and_what_is_running():
+def test_the_status_line_counts_the_subagents_and_what_is_running() -> None:
     tree = AgentTreeStore().active
     root = tree.ensure_root('wizard')
     done = tree.add(parent_id=root.id, name='researcher', role=AgentRole.SUBAGENT, task='a')
@@ -137,7 +139,7 @@ def test_the_status_line_counts_the_subagents_and_what_is_running():
     assert '1 running' in status
 
 
-def test_a_tree_with_only_the_root_says_there_is_nobody_yet():
+def test_a_tree_with_only_the_root_says_there_is_nobody_yet() -> None:
     tree = AgentTreeStore().active
     tree.ensure_root('wizard')
     assert 'No subagents' in render_text(Text.from_markup(status_text(tree.nodes())))
@@ -146,10 +148,10 @@ def test_a_tree_with_only_the_root_says_there_is_nobody_yet():
 # --- navigation --------------------------------------------------------------
 
 
-def test_alt_t_opens_the_tree_and_choosing_a_node_opens_it():
+def test_alt_t_opens_the_tree_and_choosing_a_node_opens_it() -> None:
     """The whole path a user takes: the key, the list, Enter, the node."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             first = _fill(app)
@@ -178,8 +180,8 @@ def test_alt_t_opens_the_tree_and_choosing_a_node_opens_it():
     asyncio.run(inner())
 
 
-def test_opening_a_subagent_replaces_the_chat_and_locks_the_composer():
-    async def inner():
+def test_opening_a_subagent_replaces_the_chat_and_locks_the_composer() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             first = _fill(app)
@@ -208,8 +210,8 @@ def test_opening_a_subagent_replaces_the_chat_and_locks_the_composer():
     asyncio.run(inner())
 
 
-def test_the_node_view_paints_the_transcript_of_the_node():
-    async def inner():
+def test_the_node_view_paints_the_transcript_of_the_node() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             first = _fill(app)
@@ -233,8 +235,8 @@ def test_the_node_view_paints_the_transcript_of_the_node():
     asyncio.run(inner())
 
 
-def test_going_back_from_a_nested_node_lands_on_its_parent():
-    async def inner():
+def test_going_back_from_a_nested_node_lands_on_its_parent() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             first = _fill(app)
@@ -257,10 +259,10 @@ def test_going_back_from_a_nested_node_lands_on_its_parent():
     asyncio.run(inner())
 
 
-def test_alt_t_without_subagents_opens_the_window_that_says_so():
+def test_alt_t_without_subagents_opens_the_window_that_says_so() -> None:
     """The empty state is information, and it belongs in the window, not in a toast."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -285,10 +287,10 @@ def test_alt_t_without_subagents_opens_the_window_that_says_so():
     asyncio.run(inner())
 
 
-def test_opening_the_debug_view_closes_the_node_view():
+def test_opening_the_debug_view_closes_the_node_view() -> None:
     """Two views that replace the same chat cannot both be on screen."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             first = _fill(app)
@@ -305,7 +307,7 @@ def test_opening_the_debug_view_closes_the_node_view():
                 await pilot.press('alt+d')
                 assert app.subagent_open is False
                 assert app.debug_visible is True
-                from src.ui.widgets.debug_view import AgentDebugView
+                from src.ui.widgets.agent_debug_view import AgentDebugView
 
                 assert len(app.query_one(AgentDebugView).last_report.log) == 1
                 assert app.viewed_node_id() == first.id
@@ -330,8 +332,8 @@ def test_opening_the_debug_view_closes_the_node_view():
     asyncio.run(inner())
 
 
-def test_new_session_while_a_subagent_is_open_gives_the_chat_back():
-    async def inner():
+def test_new_session_while_a_subagent_is_open_gives_the_chat_back() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             first = _fill(app)
@@ -349,8 +351,8 @@ def test_new_session_while_a_subagent_is_open_gives_the_chat_back():
     asyncio.run(inner())
 
 
-def test_a_finished_subagent_repaints_the_view_it_is_shown_in():
-    async def inner():
+def test_a_finished_subagent_repaints_the_view_it_is_shown_in() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             first = _fill(app, running='researcher')
@@ -370,10 +372,10 @@ def test_a_finished_subagent_repaints_the_view_it_is_shown_in():
 # --- the way back for async subagents ----------------------------------------
 
 
-def test_a_message_from_a_subagent_goes_to_the_running_turn():
+def test_a_message_from_a_subagent_goes_to_the_running_turn() -> None:
     """The run is the one the app owns; the summoner asks for it, it does not keep it."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -411,10 +413,10 @@ def test_a_message_from_a_subagent_goes_to_the_running_turn():
     asyncio.run(inner())
 
 
-def test_the_messages_that_arrive_while_idle_wait_for_the_next_turn():
+def test_the_messages_that_arrive_while_idle_wait_for_the_next_turn() -> None:
     """`pending` is drained by the turn, not by the UI: it is the engine's queue."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             registry = AgentRegistry([('builtin', Path(tmp) / 'none')], active=None)
             summoner = SubagentSummoner(
@@ -432,8 +434,8 @@ def test_the_messages_that_arrive_while_idle_wait_for_the_next_turn():
     asyncio.run(inner())
 
 
-def test_stop_subagents_reaches_the_summoner():
-    async def inner():
+def test_stop_subagents_reaches_the_summoner() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             registry = AgentRegistry([('builtin', Path(tmp) / 'none')], active=None)
             summoner = SubagentSummoner(
@@ -451,8 +453,8 @@ def test_stop_subagents_reaches_the_summoner():
     asyncio.run(inner())
 
 
-def test_loading_another_session_swaps_the_tree():
-    async def inner():
+def test_loading_another_session_swaps_the_tree() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             _fill(app)
@@ -470,10 +472,10 @@ def test_loading_another_session_swaps_the_tree():
     asyncio.run(inner())
 
 
-def test_running_node_keeps_unreturned_calls_pending_and_finishes_them_on_cancel():
+def test_running_node_keeps_unreturned_calls_pending_and_finishes_them_on_cancel() -> None:
     from pydantic_ai.messages import ModelResponse, ToolCallPart
 
-    from src.ui.widgets.chat_log import ToolCallBlock
+    from src.ui.widgets.tool_call_block import ToolCallBlock
 
     async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -494,10 +496,10 @@ def test_running_node_keeps_unreturned_calls_pending_and_finishes_them_on_cancel
     asyncio.run(inner())
 
 
-def test_overlapping_refreshes_do_not_mix_transcript_snapshots():
+def test_overlapping_refreshes_do_not_mix_transcript_snapshots() -> None:
     from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
 
-    from src.ui.widgets.chat_log import ToolCallBlock
+    from src.ui.widgets.tool_call_block import ToolCallBlock
 
     async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -539,10 +541,10 @@ def test_overlapping_refreshes_do_not_mix_transcript_snapshots():
     asyncio.run(inner())
 
 
-def test_node_view_refreshes_when_a_message_changes_without_a_count_change():
+def test_node_view_refreshes_when_a_message_changes_without_a_count_change() -> None:
     from pydantic_ai.messages import ModelResponse, TextPart
 
-    from src.ui.widgets.chat_log import AssistantBlock
+    from src.ui.widgets.assistant_block import AssistantBlock
 
     async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -559,9 +561,10 @@ def test_node_view_refreshes_when_a_message_changes_without_a_count_change():
     asyncio.run(inner())
 
 
-def test_subagent_instructions_are_distinct_from_user_messages():
-    from src.engine.agents.message_types import origin, request
-    from src.ui.widgets.chat_log import AgentMessageBlock, UserMessage
+def test_subagent_instructions_are_distinct_from_user_messages() -> None:
+    from src.core.agents.message_types import origin, request
+    from src.ui.widgets.agent_message_block import AgentMessageBlock
+    from src.ui.widgets.user_message import UserMessage
 
     async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:

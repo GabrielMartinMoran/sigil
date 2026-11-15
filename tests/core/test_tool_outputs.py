@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from src.engine.shell.models.run_tool_output import RunToolOutput
-from src.engine.tooling.outputs import present_output
+from src.core.shell.models.run_tool_output import RunToolOutput
+from src.core.tooling.outputs import present_output
 
 
 @pytest.mark.parametrize('serialized', [False, True])
@@ -67,10 +67,10 @@ def test_should_allow_tools_to_declare_output_without_changing_model_result() ->
     from pydantic_ai import Agent
     from pydantic_ai.models.test import TestModel
 
-    from src.engine.tooling.logging import ToolLoggerHub
-    from src.engine.tooling.outputs import ToolOutput
-    from src.engine.tooling.presentation import ToolSummary
-    from src.engine.tooling.registrar import ToolRegistrar
+    from src.core.tooling.logging import ToolLoggerHub
+    from src.core.tooling.outputs import ToolOutput
+    from src.core.tooling.presentation import ToolSummary
+    from src.core.tooling.registrar import ToolRegistrar
 
     events = []
     agent = Agent(TestModel(call_tools=[]))
@@ -88,7 +88,7 @@ def test_should_allow_tools_to_declare_output_without_changing_model_result() ->
 
 
 def test_should_tolerate_a_broken_presenter_without_reintroducing_repr() -> None:
-    from src.engine.tooling.outputs import register_output
+    from src.core.tooling.outputs import register_output
 
     def broken(value: object) -> None:
         raise ValueError('formatter failed')

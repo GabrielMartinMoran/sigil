@@ -37,7 +37,7 @@ them.
 
 Pasting an image is the other thing that lives here, because clipboard access is
 not a keystroke the app can read: `ctrl+v` means "look at the clipboard", and a
-terminal only carries text. See `src/engine/attachments`.
+terminal only carries text. See `src/core/attachments`.
 """
 
 from __future__ import annotations
@@ -55,10 +55,12 @@ from textual.message import Message
 from textual.strip import Strip
 from textual.widgets import TextArea
 
-from src.engine.attachments.clipboard import ClipboardUnavailable, read_clipboard_image
-from src.engine.attachments.image_attachment import ImageAttachment
-from src.engine.attachments.images import ImageError, prepare_image
-from src.engine.attachments.tokens import (
+from src.core.attachments.clipboard import read_clipboard_image
+from src.core.attachments.clipboard_unavailable import ClipboardUnavailable
+from src.core.attachments.image_attachment import ImageAttachment
+from src.core.attachments.image_error import ImageError
+from src.core.attachments.images import prepare_image
+from src.core.attachments.tokens import (
     TOKEN_PATTERN,
     block_deletion,
     location,
@@ -67,14 +69,7 @@ from src.engine.attachments.tokens import (
     remap,
     renumber,
 )
-from src.ui.widgets.reading import (
-    SCROLL_DOWN_KEY,
-    SCROLL_LINES,
-    SCROLL_UP_KEY,
-    current_pane,
-    page_lines,
-    scroll_pane,
-)
+from src.ui.widgets.reading import SCROLL_DOWN_KEY, SCROLL_LINES, SCROLL_UP_KEY, current_pane, page_lines, scroll_pane
 
 CTRL_MODELS = 'ctrl+m'
 """Ctrl+M. Same byte as Enter on a legacy terminal; see the module docstring."""
@@ -530,7 +525,7 @@ class PromptInput(TextArea):
 
     # --- edits --------------------------------------------------------------
 
-    def edit(self, edit: Edit):  # type: ignore[no-untyped-def]
+    def edit(self, edit: Edit) -> None:
         """Runs the edit and keeps the attachments in sync with the text."""
         result = super().edit(edit)
         self._sync_attachments()

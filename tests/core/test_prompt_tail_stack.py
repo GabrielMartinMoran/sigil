@@ -7,11 +7,11 @@ import asyncio
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
-from src.engine.agents.agent import create_agent
-from src.engine.agents.tree.summoner import SigilDeps
-from src.engine.context.capability import ContextViewCapability
-from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.context.strategy.append_only import AppendOnlyStrategy
+from src.core.agents.agent import create_agent
+from src.core.agents.tree.summoner import SigilDeps
+from src.core.context.capability import ContextViewCapability
+from src.core.context.meter.context_meter import ContextMeter
+from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 from tests.support.context_compaction_records import history
 
 

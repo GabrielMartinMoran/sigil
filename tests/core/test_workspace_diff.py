@@ -7,8 +7,10 @@ real repository and compare against git's own answer.
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
-from src.engine.workspace.diff import DiffStat, worktree_diff
+from src.core.workspace.diff import worktree_diff
+from src.core.workspace.models.diff_stat import DiffStat
 
 
 def _git(cwd, *args: str) -> None:
@@ -36,11 +38,11 @@ def _repo(tmp_path):
     return tmp_path
 
 
-def test_outside_a_repository_there_is_no_summary(tmp_path):
+def test_outside_a_repository_there_is_no_summary(tmp_path: Path) -> None:
     assert worktree_diff(tmp_path) is None
 
 
-def test_a_clean_tree_is_zero_and_not_none(tmp_path):
+def test_a_clean_tree_is_zero_and_not_none(tmp_path: Path) -> None:
     """`None` means "no repository"; zero means "nothing changed". The bar tells them apart."""
     stat = worktree_diff(_repo(tmp_path))
     assert stat is not None
@@ -49,7 +51,7 @@ def test_a_clean_tree_is_zero_and_not_none(tmp_path):
     assert stat.is_empty
 
 
-def test_unstaged_changes_are_counted(tmp_path):
+def test_unstaged_changes_are_counted(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     (root / 'a.txt').write_text('one\ntwo\nthree\nfour\nfive\n', encoding='utf-8')
     stat = worktree_diff(root)
@@ -59,7 +61,7 @@ def test_unstaged_changes_are_counted(tmp_path):
     assert stat.files == 1
 
 
-def test_staged_changes_are_counted_too(tmp_path):
+def test_staged_changes_are_counted_too(tmp_path: Path) -> None:
     """`git diff HEAD` covers the index: a staged edit is still an edit."""
     root = _repo(tmp_path)
     (root / 'a.txt').write_text('one\n', encoding='utf-8')
@@ -70,7 +72,7 @@ def test_staged_changes_are_counted_too(tmp_path):
     assert stat.added == 0
 
 
-def test_additions_and_deletions_are_separate(tmp_path):
+def test_additions_and_deletions_are_separate(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     (root / 'a.txt').write_text('one\nTWO\nthree\nfour\n', encoding='utf-8')
     stat = worktree_diff(root)
@@ -80,7 +82,7 @@ def test_additions_and_deletions_are_separate(tmp_path):
     assert stat.total == 3
 
 
-def test_untracked_files_are_counted_and_not_guessed(tmp_path):
+def test_untracked_files_are_counted_and_not_guessed(tmp_path: Path) -> None:
     """Git has no diff for a file outside the index, so only the count is real."""
     root = _repo(tmp_path)
     (root / 'new.txt').write_text('a\nb\nc\n', encoding='utf-8')
@@ -93,7 +95,7 @@ def test_untracked_files_are_counted_and_not_guessed(tmp_path):
     assert not stat.is_empty
 
 
-def test_ignored_files_are_not_counted(tmp_path):
+def test_ignored_files_are_not_counted(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     (root / '.gitignore').write_text('build/\n', encoding='utf-8')
     (root / 'build').mkdir()
@@ -104,7 +106,7 @@ def test_ignored_files_are_not_counted(tmp_path):
     assert stat.untracked == 1
 
 
-def test_a_binary_file_does_not_break_the_count(tmp_path):
+def test_a_binary_file_does_not_break_the_count(tmp_path: Path) -> None:
     root = _repo(tmp_path)
     (root / 'a.txt').write_bytes(b'\x00\x01\x02')
     stat = worktree_diff(root)
@@ -115,7 +117,7 @@ def test_a_binary_file_does_not_break_the_count(tmp_path):
     assert stat.added == 0
 
 
-def test_a_repository_without_commits_reports_untracked_files(tmp_path):
+def test_a_repository_without_commits_reports_untracked_files(tmp_path: Path) -> None:
     root = tmp_path / 'fresh'
     root.mkdir()
     _git(root, 'init', '-q')
@@ -126,7 +128,7 @@ def test_a_repository_without_commits_reports_untracked_files(tmp_path):
     assert stat.is_empty is False
 
 
-def test_the_summary_is_built_from_the_requested_root(tmp_path):
+def test_the_summary_is_built_from_the_requested_root(tmp_path: Path) -> None:
     """The agent can work in a subdirectory; the summary follows the workspace root."""
     root = _repo(tmp_path)
     nested = root / 'pkg'
@@ -138,6 +140,6 @@ def test_the_summary_is_built_from_the_requested_root(tmp_path):
     assert stat.removed == 2
 
 
-def test_an_empty_stat_has_a_zero_total():
+def test_an_empty_stat_has_a_zero_total() -> None:
     assert DiffStat().total == 0
     assert DiffStat().is_empty

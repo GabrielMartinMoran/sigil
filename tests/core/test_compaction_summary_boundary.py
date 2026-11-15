@@ -2,7 +2,7 @@
 
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ThinkingPart, ToolCallPart, ToolReturnPart
 
-from src.engine.context.compaction.summary import summary_boundary
+from src.core.context.compaction.summary import summary_boundary
 
 
 def test_boundary_preserves_the_five_recent_reasoning_blocks_and_twenty_calls() -> None:

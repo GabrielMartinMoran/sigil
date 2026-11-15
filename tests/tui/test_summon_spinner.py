@@ -1,8 +1,8 @@
-from src.ui.widgets.chat_log import SummonBlock
 from src.ui.widgets.status_bar import SPINNER_FRAMES
+from src.ui.widgets.summon_block import SummonBlock
 
 
-def test_pending_summon_animates_and_stops_when_finished():
+def test_pending_summon_animates_and_stops_when_finished() -> None:
     block = SummonBlock('summon', {'agent': 'scout', 'task': 'inspect'})
     assert SPINNER_FRAMES[0] in block._spawn_header().plain
     block._advance_pending()
@@ -13,13 +13,13 @@ def test_pending_summon_animates_and_stops_when_finished():
     assert 'finished' in block._meta_line().plain
 
 
-def test_pending_resume_also_uses_spinner():
+def test_pending_resume_also_uses_spinner() -> None:
     block = SummonBlock('summon', {'agent_id': 'abcd1234', 'task': 'continue'})
     assert SPINNER_FRAMES[0] in block._spawn_header().plain
     assert 'resume' in block._spawn_header().plain
 
 
-def test_finished_subagent_is_marked_as_done():
+def test_finished_subagent_is_marked_as_done() -> None:
     """`●` is the mark of a node that is *running*; a finished one gets the check."""
     block = SummonBlock('summon', {'agent': 'scout', 'task': 'inspect'})
     block.set_result('[subagent Scout (scout #abcd1234, sync) finished]')
@@ -29,7 +29,7 @@ def test_finished_subagent_is_marked_as_done():
     assert '●' not in header
 
 
-def test_failed_and_stopped_subagents_keep_their_own_marks():
+def test_failed_and_stopped_subagents_keep_their_own_marks() -> None:
     failed = SummonBlock('summon', {'agent': 'scout', 'task': 'inspect'})
     failed.set_error('PermissionDenied')
     assert '✖' in failed._spawn_header().plain
@@ -39,9 +39,9 @@ def test_failed_and_stopped_subagents_keep_their_own_marks():
     assert '◼' in stopped._spawn_header().plain
 
 
-def test_background_summon_tracks_node_until_completion():
-    from src.engine.agents.profile.models.agent_role import AgentRole
-    from src.engine.agents.tree.store import AgentTreeStore
+def test_background_summon_tracks_node_until_completion() -> None:
+    from src.core.agents.profile.models.agent_role import AgentRole
+    from src.core.agents.tree.agent_tree_store import AgentTreeStore
 
     tree = AgentTreeStore().active
     root = tree.ensure_root('lead')
@@ -62,7 +62,7 @@ def test_background_summon_tracks_node_until_completion():
     assert 'finished' in block._meta_line().plain
 
 
-def test_background_result_spins_before_tree_event():
+def test_background_result_spins_before_tree_event() -> None:
     block = SummonBlock('summon', {'agent': 'scout', 'mode': 'async', 'task': 'inspect'})
     block.set_result('#abcd1234 (Scout) is working in the background.')
     assert SPINNER_FRAMES[0] in block._spawn_header().plain

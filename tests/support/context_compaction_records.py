@@ -15,10 +15,10 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 
-from src.engine.context.capability import ContextViewCapability
-from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.context.strategy.append_only import AppendOnlyStrategy
-from src.engine.context.tokens import estimate_messages_tokens
+from src.core.context.capability import ContextViewCapability
+from src.core.context.meter.context_meter import ContextMeter
+from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
+from src.core.context.tokens import estimate_messages_tokens
 
 
 def history(count: int) -> list:

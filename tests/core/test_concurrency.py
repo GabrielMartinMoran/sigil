@@ -14,14 +14,9 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from src.engine.agents.tool_errors import ToolErrorRecovery
-from src.engine.tooling.concurrency import (
-    ConcurrencyContext,
-    SiblingCall,
-    ToolConflict,
-    earlier_siblings,
-)
-from src.engine.tooling.registrar import ToolRegistrar
+from src.core.agents.tool_errors import ToolErrorRecovery
+from src.core.tooling.concurrency import ConcurrencyContext, SiblingCall, ToolConflict, earlier_siblings
+from src.core.tooling.registrar import ToolRegistrar
 
 
 def _response(*calls: tuple[str, dict, str | None]) -> ModelResponse:
@@ -36,7 +31,7 @@ def _response(*calls: tuple[str, dict, str | None]) -> ModelResponse:
 # --- earlier_siblings ---------------------------------------------------------
 
 
-def test_earlier_siblings_returns_only_the_previous_calls_in_order():
+def test_earlier_siblings_returns_only_the_previous_calls_in_order() -> None:
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('hello')]),
         _response(('a', {'x': 1}, 'c1'), ('b', {'x': 2}, 'c2'), ('c', {'x': 3}, 'c3')),
@@ -48,23 +43,23 @@ def test_earlier_siblings_returns_only_the_previous_calls_in_order():
     assert [sibling.tool_call_id for sibling in siblings] == ['c1', 'c2']
 
 
-def test_first_call_has_no_siblings():
+def test_first_call_has_no_siblings() -> None:
     messages: list[ModelMessage] = [_response(('a', {}, 'c1'), ('b', {}, 'c2'))]
 
     assert earlier_siblings(messages, tool_call_id='c1', tool_name='a', args={}) == ()
 
 
-def test_no_siblings_without_messages():
+def test_no_siblings_without_messages() -> None:
     assert earlier_siblings([], tool_call_id='c1', tool_name='a', args={}) == ()
 
 
-def test_no_siblings_when_the_last_message_is_not_a_response():
+def test_no_siblings_when_the_last_message_is_not_a_response() -> None:
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hello')])]
 
     assert earlier_siblings(messages, tool_call_id='c1', tool_name='a', args={}) == ()
 
 
-def test_falls_back_to_name_and_args_when_the_id_does_not_match():
+def test_falls_back_to_name_and_args_when_the_id_does_not_match() -> None:
     messages: list[ModelMessage] = [_response(('a', {'x': 1}, 'c1'), ('a', {'x': 2}, 'c2'))]
 
     siblings = earlier_siblings(messages, tool_call_id='stale-id', tool_name='a', args={'x': 2})
@@ -72,13 +67,13 @@ def test_falls_back_to_name_and_args_when_the_id_does_not_match():
     assert [sibling.args for sibling in siblings] == [{'x': 1}]
 
 
-def test_unknown_call_yields_no_siblings():
+def test_unknown_call_yields_no_siblings() -> None:
     messages: list[ModelMessage] = [_response(('a', {}, 'c1'))]
 
     assert earlier_siblings(messages, tool_call_id='nope', tool_name='zzz', args={}) == ()
 
 
-def test_non_dict_args_are_ignored():
+def test_non_dict_args_are_ignored() -> None:
     response = ModelResponse(
         parts=[
             ToolCallPart('a', 'raw-json-string', tool_call_id='c1'),
@@ -128,7 +123,7 @@ def _returns(result):
     ]
 
 
-def test_guard_lets_the_first_call_through_and_fails_the_second():
+def test_guard_lets_the_first_call_through_and_fails_the_second() -> None:
     agent = _agent_with_guarded_tool([('touch', {'key': 'a'}), ('touch', {'key': 'a'})])
 
     result = asyncio.run(agent.run('go'))
@@ -138,7 +133,7 @@ def test_guard_lets_the_first_call_through_and_fails_the_second():
     assert 'already ran for key' in str(returns[1].content)
 
 
-def test_guard_does_not_block_calls_with_a_different_key():
+def test_guard_does_not_block_calls_with_a_different_key() -> None:
     agent = _agent_with_guarded_tool([('touch', {'key': 'a'}), ('touch', {'key': 'b'})])
 
     result = asyncio.run(agent.run('go'))
@@ -146,7 +141,7 @@ def test_guard_does_not_block_calls_with_a_different_key():
     assert [part.outcome for part in _returns(result)] == ['success', 'success']
 
 
-def test_guard_sees_defaults_applied():
+def test_guard_sees_defaults_applied() -> None:
     seen: list[dict] = []
 
     def guard(ctx: ConcurrencyContext) -> str | None:
@@ -170,7 +165,7 @@ def test_guard_sees_defaults_applied():
     assert seen == [{'key': 'a', 'mode': 'default'}]
 
 
-def test_guarded_tool_hides_the_context_from_the_schema():
+def test_guarded_tool_hides_the_context_from_the_schema() -> None:
     agent = _agent_with_guarded_tool([])
     tool = agent._function_toolset.tools['touch']
 
@@ -178,7 +173,7 @@ def test_guarded_tool_hides_the_context_from_the_schema():
     assert tool.sequential is False
 
 
-def test_direct_call_without_context_skips_the_guard():
+def test_direct_call_without_context_skips_the_guard() -> None:
     agent = _agent_with_guarded_tool([])
     tool = agent._function_toolset.tools['touch']
 
@@ -186,13 +181,13 @@ def test_direct_call_without_context_skips_the_guard():
     assert tool.function('a') == 'a:default'
 
 
-def test_tool_conflict_is_an_exception():
+def test_tool_conflict_is_an_exception() -> None:
     assert issubclass(ToolConflict, Exception)
     with pytest.raises(ToolConflict, match='boom'):
         raise ToolConflict('boom')
 
 
-def test_conflict_is_logged_as_an_error():
+def test_conflict_is_logged_as_an_error() -> None:
     events = []
 
     def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:

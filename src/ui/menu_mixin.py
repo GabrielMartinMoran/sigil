@@ -7,7 +7,7 @@ import shlex
 from textual.css.query import NoMatches
 from textual.widgets import TextArea
 
-from src.engine.commands import match_commands
+from src.core.commands.catalog import match_commands
 from src.ui.widgets.command_menu import CommandMenu
 from src.ui.widgets.prompt_input import PromptInput
 

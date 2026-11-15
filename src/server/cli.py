@@ -39,15 +39,20 @@ from types import FrameType
 
 from dotenv import load_dotenv
 
-from src.engine.bootstrap import Composition
+from src.core.bootstrap import Composition
 from src.server import webbuild
-from src.server.app import GracefulStop, create_app
-from src.server.config import PASSWORD_ENV, ServerConfig, ServerConfigError, banner, resolve_config
+from src.server.app import create_app
+from src.server.config import banner, resolve_config
 from src.server.diagnostics import diagnose_server, record
-from src.server.endpoint import EndpointPublisher
-from src.server.events import EventHub
-from src.server.ownership import OwnershipError, ServerOwnership
-from src.server.runtime import DEFAULT_IDLE_GRACE, ServerRuntime
+from src.server.endpoint_publisher import EndpointPublisher
+from src.server.event_hub import EventHub
+from src.server.graceful_stop import GracefulStop
+from src.server.ownership_error import OwnershipError
+from src.server.server_config import ServerConfig
+from src.server.server_config_error import ServerConfigError
+from src.server.server_defaults import PASSWORD_ENV
+from src.server.server_ownership import ServerOwnership
+from src.server.server_runtime import DEFAULT_IDLE_GRACE, ServerRuntime
 
 MAX_IDLE_GRACE = 24 * 60 * 60.0
 """Largest accepted ``--idle-grace``: one day.
@@ -217,8 +222,8 @@ def _run(args: argparse.Namespace, *, web: bool = True) -> int:
             record('server_signal_received', signal=sig)
             super().handle_exit(sig, frame)
 
-    from src.engine.settings import load_settings
-    from src.engine.storage.database import database_path
+    from src.core.settings import load_settings
+    from src.core.storage.database import database_path
 
     # The lock is taken before the engine is built, and it is held until the process
     # closes. `Composition` reads settings, the MCP config and the skill registry, so

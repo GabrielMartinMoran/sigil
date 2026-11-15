@@ -26,8 +26,10 @@ import json
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
 from pathlib import Path
+
+from src.server.build_error import BuildError
+from src.server.staleness import Staleness
 
 HASH_CHARS = 16
 """Characters of the digest kept in `build.json`. Must match the Node script."""
@@ -110,22 +112,6 @@ def built_hash(root: Path | None = None) -> str | None:
     return value if isinstance(value, str) else None
 
 
-@dataclass(frozen=True, slots=True)
-class Staleness:
-    """Why the bundle does not match the sources, in the terms a user acts on."""
-
-    stale: bool
-    reason: str = ''
-    source_hash: str = ''
-    built_hash: str | None = None
-
-    def message(self) -> str:
-        """One sentence for a terminal or a log line. Empty when fresh."""
-        if not self.stale:
-            return ''
-        return f'{self.reason}. Run `npm run build` in web/ (or `python -m src.server.webbuild --build`).'
-
-
 def staleness(root: Path | None = None) -> Staleness:
     """Whether the committed bundle matches the sources, and why not when it does not."""
     base = root if root is not None else web_root()
@@ -149,10 +135,6 @@ def staleness(root: Path | None = None) -> Staleness:
             built_hash=built,
         )
     return Staleness(stale=False, source_hash=current, built_hash=built)
-
-
-class BuildError(RuntimeError):
-    """npm is missing, or the build failed. The message says which."""
 
 
 def _npm() -> str:

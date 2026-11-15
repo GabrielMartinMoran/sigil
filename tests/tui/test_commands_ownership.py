@@ -14,14 +14,11 @@ from pathlib import Path
 
 import pytest
 
-from src.engine.commands import COMMANDS, CommandOwner, match_commands, owned_by
-from src.ui.command_transport import (
-    TRANSPORT,
-    Transport,
-    TransportState,
-    transport_for,
-    unavailable_notice,
-)
+from src.core.commands.catalog import COMMANDS, match_commands, owned_by
+from src.core.commands.command_owner import CommandOwner
+from src.ui.command_transport import TRANSPORT, transport_for, unavailable_notice
+from src.ui.transport import Transport
+from src.ui.transport_state import TransportState
 
 HANDLERS = Path(__file__).resolve().parents[2] / 'src' / 'ui' / 'commands_mixin.py'
 
@@ -46,11 +43,11 @@ core's API has to grow. Either way it is a decision, and this test is what makes
 """
 
 
-def test_every_command_declares_an_owner():
+def test_every_command_declares_an_owner() -> None:
     assert all(command.owner in tuple(CommandOwner) for command in COMMANDS)
 
 
-def test_the_two_owners_partition_the_catalogue():
+def test_the_two_owners_partition_the_catalogue() -> None:
     core = set(owned_by(CommandOwner.CORE))
     client = set(owned_by(CommandOwner.CLIENT))
 
@@ -58,11 +55,11 @@ def test_the_two_owners_partition_the_catalogue():
     assert core | client == set(COMMANDS)
 
 
-def test_the_client_commands_are_the_known_ones():
+def test_the_client_commands_are_the_known_ones() -> None:
     assert {command.name for command in owned_by(CommandOwner.CLIENT)} == CLIENT_COMMANDS
 
 
-def test_every_command_has_a_handler_and_every_handler_a_command():
+def test_every_command_has_a_handler_and_every_handler_a_command() -> None:
     """A name in the catalogue with no handler is a menu entry that does nothing.
 
     The handler map is the only place the dispatch exists, so it is read from the
@@ -77,30 +74,30 @@ def test_every_command_has_a_handler_and_every_handler_a_command():
     assert implemented == {command.name for command in COMMANDS}
 
 
-def test_the_duplicate_name_check():
+def test_the_duplicate_name_check() -> None:
     names = [command.name for command in COMMANDS]
     assert len(names) == len(set(names))
 
 
 @pytest.mark.parametrize('name', ['/new', '/load', '/rollback', '/context'])
-def test_a_core_command_is_one_a_second_client_would_keep(name: str):
+def test_a_core_command_is_one_a_second_client_would_keep(name: str) -> None:
     command = next(item for item in COMMANDS if item.name == name)
     assert command.owner is CommandOwner.CORE
 
 
 @pytest.mark.parametrize('name', ['/theme', '/sidebar', '/quit'])
-def test_a_client_command_is_one_a_second_client_would_bring(name: str):
+def test_a_client_command_is_one_a_second_client_would_bring(name: str) -> None:
     command = next(item for item in COMMANDS if item.name == name)
     assert command.owner is CommandOwner.CLIENT
 
 
-def test_matching_still_works_across_both_owners():
+def test_matching_still_works_across_both_owners() -> None:
     """The palette shows everything: the client filters what it delegates."""
     assert [command.name for command in match_commands('/s')] == ['/sidebar']
     assert [command.name for command in match_commands('/l')] == ['/load']
 
 
-def test_the_help_lists_both_groups_and_loses_nothing():
+def test_the_help_lists_both_groups_and_loses_nothing() -> None:
     from src.ui.help_text import HELP_TEXT
 
     assert 'Session' in HELP_TEXT
@@ -109,7 +106,7 @@ def test_the_help_lists_both_groups_and_loses_nothing():
         assert command.name in HELP_TEXT
 
 
-def test_the_help_never_promises_an_edit_the_service_can_refuse():
+def test_the_help_never_promises_an_edit_the_service_can_refuse() -> None:
     """The one sentence `/help` prints is true in both modes, so it cannot lie in either.
 
     What a default *is* and where it lives is true whether the write happens here or
@@ -126,7 +123,7 @@ def test_the_help_never_promises_an_edit_the_service_can_refuse():
     assert command.description in HELP_TEXT, 'the help prints the catalogue, not a second copy'
 
 
-def test_a_listing_mark_comes_from_the_transport_row(monkeypatch: pytest.MonkeyPatch):
+def test_a_listing_mark_comes_from_the_transport_row(monkeypatch: pytest.MonkeyPatch) -> None:
     """A listing marks what the table refuses, and invents no sentence of its own.
 
     One derivation, next to the refusal it shortens: the `/` menu and any future
@@ -174,26 +171,26 @@ def test_a_listing_mark_comes_from_the_transport_row(monkeypatch: pytest.MonkeyP
 # row without a command, fails here instead of silently doing nothing.
 
 
-def test_every_command_has_a_transport_row_and_every_row_a_command():
+def test_every_command_has_a_transport_row_and_every_row_a_command() -> None:
     assert {row.name for row in TRANSPORT} == {command.name for command in COMMANDS}
 
 
-def test_the_transport_table_names_each_command_once():
+def test_the_transport_table_names_each_command_once() -> None:
     names = [row.name for row in TRANSPORT]
     assert len(names) == len(set(names))
 
 
-def test_a_transport_row_keeps_the_owner_the_catalogue_declared():
+def test_a_transport_row_keeps_the_owner_the_catalogue_declared() -> None:
     owners = {command.name: command.owner for command in COMMANDS}
     assert all(row.owner is owners[row.name] for row in TRANSPORT)
 
 
-def test_the_commands_that_run_here_are_exactly_the_client_ones():
+def test_the_commands_that_run_here_are_exactly_the_client_ones() -> None:
     local = {row.name for row in TRANSPORT if row.state is TransportState.CLIENT}
     assert local == CLIENT_COMMANDS
 
 
-def test_only_the_documented_gap_is_blocked():
+def test_only_the_documented_gap_is_blocked() -> None:
     """No command the service serves is left without a way out of this terminal.
 
     The `blocked` state stays in the table because the decision has to be total: a
@@ -211,7 +208,7 @@ def test_only_the_documented_gap_is_blocked():
     assert blocked == set(), f'{sorted(blocked)} has no endpoint to reach'
 
 
-def test_a_row_that_does_not_run_here_says_why_and_where():
+def test_a_row_that_does_not_run_here_says_why_and_where() -> None:
     for row in TRANSPORT:
         if row.state is TransportState.CLIENT:
             assert row.reason == '', f'{row.name} runs here, so it has nothing to explain'
@@ -224,13 +221,13 @@ def test_a_row_that_does_not_run_here_says_why_and_where():
             assert row.route is None, 'a blocked command has no route to name'
 
 
-def test_an_unknown_command_has_no_row_at_all():
+def test_an_unknown_command_has_no_row_at_all() -> None:
     """The dispatcher still owns "Unknown command": a name nobody planned is not a row."""
 
     assert transport_for('/nope') is None
 
 
-def test_the_not_wired_notice_still_names_the_command_the_route_and_the_gap():
+def test_the_not_wired_notice_still_names_the_command_the_route_and_the_gap() -> None:
     """No row is `not_wired` now, so the sentence is proven on a row built for it.
 
     The state stays in the table because the decision has to be total: a command the
@@ -252,7 +249,7 @@ def test_the_not_wired_notice_still_names_the_command_the_route_and_the_gap():
     assert row.reason in notice
 
 
-def test_the_blocked_notice_says_no_endpoint_rather_than_a_missing_setting():
+def test_the_blocked_notice_says_no_endpoint_rather_than_a_missing_setting() -> None:
     """The blocked sentence must not send the user to configure what they have."""
 
     row = Transport(
@@ -268,7 +265,7 @@ def test_the_blocked_notice_says_no_endpoint_rather_than_a_missing_setting():
     assert 'Configure a provider' not in notice
 
 
-def test_a_delegated_row_has_a_route_and_is_dispatched_to_its_handler():
+def test_a_delegated_row_has_a_route_and_is_dispatched_to_its_handler() -> None:
     """Delegated means wired: a route to send to, and a handler that runs.
 
     The refusal sentence is not for these rows any more. Asking one for it is a bug
@@ -303,7 +300,7 @@ def test_a_delegated_row_has_a_route_and_is_dispatched_to_its_handler():
     assert '{TransportState.NOT_WIRED, TransportState.BLOCKED}' in source
 
 
-def test_the_transport_table_refuses_two_rows_for_one_command():
+def test_the_transport_table_refuses_two_rows_for_one_command() -> None:
     """The import-time guard, proven: two rows for one command would be a silent winner.
 
     It fails where the table is built, not at the moment a user types the command.
@@ -317,7 +314,7 @@ def test_the_transport_table_refuses_two_rows_for_one_command():
 
 def test_the_menu_marks_only_the_row_the_table_refuses(
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     """One listing, two windows: the mark is the table's, and it tracks the row.
 
     Mounted on its own, so the assertion is about the menu's rule rather than about an

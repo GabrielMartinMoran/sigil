@@ -9,15 +9,15 @@ import pytest
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from src.engine.agents.agent import create_agent
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.engine.agents.tree.models.agent_node import AgentNode
-from src.engine.agents.tree.models.summon_error import SummonError
-from src.engine.agents.tree.rendering import render_notifications
-from src.engine.agents.tree.summoner import SigilDeps
-from src.engine.agents.tree.tools import register_tree_tools
-from src.engine.agents.tree.tree import AgentTree
-from src.engine.sessions.session_store import SessionStore
+from src.core.agents.agent import create_agent
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.agents.tree.agent_tree import AgentTree
+from src.core.agents.tree.models.agent_node import AgentNode
+from src.core.agents.tree.models.summon_error import SummonError
+from src.core.agents.tree.rendering import render_notifications
+from src.core.agents.tree.summoner import SigilDeps
+from src.core.agents.tree.tools import register_tree_tools
+from src.core.sessions.session_store import SessionStore
 from tests.support.agents_tree_control import Env, _LiveRun, _root_calling, make_env
 
 
@@ -184,7 +184,7 @@ def test_should_use_session_sequence_across_receivers_and_equal_timestamps(env: 
 
     from dataclasses import replace
 
-    from src.engine.agents.tree.notifications import Notifications
+    from src.core.agents.tree.notifications import Notifications
 
     log = Notifications([replace(entry, created_at=1.0) for entry in reversed(log.all())])
     assert [entry.sequence for entry in log.for_receiver(first.id)] == [1, 3]
@@ -193,7 +193,7 @@ def test_should_use_session_sequence_across_receivers_and_equal_timestamps(env: 
 
 
 def test_should_render_for_root_and_isolate_sessions_in_composition(env: Env) -> None:
-    from src.engine.bootstrap import Composition
+    from src.core.bootstrap import Composition
 
     worker = add_worker(env)
     env.summoner.send_message(sender_id=worker.id, target_id=env.tree().root_id, text='root-only notice')
@@ -211,8 +211,8 @@ def test_should_render_for_root_and_isolate_sessions_in_composition(env: Env) ->
 def test_should_upgrade_version_two_without_losing_history(tmp_path: Path) -> None:
     import sqlite3
 
-    from src.engine.storage.database import Database
-    from src.engine.storage.schema import SCHEMA, USER_VERSION
+    from src.core.storage.database import Database
+    from src.core.storage.schema import SCHEMA, USER_VERSION
 
     path = tmp_path / 'older.db'
     with sqlite3.connect(path) as connection:
@@ -236,7 +236,7 @@ def test_should_upgrade_version_two_without_losing_history(tmp_path: Path) -> No
 def test_should_include_notices_in_session_export(env: Env, tmp_path: Path) -> None:
     import json
 
-    from src.engine.storage.maintenance import export_session
+    from src.core.storage.maintenance import export_session
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'export')
     session = store.create_session()

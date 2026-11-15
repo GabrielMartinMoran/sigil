@@ -25,14 +25,12 @@ from pathlib import Path
 
 import pytest
 
-from src.engine.paths import endpoint_file, service_dir
+from src.core.paths import endpoint_file, service_dir
 from src.server.cli import listening_socket
-from src.server.endpoint import Endpoint, EndpointPublisher, read_endpoint
-from tests.support.server_endpoint import (
-    _mode,
-    _RuntimeStub,
-    _umask,
-)
+from src.server.endpoint import Endpoint
+from src.server.endpoint_file import read_endpoint
+from src.server.endpoint_publisher import EndpointPublisher
+from tests.support.server_endpoint import _RuntimeStub, _umask
 
 
 def test_the_service_directory_sits_under_the_sigil_home(tmp_path: Path) -> None:
@@ -229,7 +227,7 @@ def test_the_app_publishes_when_it_starts_and_unpublishes_when_it_stops(tmp_path
     from fastapi.testclient import TestClient
 
     from src.server.app import create_app
-    from src.server.config import ServerConfig
+    from src.server.server_config import ServerConfig
 
     path = tmp_path / 'service' / 'endpoint.json'
     publisher = EndpointPublisher(path=path)
@@ -268,7 +266,7 @@ def test_lifespan_releases_runtime_when_session_shutdown_fails(tmp_path: Path) -
     from fastapi.testclient import TestClient
 
     from src.server.app import create_app
-    from src.server.config import ServerConfig
+    from src.server.server_config import ServerConfig
 
     runtime = _RuntimeStub()
     runtime.session_runtime.aclose.side_effect = RuntimeError('shutdown failed')
@@ -281,3 +279,9 @@ def test_lifespan_releases_runtime_when_session_shutdown_fails(tmp_path: Path) -
         pass
     runtime.composition.extensions.close.assert_awaited_once()
     assert runtime.calls[-1] == 'close'
+
+
+def _mode(path: Path) -> int:
+    """Permission bits of one path."""
+
+    return path.stat().st_mode & 0o777

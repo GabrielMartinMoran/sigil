@@ -11,8 +11,7 @@ from typing import Any
 
 from pydantic_ai.messages import ModelMessage, ModelSettingsDeltaPart
 
-from src.engine.providers.domain.thinking import EFFORT_LEVELS, label
-from src.engine.providers.snapshot import ModelSnapshot
+from src.core.providers.snapshot import ModelSnapshot
 
 
 class ModelViewMixin:
@@ -90,10 +89,3 @@ class ModelViewMixin:
             f'{snapshot.model or "This model"} does not accept images. '
             'Pick a multimodal model with `/model`, or describe it in words.'
         )
-
-
-def effort_label(model: ModelSnapshot, in_effect: str) -> str:
-    """Readable effort, falling back to the selection when the history says nothing."""
-    if in_effect and in_effect in EFFORT_LEVELS:
-        return in_effect
-    return str(model.thinking) if model.selection is not None else label('default')
