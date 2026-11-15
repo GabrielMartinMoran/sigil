@@ -71,43 +71,58 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const post = <T>(path: string, payload?: unknown): Promise<T> =>
   request<T>(path, { method: 'POST', body: payload === undefined ? undefined : JSON.stringify(payload) });
 
+function scoped(path: string, sessionId?: string | null): string {
+  if (!sessionId) return path;
+  return `${path}${path.includes('?') ? '&' : '?'}session_id=${encodeURIComponent(sessionId)}`;
+}
+
 export const api = {
   status: () => request<LoginState>('/api/status'),
-  state: () => request<State>('/api/state'),
+  state: (sessionId?: string | null) => request<State>(scoped('/api/state', sessionId)),
 
   login: (password: string) => post<{ ok: true }>('/api/login', { password }),
   logout: () => post<{ ok: true }>('/api/logout'),
 
-  transcript: (limit?: number, before?: number) => {
+  transcript: (limit?: number, before?: number, sessionId?: string | null) => {
     const query = new URLSearchParams();
     if (limit !== undefined) query.set('limit', String(limit));
     if (before !== undefined) query.set('before', String(before));
+    if (sessionId) query.set('session_id', sessionId);
     const search = query.toString();
     return request<TranscriptPage>(`/api/session/transcript${search ? `?${search}` : ''}`);
   },
-  sessions: () => request<{ current: string; sessions: SessionSummary[] }>('/api/sessions'),
-  workspaces: () => request<{ repositories: RepositoryGroup[] }>('/api/workspaces'),
+  sessions: (sessionId?: string | null) =>
+    request<{ current: string; sessions: SessionSummary[] }>(scoped('/api/sessions', sessionId)),
+  workspaces: (sessionId?: string | null) =>
+    request<{ repositories: RepositoryGroup[] }>(scoped('/api/workspaces', sessionId)),
 
-  send: (text: string, requestId: string) =>
+  send: (text: string, requestId: string, sessionId?: string | null) =>
     post<{
       accepted: 'turn' | 'steer';
       delivered?: boolean;
       request_id: string;
       duplicate?: boolean;
       state?: string;
-    }>('/api/turn', {
+    }>(scoped('/api/turn', sessionId), {
       text,
       request_id: requestId,
     }),
-  durable: () => request<DurableSession>('/api/session/durable'),
-  abort: () => post<{ stopped: boolean }>('/api/abort'),
-  answer: (id: string, answers: { question: string; answer: string; custom?: boolean }[] | null) =>
-    post<{ resolved: boolean }>('/api/answer', { id, answers }),
+  durable: (sessionId?: string | null) => request<DurableSession>(scoped('/api/session/durable', sessionId)),
+  abort: (sessionId?: string | null) => post<{ stopped: boolean }>(scoped('/api/abort', sessionId)),
+  answer: (
+    id: string,
+    answers: { question: string; answer: string; custom?: boolean }[] | null,
+    sessionId?: string | null,
+  ) => post<{ resolved: boolean }>(scoped('/api/answer', sessionId), { id, answers }),
 
-  selectAgent: (name: string) => post<{ agent: AgentView; agents: AgentView[] }>('/api/agent', { name }),
+  selectAgent: (name: string, sessionId?: string | null) =>
+    post<{ agent: AgentView; agents: AgentView[] }>(scoped('/api/agent', sessionId), { name }),
 
-  newSession: () => post<{ session: SessionView }>('/api/session/new'),
-  openSession: (id: string) => post<{ session: SessionView }>('/api/session/open', { id }),
-  switchWorkspace: (root: string) =>
-    post<{ root: string; label: string; changed: boolean }>('/api/workspace', { root }),
+  newSession: (sessionId?: string | null) => post<{ session: SessionView }>(scoped('/api/session/new', sessionId)),
+  openSession: (id: string, sessionId?: string | null) =>
+    post<{ session: SessionView }>(scoped('/api/session/open', sessionId), { id }),
+  switchWorkspace: (root: string, sessionId?: string | null) =>
+    post<{ root: string; label: string; changed: boolean; session: SessionView }>(scoped('/api/workspace', sessionId), {
+      root,
+    }),
 };

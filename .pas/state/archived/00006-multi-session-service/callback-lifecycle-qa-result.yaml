@@ -1,0 +1,33 @@
+version: 1
+contract: session-callback-detachment-v1
+worker: b4d1c12f
+verdict: BLOCKED
+category: other
+lead_adjudication: Accept verification blocker; do not accept implementation as complete or substitute focused gates.
+head: 9df4b38
+checks:
+  focused: '39 passed in 2.77s; worker used -n 2'
+  regression: '144 passed in 54.59s'
+  ruff: exit 0
+  format: exit 0
+  diff: exit 0
+  full_suite: NOT_RUN by independent QA;120s tool ceiling insufficient for recent211-244s runs. Existing modified-tree full logs fail.
+  validator: NOT_RUN
+scope: Exactly two approved source/test paths; no scope creep.
+quality: '8/10 Mostly Clean'
+findings:
+  - Seven callback registrations correctly detached or neutralized; engine relay preserved.
+  - Unrelated tool sink survives; shared lock/database preserved; repeated close safe.
+  - Stand-in tasks cancelled and awaited; no observed pytest processes remained at audit.
+  - Existing logs show baseline and modified full runs failing with varying deadline failures; environmental attribution remains unproven.
+  - Same running-turn idle test fails sequentially on both trees.
+  - RED history claimed by developer but raw log unavailable.
+logs:
+  - /tmp/sigil_full_suite.log
+  - /tmp/sigil_full2.log
+  - /tmp/sigil_baseline.log
+  - /tmp/sigil_seq.log
+  - /tmp/sigil_base_seq.log
+  - /tmp/qa_full_suite.log
+next: Need permitted full-suite execution with sufficient bounded timeout; current tool cannot exceed120s. Request user-run full check rather than bypass restrictions or repair unrelated source.
+no_source_edits_by_qa: true

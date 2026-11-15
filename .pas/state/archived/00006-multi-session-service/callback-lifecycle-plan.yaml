@@ -1,0 +1,85 @@
+version: 1
+contract: session-callback-detachment-v1
+status: approved
+implementation_authorized: true
+authorization: User replied 'ok' to the presented two-file session-callback-detachment-v1 implementation plan. Single-use authorization covers this contract only.
+objective: Disconnect all seven session-owned callback registrations when the current single-owner SessionRuntime closes.
+research_gate: Passed for registration detachment only; exact setter/default and current exclusive-composition source evidence supplied by researcher e169afac. Broader resource lifecycle and concurrency remain unresolved and excluded.
+user_constraints:
+  - Continue all feature 6 work using narrower research scopes when necessary.
+  - Sessions must ultimately continue in background; this task must not add switching restrictions.
+agent_decisions:
+  - Limit this prerequisite to callback registration cleanup; do not cancel background agents or change report delivery.
+  - Restore extension_notice and tree_changed to None, retry.on_retry to None, and model_service.is_busy to a false-returning neutral predicate, matching owner defaults.
+  - Use composition.on_idle(None), preserving the Composition tree-change relay rather than clearing all summoner listeners.
+  - Retain existing question asker removal and targeted tool-sink removal; do not remove unrelated tool sinks.
+  - Rely on the current sole SessionRuntime ownership of its Composition; this does not introduce or authorize sharing one Composition between live runtimes. Ownership handoff requires its own later contract.
+  - Do not add closing guards to callback bodies. Unregistering prevents future ordinary dispatch but cannot revoke references already captured by another task; that stronger contract is excluded.
+  - Extend existing real Composition tests with deterministic TestModel at the smallest sufficient integration level; reuse lock/database and repeated-close coverage.
+  - No documentation edit required: existing scoped ownership prose becomes more accurate with full registration detachment. Do not claim complete resource shutdown.
+skill_assignment:
+  available_skills: [archify, clean-architecture, clean-code, clean-python, cognitive-writing, docs-writer, documentation-lookup, figma-generate-library, figma-use, find-skills, frontend-design, mind-management, prompt-optimizer, skill-creator, vanya]
+  required_by_role:
+    researcher: [clean-code, clean-python, clean-architecture]
+    developer: [clean-code, clean-python, clean-architecture]
+    qa: [clean-code, clean-python, clean-architecture]
+  missing_skills: [clean-backend-architecture]
+  critical_missing: []
+task:
+  version: 1
+  worker: pas_developer
+  verifier: pas_qa
+  objective: Make callback teardown complete and idempotent without changing process-resource ownership or callback execution behavior before close.
+  paths:
+    - src/server/session_runtime.py
+    - tests/test_server_session_runtime.py
+  read_only_dependencies:
+    - src/engine/bootstrap.py
+    - src/engine/interaction/hub.py
+    - src/engine/tooling/logging.py
+    - src/engine/providers/service.py
+    - src/engine/agents/retry.py
+    - src/engine/agents/tree/summoner.py
+    - src/server/runtime.py
+    - docs/architecture.md
+  acceptance_tags: ['@integration']
+  red:
+    - Extend existing lifecycle tests to assert all seven registration slots are detached or neutral after SessionRuntime.close; verify registrations were active before close so assertions are nonvacuous.
+    - Show incomplete extension, busy, retry, tree-change and idle teardown fails before implementation; preserve question and tool assertions.
+    - Verify a separate tool sink is retained and repeated close is harmless, extending existing close tests rather than duplicating expensive setup.
+  green:
+    - Complete _detach_callbacks using existing owner APIs and neutral defaults; preserve session.close ordering and facade ownership.
+    - Never call summoner.cancel_all or close extensions, MCP, cached DB or ownership from this task.
+  refactor:
+    - Keep types explicit, implementation small, and existing assertions intact. No unrelated code cleanup.
+  focused: uv run pytest -q -p no:sugar tests/test_server_session_runtime.py
+  regression: uv run pytest -q -p no:sugar tests/test_server_runtime.py tests/test_server_queue.py tests/test_subagent_wakeup.py
+  full_checks:
+    - uv run pytest -q -p no:sugar -n 8
+    - uv run ruff check src tests
+    - uv run ruff format --check src tests
+    - git diff --check
+  validator: Run experimental clean-python validator within permitted scope; report non-passing or blocked result accurately, no baseline cleanup.
+  escalation: Stop on any additional source/test path, callback owner APIs incompatible with researched defaults, evidence of a concurrent replacement owner of the same Composition, changed report/task behavior, or unrelated baseline failure. No source expansion without amended approval.
+verification_levels:
+  - behavior: All seven callbacks are active before close and detached or neutral after close.
+    tag: '@integration'
+    cheapest_sufficient: integration
+    rationale: Real Composition and its actual setter/listener interactions are the contract; isolated assignment mocks would miss relay behavior.
+  - behavior: Repeated close retains unrelated tool sinks and preserves process lock/database ownership.
+    tag: '@integration'
+    cheapest_sufficient: integration
+    rationale: Extend existing real lifecycle and resource tests; no new process workflow or UI mount needed.
+excluded:
+  - Suppression of already-retained callback references or callbacks already executing.
+  - MCP loader/task cancellation, extension shutdown, subagent cancellation and report recovery.
+  - Composition factory redesign, registry, concurrent consumers, HTTP or client changes.
+  - Per-session idle grace choice, benchmark/performance claims and unrelated documentation updates.
+risks:
+  - Detachment is not revocation of previously captured callbacks; no such guarantee is offered.
+  - Future multiple live owners of one Composition would need owner-aware registrations; this task preserves the current exclusive-owner boundary.
+  - Existing shared checkpoint belongs to unrelated debug work; preserve it and use feature-local state plus feature-specific memory.
+gherkin:
+  draft: .pas/state/active/00006-multi-session-service/callback-lifecycle.feature
+  publish_on_done: specs/features/application/session_callback_lifecycle.feature
+planning_gate: Passed for this two-file prerequisite; no unresolved user choices, implementation requires approval.

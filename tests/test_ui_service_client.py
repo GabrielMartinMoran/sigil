@@ -97,6 +97,7 @@ async def _served(
     """A client wired to the real app, unless the test brought its own transport."""
     chosen = transport or httpx.ASGITransport(app=_app(runtime, tmp_path), raise_app_exceptions=False)
     client = ServiceClient(_endpoint(), transport=chosen)
+    client._select_session({'id': runtime.session.id})
     try:
         yield client
     finally:
@@ -241,7 +242,7 @@ def test_durable_returns_the_transcript_and_the_queue(runtime: ServerRuntime, tm
 
     async def go() -> None:
         session = runtime.composition.store.create_session()
-        runtime.composition.bind_session(session)
+        runtime._select_default(runtime.resident_session(session))
         async with _served(runtime, tmp_path) as client:
             payload = await client.durable()
 
@@ -806,7 +807,8 @@ def test_new_session_creates_the_services_session(runtime: ServerRuntime, tmp_pa
             before = runtime.session.id
             created = await client.new_session()
             assert created['id'] != before
-            assert runtime.session.id == created['id']
+            assert client.session_id == created['id']
+            assert runtime.session.id == before
             listing = await client.sessions()
             # The service is the one that knows which session is open.
             assert listing['current'] == created['id']
@@ -824,8 +826,10 @@ def test_open_session_opens_a_stored_conversation(runtime: ServerRuntime, tmp_pa
             await client.send_turn(TurnRequest('first'))
             await runtime.wait()
             created = await client.new_session()
-            assert runtime.session.id == created['id']
+            assert client.session_id == created['id']
+            assert runtime.session.id == first
             opened = await client.open_session(first)
+            assert client.session_id == first
             assert runtime.session.id == first
             return opened
 
@@ -851,15 +855,16 @@ def test_opening_an_unknown_session_is_a_typed_refusal(runtime: ServerRuntime, t
     asyncio.run(go())
 
 
-def test_new_session_is_refused_while_a_turn_runs(runtime: ServerRuntime, tmp_path: Path) -> None:
+def test_new_session_keeps_the_previous_turn_running(runtime: ServerRuntime, tmp_path: Path) -> None:
     async def go() -> None:
         async with _served(runtime, tmp_path) as client:
             before = runtime.session.id
             async with _busy(runtime):
-                with pytest.raises(ServiceBusy) as caught:
-                    await client.new_session()
-            assert 'turn' in str(caught.value).lower()
+                created = await client.new_session()
+                assert runtime.busy
+                assert client.session_id == created['id'] != before
             assert runtime.session.id == before
+        await runtime.close_sessions()
 
     asyncio.run(go())
 
@@ -1434,3 +1439,51 @@ def test_should_translate_malformed_debug_contract_to_safe_client_error(payload:
                 await client.debug()
 
     asyncio.run(scenario())
+
+
+def test_two_clients_keep_independent_selection_and_actions(runtime: ServerRuntime, tmp_path: Path) -> None:
+    async def go() -> None:
+        async with _served(runtime, tmp_path) as first, _served(runtime, tmp_path) as second:
+            initial = first.session_id
+            created = await first.new_session()
+            assert first.session_id == created['id'] != initial
+            assert second.session_id == initial
+            await first.external_files(True)
+            assert (await first.state())['session']['id'] == created['id']
+            assert (await second.state())['session']['id'] == initial
+            assert runtime.find_session(created['id']).session.allow_external_files is True
+            assert runtime.find_session(initial).session.allow_external_files is False
+        await runtime.close_sessions()
+
+    asyncio.run(go())
+
+
+def test_late_open_reply_cannot_replace_a_newer_client_selection() -> None:
+    async def go() -> None:
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+
+        async def handle(request: httpx.Request) -> httpx.Response:
+            import json
+
+            target = json.loads(request.content)['id']
+            if target == 'first':
+                first_started.set()
+                await release_first.wait()
+            return httpx.Response(200, json={'session': {'id': target}})
+
+        async with ServiceClient(_endpoint(), transport=httpx.MockTransport(handle)) as client:
+            client._select_session({'id': 'original'})
+            late = asyncio.create_task(client.open_session('first'))
+            await asyncio.wait_for(first_started.wait(), timeout=2)
+            try:
+                await client.open_session('second')
+                release_first.set()
+                with pytest.raises(RequestRejected, match='newer session selection'):
+                    await asyncio.wait_for(late, timeout=2)
+                assert client.session_id == 'second'
+            finally:
+                release_first.set()
+                await asyncio.gather(late, return_exceptions=True)
+
+    asyncio.run(go())

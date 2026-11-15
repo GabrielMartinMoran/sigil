@@ -321,8 +321,7 @@ def test_new_session_and_open_session_round_trip(runtime: ServerRuntime) -> None
     second = runtime.new_session()
     assert second.id != first.id
     assert runtime.session.id == second.id
-    with pytest.raises(LookupError):
-        runtime.open_session(first.id)
+    assert runtime.open_session(first.id) is first
     assert runtime.composition.store.list_sessions() == []
 
 
@@ -332,9 +331,10 @@ def test_the_routes_answer_with_the_projections(tmp_path: Path, composition: Com
 
     from src.server.app import create_app
 
-    runtime = ServerRuntime(composition, EventHub())
+    runtime = ServerRuntime(composition, EventHub(), require_ownership=False)
     config = ServerConfig(host='127.0.0.1', port=8760, password='secret-pass')
     client = TestClient(create_app(runtime, config, dist=tmp_path / 'missing'))
+    client.headers['x-sigil-session'] = runtime.session.id
 
     assert client.get('/api/state').status_code == 401
 
@@ -353,7 +353,8 @@ def test_the_routes_answer_with_the_projections(tmp_path: Path, composition: Com
 
     created = client.post('/api/session/new')
     assert created.status_code == 200
-    assert created.json()['session']['id'] == runtime.session.id
+    assert created.json()['session']['id'] != runtime.session.id
+    assert runtime.find_session(created.json()['session']['id']) is not None
 
 
 def test_the_bundle_missing_is_a_503_and_not_a_crash(tmp_path: Path, composition: Composition) -> None:
@@ -364,6 +365,7 @@ def test_the_bundle_missing_is_a_503_and_not_a_crash(tmp_path: Path, composition
 
     runtime = ServerRuntime(composition, EventHub())
     client = TestClient(create_app(runtime, ServerConfig(password='x'), dist=tmp_path / 'nope'))
+    client.headers['x-sigil-session'] = runtime.session.id
     response = client.get('/')
     assert response.status_code == 503
     assert 'not built' in response.text
@@ -393,6 +395,7 @@ def test_the_api_backend_serves_no_client_and_no_login(tmp_path: Path, compositi
     runtime = ServerRuntime(composition, EventHub())
     config = resolve_config(host='127.0.0.1', port=8760, env={}, web=False)
     client = TestClient(create_app(runtime, config, dist=_bundle(tmp_path)))
+    client.headers['x-sigil-session'] = runtime.session.id
 
     root = client.get('/')
     assert root.status_code == 200
@@ -414,6 +417,7 @@ def test_serve_mounts_the_client_and_asks_for_the_password(tmp_path: Path, compo
     runtime = ServerRuntime(composition, EventHub())
     config = resolve_config(host='127.0.0.1', port=8760, env={PASSWORD_ENV: 'secret-pass'})
     client = TestClient(create_app(runtime, config, dist=_bundle(tmp_path)))
+    client.headers['x-sigil-session'] = runtime.session.id
 
     assert config.web is True
     page = client.get('/')
@@ -443,7 +447,9 @@ def test_the_backend_accepts_the_endpoint_token_for_a_turn(tmp_path: Path, runti
 
     async def go() -> tuple[int, int]:
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url='http://sigil.test') as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url='http://sigil.test', headers={'x-sigil-session': runtime.session.id}
+        ) as client:
             refused = await client.post('/api/turn', json={'text': 'hello'})
             accepted = await client.post('/api/turn', json={'text': 'hello'}, headers=bearer)
             await runtime.wait()
@@ -459,6 +465,7 @@ def test_logout_clears_the_cookie(tmp_path: Path, composition: Composition) -> N
 
     runtime = ServerRuntime(composition, EventHub())
     client = TestClient(create_app(runtime, ServerConfig(password='secret-pass'), dist=tmp_path / 'nope'))
+    client.headers['x-sigil-session'] = runtime.session.id
     client.post('/api/login', json={'password': 'secret-pass'})
     logout = client.post('/api/logout')
     assert 'Max-Age=0' in logout.headers['set-cookie']
@@ -865,7 +872,9 @@ async def _signed_in(runtime: ServerRuntime, tmp_path: Path) -> AsyncIterator[ht
     """A logged-in client for the real app, over the ASGI transport (no socket)."""
     app = create_app(runtime, ServerConfig(password=_PASSWORD), dist=tmp_path / 'missing')
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-    async with httpx.AsyncClient(transport=transport, base_url='http://sigil.test') as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url='http://sigil.test', headers={'x-sigil-session': runtime.session.id}
+    ) as client:
         login = await client.post('/api/login', json={'password': _PASSWORD})
         assert login.status_code == 200, login.text
         yield client
@@ -1256,7 +1265,9 @@ def test_an_unauthenticated_body_is_refused_before_the_ceiling(
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
 
     async def go() -> httpx.Response:
-        async with httpx.AsyncClient(transport=transport, base_url='http://sigil.test') as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url='http://sigil.test', headers={'x-sigil-session': runtime.session.id}
+        ) as client:
             return await client.post('/api/turn', json={'text': 'x' * 4096})
 
     response = asyncio.run(go())
@@ -2483,3 +2494,156 @@ def test_a_turn_binds_the_selected_workspace_for_its_tools(runtime: ServerRuntim
     assert seen == [runtime.composition.workspace_manager.root]
     assert runtime.composition.execution_root() == runtime.composition.workspace_manager.root
     assert Path.cwd() != runtime.composition.workspace_manager.root
+
+
+def test_events_rejects_a_session_the_service_does_not_hold(runtime: ServerRuntime, tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    client = TestClient(create_app(runtime, ServerConfig(password='secret-pass'), dist=tmp_path / 'missing'))
+    client.headers['x-sigil-session'] = runtime.session.id
+    assert client.post('/api/login', json={'password': 'secret-pass'}).status_code == 200
+    response = client.get('/events', params={'session_id': 'not-resident'})
+    assert response.status_code == 404
+
+
+def test_scoped_state_and_transcript_target_the_requested_session(runtime: ServerRuntime, tmp_path: Path) -> None:
+    first = runtime.session_runtime
+    second = runtime.resident_session(runtime.composition.store.draft_session())
+
+    async def go() -> None:
+        async with _signed_in(runtime, tmp_path) as client:
+            for owner in (first, second):
+                params = {'session_id': owner.session.id}
+                state = await client.get('/api/state', params=params)
+                transcript = await client.get('/api/session/transcript', params=params)
+                assert state.status_code == 200
+                assert transcript.status_code == 200
+                assert state.json()['session']['id'] == owner.session.id
+                assert transcript.json()['session']['id'] == owner.session.id
+            assert (await client.get('/api/state', params={'session_id': 'not-resident'})).status_code == 404
+            assert (
+                await client.get('/api/session/transcript', params={'session_id': 'not-resident'})
+            ).status_code == 404
+        await runtime.close_sessions()
+
+    asyncio.run(go())
+
+
+def test_scoped_abort_and_pending_target_the_requested_session(
+    runtime: ServerRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = runtime.session_runtime
+    second = runtime.resident_session(runtime.composition.store.draft_session())
+    stopped: list[str] = []
+    monkeypatch.setattr(first, 'abort', lambda: stopped.append(first.session.id) or True)
+    monkeypatch.setattr(second, 'abort', lambda: stopped.append(second.session.id) or True)
+    request_id = str(uuid.uuid4())
+    second.composition.store.accept_input(second.session, request_id, 'queued', [], 'turn')
+
+    async def go() -> None:
+        async with _signed_in(runtime, tmp_path) as client:
+            params = {'session_id': second.session.id}
+            pending = await client.get('/api/session/pending', params=params)
+            response = await client.post('/api/abort', params=params)
+            assert [row['request_id'] for row in pending.json()['pending']] == [request_id]
+            assert response.json()['stopped'] is True
+            assert stopped == [second.session.id]
+            assert (await client.post('/api/abort', params={'session_id': 'missing'})).status_code == 404
+
+    try:
+        asyncio.run(go())
+    finally:
+        runtime._accepted.transition(second.session.id, request_id, 'stopped')
+        second.close()
+        second.composition.close()
+
+
+def test_scoped_turn_dispatches_to_selected_session(
+    runtime: ServerRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import AsyncMock
+
+    second = runtime.resident_session(runtime.composition.store.draft_session())
+    send = AsyncMock(return_value={'status': 'accepted'})
+    monkeypatch.setattr(second, 'send', send)
+
+    async def go() -> None:
+        async with _signed_in(runtime, tmp_path) as client:
+            response = await client.post('/api/turn', params={'session_id': second.session.id}, json={'text': 'hello'})
+            assert response.status_code == 200
+            send.assert_awaited_once()
+            assert (
+                await client.post('/api/turn', params={'session_id': 'missing'}, json={'text': 'hello'})
+            ).status_code == 404
+
+    try:
+        asyncio.run(go())
+    finally:
+        second.close()
+        second.composition.close()
+
+
+def test_scoped_new_and_open_do_not_rebind_another_clients_session(runtime: ServerRuntime, tmp_path: Path) -> None:
+    original = runtime.session.id
+
+    async def go() -> None:
+        async with _signed_in(runtime, tmp_path) as client:
+            created = await client.post('/api/session/new', params={'session_id': original})
+            assert created.status_code == 200
+            second_id = created.json()['session']['id']
+            assert second_id != original
+            assert runtime.session.id == original
+            reopened = await client.post('/api/session/open', params={'session_id': original}, json={'id': second_id})
+            assert reopened.status_code == 200
+            assert reopened.json()['session']['id'] == second_id
+            assert runtime.find_session(second_id) is not None
+            assert runtime.session.id == original
+        await runtime.close_sessions()
+
+    asyncio.run(go())
+
+
+@pytest.mark.parametrize(
+    'method,path', [('GET', '/api/session/transcript'), ('POST', '/api/abort'), ('GET', '/events')]
+)
+def test_session_operations_reject_a_missing_selector(
+    runtime: ServerRuntime, tmp_path: Path, method: str, path: str
+) -> None:
+    async def go() -> None:
+        async with _signed_in(runtime, tmp_path) as client:
+            response = await client.request(method, path, headers={'x-sigil-session': ''})
+            assert response.status_code == 422
+            assert response.json()['detail'] == 'session_id is required'
+
+    asyncio.run(go())
+
+
+def test_bootstrap_state_holds_a_session_lease_until_response_finishes(
+    runtime: ServerRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import src.server.app as app_module
+
+    async def go() -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+        original = app_module._state
+
+        async def blocked_state(owner: Any) -> dict[str, Any]:
+            started.set()
+            await release.wait()
+            return await original(owner)
+
+        monkeypatch.setattr(app_module, '_state', blocked_state)
+        async with _signed_in(runtime, tmp_path) as client:
+            reading = asyncio.create_task(client.get('/api/state', headers={'x-sigil-session': ''}))
+            try:
+                await asyncio.wait_for(started.wait(), timeout=2)
+                await runtime.release_idle_sessions(grace=0)
+                assert runtime.find_session(runtime.session.id) is runtime.session_runtime
+                assert not runtime.session_runtime._closing
+            finally:
+                release.set()
+                response = await asyncio.wait_for(reading, timeout=2)
+            assert response.status_code == 200
+
+    asyncio.run(go())

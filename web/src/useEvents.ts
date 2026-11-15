@@ -11,11 +11,14 @@
 
 import { useEffect } from 'react';
 
-import { api, setUnauthorizedHandler } from './api';
+import { setUnauthorizedHandler } from './api';
 import { closeAttention, createAttentionListener } from './notifications';
+import { isCurrentSession } from './sessionSelection';
 import { useStore } from './store';
 
 export function useEvents(active: boolean): void {
+  const sessionId = useStore((store) => store.selectedSessionId);
+  const generation = useStore((store) => store.selectionGeneration);
   const applyEvent = useStore((store) => store.applyEvent);
   const setUnauthenticated = useStore((store) => store.setUnauthenticated);
 
@@ -25,7 +28,9 @@ export function useEvents(active: boolean): void {
   }, [setUnauthenticated]);
 
   useEffect(() => {
-    if (!active) return;
+    if (!active || !sessionId) return;
+    let disposed = false;
+    const current = () => !disposed && isCurrentSession(useStore.getState(), sessionId, generation);
 
     const attention = createAttentionListener(useStore.getState().state?.seq ?? 0, () => {
       const state = useStore.getState().state;
@@ -38,11 +43,15 @@ export function useEvents(active: boolean): void {
         : workspace.label;
       return { project, conversation: state.session.title || `Session ${state.session.short_id}` };
     });
-    const source = new EventSource('/events', { withCredentials: true });
+    const source = new EventSource(
+      `/events?session_id=${encodeURIComponent(sessionId)}&after=${useStore.getState().state?.seq ?? 0}`,
+      { withCredentials: true },
+    );
     let opened = false;
 
     const listen = (type: string) => {
       source.addEventListener(type, (event) => {
+        if (!current()) return;
         const payload = JSON.parse((event as MessageEvent<string>).data) as Record<string, unknown>;
         attention(type, payload);
         applyEvent(type, payload);
@@ -74,19 +83,43 @@ export function useEvents(active: boolean): void {
     source.addEventListener('open', () => {
       // The first open is the boot's own state fetch; a later one is a reconnection,
       // and what it missed is worth re-reading.
-      if (opened) void api.state().then(() => useStore.getState().applyEvent('state_changed', {}));
+      if (opened && current())
+        void useStore
+          .getState()
+          .refresh()
+          .then(() => {
+            if (current()) useStore.getState().applyEvent('state_changed', {});
+          })
+          .catch(() => undefined);
       opened = true;
     });
 
+    let recovering = false;
     source.addEventListener('error', () => {
       // `EventSource` retries on its own; a 401 is the one case where it will not
       // succeed, and the store decides what that means.
-      if (source.readyState === EventSource.CLOSED) setUnauthenticated();
+      if (!current() || recovering) return;
+      recovering = true;
+      void useStore
+        .getState()
+        .refresh()
+        .then(() => {
+          if (!current()) return;
+          useStore.getState().applyEvent('lagged', {});
+          if (source.readyState === EventSource.CLOSED) {
+            useStore.setState({ selectionGeneration: generation + 1 });
+          }
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          recovering = false;
+        });
     });
 
     return () => {
+      disposed = true;
       source.close();
       closeAttention();
     };
-  }, [active, applyEvent, setUnauthenticated]);
+  }, [active, sessionId, generation, applyEvent, setUnauthenticated]);
 }

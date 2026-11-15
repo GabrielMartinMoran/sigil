@@ -96,6 +96,7 @@ def test_should_read_live_run_and_cache_unchanged_diagnostics(
             await client.get('/api/debug')
             assert calls == 2
             runtime.new_session()
+            client.headers['x-sigil-session'] = runtime.session.id
             runtime.session_runtime._run = None
             empty = (await client.get('/api/debug')).json()['report']
             assert empty['cache']['requests'] == 0

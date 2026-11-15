@@ -756,7 +756,10 @@ class SigilApp(
         if client is None:
             return
         try:
+            generation = client.selection_generation
             state = await client.state()
+            if client.selection_generation != generation and state.get('session', {}).get('id') != client.session_id:
+                return
         except ServiceClientError as exc:
             if isinstance(exc, (ServiceUnavailable, Unauthorized)) and await self.resume_after_restart():
                 return
@@ -1050,7 +1053,10 @@ class SigilApp(
                 if client is None or not self._turn_active:
                     return
                 try:
+                    generation = client.selection_generation
                     reply = await client.pending()
+                    if generation != client.selection_generation:
+                        return
                 except ServiceClientError as exc:
                     await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
                     return
@@ -1136,7 +1142,10 @@ class SigilApp(
         if client is None:
             return False
         try:
+            generation = client.selection_generation
             state = await client.state()
+            if client.selection_generation != generation and state.get('session', {}).get('id') != client.session_id:
+                return False
         except ServiceClientError as exc:
             await self.report_service_trouble(exc)
             return False
@@ -1168,7 +1177,10 @@ class SigilApp(
             return
         chat = self.query_one(ChatLog)
         try:
+            generation = client.selection_generation
             page = await client.transcript(limit=self._preferences.transcript_window)
+            if generation != client.selection_generation:
+                return
         except ServiceClientError as exc:
             await self.report_service_trouble(exc)
             return
@@ -1237,7 +1249,10 @@ class SigilApp(
             chat.newest_page_finished()
             return
         try:
+            generation = client.selection_generation
             page = await client.transcript(limit=self._preferences.transcript_window)
+            if generation != client.selection_generation:
+                return
         except ServiceClientError:
             chat.newest_page_finished()
             return

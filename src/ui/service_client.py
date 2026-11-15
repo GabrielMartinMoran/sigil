@@ -354,6 +354,9 @@ class ServiceClient:
         endpoint_path: Path | None = None,
         wait: float = DEFAULT_READY_TIMEOUT,
     ) -> None:
+        self.session_id: str | None = None
+        self.selection_generation = 0
+        self._selection_request = 0
         self._transport = transport
         self._timeout = timeout
         # How to find a service again after one restarted on another port. It lives
@@ -445,6 +448,8 @@ class ServiceClient:
         if (endpoint.host, endpoint.port, endpoint.token) == (self._host, self._port, self._token):
             return False
         await self._rebuild(endpoint)
+        if self.session_id is not None:
+            await self.open_session(self.session_id)
         return True
 
     @classmethod
@@ -493,11 +498,27 @@ class ServiceClient:
             wait=wait,
         )
 
+    def _select_session(self, session: Mapping[str, Any]) -> None:
+        identity = str(session.get('id') or '')
+        if identity and identity != self.session_id:
+            self.session_id = identity
+            self.selection_generation += 1
+
     # --- reading ------------------------------------------------------------
 
     async def state(self) -> dict[str, Any]:
         """Everything the screen paints from: session, workspace, model, tree, question."""
-        return await self._get('/api/state')
+        target = self.session_id
+        try:
+            payload = await self._get('/api/state', absent=NoHistoryYet)
+        except NoHistoryYet:
+            if target is None or target != self.session_id:
+                raise
+            await self._post('/api/session/open', {'id': target})
+            payload = await self._get('/api/state')
+        if self.session_id is None:
+            self._select_session(payload.get('session') or {})
+        return payload
 
     async def debug(self) -> DebugSnapshot:
         """Full diagnostics measured by the service, never by the attached TUI."""
@@ -550,14 +571,25 @@ class ServiceClient:
         """
         return await self._post('/api/agent', {'name': name})
 
+    async def _select_reply(self, path: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        self._selection_request += 1
+        request_id = self._selection_request
+        payload = await self._post(path, body)
+        if request_id != self._selection_request:
+            raise RequestRejected('A newer session selection superseded this request.')
+        self._select_session(payload.get('session') or {})
+        return payload
+
     async def new_session(self, worktree: str | None = None) -> dict[str, Any]:
-        """Starts an empty conversation, in a worktree cut first when one is named."""
+        """Start an independent conversation, optionally in a new worktree."""
+        if self.session_id is None:
+            await self.state()
         body = {} if not worktree else {'worktree': worktree}
-        return (await self._post('/api/session/new', body)).get('session') or {}
+        return (await self._select_reply('/api/session/new', body)).get('session') or {}
 
     async def create_worktree(self, name: str) -> dict[str, Any]:
-        """Cuts a worktree and moves the service into it."""
-        return await self._post('/api/worktree', {'name': name})
+        """Create a worktree and select its independent session in this client."""
+        return await self._select_reply('/api/worktree', {'name': name})
 
     async def sessions(self) -> dict[str, Any]:
         """Every conversation of this repository, newest first, plus the current id."""
@@ -565,7 +597,7 @@ class ServiceClient:
 
     async def open_session(self, session_id: str) -> dict[str, Any]:
         """Opens an existing conversation, wherever its workspace is."""
-        return (await self._post('/api/session/open', {'id': session_id})).get('session') or {}
+        return (await self._select_reply('/api/session/open', {'id': session_id})).get('session') or {}
 
     async def models(self) -> dict[str, Any]:
         """The model in effect and the accounts a client may offer."""
@@ -773,10 +805,15 @@ class ServiceClient:
         `events(after=that id)` and misses nothing.
         """
         cursor = max(0, after)
+        scope = self.session_id
+        generation = self.selection_generation
+        params = {} if cursor == 0 else {'after': str(cursor)}
+        if scope is not None:
+            params['session_id'] = scope
         request = self._client.build_request(
             'GET',
             '/events',
-            params=None if cursor == 0 else {'after': str(cursor)},
+            params=params,
             headers={} if cursor == 0 else {'last-event-id': str(cursor)},
             timeout=None,
         )
@@ -791,6 +828,8 @@ class ServiceClient:
             decoder = SseDecoder()
             async for chunk in response.aiter_bytes():
                 for frame in decoder.feed(chunk):
+                    if generation != self.selection_generation:
+                        return
                     event = self._event(frame)
                     if event.id is not None:
                         cursor = event.id
@@ -823,6 +862,8 @@ class ServiceClient:
         which resource it asked about — so the caller names the error and the wire
         mapping stays here.
         """
+        if self.session_id is not None:
+            request.url = request.url.copy_set_param('session_id', self.session_id)
         try:
             response = await self._client.send(request)
         except httpx.HTTPError as exc:

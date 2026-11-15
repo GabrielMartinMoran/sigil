@@ -193,6 +193,7 @@ class SubagentSummoner:
         self._on_delivered = on_delivered
         self._on_idle = on_idle
         self._tasks: dict[str, asyncio.Task[Any]] = {}
+        self._cancelling: set[asyncio.Task[Any]] = set()
         self._detached: dict[str, asyncio.Event] = {}
 
     # --- who listens -------------------------------------------------------
@@ -581,8 +582,17 @@ class SubagentSummoner:
             if node is not None and not node.status.finished:
                 node.cancel()
                 self._notify(node)
+            self._cancelling.add(handle)
+            handle.add_done_callback(self._cancelling.discard)
             handle.cancel()
         self._tasks.clear()
+
+    async def cancel_all_and_wait(self) -> None:
+        """Cancel active subagents and wait for their cleanup to finish."""
+        self.cancel_all()
+        tasks = tuple(self._cancelling)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def running(self) -> int:
         return len(self._tasks)

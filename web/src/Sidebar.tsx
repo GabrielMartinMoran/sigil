@@ -22,7 +22,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const switchWorkspace = useStore((store) => store.switchWorkspace);
   const loadSessions = useStore((store) => store.loadSessions);
   const loadWorkspaces = useStore((store) => store.loadWorkspaces);
-  const busy = useStore((store) => store.busy);
 
   useEffect(() => {
     if (!open) return;
@@ -78,7 +77,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
               <button
                 type="button"
                 onClick={() => void newSession()}
-                disabled={busy}
                 className="border-border-subtle text-ink-muted hover:border-accent mb-2 w-full rounded border px-2 py-1.5 text-left text-xs disabled:opacity-40"
               >
                 + new session
@@ -90,7 +88,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     <button
                       type="button"
                       onClick={() => void openSession(session.id)}
-                      disabled={busy}
                       className={`w-full rounded px-2 py-1.5 text-left text-xs disabled:opacity-40 ${
                         session.id === current ? 'bg-surface-sunken text-ink' : 'text-ink-muted hover:bg-surface-sunken'
                       }`}
@@ -127,7 +124,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                         <button
                           type="button"
                           onClick={() => void switchWorkspace(workspace.root)}
-                          disabled={busy || workspace.active === true}
+                          disabled={workspace.active === true}
                           title={workspace.root}
                           className={`w-full rounded px-2 py-1.5 text-left text-xs disabled:opacity-60 ${
                             workspace.active === true

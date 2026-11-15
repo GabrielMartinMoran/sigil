@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from src.engine.context.capability import ContextViewCapability
     from src.engine.providers.snapshot import ModelSnapshot
     from src.server.runtime import ServerRuntime
+    from src.server.session_runtime import SessionRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ class DebugDiagnostics:
         self._report: dict[str, Any] | None = None
         self._inflight: asyncio.Task[dict[str, Any]] | None = None
 
-    async def read(self, runtime: ServerRuntime) -> dict[str, Any]:
+    async def read(self, runtime: ServerRuntime | SessionRuntime) -> dict[str, Any]:
         """Shield shared calculation from disconnects and exclusive TUI workers."""
         if self._inflight is None or self._inflight.done():
             self._inflight = asyncio.create_task(self._read_snapshot(runtime))
@@ -59,8 +60,8 @@ class DebugDiagnostics:
             return await self.read(runtime)
         return result
 
-    async def _read_snapshot(self, runtime: ServerRuntime) -> dict[str, Any]:
-        session_runtime = runtime.session_runtime
+    async def _read_snapshot(self, runtime: ServerRuntime | SessionRuntime) -> dict[str, Any]:
+        session_runtime = getattr(runtime, 'session_runtime', runtime)
         composition = runtime.composition
         capability = composition.context_capability
         model = composition.model_service.snapshot()

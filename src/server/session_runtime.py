@@ -82,6 +82,15 @@ from src.server.runtime_support import (
 )
 
 
+def _not_busy() -> bool:
+    """The model service's own default: nothing this session owns is running.
+
+    A closed session leaves this in place of its own flag, so a model swap is
+    refused only by a session that is still alive to have one.
+    """
+    return False
+
+
 class SessionRuntime:
     """The execution state and callbacks of one session.
 
@@ -142,8 +151,11 @@ class SessionRuntime:
         self._confirmed: set[str] = set()
         self._finished: set[str] = set()
         self._mcp_started = False
+        self._mcp_task: asyncio.Task[None] | None = None
+        self._shutdown_task: asyncio.Task[None] | None = None
+        self._title_tasks: set[asyncio.Task[None]] = set()
 
-        composition.extension_notice = lambda text: hub.publish('notice', text=text, tone='danger')
+        composition.extension_notice = lambda text: self._publish('notice', text=text, tone='danger')
 
         # The agent asks through the hub; the browser answers over HTTP.
         composition.question_hub.set_asker(self._ask)
@@ -168,6 +180,12 @@ class SessionRuntime:
         # The tree moves while subagents work; the sidebar follows it.
         composition.on_idle(self._on_tree_idle)
         composition.tree_changed = self._on_tree_change
+
+    def _publish(self, event_type: str, **data: Any) -> None:
+        self.hub.publish(event_type, owner_session_id=self.session.id, **data)
+
+    def _publish_state(self, reason: str) -> None:
+        self.hub.publish_state(reason, owner_session_id=self.session.id)
 
     # --- state ---------------------------------------------------------------
 
@@ -210,12 +228,16 @@ class SessionRuntime:
                 # ready event is never set and `GET /api/mcp` waits forever on a
                 # manager that is not coming.
                 gateway.fail(str(exc))
-                self.hub.publish('notice', text=f'MCP: {exc}', tone='danger')
+                self._publish('notice', text=f'MCP: {exc}', tone='danger')
             else:
-                gateway.install(manager)
-            self.hub.publish_state('mcp')
+                try:
+                    gateway.install(manager)
+                except Exception:
+                    await manager.aclose()
+                    raise
+            self._publish_state('mcp')
 
-        asyncio.get_running_loop().create_task(load())
+        self._mcp_task = asyncio.get_running_loop().create_task(load())
 
     # --- a turn --------------------------------------------------------------
 
@@ -247,7 +269,7 @@ class SessionRuntime:
         latest = self.composition.store.refresh(self.session)
         if latest is not None:
             self.composition.bind_session(latest)
-            self.hub.publish_state('session_reloaded')
+            self._publish_state('session_reloaded')
         kind = 'steer' if self.busy else 'turn'
         identifier = request_id or str(uuid.uuid4())
         existing = self.composition.store.database.one(
@@ -263,7 +285,7 @@ class SessionRuntime:
             # the event would be a second version of it to keep in step — the screen
             # reads the rows again instead. A duplicate retry wrote no row, so it
             # announces nothing.
-            self.hub.publish_state('queue')
+            self._publish_state('queue')
         response = {
             'accepted': kind if existing is None else str(existing['kind']),
             'request_id': accepted.request_id,
@@ -348,8 +370,8 @@ class SessionRuntime:
                 self._consumer_error = exc
                 # Nobody is left to consume accepted rows: make them visible as
                 # interrupted instead of leaving them hanging in ``accepted``.
-                self._accepted.interrupt_open()
-                self.hub.publish('notice', text=f'Queue consumer: {exc}', tone='danger')
+                self._accepted.interrupt_open(self.session.id)
+                self._publish('notice', text=f'Queue consumer: {exc}', tone='danger')
                 self._settled.set()
                 return
         self._settled.set()
@@ -401,7 +423,7 @@ class SessionRuntime:
             except Exception as exc:  # noqa: BLE001 - cancelling a finished run is a no-op
                 # A run the graph already closed refuses the cancel; the turn was
                 # ending anyway, so this is not a failure to report.
-                self.hub.publish('notice', text=f'Abort ignored: {exc}', tone='muted')
+                self._publish('notice', text=f'Abort ignored: {exc}', tone='muted')
         self._stop_pending(self.session.id, keep=frozenset(self._enqueued))
         return True
 
@@ -479,7 +501,7 @@ class SessionRuntime:
         try:
             result = self.composition.store.save_progress_result(session, confirmations=confirmations)
         except Exception as exc:  # noqa: BLE001 - a failed checkpoint is reported, not fatal
-            self.hub.publish('notice', text=f'Checkpoint: {exc}', tone='warn')
+            self._publish('notice', text=f'Checkpoint: {exc}', tone='warn')
             return
         self._confirmed.update(confirmation.request_id for confirmation in confirmations)
         if result is not None and result.recovery_session_id:
@@ -487,7 +509,7 @@ class SessionRuntime:
             if recovered is not None:
                 self.composition.bind_session(recovered)
                 self._turn_session = recovered
-                self.hub.publish(
+                self._publish(
                     'notice',
                     text='Session changed elsewhere; local progress was saved in a recovered session.',
                     tone='warn',
@@ -505,7 +527,7 @@ class SessionRuntime:
             self._event_seen.add(accepted.request_id)
         timings = self._turn_timings = TurnTimings()
         self._timing_session_id = session.id
-        self.hub.publish('turn_started', session_id=session.id)
+        self._publish('turn_started', session_id=session.id)
         self._name_session(session, text)
 
         budget = StepBudget(max_steps=self._budget(), role='turn')
@@ -530,7 +552,7 @@ class SessionRuntime:
                 history = recovery.messages
                 session.messages = history
                 composition.store.save_progress(session)
-                self.hub.publish('notice', text=recovery.notice, tone='warn')
+                self._publish('notice', text=recovery.notice, tone='warn')
 
             # The workspace this turn selected, snapshotted for as long as the run
             # lasts: tools, permissions and shell commands resolve against it, so a
@@ -548,7 +570,7 @@ class SessionRuntime:
                     async for _node in timings.trace(run):
                         self._pump_steering()
                         self._checkpoint()
-                        self.hub.publish('debug_changed', owner_session_id=session.id)
+                        self._publish('debug_changed')
                 history = run.all_messages()
         except RunCancelled:
             status = 'cancelled'
@@ -585,7 +607,7 @@ class SessionRuntime:
             latest = composition.store.load(session.id)
             if latest is not None:
                 composition.bind_session(latest)
-                self.hub.publish(
+                self._publish(
                     'notice',
                     text='Session changed elsewhere; local progress was saved in a recovered session.',
                     tone='warn',
@@ -603,13 +625,13 @@ class SessionRuntime:
             self._aborting = False
 
         if budget.exhausted:
-            self.hub.publish(
+            self._publish(
                 'notice',
                 text=f'Step limit of {budget.max_steps} reached: the turn got one last call without tools.',
                 tone='warn',
             )
-        self.hub.publish('turn_finished', status=status, error=error, session_id=session.id)
-        self.hub.publish_state('turn')
+        self._publish('turn_finished', status=status, error=error, session_id=session.id)
+        self._publish_state('turn')
 
     def _budget(self) -> int:
         """The profile's own budget, or the configured default — the same rule as the TUI."""
@@ -637,9 +659,11 @@ class SessionRuntime:
                 return
             session.title = title
             self.composition.store.save_progress(session)
-            self.hub.publish_state('session_named')
+            self._publish_state('session_named')
 
-        asyncio.get_event_loop().create_task(name())
+        task = asyncio.create_task(name())
+        self._title_tasks.add(task)
+        task.add_done_callback(self._title_tasks.discard)
 
     # --- the stream ----------------------------------------------------------
 
@@ -654,20 +678,20 @@ class SessionRuntime:
             if isinstance(event, PartStartEvent):
                 part = event.part
                 if isinstance(part, ThinkingPart) and part.content:
-                    self.hub.publish('thinking_delta', text=part.content)
+                    self._publish('thinking_delta', text=part.content)
                 elif isinstance(part, TextPart) and part.content:
-                    self.hub.publish('text_delta', text=part.content)
+                    self._publish('text_delta', text=part.content)
             elif isinstance(event, PartDeltaEvent):
                 delta = event.delta
                 if isinstance(delta, TextPartDelta) and delta.content_delta:
                     # The one event that must not be batched: it is the typing.
-                    self.hub.publish('text_delta', text=delta.content_delta)
+                    self._publish('text_delta', text=delta.content_delta)
                 elif isinstance(delta, ThinkingPartDelta) and delta.content_delta:
-                    self.hub.publish('thinking_delta', text=delta.content_delta)
+                    self._publish('thinking_delta', text=delta.content_delta)
             elif isinstance(event, FunctionToolResultEvent):
                 ok = getattr(event.part, 'outcome', 'success') == 'success'
                 content = present_output(event.part.tool_name, event.part.content).text
-                self.hub.publish(
+                self._publish(
                     'tool_result',
                     tool_name=event.part.tool_name,
                     call_id=str(getattr(event.part, 'tool_call_id', '')),
@@ -680,7 +704,7 @@ class SessionRuntime:
                     self._event_seen.add(request_id)
                     # Only a snapshot forced by the delivery event may confirm it.
                     self._checkpoint(force=True)
-                self.hub.publish('steer_delivered', enqueue_id=str(event.enqueue_id))
+                self._publish('steer_delivered', enqueue_id=str(event.enqueue_id))
 
     def _request_for_enqueue(self, enqueue_id: str) -> str | None:
         for request_id, value in self._enqueued.items():
@@ -733,7 +757,7 @@ class SessionRuntime:
             return
         phase = getattr(event, 'phase', '')
         if phase == 'start':
-            self.hub.publish(
+            self._publish(
                 'tool_call',
                 tool_name=event.tool_name,
                 args=jsonable(event.args),
@@ -741,7 +765,7 @@ class SessionRuntime:
             )
             return
         summary = getattr(event, 'summary', None)
-        self.hub.publish(
+        self._publish(
             'tool_finished',
             tool_name=event.tool_name,
             phase=phase,
@@ -768,7 +792,7 @@ class SessionRuntime:
         """
         self._note_activity()
         try:
-            self.hub.publish(
+            self._publish(
                 'notice',
                 text=(
                     f'↻ Transient model failure ({notice.reason}); '
@@ -801,7 +825,7 @@ class SessionRuntime:
                     # That wait is a person's, it has its own deadline, and saying
                     # "waiting on the model" about it would be a lie.
                     continue
-                self.hub.publish(
+                self._publish(
                     'notice',
                     text=(
                         f'Still waiting on the model: no output for {SLOW_TURN_NOTICE_SECONDS:g} seconds. '
@@ -828,7 +852,7 @@ class SessionRuntime:
         self._question_ids += 1
         pending = PendingQuestion(id=f'q{self._question_ids}', questions=questions)
         self._pending_question = pending
-        self.hub.publish(
+        self._publish(
             'question',
             id=pending.id,
             questions=[
@@ -869,8 +893,8 @@ class SessionRuntime:
             self._pending_question = None
         if not pending.future.done():
             pending.future.set_result(None)
-        self.hub.publish('question_closed', id=pending.id, reason='timeout')
-        self.hub.publish(
+        self._publish('question_closed', id=pending.id, reason='timeout')
+        self._publish(
             'notice',
             text=(
                 f'No answer to the question after {self._question_timeout:g} seconds, so it was withdrawn '
@@ -897,7 +921,7 @@ class SessionRuntime:
         self._pending_question = None
         if not pending.future.done():
             pending.future.set_result(parsed)
-        self.hub.publish('question_closed', id=question_id, reason='answered' if parsed is not None else 'cancelled')
+        self._publish('question_closed', id=question_id, reason='answered' if parsed is not None else 'cancelled')
         return True
 
     def _resolve_question(self, answers: list[QuestionAnswer] | None, *, reason: str = 'withdrawn') -> None:
@@ -908,7 +932,7 @@ class SessionRuntime:
         self._pending_question = None
         if not pending.future.done():
             pending.future.set_result(answers)
-        self.hub.publish('question_closed', id=pending.id, reason=reason)
+        self._publish('question_closed', id=pending.id, reason=reason)
 
     @property
     def pending_question(self) -> PendingQuestion | None:
@@ -917,7 +941,7 @@ class SessionRuntime:
     # --- tree ----------------------------------------------------------------
 
     def _on_tree_change(self, node: Any) -> None:
-        self.hub.publish('tree_changed', node_id=getattr(node, 'id', ''))
+        self._publish('tree_changed', node_id=getattr(node, 'id', ''))
 
     def _on_tree_idle(self) -> None:
         """A subagent answered with nobody in a turn: that is work, and it is owed.
@@ -928,7 +952,7 @@ class SessionRuntime:
         clears `_settled`: `wait()` means "nothing left to do", and a report nobody
         has read is something left to do.
         """
-        self.hub.publish_state('tree_idle')
+        self._publish_state('tree_idle')
         if self._closing or self._consumer is None:
             return
         if not self.composition.summoner.waiting():
@@ -989,7 +1013,7 @@ class SessionRuntime:
         """
         self._refuse_while_busy('change file access')
         session = self.composition.apply_external_files(allow)
-        self.hub.publish_state('session')
+        self._publish_state('session')
         return session
 
     async def toggle_mcp(self, name: str, enabled: bool) -> Any:
@@ -1004,7 +1028,7 @@ class SessionRuntime:
         """
         self._refuse_while_busy('change MCP servers')
         session = await self.composition.apply_mcp_override(name, enabled)
-        self.hub.publish_state('mcp')
+        self._publish_state('mcp')
         return session
 
     # --- selection and history -----------------------------------------------
@@ -1024,7 +1048,7 @@ class SessionRuntime:
         snapshot = self.composition.model_service.select(account, model, thinking)
         self.composition.apply_model_change(snapshot)
         self.composition.rebuild_agent()
-        self.hub.publish_state('model')
+        self._publish_state('model')
         return snapshot
 
     def set_effort(self, thinking: str) -> Any:
@@ -1041,7 +1065,7 @@ class SessionRuntime:
         """
         snapshot = self.composition.model_service.set_thinking(thinking)
         self.composition.apply_model_change(snapshot)
-        self.hub.publish_state('model')
+        self._publish_state('model')
         return snapshot
 
     def select_agent(self, name: str) -> AgentProfile:
@@ -1060,7 +1084,7 @@ class SessionRuntime:
         self._refuse_while_busy('switch agent')
         self.composition.agent_registry.refresh()
         profile, _snapshot = self.composition.apply_agent(name)
-        self.hub.publish_state('agent')
+        self._publish_state('agent')
         return profile
 
     def rollback_points(self) -> list[Checkpoint]:
@@ -1084,7 +1108,7 @@ class SessionRuntime:
         self._refuse_while_busy('roll back')
         outcome = self.composition.rollback.to_turn(self.session.id, turn_id, files=files)
         self._reload_session()
-        self.hub.publish_state('rollback')
+        self._publish_state('rollback')
         return outcome
 
     def fork(self, turn_id: str) -> ForkOutcome:
@@ -1113,7 +1137,7 @@ class SessionRuntime:
         self._refuse_while_busy('create a worktree')
         switch = self.composition.workspace_manager.create_and_switch(name)
         self.composition.root = switch.workspace.root
-        self.hub.publish_state('workspace')
+        self._publish_state('workspace')
         return switch
 
     def refuse_while_busy(self, action: str) -> None:
@@ -1137,7 +1161,7 @@ class SessionRuntime:
         """
         self.composition.apply_model_change(snapshot)
         self.composition.rebuild_agent()
-        self.hub.publish_state('model')
+        self._publish_state('model')
 
     def _refuse_while_busy(self, action: str) -> None:
         """The one refusal for the history commands: a turn is still running."""
@@ -1216,7 +1240,7 @@ class SessionRuntime:
         # the agent's own, then `default_model`, then the last one used.
         self.composition.bind_session(session)
         self.composition.rebuild_agent()
-        self.hub.publish_state('workspace')
+        self._publish_state('workspace')
         return {'root': str(switch.workspace.root), 'label': switch.workspace.label, 'changed': switch.changed}
 
     def new_session(self) -> Any:
@@ -1229,7 +1253,7 @@ class SessionRuntime:
         # this session only.
         self.composition.bind_session(session)
         session.selection = session.selection or self.composition.model_service.snapshot().selection
-        self.hub.publish_state('session')
+        self._publish_state('session')
         return session
 
     def open_session(self, session_id: str) -> Any:
@@ -1242,10 +1266,37 @@ class SessionRuntime:
             self.composition.workspace_manager.switch(target.cwd)
             self.composition.root = target.cwd
         self.composition.bind_session(target)
-        self.hub.publish_state('session')
+        self._publish_state('session')
         return target
 
     # --- leaving -------------------------------------------------------------
+
+    async def aclose(self) -> None:
+        """Finish session cleanup even if the caller is cancelled."""
+        if self._shutdown_task is None:
+            self._shutdown_task = asyncio.create_task(self._shutdown())
+        cancelled = False
+        while not self._shutdown_task.done():
+            try:
+                await asyncio.shield(self._shutdown_task)
+            except asyncio.CancelledError:
+                cancelled = True
+        self._shutdown_task.result()
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def _shutdown(self) -> None:
+        self.close()
+        if self._consumer is not None:
+            await asyncio.gather(self._consumer, return_exceptions=True)
+        if self._title_tasks:
+            await asyncio.gather(*self._title_tasks, return_exceptions=True)
+        await self.composition.summoner.cancel_all_and_wait()
+        try:
+            if self._mcp_task is not None:
+                await self._mcp_task
+        finally:
+            await self.composition.mcp.aclose()
 
     def close(self) -> None:
         """Releases this session's execution, and only that.
@@ -1272,12 +1323,29 @@ class SessionRuntime:
                 self._consumer.cancel()
             except RuntimeError:  # pragma: no cover - the loop already stopped
                 pass
+        for task in self._title_tasks:
+            task.cancel()
         self._detach_callbacks()
 
     def _detach_callbacks(self) -> None:
-        """Detaches the engine callbacks, idempotently: closing twice is harmless."""
+        """Detaches the engine callbacks, idempotently: closing twice is harmless.
+
+        Seven registrations were made in ``__init__`` and each is undone with its
+        owner's own default, so a closed session is not asked to publish a tool
+        event, a retry, an extension notice or a tree change, and the model service
+        stops refusing swaps on its behalf.
+
+        ``on_idle(None)`` is not a blanket listener reset: it re-registers the
+        composition's own tree relay with no session callback, so the engine keeps
+        announcing changes to whoever attaches next.
+        """
+        self.composition.extension_notice = None
         self.composition.question_hub.set_asker(None)
+        self.composition.model_service.is_busy = _not_busy
         self.composition.tool_logger.remove_sink(self._on_tool_event)
+        self.composition.model_retry.on_retry = None
+        self.composition.on_idle(None)
+        self.composition.tree_changed = None
 
 
 __all__ = ['SessionRuntime']

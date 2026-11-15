@@ -1,0 +1,9 @@
+version: 1
+status: authorized_research
+user_direction: 'investiga y segui con todo, pero anda acotando scopes a medida que necesites o haya problemas y expandi cuando amerite'
+interpretation: Lead may autonomously narrow/expand research within feature 6; no new source implementation contract is approved by this research direction.
+next_scope: Callback and resource ownership only; exclude HTTP, TUI and web mapping.
+prior_failure: Broad researcher9c7ea4f5 twice left requested inventory incomplete; new bounded investigation replaces broad retry.
+worker: pas_researcher
+skills: [clean-code, clean-python, clean-architecture]
+expected_output: Concrete registration/invocation/cleanup table and resource owner map, exact source references, no generic survey.

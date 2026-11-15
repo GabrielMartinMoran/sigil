@@ -199,12 +199,13 @@ source of truth.
 
 ## What a service changes about the product
 
-This is a state-model change, not a refactor. It has to be named now, because it
-decides how the facade is written.
+This is a state-model change, not just a refactor. The table contrasts the
+legacy in-process client with the service contract. Current ownership and
+routing are described in [Process ownership and session ownership](#process-ownership-and-session-ownership).
 
-| Today | As a service |
+| Legacy in-process client | Service contract |
 | --- | --- |
-| One session per process: `SessionStore.rebind`, `AgentTreeStore.bind`, `RoadmapStores.bind_session` | Many sessions; every command carries `session_id` and the `bind` methods disappear |
+| One session per process: `SessionStore.rebind`, `AgentTreeStore.bind`, `RoadmapStores.bind_session` | Many sessions; requests carry `session_id`; binding stays internal to each composition |
 | Closing the UI kills the turn | The turn survives the client; a client attaches to a turn in progress |
 | `ask_user` assumes someone is looking | A question has a deadline: `QUESTION_TIMEOUT_SECONDS`, overridable, after which it is withdrawn, the turn stops and the screen says why (see [the question deadline](#the-question-deadline)) |
 | One process, one writer | One writer per turn, many readers: a written rule, and a partial unique index in the schema (`turns_one_open`) |
@@ -348,12 +349,13 @@ Abort and consumer death: abort sets `_aborting` so `_pump_steering` stops claim
 new work and `stop_open(keep=...)` does not stop requests already handed to
 `run.enqueue`. Once the run unwinds, requests confirmed from its snapshot become
 `finished`; the rest become `stopped`. A consumer that dies calls the
-database-wide `interrupt_open`, so accepted rows become `interrupted` and `send`
-refuses new work instead of accepting rows nobody will consume.
+session-scoped `interrupt_open`, so only that session's accepted rows become
+`interrupted` and its `send` refuses work nobody will consume. Process startup
+still reconciles open rows database-wide.
 
 ### Process ownership and session ownership
 
-**Scope:** server runtime ownership. **Owner:** server. **Last update:** 2026-11-13.
+**Scope:** server runtime ownership. **Owner:** server. **Last update:** 2026-11-15.
 
 The service has two lifetimes, and the code names them. `ServerRuntime` in
 `src/server/runtime.py` is the process: it owns the database lock
@@ -372,17 +374,44 @@ sides import; `runtime.py` re-exports them, so the routes, the CLI and the tests
 that already name them there need no change.
 
 Closing is asymmetric on purpose. `SessionRuntime.close` resolves its question,
-cancels its consumer and detaches its callbacks; it never releases the process
-lock and never closes the shared cached database. `ServerRuntime.close` runs that
-cleanup, then releases ownership and closes the composition in a `finally`, so
-closing twice is a no-op and an orderly shutdown still leaves unexecuted rows as
-they were (see [idle shutdown](#idle-shutdown)).
+cancels its consumer, and detaches its seven callback registrations; it never
+releases the process lock or closes the shared cached database. Its asynchronous
+`aclose` waits for the consumer, cancelled subagents, background title tasks,
+and deferred MCP startup before closing the gateway. The service awaits every resident session and its
+extension cleanup before releasing ownership. Cleanup continues through errors;
+cancelling the caller does not abandon an in-progress MCP loader.
 
-What this does not deliver: the facade still drives exactly one session. Rows carry
-no producing-session tag, no HTTP route selects a session, a session-changing
-command still rebinds the one composition in place, and a report stranded by that
-rebinding is not addressed here. Concurrent consumers, a session registry and
-session-addressed requests are the next cut, not a claim of this one.
+`ServerRuntime` holds a registry keyed by session ID. Each entry owns a distinct
+composition, model router and active selection, context meter, MCP gateway,
+roadmap stores, agent tree, consumer, and pending question. Provider credentials,
+installation preferences, the database, and the process lock remain shared.
+Changing one session's model updates its own active selection; the shared last
+selection is only a fallback for future conversations.
+
+A client selects a session, not the service. Creating or opening another session
+returns its ID without rebinding another live composition. The client includes
+`session_id` on subsequent reads, actions, and `/events` subscriptions. HTTP also
+accepts the `X-Sigil-Session` header; the explicit query parameter takes precedence.
+Missing selectors return 422 and nonresident IDs return 404. The exceptions are
+process-level health, authentication, static assets, and the initial unscoped
+`GET /api/state` bootstrap, which returns an available default ID. The open route
+uses its body ID to load a persisted or resident session. Session IDs are routing
+identities, not additional authorization credentials.
+
+Session callbacks label events with internal ownership metadata. SSE filters both
+live events and replay while retaining the global sequence and service-wide
+events. TUI and web replace their streams on selection changes and reject stale
+responses. Switching away does not stop a turn or a background child: its report
+wakes its original session's consumer, even with no client watching.
+
+Requests and SSE connections lease their selected entry for their complete
+response lifetime. Idle entries have a separate grace period, configured by
+`--session-idle-grace SECONDS` (default 300). The reaper releases only entries
+without a client/request lease, active turn, queued input, running child, or
+unread child report. Releasing an entry closes its resources without touching
+another session or the process lock. A persisted session can be opened again;
+an empty draft remains in memory only and disappears when released. The process
+idle timer below remains independent.
 
 ### Idle shutdown
 
@@ -390,7 +419,8 @@ A service nobody needs should not outlive the work, so the server stops itself
 instead of waiting to be killed. `IdleShutdown` in `src/server/runtime.py` asks two
 questions, in this order:
 
-- **Is a turn running?** `ServerRuntime.busy`. A pending question needs no rule of
+- **Is work running in any session?** The registry checks every resident turn
+  and its background children. A pending question needs no rule of
   its own: the agent asks from inside the turn that is waiting for the answer, so the
   turn is still running and the question is covered. There are no interactive
   approvals (see [Risks](#risks)).

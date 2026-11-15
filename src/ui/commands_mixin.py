@@ -269,7 +269,7 @@ class CommandsMixin:
         here: this process cannot see the session's state, so it must not change it.
         Both cases are refusals rather than guesses, and neither is silent.
         """
-        if self._client is None or name not in BUSY_COMMANDS:
+        if self._client is None or name not in BUSY_COMMANDS or name in {'/new', '/load'}:
             return False
         try:
             state = await self._client.state()
@@ -298,7 +298,7 @@ class CommandsMixin:
         refusal free of a panel — the picker would otherwise open, fetch a
         catalogue and only then be told the session is in the way.
         """
-        if name not in BUSY_COMMANDS:
+        if name not in BUSY_COMMANDS or (self._client is not None and name in {'/new', '/load'}):
             return False
         if name == '/mcp' and getattr(self, '_summoner', None) is not None and self._summoner.running():
             return True
@@ -539,6 +539,7 @@ class CommandsMixin:
         # The cursor restarts from the state just read: the new session has its own
         # sequence, and keeping the old number would skip whatever it publishes.
         self._service_cursor = self._state_cursor()
+        self.follow_service_events()
         # The answered questions belong to the session that just ended, exactly as
         # they belong to the run that ended after a restart: a new session numbers
         # its questions from one again, and keeping `q1` would suppress a brand-new
@@ -571,6 +572,7 @@ class CommandsMixin:
         await self.refresh_service_state()
         await self.load_service_history(rebuild=True)
         self._service_cursor = self._state_cursor()
+        self.follow_service_events()
         # Same rule as `/new`: the questions this screen answered were the previous
         # session's, and their ids do not survive the switch.
         self._service_answered.clear()

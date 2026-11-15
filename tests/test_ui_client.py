@@ -188,15 +188,17 @@ class _HubStream(httpx.AsyncByteStream):
         *,
         stop_after_replay: bool = False,
         drop: frozenset[str] = frozenset(),
+        session_id: str | None = None,
     ) -> None:
         self._hub = hub
         self._after = after
+        self._session_id = session_id
         self._stop_after_replay = stop_after_replay
         self._drop = drop
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
-        async with self._hub.subscribe() as subscription:
-            for event in self._hub.replay(self._after):
+        async with self._hub.subscribe(session_id=self._session_id) as subscription:
+            for event in self._hub.replay(self._after, session_id=self._session_id):
                 if event.type in self._drop:
                     continue
                 yield event.to_sse().encode()
@@ -358,12 +360,12 @@ async def _service_under_test(
     )
     transport = _ServiceTransport(app, runtime.hub)
     client = ServiceClient(SERVICE, transport=transport)
+    await client.state()
     try:
         yield runtime, transport, client
     finally:
         await client.aclose()
-        runtime.abort()
-        await runtime.wait()
+        await runtime.close_sessions()
         runtime.close()
 
 
@@ -1824,11 +1826,12 @@ def test_new_creates_the_session_in_the_service(composition: Composition, tmp_pa
                 await app.handle_command('/new')
                 await pilot.pause()
 
-                assert runtime.session.id != before
+                assert client.session_id != before
+                assert runtime.session.id == before
                 # The reading this terminal holds is not the new session: the row,
                 # the id and the identity are the service's.
                 assert app._session.id == before
-                assert f'New session {runtime.session.short_id}' in _transcript(app)
+                assert f'New session {client.session_id[:8]}' in _transcript(app)
                 # The cursor restarts from the state just read, not from the old run.
                 assert app._service_cursor == app._state_cursor()
 
@@ -1858,13 +1861,16 @@ def test_new_with_a_worktree_cuts_it_in_the_service_and_starts_the_session_there
                     await app.handle_command('/new', '--worktree fresh')
                     await pilot.pause()
 
-                    created = Path(os.path.realpath(str(runtime.session.cwd)))
-                    assert runtime.session.id != before, 'the session is new'
-                    assert created == Path(os.path.realpath(str(runtime.composition.workspace_manager.root)))
+                    owner = runtime.find_session(client.session_id)
+                    assert owner is not None
+                    created = Path(os.path.realpath(str(owner.session.cwd)))
+                    assert owner.session.id != before, 'the session is new'
+                    assert runtime.session.id == before, 'other clients keep their session'
+                    assert created == Path(os.path.realpath(str(owner.composition.workspace_manager.root)))
                     assert created.name == 'fresh', 'the session runs in the worktree that was cut'
                     assert (created / 'README.md').is_file(), 'and that directory is a real checkout'
                     assert 'Workspace: fresh.' in _transcript(app), 'the move is announced'
-                    assert f'New session {runtime.session.short_id}' in _transcript(app)
+                    assert f'New session {owner.session.short_id}' in _transcript(app)
 
         asyncio.run(inner())
     finally:
@@ -1923,7 +1929,8 @@ def test_load_opens_the_chosen_session_through_the_service(composition: Composit
             await client.send_turn(TurnRequest('first'))
             await runtime.wait()
             created = await client.new_session()
-            assert runtime.session.id == created['id']
+            assert client.session_id == created['id']
+            assert runtime.session.id == first
 
             app = _terminal(client, _session(runtime))
 
@@ -1937,6 +1944,7 @@ def test_load_opens_the_chosen_session_through_the_service(composition: Composit
                 await app.handle_command('/load')
                 await pilot.pause()
 
+                assert client.session_id == first
                 assert runtime.session.id == first
                 assert f'Loaded session {first[:8]}' in _transcript(app)
 
@@ -2351,19 +2359,14 @@ def test_an_unreadable_state_refuses_the_command_instead_of_assuming_idle(
     asyncio.run(inner())
 
 
-@pytest.mark.parametrize('name', ('/new', '/load', '/provider'))
-def test_a_command_that_swaps_the_session_refuses_when_the_state_cannot_be_read(
+@pytest.mark.parametrize('name', ('/provider', '/agent'))
+def test_a_command_that_mutates_the_current_session_refuses_when_the_state_cannot_be_read(
     name: str, composition: Composition, tmp_path: Path
 ) -> None:
-    """A command that *changes* the session does not run on a state it could not read.
+    """Current-session settings require readable busy state before opening a picker.
 
-    `/effort` above cannot show what the guard is worth: it refuses twice, here and in
-    its own `is_refused_while_busy`. These three are the ones the guard is the only
-    thing standing in front of, and each has its own way of hurting: `/new` creates a
-    session, `/load` opens the picker that would replace it, and `/provider` opens the
-    accounts screen, whose next keypresses add, rename or delete an account. A guard
-    that answered `False` on a failed read would reach the service through routes that
-    still answer while `/api/state` does not. That is the mutation this test exists for.
+    New/load are deliberately excluded: they now select an independent session,
+    rather than changing what the current turn executes.
     """
 
     async def inner() -> None:
@@ -4359,3 +4362,29 @@ def test_should_clear_stale_service_debug_after_a_read_failure(
                 assert 'Fixed cost per request' not in _debug_body(app)
 
     asyncio.run(scenario())
+
+
+def test_new_command_can_switch_away_while_original_session_is_busy(composition: Composition, tmp_path: Path) -> None:
+    async def inner() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(100, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='the state')
+                original = runtime.session_runtime
+                original_id = original.session.id
+                original._task = asyncio.create_task(asyncio.Event().wait())
+                try:
+                    await app.refresh_service_state()
+                    assert app._service_state['busy'] is True
+                    app.query_one(PromptInput).focus()
+                    await pilot.press(*'/new', 'enter')
+                    await _until(pilot, lambda: client.session_id != original_id, what='the new selection')
+                    assert original.busy is True
+                    assert runtime.find_session(original_id) is original
+                    assert app.is_refused_while_busy('/load') is False
+                finally:
+                    original._task.cancel()
+                    await asyncio.gather(original._task, return_exceptions=True)
+                    original._task = None
+
+    asyncio.run(inner())

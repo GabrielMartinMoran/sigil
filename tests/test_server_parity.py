@@ -110,7 +110,9 @@ async def _signed_in(runtime: ServerRuntime, tmp_path: Path) -> AsyncIterator[ht
     """A logged-in client for the real app, over the ASGI transport (no socket)."""
     app = create_app(runtime, ServerConfig(password=PASSWORD), dist=tmp_path / 'missing')
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-    async with httpx.AsyncClient(transport=transport, base_url='http://sigil.test') as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url='http://sigil.test', headers={'x-sigil-session': runtime.session.id}
+    ) as client:
         login = await client.post('/api/login', json={'password': PASSWORD})
         assert login.status_code == 200, login.text
         yield client

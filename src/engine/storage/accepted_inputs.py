@@ -207,15 +207,19 @@ class AcceptedInputs:
         """
         return self.database.one(OPEN_INPUTS_SQL) is not None
 
-    def interrupt_open(self) -> int:
-        """Database-wide: marks every non-terminal input interrupted, without executing."""
+    def interrupt_open(self, session_id: str | None = None) -> int:
+        """Interrupt non-terminal inputs globally or for one session."""
         now = datetime.now(UTC).isoformat()
+        query = (
+            "UPDATE accepted_inputs SET state = 'interrupted', updated_at = ? "
+            "WHERE state IN ('accepted', 'claimed', 'delivered')"
+        )
+        params = (now,)
+        if session_id is not None:
+            query += ' AND session_id = ?'
+            params = (now, session_id)
         with self.database.transaction() as conn:
-            cursor = conn.execute(
-                "UPDATE accepted_inputs SET state = 'interrupted', updated_at = ? "
-                "WHERE state IN ('accepted', 'claimed', 'delivered')",
-                (now,),
-            )
+            cursor = conn.execute(query, params)
         return int(cursor.rowcount)
 
     def stop_open(self, session_id: str, *, keep: Sequence[str] = ()) -> int:

@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 from src.engine.agents.model_config import AgentModelConfig
@@ -27,6 +29,7 @@ from src.engine.agents.profile.models.agent_profile import AgentProfile
 from src.engine.agents.rollback import Checkpoint, ForkOutcome, RollbackOutcome
 from src.engine.agents.tree.models.agent_node import AgentNode
 from src.engine.bootstrap import Composition
+from src.engine.sessions.session_store import Session
 from src.engine.storage.accepted_inputs import AcceptedInputs
 from src.server.diagnostics import record
 from src.server.events import EventHub
@@ -117,10 +120,10 @@ class ServerRuntime:
 
     This object keeps what outlives work: the ownership lock and the gate that asks
     whether it is held, the reconciliation `start` performs, the accepted-inputs
-    handle, the hub and the service-wide idle decision. Everything a turn does is
-    delegated — unchanged, and explicitly — to the one `SessionRuntime` exposed by
-    `session_runtime`. There is no registry here: one runtime, one session, until
-    the concurrency work says otherwise.
+    handle, the hub and the service-wide idle decision. A canonical registry maps
+    session IDs to independent compositions and consumers. The legacy facade
+    delegates to its default `session_runtime`; HTTP callers address their own
+    resident owner without changing that default.
     """
 
     def __init__(
@@ -160,6 +163,86 @@ class ServerRuntime:
             question_timeout=resolve_question_timeout(question_timeout),
             require_worker_ownership=self._require_worker_ownership,
         )
+        self._sessions: dict[str, SessionRuntime] = {self.session.id: self._session_runtime}
+        self._registry_lock = asyncio.Lock()
+        self._last_used: dict[str, float] = {self.session.id: time.monotonic()}
+        self._leases: dict[str, int] = {}
+        self._sessions_shutdown: asyncio.Task[None] | None = None
+
+    def find_session(self, session_id: str) -> SessionRuntime | None:
+        """Find an already resident session without loading or switching it."""
+        return self._sessions.get(session_id)
+
+    def resident_session(self, session: Session) -> SessionRuntime:
+        """Return the session's runtime, creating an independent composition if needed."""
+        if self._closing:
+            raise RuntimeError('The service is closing')
+        existing = self._sessions.get(session.id)
+        if existing is not None:
+            return existing
+        composition = Composition(
+            session.cwd,
+            settings=self.composition.settings,
+            session=session,
+            model=self.composition._model_override,
+            provider_paths=self.composition.provider_paths,
+        )
+        owner = SessionRuntime(
+            composition,
+            self.hub,
+            self._accepted,
+            question_timeout=self._session_runtime._question_timeout,
+            require_worker_ownership=self._require_worker_ownership,
+        )
+        self._sessions[session.id] = owner
+        self.touch_session(session.id)
+        return owner
+
+    def load_resident(self, session_id: str) -> SessionRuntime:
+        """Open a stored or resident conversation without changing another owner."""
+        owner = self.find_session(session_id)
+        if owner is not None:
+            return owner
+        session = self.composition.store.load(session_id)
+        if session is None:
+            raise LookupError(f'No session {session_id}.')
+        return self.resident_session(session)
+
+    def create_resident(self, source: SessionRuntime, root: str | None = None) -> SessionRuntime:
+        """Create a draft with independent execution state, preserving the source."""
+        session = source.composition.store.draft_session()
+        if root is not None:
+            session.cwd = str(Path(root).expanduser().resolve(strict=True))
+        session.agent = source.composition.agent_registry.active_name
+        return self.resident_session(session)
+
+    def _select_default(self, owner: SessionRuntime) -> None:
+        self._session_runtime = owner
+        self.composition = owner.composition
+
+    async def _resolve_resident(self, factory: Callable[[], SessionRuntime]) -> SessionRuntime:
+        async with self._registry_lock:
+            if self._closing:
+                raise RuntimeError('The service is closing')
+            task = asyncio.create_task(asyncio.to_thread(factory))
+            cancelled = False
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    cancelled = True
+            owner = task.result()
+            if not self._closing:
+                owner.ensure_workers()
+            if cancelled:
+                raise asyncio.CancelledError
+            return owner
+
+    async def open_resident(self, session_id: str) -> SessionRuntime:
+        return await self._resolve_resident(lambda: self.load_resident(session_id))
+
+    async def new_resident(self, source: SessionRuntime, root: str | None = None) -> SessionRuntime:
+        return await self._resolve_resident(lambda: self.create_resident(source, root))
 
     # --- state ---------------------------------------------------------------
 
@@ -177,7 +260,7 @@ class ServerRuntime:
 
     @property
     def session_runtime(self) -> SessionRuntime:
-        """The one session this service drives. Read-only: replacing it is not a command."""
+        """The default facade session; HTTP clients select their own registry entry."""
         return self._session_runtime
 
     def has_active_work(self) -> bool:
@@ -188,7 +271,10 @@ class ServerRuntime:
         service serves the whole database. A connected event subscriber is not work:
         it reconnects to whatever service is there.
         """
-        return self.busy or self.composition.summoner.running() > 0 or self._accepted.has_open()
+        owners = tuple(set(self._sessions.values()))
+        return (
+            any(owner.busy or owner.composition.summoner.running() > 0 for owner in owners) or self._accepted.has_open()
+        )
 
     async def stop_when_idle(
         self,
@@ -259,6 +345,95 @@ class ServerRuntime:
         if self._require_ownership and not self._ownership.held:
             raise OwnershipError('The queue consumer requires the database lock')
 
+    @staticmethod
+    async def _close_owner(owner: SessionRuntime) -> None:
+        try:
+            owner.abort()
+            await owner.wait()
+        finally:
+            try:
+                await owner.aclose()
+            finally:
+                try:
+                    await owner.composition.extensions.close()
+                finally:
+                    owner.composition.close()
+
+    async def close_sessions(self) -> None:
+        """Drain all owners, even under cancellation, before releasing the lock."""
+        if self._sessions_shutdown is None:
+            self._closing = True
+            self._sessions_shutdown = asyncio.create_task(self._close_sessions())
+        cancelled = False
+        while not self._sessions_shutdown.done():
+            try:
+                await asyncio.shield(self._sessions_shutdown)
+            except asyncio.CancelledError:
+                cancelled = True
+        self._sessions_shutdown.result()
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def _close_sessions(self) -> None:
+        async with self._registry_lock:
+            owners = tuple(set(self._sessions.values()))
+        results = await asyncio.gather(*(self._close_owner(owner) for owner in owners), return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+
+    def touch_session(self, session_id: str, *, now: float | None = None) -> None:
+        self._last_used[session_id] = time.monotonic() if now is None else now
+
+    @contextmanager
+    def session_lease(self, session_id: str) -> Iterator[SessionRuntime]:
+        owner = self.find_session(session_id)
+        if owner is None:
+            raise LookupError(f'Session {session_id} is not resident')
+        self._leases[session_id] = self._leases.get(session_id, 0) + 1
+        try:
+            yield owner
+        finally:
+            self._leases[session_id] -= 1
+            self.touch_session(session_id)
+
+    async def release_idle_sessions(self, *, grace: float, now: float | None = None) -> None:
+        current = time.monotonic() if now is None else now
+        async with self._registry_lock:
+            for session_id, owner in tuple(self._sessions.items()):
+                working = (
+                    owner.busy
+                    or owner.composition.summoner.running() > 0
+                    or bool(owner.composition.summoner.waiting())
+                    or any(row.state in {'accepted', 'claimed', 'delivered'} for row in self._accepted.list(session_id))
+                )
+                if self._leases.get(session_id, 0) or working:
+                    self.touch_session(session_id, now=current)
+                    continue
+                if current - self._last_used.get(session_id, current) < grace:
+                    continue
+                # Remove before awaiting teardown, so new requests cannot use a closing owner.
+                del self._sessions[session_id]
+                self._last_used.pop(session_id, None)
+                self._leases.pop(session_id, None)
+                await self._close_owner(owner)
+
+    async def reap_sessions(self, *, grace: float, poll: float = IDLE_POLL_INTERVAL) -> None:
+        while not self._closing:
+            await asyncio.sleep(min(poll, grace) if grace > 0 else poll)
+            try:
+                await self.release_idle_sessions(grace=grace)
+            except Exception as exc:  # noqa: BLE001 - cleanup errors must not stop residency accounting
+                record('session_release_failed', error=exc)
+
+    def bootstrap_session(self) -> SessionRuntime:
+        owner = self.find_session(self.session.id)
+        if owner is None:
+            owner = self.create_resident(self._session_runtime)
+            self._select_default(owner)
+        self.touch_session(owner.session.id)
+        return owner
+
     def close(self) -> None:
         """Releases everything, and leaves the queue exactly as it found it.
 
@@ -273,7 +448,8 @@ class ServerRuntime:
         store is never writable by a second process while this one is still closing.
         """
         try:
-            self._session_runtime.close()
+            for owner in set(self._sessions.values()):
+                owner.close()
         finally:
             self._closing = True
             self._started = False
@@ -381,15 +557,26 @@ class ServerRuntime:
 
     def switch_workspace(self, root: str) -> dict[str, Any]:
         """Moves the service to another workspace and starts an empty conversation."""
-        return self._session_runtime.switch_workspace(root)
+        self.refuse_while_busy('switch workspace')
+        previous = self.session.cwd
+        owner = self.create_resident(self._session_runtime, root)
+        self._select_default(owner)
+        workspace = owner.composition.workspace_manager.current()
+        return {'root': str(workspace.root), 'label': workspace.label, 'changed': previous != owner.session.cwd}
 
     def new_session(self) -> Any:
         """Starts an empty conversation in the current workspace."""
-        return self._session_runtime.new_session()
+        self.refuse_while_busy('start a session')
+        owner = self.create_resident(self._session_runtime)
+        self._select_default(owner)
+        return owner.session
 
     def open_session(self, session_id: str) -> Any:
         """Opens an existing conversation, wherever its workspace is."""
-        return self._session_runtime.open_session(session_id)
+        self.refuse_while_busy('open another session')
+        owner = self.load_resident(session_id)
+        self._select_default(owner)
+        return owner.session
 
 
 __all__ = [

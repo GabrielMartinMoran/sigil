@@ -262,19 +262,46 @@ def test_switching_workspace_starts_empty_and_an_explicit_open_restores_the_mode
     composition.store.save(leaving)
     assert leaving.selection.model == 'first/model'
 
+    from copy import copy
+    from dataclasses import replace
+
+    monkeypatch.setattr(
+        'src.engine.bootstrap.build_service', lambda *args, **kwargs: replace(service, router=copy(service.router))
+    )
     # Leaving and coming back opens an empty draft instead of that conversation.
     runtime.switch_workspace(str(other))
     runtime.switch_workspace(str(tmp_path))
 
-    assert composition.session.id != leaving.id
-    assert composition.session.messages == []
+    assert runtime.session.id != leaving.id
+    assert runtime.session.messages == []
 
     # Opening it explicitly is what brings its own model back.
-    service.select('work', 'second/model', 'high')
-    assert service.snapshot().model == 'second/model'
+    runtime.composition.model_service.select('work', 'second/model', 'high')
+    assert runtime.composition.model_service.snapshot().model == 'second/model'
 
     runtime.open_session(leaving.id)
 
-    assert composition.session.id == leaving.id
-    assert service.snapshot().model == 'first/model'
-    assert composition.session.selection.model == 'first/model'
+    assert runtime.session.id == leaving.id
+    assert runtime.composition.model_service.snapshot().model == 'first/model'
+    assert runtime.session.selection.model == 'first/model'
+
+
+def test_resident_compositions_keep_independent_model_snapshots(tmp_path, monkeypatch):
+    from copy import copy
+    from dataclasses import replace
+
+    composition, service = _composition(tmp_path, monkeypatch)
+    # The real factory makes one service/router per composition over shared stores.
+    monkeypatch.setattr(
+        'src.engine.bootstrap.build_service', lambda *args, **kwargs: replace(service, router=copy(service.router))
+    )
+    from src.server.events import EventHub
+    from src.server.runtime import ServerRuntime
+
+    runtime = ServerRuntime(composition, EventHub(), require_ownership=False)
+    first = runtime.session_runtime
+    second = runtime.resident_session(composition.store.draft_session())
+    second.set_model('work', 'second/model', 'high')
+    assert first.composition.model_service.snapshot().model == 'first/model'
+    assert second.composition.model_service.snapshot().model == 'second/model'
+    assert first.session.selection.model == 'first/model'

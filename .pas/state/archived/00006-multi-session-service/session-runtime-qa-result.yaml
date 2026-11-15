@@ -1,0 +1,32 @@
+version: 1
+contract: session-runtime-extraction-v1
+worker: pas_qa
+agent_id: 59315483
+head: 9df4b38
+verdict: PASS
+recommendation: APPROVE
+lead_adjudication: Accepted objective behavioral PASS; historical TDD and developer skill application remain unverified.
+checks:
+  focused: '217 passed in 44.64s; exit 0'
+  integration: '246 passed in 87.62s; exit 0'
+  full: 'uv run pytest -q -p no:sugar -n 8: 2940 passed, 1 skipped, 1 pre-existing deprecation warning in 48.80s; exit 0'
+  lint: 'uv run ruff check src tests: exit 0'
+  format: 'uv run ruff format --check src tests: 539 files already formatted; exit 0'
+  diff: 'git diff --check: exit 0'
+  experimental_validator: 'exit 1: pre-existing naming-policy findings; zero findings in session_runtime.py; not a project gate'
+evidence:
+  - Existing public facade preserved; only session_runtime read-only property added.
+  - 51 migrated method bodies normalized-identical; remaining differences match extraction decisions and workspace context.
+  - Session close retains process lock and shared database; facade double-close preserves never-executed accepted rows.
+  - Slow-turn and tool-event patch seams exercise moved implementation.
+  - No extraction-attributable scope creep; mixed historical commit changes distinguished.
+  - Draft Gherkin aligns; publication pending on_done.
+limitations:
+  - No historical developer completion report or red-first ordering evidence.
+  - Historical developer skill application unverifiable; current artifacts reviewed against assigned principles.
+follow_up:
+  - Callback cleanup currently clears question asker and tool sink only; other callbacks remain bound. Resolve lifecycle before concurrent sessions; prose currently overstates detachment.
+  - Large SessionRuntime remains deliberately intact for mechanical extraction; avoid unrelated restructuring.
+skills_applied: [clean-code, clean-python, clean-architecture, cognitive-writing, docs-writer]
+missing_noncritical: [clean-backend-architecture]
+source_changes_by_qa: none

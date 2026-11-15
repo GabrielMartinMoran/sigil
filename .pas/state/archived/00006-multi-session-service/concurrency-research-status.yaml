@@ -1,0 +1,22 @@
+version: 1
+worker: 9c7ea4f5
+recommendation: CONTINUE
+lead_research_gate: blocked
+reason: Targeted continuation repeated the same missing evidence and returned DO_NOT_CONTINUE without a concrete source/tool blocker. Stop automatic research retries; user decision required before a narrower investigation.
+continuation_verdict: DO_NOT_CONTINUE
+next_decision: Offer separate callback/resource-ownership investigation first; defer route and client mapping until that evidence is accepted.
+memory_note: Shared Mind checkpoint now belongs to unrelated debug-screen work; preserve it. Feature-specific memory and local PAS artifacts are the recovery source.
+confirmed:
+  - Existing parent behavior requires background sessions and client-local loaded session.
+  - Current runtime remains a single SessionRuntime; rebinding is not concurrency.
+  - EventHub filter foundation does not deliver publisher/request/client ownership.
+  - Existing process idle grace is 900 seconds; per-session release grace unspecified.
+required_follow_up:
+  - Complete callback registration/capture/invocation/cleanup and background report routing trace.
+  - Exact composition construction and shared/owned resource paths.
+  - Complete route/request/client mapping including intentionally service-wide endpoints.
+  - Browser selection and test infrastructure inspection.
+  - Exact affected path inventory for bounded slices.
+worker_hygiene:
+  - Worker additionally applied frontend-design and followed older skill-assignment rather than exact brief. Read-only, no behavior or repository impact; announce and correct assignment in follow-up.
+source_changes: none

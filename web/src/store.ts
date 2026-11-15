@@ -58,6 +58,8 @@ type Store = {
   notice: string;
 
   state: State | null;
+  selectedSessionId: string | null;
+  selectionGeneration: number;
   /** The mounted window of the conversation, newest page first mounted. */
   items: TranscriptItem[];
   /** Absolute position of `items[0]`: the `before` cursor for the page above it. */
@@ -163,6 +165,8 @@ export const useStore = create<Store>((set, get) => ({
   error: '',
   notice: '',
   state: null,
+  selectedSessionId: null,
+  selectionGeneration: 0,
   ...emptyWindow(),
   readingFraction: 0,
   loadingOlder: false,
@@ -210,6 +214,8 @@ export const useStore = create<Store>((set, get) => ({
     await api.logout().catch(() => undefined);
     set({
       phase: 'login',
+      selectedSessionId: null,
+      selectionGeneration: get().selectionGeneration + 1,
       state: null,
       ...emptyWindow(),
       loadingOlder: false,
@@ -220,15 +226,33 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   async refresh() {
-    const state = await api.state();
-    set({ state, busy: state.busy });
+    const generation = get().selectionGeneration;
+    const commit = (patch: Partial<Store>) => {
+      if (generation === get().selectionGeneration) set(patch);
+    };
+    const selected = get().selectedSessionId;
+    let state: State;
+    try {
+      state = await api.state(selected);
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404 || !selected) throw error;
+      if (generation !== get().selectionGeneration) return;
+      await api.openSession(selected, selected);
+      if (generation !== get().selectionGeneration) return;
+      state = await api.state(selected);
+    }
+    commit({ state, busy: state.busy, selectedSessionId: state.session.id });
   },
 
   async refetchTranscript({ keepStream = false }: RefetchOptions = {}) {
+    const generation = get().selectionGeneration;
+    const commit = (patch: Partial<Store>) => {
+      if (generation === get().selectionGeneration) set(patch);
+    };
     // One window, not the whole conversation: a session of thousands of messages is
     // the reason this route pages at all.
-    const page = await api.transcript(TRANSCRIPT_WINDOW);
-    set({
+    const page = await api.transcript(TRANSCRIPT_WINDOW, undefined, get().selectedSessionId);
+    commit({
       ...newestWindow(page),
       loadingOlder: false,
       // The deltas are the turn that is still typing, and this reload can be asked
@@ -242,22 +266,26 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   async loadOlder() {
+    const generation = get().selectionGeneration;
+    const commit = (patch: Partial<Store>) => {
+      if (generation === get().selectionGeneration) set(patch);
+    };
     const { hasMore, loadingOlder, firstIndex, items, total, pages, readingFraction } = get();
     // `hasMore` is the service's answer, not a guess: at the start of a conversation
     // it stays false and nothing here asks again.
     if (!hasMore || loadingOlder || items.length === 0) return;
-    set({ loadingOlder: true });
+    commit({ loadingOlder: true });
     try {
-      const page = await api.transcript(TRANSCRIPT_WINDOW, firstIndex);
+      const page = await api.transcript(TRANSCRIPT_WINDOW, firstIndex, get().selectedSessionId);
       // `readingFraction` decides which page leaves when the window is over its
       // bound: the one furthest from where the reader actually is, not always the
       // newest one. `withOlderPage` is where the fraction becomes an item.
-      set({
+      commit({
         ...withOlderPage({ items, firstIndex, total, hasMore, pages }, page, readingFraction),
         loadingOlder: false,
       });
     } catch (error) {
-      set({ loadingOlder: false, notice: report(error) });
+      commit({ loadingOlder: false, notice: report(error) });
     }
   },
 
@@ -271,130 +299,202 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   async refreshDurable() {
+    const generation = get().selectionGeneration;
+    const commit = (patch: Partial<Store>) => {
+      if (generation === get().selectionGeneration) set(patch);
+    };
     try {
-      set({ durable: await api.durable() });
+      commit({ durable: await api.durable(get().selectedSessionId) });
     } catch (error) {
       // A draft session has no row to project, and the service says so with a typed
       // 404. That is "nothing yet", a normal state — not a failure to report. What
       // must not survive it is the overlay: leaving the previous conversation's queue
       // and recoveries painted over an empty one is a lie about this session.
       if (error instanceof ApiError && error.status === 404) {
-        set({ durable: null });
+        commit({ durable: null });
         return;
       }
-      set({ notice: report(error) });
+      commit({ notice: report(error) });
     }
   },
 
   async loadSessions() {
+    const generation = get().selectionGeneration;
+    const commit = (patch: Partial<Store>) => {
+      if (generation === get().selectionGeneration) set(patch);
+    };
     try {
-      const body = await api.sessions();
-      set({ sessions: body.sessions });
+      const body = await api.sessions(get().selectedSessionId);
+      commit({ sessions: body.sessions });
     } catch (error) {
-      set({ notice: report(error) });
+      commit({ notice: report(error) });
     }
   },
 
   async loadWorkspaces() {
+    const generation = get().selectionGeneration;
+    const commit = (patch: Partial<Store>) => {
+      if (generation === get().selectionGeneration) set(patch);
+    };
     try {
-      const body = await api.workspaces();
-      set({ repositories: body.repositories });
+      const body = await api.workspaces(get().selectedSessionId);
+      commit({ repositories: body.repositories });
     } catch (error) {
-      set({ notice: report(error) });
+      commit({ notice: report(error) });
     }
   },
 
   async send(text) {
+    const generation = get().selectionGeneration;
+    const commit = (patch: Partial<Store>) => {
+      if (generation === get().selectionGeneration) set(patch);
+    };
     const trimmed = text.trim();
     if (!trimmed) return false;
     const previous = get().pendingSend;
     const requestId = previous !== null && previous.text === trimmed ? previous.requestId : crypto.randomUUID();
-    set({ error: '', notice: '', pendingSend: { requestId, text: trimmed } });
+    commit({ error: '', notice: '', pendingSend: { requestId, text: trimmed } });
     try {
-      const result = await api.send(trimmed, requestId);
-      set({ pendingSend: null });
+      const result = await api.send(trimmed, requestId, get().selectedSessionId);
+      commit({ pendingSend: null });
       if (result.duplicate === true) {
-        set({ notice: 'This message was already accepted.' });
+        commit({ notice: 'This message was already accepted.' });
         void get().refetchTranscript();
         void get().refreshDurable();
         return true;
       }
       if (result.accepted === 'steer') {
-        set({ notice: result.delivered ? 'Queued into the running turn.' : 'Could not queue it.' });
+        commit({ notice: result.delivered ? 'Queued into the running turn.' : 'Could not queue it.' });
       } else {
-        set({ busy: true, stream: emptyStream() });
+        commit({ busy: true, stream: emptyStream() });
       }
       void get().refreshDurable();
       return true;
     } catch (error) {
-      set({ error: report(error) });
+      commit({ error: report(error) });
       return false;
     }
   },
 
   async abort() {
-    await api.abort().catch((error: unknown) => set({ error: report(error) }));
+    const generation = get().selectionGeneration;
+    const commit = (patch: Partial<Store>) => {
+      if (generation === get().selectionGeneration) set(patch);
+    };
+    await api.abort(get().selectedSessionId).catch((error: unknown) => commit({ error: report(error) }));
   },
 
   async answer(id, answers) {
-    await api.answer(id, answers).catch((error: unknown) => set({ error: report(error) }));
+    const generation = get().selectionGeneration;
+    const commit = (patch: Partial<Store>) => {
+      if (generation === get().selectionGeneration) set(patch);
+    };
+    await api.answer(id, answers, get().selectedSessionId).catch((error: unknown) => commit({ error: report(error) }));
     await get().refresh();
   },
 
   async newSession() {
+    set({ selectionGeneration: get().selectionGeneration + 1, selectingAgent: false, loadingOlder: false });
+    const generation = get().selectionGeneration;
+    const commit = (patch: Partial<Store>) => {
+      if (generation === get().selectionGeneration) set(patch);
+    };
     try {
-      await api.newSession();
-      set({ ...emptyWindow(), loadingOlder: false, stream: emptyStream() });
+      const reply = await api.newSession(get().selectedSessionId);
+      commit({
+        selectedSessionId: reply.session.id,
+        state: null,
+        durable: null,
+        pendingSend: null,
+        ...emptyWindow(),
+        loadingOlder: false,
+        busy: false,
+        stream: emptyStream(),
+      });
+      if (generation !== get().selectionGeneration) return;
+      commit({ ...emptyWindow(), loadingOlder: false, stream: emptyStream() });
       await get().refresh();
       await get().loadSessions();
     } catch (error) {
-      set({ error: report(error) });
+      commit({ error: report(error) });
     }
   },
 
   async openSession(id) {
+    set({ selectionGeneration: get().selectionGeneration + 1, selectingAgent: false, loadingOlder: false });
+    const generation = get().selectionGeneration;
+    const commit = (patch: Partial<Store>) => {
+      if (generation === get().selectionGeneration) set(patch);
+    };
     try {
-      await api.openSession(id);
+      const reply = await api.openSession(id, get().selectedSessionId);
+      commit({
+        selectedSessionId: reply.session.id,
+        state: null,
+        durable: null,
+        pendingSend: null,
+        ...emptyWindow(),
+        loadingOlder: false,
+        busy: false,
+        stream: emptyStream(),
+      });
+      if (generation !== get().selectionGeneration) return;
       await get().refresh();
       await get().refetchTranscript();
       await get().loadSessions();
     } catch (error) {
-      set({ error: report(error) });
+      commit({ error: report(error) });
     }
   },
 
   async openRecovery(id) {
-    if (get().busy) {
-      set({ notice: 'The server is busy; open the recovery when the turn ends.' });
-      return;
-    }
     await get().openSession(id);
   },
 
   async selectAgent(name) {
+    const generation = get().selectionGeneration;
+    const commit = (patch: Partial<Store>) => {
+      if (generation === get().selectionGeneration) set(patch);
+    };
     if (get().busy || get().selectingAgent) return false;
-    set({ selectingAgent: true, error: '' });
+    commit({ selectingAgent: true, error: '' });
     try {
-      await api.selectAgent(name);
+      await api.selectAgent(name, get().selectedSessionId);
       await get().refresh();
       return true;
     } catch (error) {
-      set({ error: report(error) });
+      commit({ error: report(error) });
       return false;
     } finally {
-      set({ selectingAgent: false });
+      commit({ selectingAgent: false });
     }
   },
 
   async switchWorkspace(root) {
+    set({ selectionGeneration: get().selectionGeneration + 1, selectingAgent: false, loadingOlder: false });
+    const generation = get().selectionGeneration;
+    const commit = (patch: Partial<Store>) => {
+      if (generation === get().selectionGeneration) set(patch);
+    };
     try {
-      await api.switchWorkspace(root);
-      set({ ...emptyWindow(), loadingOlder: false, stream: emptyStream() });
+      const reply = await api.switchWorkspace(root, get().selectedSessionId);
+      commit({
+        selectedSessionId: reply.session.id,
+        state: null,
+        durable: null,
+        pendingSend: null,
+        ...emptyWindow(),
+        loadingOlder: false,
+        busy: false,
+        stream: emptyStream(),
+      });
+      if (generation !== get().selectionGeneration) return;
+      commit({ ...emptyWindow(), loadingOlder: false, stream: emptyStream() });
       await get().refresh();
       await get().refetchTranscript();
       await Promise.all([get().loadSessions(), get().loadWorkspaces()]);
     } catch (error) {
-      set({ error: report(error) });
+      commit({ error: report(error) });
     }
   },
 

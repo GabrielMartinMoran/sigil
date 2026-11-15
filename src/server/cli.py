@@ -150,6 +150,13 @@ def build_parser(web: bool = True) -> argparse.ArgumentParser:
             f'stop on the first idle look (default {DEFAULT_IDLE_GRACE:g})'
         ),
     )
+    parser.add_argument(
+        '--session-idle-grace',
+        type=idle_grace,
+        default=300,
+        metavar='SECONDS',
+        help='seconds before releasing an unattached idle session (default 300)',
+    )
     parser.add_argument('--reload', action='store_true', help=argparse.SUPPRESS)
     return parser
 
@@ -253,6 +260,7 @@ def _run(args: argparse.Namespace, *, web: bool = True) -> int:
             publisher=publisher,
             request_shutdown=stop.request,
             idle_grace=args.idle_grace,
+            session_idle_grace=args.session_idle_grace,
         )
 
         try:

@@ -137,7 +137,8 @@ def test_should_publish_formatted_live_output_not_the_raw_logging_preview() -> N
     from src.server.events import EventHub
     from src.server.session_runtime import SessionRuntime
 
-    runtime = SimpleNamespace(hub=EventHub())
+    hub = EventHub()
+    runtime = SimpleNamespace(hub=hub, _publish=hub.publish)
     SessionRuntime._on_tool_event(
         runtime,
         ToolCallEvent(

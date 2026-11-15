@@ -17,6 +17,7 @@ listening before the file that names it exists.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import socket
@@ -246,6 +247,8 @@ class _RuntimeStub:
         self.hub = EventHub()
         self.composition = MagicMock()
         self.composition.extensions.close = AsyncMock()
+        self.session_runtime = MagicMock()
+        self.session_runtime.aclose = AsyncMock()
         self.calls: list[str] = []
 
     def start(self) -> None:
@@ -259,6 +262,17 @@ class _RuntimeStub:
 
     async def wait(self) -> None:
         self.calls.append('wait')
+
+    async def reap_sessions(self, **kwargs: object) -> None:
+        await asyncio.Event().wait()
+
+    async def close_sessions(self) -> None:
+        self.abort()
+        await self.wait()
+        try:
+            await self.session_runtime.aclose()
+        finally:
+            await self.composition.extensions.close()
 
     def close(self) -> None:
         self.calls.append('close')
@@ -289,6 +303,7 @@ def test_the_app_publishes_when_it_starts_and_unpublishes_when_it_stops(tmp_path
         assert published.token == publisher.token
 
     assert read_endpoint(path) is None
+    runtime.session_runtime.aclose.assert_awaited_once()
     assert runtime.calls[-1] == 'close'
 
 
@@ -302,3 +317,22 @@ def test_the_port_is_listening_before_the_endpoint_is_published() -> None:
             pass
     finally:
         sock.close()
+
+
+def test_lifespan_releases_runtime_when_session_shutdown_fails(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from src.server.app import create_app
+    from src.server.config import ServerConfig
+
+    runtime = _RuntimeStub()
+    runtime.session_runtime.aclose.side_effect = RuntimeError('shutdown failed')
+    app = create_app(
+        runtime,  # type: ignore[arg-type]
+        ServerConfig(host='127.0.0.1', port=8760, password='secret-pass'),
+        dist=tmp_path / 'missing',
+    )
+    with pytest.raises(RuntimeError, match='shutdown failed'), TestClient(app):
+        pass
+    runtime.composition.extensions.close.assert_awaited_once()
+    assert runtime.calls[-1] == 'close'

@@ -502,6 +502,8 @@ composition = Composition(
 ownership = ServerOwnership(composition.store.database.path)
 ownership.acquire()
 runtime = ServerRuntime(composition, EventHub(), ownership=ownership)
+Path({endpoint!r}).parent.mkdir(parents=True, exist_ok=True)
+Path({endpoint!r}).with_suffix('.session-id').write_text(composition.session.id)
 
 sock = listening_socket('127.0.0.1', 0)
 config = ServerConfig(host='127.0.0.1', port=sock.getsockname()[1], password='test')
@@ -605,10 +607,11 @@ def test_a_service_with_no_work_stops_after_the_window_and_releases_the_store(tm
                 published = read_endpoint(endpoint)
                 assert published is not None
                 client = stack.enter_context(httpx.Client(timeout=5))
+                session_id = endpoint.with_suffix('.session-id').read_text()
                 response = stack.enter_context(
                     client.stream(
                         'GET',
-                        f'http://{published.host}:{published.port}/events',
+                        f'http://{published.host}:{published.port}/events?session_id={session_id}',
                         headers={'authorization': f'Bearer {published.token}'},
                     )
                 )

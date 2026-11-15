@@ -76,6 +76,7 @@ from src.engine.providers.login.credential_source import chatgpt_provider_factor
 from src.engine.providers.service import ModelService
 from src.engine.providers.snapshot import ModelSnapshot
 from src.engine.providers.store.secret_store import FileSecretStore
+from src.engine.providers.store.session_state_store import SessionStateStore
 from src.engine.providers.store.state_store import SqliteStateStore
 from src.engine.roadmap.stores import RoadmapStores
 from src.engine.roadmap.tools import register_roadmap_tools
@@ -227,6 +228,7 @@ class Composition:
             initial_model=UnconfiguredModel(),
             oauth_provider_factory=chatgpt_provider_factory(secrets),
         )
+        self.model_service.state = SessionStateStore(self.model_service.state)
         # The model the conversation runs on. The session's own wins, and a session
         # that has none gets the default chain. It is the same path every `/load`
         # takes, so a conversation opened cold and one opened mid-run agree — and

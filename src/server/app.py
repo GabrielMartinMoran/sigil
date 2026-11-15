@@ -28,7 +28,7 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -58,6 +58,8 @@ from src.server.diagnostics import record
 from src.server.endpoint import EndpointPublisher
 from src.server.events import EventHub
 from src.server.runtime import DEFAULT_IDLE_GRACE, IDLE_POLL_INTERVAL, IncomingImage, ServerRuntime
+from src.server.session_lease_middleware import SessionLeaseMiddleware
+from src.server.session_runtime import SessionRuntime
 from src.server.webbuild import dist_root, staleness
 
 HEARTBEAT_SECONDS = 20.0
@@ -498,6 +500,7 @@ def create_app(
     request_shutdown: Callable[[], None] | None = None,
     idle_grace: float = DEFAULT_IDLE_GRACE,
     idle_poll: float = IDLE_POLL_INTERVAL,
+    session_idle_grace: float = 300,
 ) -> FastAPI:
     """Builds the application around a runtime that is already wired.
 
@@ -552,6 +555,7 @@ def create_app(
             if publisher is not None:
                 publisher.publish(host=config.host, port=config.port)
             record('server_lifespan_ready', port=config.port)
+            reaper = asyncio.create_task(runtime.reap_sessions(grace=session_idle_grace, poll=idle_poll))
             watch = (
                 None
                 if request_shutdown is None
@@ -563,6 +567,9 @@ def create_app(
                 yield
             finally:
                 record('server_lifespan_shutdown_started')
+                reaper.cancel()
+                with suppress(asyncio.CancelledError):
+                    await reaper
                 # The watch stops first: a request to leave *while* the loop is already
                 # leaving is at best noise, and at worst a second attempt on a runtime
                 # that is unwinding.
@@ -574,11 +581,10 @@ def create_app(
                 # should fail to connect rather than attach to a runtime that is unwinding.
                 if publisher is not None:
                     publisher.clear()
-                runtime.abort()
-                await runtime.wait()
-                runtime.composition.summoner.cancel_all()
-                await runtime.composition.extensions.close()
-                runtime.close()
+                try:
+                    await runtime.close_sessions()
+                finally:
+                    runtime.close()
                 record('server_lifespan_shutdown_finished')
         except BaseException as error:
             record('server_lifespan_failed', error=error)
@@ -603,7 +609,7 @@ def create_app(
             allow_origins=config.origins,
             allow_credentials=True,
             allow_methods=['GET', 'POST', 'DELETE', 'OPTIONS'],
-            allow_headers=['content-type', 'last-event-id'],
+            allow_headers=['content-type', 'last-event-id', 'x-sigil-session'],
         )
 
     # `add_middleware` wraps in reverse order, so the *last* one added runs first.
@@ -611,6 +617,7 @@ def create_app(
     # outermost, so an unauthenticated request is refused without a single byte of
     # its body being read. The cap only bounds what an authenticated caller may
     # send, which is the point — refusing early is a cost saving, not a boundary.
+    app.add_middleware(SessionLeaseMiddleware, runtime=runtime)
     app.add_middleware(BodyLimitMiddleware, limit=MAX_COMMAND_BYTES)
     app.add_middleware(AuthMiddleware, auth=auth)
 
@@ -676,17 +683,30 @@ def create_app(
 
     # --- state ---------------------------------------------------------
 
+    def selected_session(session_id: str | None) -> SessionRuntime:
+        if session_id is None:
+            raise HTTPException(status_code=422, detail='session_id is required')
+        owner = runtime.find_session(session_id)
+        if owner is None:
+            raise HTTPException(status_code=404, detail='Session is not resident')
+        runtime.touch_session(session_id)
+        return owner
+
     @app.get('/api/state')
-    async def state() -> dict[str, Any]:
+    async def state(session_id: str | None = None) -> dict[str, Any]:
         """Everything the screen needs, in one request.
 
         Sections are cheap queries and cached values, not a transcript: the
         conversation is its own route because it is the one that grows.
         """
-        return await _state(runtime)
+        owner = runtime.bootstrap_session() if session_id is None else selected_session(session_id)
+        with runtime.session_lease(owner.session.id):
+            return await _state(owner)
 
     @app.get('/api/session/transcript')
-    async def transcript(limit: str | None = None, before: str | None = None) -> dict[str, Any]:
+    async def transcript(
+        limit: str | None = None, before: str | None = None, session_id: str | None = None
+    ) -> dict[str, Any]:
         """The conversation of the open session, as items a client can paint.
 
         Without ``limit`` the whole conversation comes back, which is what the web
@@ -702,6 +722,7 @@ def create_app(
         carries an empty list: a waiting row is not history, so it cannot ride a
         chunk and must not be painted twice.
         """
+        owner = selected_session(session_id)
         try:
             limit_items = _page_limit(limit)
             before_position = _page_before(before)
@@ -714,28 +735,28 @@ def create_app(
         # is projected in a worker thread; the list and the nodes are copied here
         # first, because the turn appends to one and the tree may gain a node, and the
         # projection must read one consistent version of both.
-        reports = tuple(_report_nodes(runtime))
+        reports = tuple(_report_nodes(owner))
         page = await asyncio.to_thread(
             views.transcript_window,
-            list(runtime.session.messages),
+            list(owner.session.messages),
             limit=limit_items,
             before=before_position,
             reports=reports,
         )
         return {
-            'session': views.session_view(runtime.session),
+            'session': views.session_view(owner.session),
             'items': page.items,
             'first_index': page.first_index,
             'has_more': page.has_more,
             'total': page.total,
-            'skills': views.skills_view(runtime.session.messages),
+            'skills': views.skills_view(owner.session.messages),
             'pending': []
             if before_position is not None
-            else views.pending_rows(runtime.composition.store.database, runtime.session.id),
+            else views.pending_rows(owner.composition.store.database, owner.session.id),
         }
 
     @app.get('/api/session/durable')
-    async def durable() -> dict[str, Any]:
+    async def durable(session_id: str | None = None) -> dict[str, Any]:
         """The durable transcript, queue overlay and recovery facts in one read.
 
         Decoding and projecting the whole conversation cost 231 ms on a real session,
@@ -749,15 +770,14 @@ def create_app(
         that has not started is in a normal state, and answering 500 painted an error
         banner about mismatched versions on a service that was answering correctly.
         """
+        owner = selected_session(session_id)
         try:
-            return await asyncio.to_thread(
-                views.durable_session, runtime.composition.store.database, runtime.session.id
-            )
+            return await asyncio.to_thread(views.durable_session, owner.composition.store.database, owner.session.id)
         except views.SessionNotStored as exc:
             return JSONResponse({'error': str(exc)}, status_code=404)  # type: ignore[return-value]
 
     @app.get('/api/session/pending')
-    async def pending() -> dict[str, Any]:
+    async def pending(session_id: str | None = None) -> dict[str, Any]:
         """The queue's waiting rows, and nothing else.
 
         A screen mid-turn learns of a queued message from an event that carries no
@@ -766,16 +786,18 @@ def create_app(
         there, because the screen already holds the transcript it is streaming into.
         A session with no row yet has no queue, which is an empty list, not a 404.
         """
-        return {'pending': views.pending_rows(runtime.composition.store.database, runtime.session.id)}
+        owner = selected_session(session_id)
+        return {'pending': views.pending_rows(owner.composition.store.database, owner.session.id)}
 
     @app.get('/api/sessions')
-    async def sessions() -> dict[str, Any]:
+    async def sessions(session_id: str | None = None) -> dict[str, Any]:
         """Every conversation of this repository's workspaces, newest first."""
-        root = runtime.composition.store.cwd
+        owner = selected_session(session_id)
+        root = owner.composition.store.cwd
         repository = GitRepository.discover(root)
         entries = catalog(root)
         return {
-            'current': runtime.session.id,
+            'current': owner.session.id,
             'sessions': [
                 {
                     **views.summary_view(
@@ -784,14 +806,14 @@ def create_app(
                         is_worktree=entry.workspace.is_worktree,
                     ),
                     'workspace_label': entry.label,
-                    'is_current': entry.is_current,
+                    'is_current': entry.session.id == owner.session.id,
                 }
                 for entry in entries
             ],
         }
 
     @app.get('/api/workspaces')
-    async def workspaces() -> dict[str, Any]:
+    async def workspaces(session_id: str | None = None) -> dict[str, Any]:
         """The workspaces of this repository, grouped: the main checkout and its worktrees.
 
         One group, because the picker only ever shows the repository Sigil is in. The
@@ -799,7 +821,8 @@ def create_app(
         different feature, and pretending it is already here would be a lie in the
         response.
         """
-        active = runtime.composition.workspace_manager.current()
+        owner = selected_session(session_id)
+        active = owner.composition.workspace_manager.current()
         current_root = Path(os.path.realpath(str(active.root)))
         repository = GitRepository.discover(current_root)
         found = discover_workspaces(current_root)
@@ -813,20 +836,21 @@ def create_app(
         }
 
     @app.get('/api/mcp')
-    async def mcp() -> dict[str, Any]:
-        return views.mcp_view(await runtime.composition.mcp.describe())
+    async def mcp(session_id: str | None = None) -> dict[str, Any]:
+        owner = selected_session(session_id)
+        return views.mcp_view(await owner.composition.mcp.describe())
 
     # --- actions -------------------------------------------------------
 
     @app.post('/api/turn')
-    async def turn(body: TurnBody) -> dict[str, Any]:
+    async def turn(body: TurnBody, session_id: str | None = None) -> dict[str, Any]:
         """Sends a message: a new turn, or a steer into the running one.
 
         The images travel validated and ordered; a refusal is a `ValueError` from the
         runtime, which becomes a 400 with the reason and leaves the queue untouched.
         """
         try:
-            return await runtime.send(
+            return await selected_session(session_id).send(
                 body.text,
                 request_id=body.request_id,
                 images=[IncomingImage(media_type=image.media_type, data=image.data) for image in body.images],
@@ -835,84 +859,78 @@ def create_app(
             return JSONResponse({'error': str(exc)}, status_code=400)  # type: ignore[return-value]
 
     @app.post('/api/abort')
-    async def abort() -> dict[str, Any]:
-        return {'stopped': runtime.abort()}
+    async def abort(session_id: str | None = None) -> dict[str, Any]:
+        return {'stopped': selected_session(session_id).abort()}
 
     @app.post('/api/stop-all')
-    async def stop_all() -> dict[str, Any]:
+    async def stop_all(session_id: str | None = None) -> dict[str, Any]:
         """Stops the turn and anything else still running: the exit path's request."""
-        return {'stopped': runtime.stop_all()}
+        return {'stopped': selected_session(session_id).stop_all()}
 
     @app.post('/api/answer')
-    async def answer(body: AnswerBody) -> dict[str, Any]:
-        resolved = runtime.answer(body.id, body.answers)
+    async def answer(body: AnswerBody, session_id: str | None = None) -> dict[str, Any]:
+        resolved = selected_session(session_id).answer(body.id, body.answers)
         return {'resolved': resolved}
 
     @app.post('/api/session/new')
-    async def new_session(body: NewSessionBody | None = None) -> dict[str, Any]:
-        """Starts an empty conversation, in a worktree cut first when one is named.
-
-        The order is the engine's: create the worktree, then start the session, so a
-        name git refuses leaves the service where it was instead of half moved.
-        """
-        worktree = '' if body is None else (body.worktree or '').strip()
-        reply: dict[str, Any] = {}
-        if worktree:
-            try:
-                switch = await asyncio.to_thread(runtime.create_worktree, worktree)
-            except RuntimeError as exc:
-                return _conflict(exc)  # type: ignore[return-value]
-            except (WorkspaceError, OSError) as exc:
-                return _refused(exc)  # type: ignore[return-value]
-            reply['workspace'] = views.workspace_view(switch.workspace)
+    async def new_session(body: NewSessionBody | None = None, session_id: str | None = None) -> dict[str, Any]:
+        """Create an independent conversation without interrupting its source."""
+        source = selected_session(session_id)
+        root = None
         try:
-            session = runtime.new_session()
-        except RuntimeError as exc:
-            return _conflict(exc)  # type: ignore[return-value]
-        reply['session'] = views.session_view(session)
-        return reply
+            if body is not None and body.worktree:
+                created = await asyncio.to_thread(source.composition.workspace_manager.create_worktree, body.worktree)
+                root = str(created.path)
+            owner = await runtime.new_resident(source, root)
+        except (WorkspaceError, OSError) as exc:
+            return _refused(exc)
+        return {'session': views.session_view(owner.session)}
 
     @app.post('/api/worktree')
-    async def create_worktree(body: WorktreeBody) -> dict[str, Any]:
-        """Cuts a worktree and moves the service into it.
-
-        The engine half is `WorkspaceManager.create_and_switch` — the very call the
-        in-process `/new --worktree` makes — so the two clients cut the same tree the
-        same way and a failure leaves the repository and the session untouched.
-        """
+    async def create_worktree(body: WorktreeBody, session_id: str | None = None) -> dict[str, Any]:
+        """Create a worktree and independent session for the requesting client."""
+        source = selected_session(session_id)
         try:
-            runtime.refuse_while_busy('create a worktree')
-        except RuntimeError as exc:
-            return _conflict(exc)  # type: ignore[return-value]
-        try:
-            switch = await asyncio.to_thread(runtime.create_worktree, body.name)
+            created = await asyncio.to_thread(source.composition.workspace_manager.create_worktree, body.name)
+            owner = await runtime.new_resident(source, str(created.path))
         except (WorkspaceError, OSError) as exc:
-            return _refused(exc)  # type: ignore[return-value]
+            return _refused(exc)
         return {
-            'workspace': views.workspace_view(switch.workspace),
-            'previous': views.workspace_view(switch.previous),
+            'workspace': views.workspace_view(owner.composition.workspace_manager.current()),
+            'previous': views.workspace_view(source.composition.workspace_manager.current()),
+            'session': views.session_view(owner.session),
         }
 
     @app.post('/api/session/open')
-    async def open_session(body: SessionBody) -> dict[str, Any]:
+    async def open_session(body: SessionBody, session_id: str | None = None) -> dict[str, Any]:
+        """Load the named session; its ID is the request's target, not a global switch."""
         try:
-            session = runtime.open_session(body.id)
+            owner = await runtime.open_resident(body.id)
         except (RuntimeError, LookupError) as exc:
-            return JSONResponse({'error': str(exc)}, status_code=409)  # type: ignore[return-value]
-        return {'session': views.session_view(session)}
+            return JSONResponse({'error': str(exc)}, status_code=409)
+        return {'session': views.session_view(owner.session)}
 
     @app.post('/api/workspace')
-    async def switch_workspace(body: WorkspaceBody) -> dict[str, Any]:
+    async def switch_workspace(body: WorkspaceBody, session_id: str | None = None) -> dict[str, Any]:
+        """Create a session in the requested workspace, leaving the source running."""
+        source = selected_session(session_id)
         try:
-            result = runtime.switch_workspace(body.root)
-        except (RuntimeError, WorkspaceError, OSError) as exc:
-            return JSONResponse({'error': str(exc)}, status_code=409)  # type: ignore[return-value]
-        return result
+            owner = await runtime.new_resident(source, body.root)
+            workspace = owner.composition.workspace_manager.current()
+        except (WorkspaceError, OSError) as exc:
+            return _conflict(exc)
+        return {
+            'root': str(workspace.root),
+            'label': workspace.label,
+            'changed': source.session.cwd != owner.session.cwd,
+            'session': views.session_view(owner.session),
+        }
 
     @app.get('/api/models')
-    async def models() -> dict[str, Any]:
+    async def models(session_id: str | None = None) -> dict[str, Any]:
         """The accounts and models known to the router, so a client can offer them."""
-        service = runtime.composition.model_service
+        owner = selected_session(session_id)
+        service = owner.composition.model_service
         return {
             'current': views.model_view(service.snapshot()),
             'accounts': [
@@ -922,7 +940,7 @@ def create_app(
         }
 
     @app.get('/api/models/{alias}')
-    async def account_models(alias: str) -> dict[str, Any]:
+    async def account_models(alias: str, session_id: str | None = None) -> dict[str, Any]:
         """The catalogue of one account, with a bounded wait.
 
         The picker needs the models of the account it is about to switch, and they
@@ -936,7 +954,8 @@ def create_app(
         if it were the provider's, because a picker that shows invented options is
         the failure this route exists to avoid.
         """
-        service = runtime.composition.model_service
+        owner = selected_session(session_id)
+        service = owner.composition.model_service
         try:
             catalog = await asyncio.wait_for(service.catalog_for(alias), timeout=CATALOG_TIMEOUT_SECONDS)
         except TimeoutError:
@@ -953,14 +972,16 @@ def create_app(
         return {'account': alias, 'catalog': views.catalog_view(catalog)}
 
     @app.get('/api/accounts')
-    async def accounts() -> dict[str, Any]:
+    async def accounts(session_id: str | None = None) -> dict[str, Any]:
         """Every configured account, and whether it holds a credential. Never the key."""
-        return {'accounts': _account_rows(runtime.composition.model_service)}
+        owner = selected_session(session_id)
+        return {'accounts': _account_rows(owner.composition.model_service)}
 
     @app.post('/api/accounts')
-    async def add_account(body: AccountBody) -> dict[str, Any]:
+    async def add_account(body: AccountBody, session_id: str | None = None) -> dict[str, Any]:
         """Adds an API-key account and makes it active, refused while a turn runs."""
-        service = runtime.composition.model_service
+        owner = selected_session(session_id)
+        service = owner.composition.model_service
         if body.auth != AuthMethod.API_KEY.value:
             return _refused(RuntimeError(OAUTH_OVER_HTTP))  # type: ignore[return-value]
         try:
@@ -974,7 +995,7 @@ def create_app(
         if not key:
             return _refused(RuntimeError('An API key is required to add an account from this client.'))  # type: ignore[return-value]
         try:
-            runtime.refuse_while_busy('add a provider account')
+            owner.refuse_while_busy('add a provider account')
         except RuntimeError as exc:
             return _conflict(exc)  # type: ignore[return-value]
         try:
@@ -990,15 +1011,16 @@ def create_app(
             )  # type: ignore[return-value]
         except ProviderError as exc:
             return _refused(exc)  # type: ignore[return-value]
-        runtime.adopt_model(snapshot)
+        owner.adopt_model(snapshot)
         return {'accounts': _account_rows(service), 'model': views.model_view(snapshot)}
 
     @app.post('/api/accounts/{alias}/activate')
-    async def activate_account(alias: str) -> dict[str, Any]:
+    async def activate_account(alias: str, session_id: str | None = None) -> dict[str, Any]:
         """Makes an account active, using the model it last had."""
-        service = runtime.composition.model_service
+        owner = selected_session(session_id)
+        service = owner.composition.model_service
         try:
-            runtime.refuse_while_busy('activate a provider account')
+            owner.refuse_while_busy('activate a provider account')
         except RuntimeError as exc:
             return _conflict(exc)  # type: ignore[return-value]
         try:
@@ -1009,7 +1031,7 @@ def create_app(
                 model = catalog.models[0].name if catalog.models else ''
             if not model:
                 return _refused(RuntimeError(f'{alias} has no model to activate yet. Pick one with /model first.'))  # type: ignore[return-value]
-            snapshot = runtime.set_model(alias, model)
+            snapshot = owner.set_model(alias, model)
         except TimeoutError:
             return _refused(RuntimeError(f'The model list of {alias!r} did not answer in time.'))  # type: ignore[return-value]
         except BusyError as exc:
@@ -1019,7 +1041,7 @@ def create_app(
         return {'accounts': _account_rows(service), 'model': views.model_view(snapshot)}
 
     @app.delete('/api/accounts/{alias}')
-    async def delete_account(alias: str) -> dict[str, Any]:
+    async def delete_account(alias: str, session_id: str | None = None) -> dict[str, Any]:
         """Removes an account and its credential.
 
         Two rules, both refusals with a reason: the **last** account cannot go (the
@@ -1029,9 +1051,10 @@ def create_app(
         would switch models mid-session without asking. Activating another account
         first is the explicit step, and this route insists on it.
         """
-        service = runtime.composition.model_service
+        owner = selected_session(session_id)
+        service = owner.composition.model_service
         try:
-            runtime.refuse_while_busy('delete a provider account')
+            owner.refuse_while_busy('delete a provider account')
         except RuntimeError as exc:
             return _conflict(exc)  # type: ignore[return-value]
         try:
@@ -1046,11 +1069,12 @@ def create_app(
         return {'accounts': _account_rows(service)}
 
     @app.post('/api/accounts/{alias}/rename')
-    async def rename_account(alias: str, body: RenameBody) -> dict[str, Any]:
+    async def rename_account(alias: str, body: RenameBody, session_id: str | None = None) -> dict[str, Any]:
         """Changes an account's label. Its id, and saved sessions, stay valid."""
-        service = runtime.composition.model_service
+        owner = selected_session(session_id)
+        service = owner.composition.model_service
         try:
-            runtime.refuse_while_busy('rename a provider account')
+            owner.refuse_while_busy('rename a provider account')
         except RuntimeError as exc:
             return _conflict(exc)  # type: ignore[return-value]
         try:
@@ -1060,7 +1084,7 @@ def create_app(
         return {'accounts': _account_rows(service)}
 
     @app.post('/api/model')
-    async def change_model(body: ModelBody) -> dict[str, Any]:
+    async def change_model(body: ModelBody, session_id: str | None = None) -> dict[str, Any]:
         """Switches the model of the session, refused while a turn runs.
 
         The refusal is the engine's (`BusyError` from `ModelService.select`), which
@@ -1068,8 +1092,9 @@ def create_app(
         — an unknown account, a model the catalogue does not know, a level the
         model does not accept — is a request that cannot be satisfied.
         """
+        owner = selected_session(session_id)
         try:
-            snapshot = runtime.set_model(body.account, body.model, body.thinking or 'default')
+            snapshot = owner.set_model(body.account, body.model, body.thinking or 'default')
         except BusyError as exc:
             return _conflict(exc)  # type: ignore[return-value]
         except ProviderError as exc:
@@ -1077,10 +1102,11 @@ def create_app(
         return {'model': views.model_view(snapshot)}
 
     @app.post('/api/effort')
-    async def change_effort(body: EffortBody) -> dict[str, Any]:
+    async def change_effort(body: EffortBody, session_id: str | None = None) -> dict[str, Any]:
         """Sets the reasoning level, effective on the next step and not this one."""
+        owner = selected_session(session_id)
         try:
-            snapshot = runtime.set_effort(body.effort)
+            snapshot = owner.set_effort(body.effort)
         except BusyError as exc:
             return _conflict(exc)  # type: ignore[return-value]
         except ProviderError as exc:
@@ -1088,30 +1114,32 @@ def create_app(
         return {'model': views.model_view(snapshot)}
 
     @app.post('/api/agent')
-    async def change_agent(body: AgentBody) -> dict[str, Any]:
+    async def change_agent(body: AgentBody, session_id: str | None = None) -> dict[str, Any]:
         """Activates an agent profile for the next turn, refused while one runs."""
+        owner = selected_session(session_id)
         try:
-            profile = runtime.select_agent(body.name)
+            profile = owner.select_agent(body.name)
         except RuntimeError as exc:
             return _conflict(exc)  # type: ignore[return-value]
         except (AgentNotFound, ProviderError) as exc:
             return _refused(exc)  # type: ignore[return-value]
-        registry = runtime.composition.agent_registry
+        registry = owner.composition.agent_registry
         return {
             'agent': views.agent_view(profile, active=True),
             'agents': [views.agent_view(item, active=item.name == registry.active_name) for item in registry.list()],
         }
 
     @app.get('/api/rollback')
-    async def rollback_points() -> dict[str, Any]:
+    async def rollback_points(session_id: str | None = None) -> dict[str, Any]:
         """The turns the open session can return to, newest first."""
-        composition = runtime.composition
+        owner = selected_session(session_id)
+        composition = owner.composition
         return {
-            'points': views.rollback_points(composition.store.database, runtime.rollback_points()),
+            'points': views.rollback_points(composition.store.database, owner.rollback_points()),
         }
 
     @app.post('/api/rollback')
-    async def rollback(body: RollbackBody) -> dict[str, Any]:
+    async def rollback(body: RollbackBody, session_id: str | None = None) -> dict[str, Any]:
         """Returns the session to before a turn, rows and optionally files.
 
         Off the event loop: the filesystem half diffs and restores the workspace,
@@ -1119,12 +1147,13 @@ def create_app(
         projection because the transcript is shorter now and the client has to
         repaint from the new truth.
         """
+        owner = selected_session(session_id)
         # Read before the rows are truncated: the prompt lives in the messages the
         # rollback drops, which is why the terminal used to look it up beforehand.
         # Doing it here means every client gets it, and none has to own a database.
-        prompt = prompt_of_turn(runtime.composition.store.database, body.turn_id)
+        prompt = prompt_of_turn(owner.composition.store.database, body.turn_id)
         try:
-            outcome = await asyncio.to_thread(runtime.rollback, body.turn_id, files=body.files)
+            outcome = await asyncio.to_thread(owner.rollback, body.turn_id, files=body.files)
         except (RuntimeError, LookupError, RollbackError) as exc:
             return _conflict(exc)  # type: ignore[return-value]
         return {
@@ -1133,14 +1162,15 @@ def create_app(
                 prompt=None if prompt is None else prompt[0],
                 prompt_images=[] if prompt is None else [_image_payload(image) for image in prompt[1]],
             ),
-            'session': views.session_view(runtime.session),
+            'session': views.session_view(owner.session),
         }
 
     @app.post('/api/fork')
-    async def fork(body: ForkBody) -> dict[str, Any]:
+    async def fork(body: ForkBody, session_id: str | None = None) -> dict[str, Any]:
         """Branches a new session at the instant before a turn. Nothing is destroyed."""
+        owner = selected_session(session_id)
         try:
-            outcome = await asyncio.to_thread(runtime.fork, body.turn_id)
+            outcome = await asyncio.to_thread(owner.fork, body.turn_id)
         except (RuntimeError, LookupError, RollbackError) as exc:
             return _conflict(exc)  # type: ignore[return-value]
         return {'fork': views.fork_view(outcome)}
@@ -1148,40 +1178,43 @@ def create_app(
     # --- the tree ------------------------------------------------------
 
     @app.post('/api/tree/stop')
-    async def stop_node(body: NodeBody) -> dict[str, Any]:
+    async def stop_node(body: NodeBody, session_id: str | None = None) -> dict[str, Any]:
         """Stops a subagent and everything it summoned.
 
         The refusals are the terminal's: an id that names no node is a request
         that cannot be satisfied, and the session's own agent is not a subagent.
         """
+        owner = selected_session(session_id)
         try:
-            node, message = runtime.stop_node(body.node_id)
+            node, message = owner.stop_node(body.node_id)
         except LookupError as exc:
             return _refused(exc)  # type: ignore[return-value]
         except SummonError as exc:
             return _conflict(exc)  # type: ignore[return-value]
-        return _tree_reply(runtime, node, message)
+        return _tree_reply(owner, node, message)
 
     @app.post('/api/tree/background')
-    async def background_node(body: NodeBody) -> dict[str, Any]:
+    async def background_node(body: NodeBody, session_id: str | None = None) -> dict[str, Any]:
         """Sends a running subagent to the background: it answers as a message later."""
+        owner = selected_session(session_id)
         try:
-            node, message = runtime.background_node(body.node_id)
+            node, message = owner.background_node(body.node_id)
         except LookupError as exc:
             return _refused(exc)  # type: ignore[return-value]
         except SummonError as exc:
             return _conflict(exc)  # type: ignore[return-value]
-        return _tree_reply(runtime, node, message)
+        return _tree_reply(owner, node, message)
 
     @app.get('/api/tree/node/{node_id}')
-    async def node_transcript(node_id: str) -> dict[str, Any]:
+    async def node_transcript(node_id: str, session_id: str | None = None) -> dict[str, Any]:
         """The messages of one execution, as the terminal's subagent view paints them.
 
         The root keeps no messages of its own: its conversation is the session's,
         and `/api/session/transcript` is where it is read.
         """
+        owner = selected_session(session_id)
         try:
-            node = runtime.node(node_id)
+            node = owner.node(node_id)
         except LookupError as exc:
             return _refused(exc)  # type: ignore[return-value]
         return {'node': views.node_view(node, include_messages=True)}
@@ -1189,65 +1222,71 @@ def create_app(
     # --- session settings ----------------------------------------------
 
     @app.post('/api/mcp')
-    async def toggle_mcp(body: McpBody) -> dict[str, Any]:
+    async def toggle_mcp(body: McpBody, session_id: str | None = None) -> dict[str, Any]:
         """Enables or disables one MCP server for this session, and remembers it.
 
         Refused mid-turn and while a subagent runs, the two criteria the terminal
         applies to `/mcp`.
         """
+        owner = selected_session(session_id)
         try:
-            session = await runtime.toggle_mcp(body.name, body.enabled)
+            session = await owner.toggle_mcp(body.name, body.enabled)
         except RuntimeError as exc:
             return _conflict(exc)  # type: ignore[return-value]
         except LookupError as exc:
             return _refused(exc)  # type: ignore[return-value]
-        return {'session': views.session_view(session), 'mcp': await _mcp_state(runtime.composition)}
+        return {'session': views.session_view(session), 'mcp': await _mcp_state(owner.composition)}
 
     @app.post('/api/external-files')
-    async def external_files(body: ExternalFilesBody) -> dict[str, Any]:
+    async def external_files(body: ExternalFilesBody, session_id: str | None = None) -> dict[str, Any]:
         """Allows or denies file access outside the workspace for this session.
 
         Refused mid-turn, like the terminal's `/external-files`.
         """
+        owner = selected_session(session_id)
         try:
-            session = runtime.set_external_files(body.allow)
+            session = owner.set_external_files(body.allow)
         except RuntimeError as exc:
             return _conflict(exc)  # type: ignore[return-value]
         return {'session': views.session_view(session)}
 
-    debug_diagnostics = DebugDiagnostics()
+    debug_diagnostics: dict[SessionRuntime, DebugDiagnostics] = {}
 
     @app.get('/api/debug')
-    async def debug() -> dict[str, Any]:
+    async def debug(session_id: str | None = None) -> dict[str, Any]:
         """Content-free context, cache, request shape and turn measurements."""
-        return await debug_diagnostics.read(runtime)
+        owner = selected_session(session_id)
+        diagnostics = debug_diagnostics.setdefault(owner, DebugDiagnostics())
+        return await diagnostics.read(owner)
 
     @app.get('/api/context')
-    async def context() -> dict[str, Any]:
+    async def context(session_id: str | None = None) -> dict[str, Any]:
         """How full the window is and what the session has cost, from the meter.
 
         The measurement is of the session's own history, which the turn loop
         checkpoints as it advances; a running turn's newest steps can therefore be
         a moment behind the transcript the stream is painting.
         """
-        meter = runtime.composition.meter
-        messages = runtime.session.messages
+        owner = selected_session(session_id)
+        meter = owner.composition.meter
+        messages = owner.session.messages
         return {'context': views.context_view(meter.snapshot(messages), session_cost(messages))}
 
     # --- the model defaults --------------------------------------------
 
     @app.get('/api/model-defaults')
-    async def model_defaults() -> dict[str, Any]:
+    async def model_defaults(session_id: str | None = None) -> dict[str, Any]:
         """Both config files that decide what a profile starts on, per file.
 
         Reading is never refused, mid-turn included: the screen shows the state
         before the user edits it, and looking at the files changes nothing.
         """
-        service = runtime.composition.model_service
-        return {'defaults': _defaults_payload(service, runtime.model_defaults())}
+        owner = selected_session(session_id)
+        service = owner.composition.model_service
+        return {'defaults': _defaults_payload(service, owner.model_defaults())}
 
     @app.post('/api/model-defaults')
-    async def write_model_default(body: ModelDefaultBody) -> dict[str, Any]:
+    async def write_model_default(body: ModelDefaultBody, session_id: str | None = None) -> dict[str, Any]:
         """Sets or clears one default and answers with the state the write left.
 
         The write is the engine's (`Composition.save_model_default`), and so are the
@@ -1257,6 +1296,7 @@ def create_app(
         a destination, an agent or a level Sigil does not have is a ``400``, because
         a different request would work.
         """
+        owner = selected_session(session_id)
         try:
             scope = ConfigScope(body.scope)
         except ValueError:
@@ -1272,10 +1312,10 @@ def create_app(
                 return _refused(RuntimeError(f'Unknown effort {body.config.effort!r}. Known levels: {known}.'))  # type: ignore[return-value]
             config = AgentModelConfig(body.config.account, body.config.model, effort)
         try:
-            state = runtime.save_model_default(body.target, config, scope)
+            state = owner.save_model_default(body.target, config, scope)
         except RuntimeError as exc:
             return _conflict(exc)  # type: ignore[return-value]
-        return {'defaults': _defaults_payload(runtime.composition.model_service, state)}
+        return {'defaults': _defaults_payload(owner.composition.model_service, state)}
 
     # --- events --------------------------------------------------------
 
@@ -1283,8 +1323,13 @@ def create_app(
     async def events(request: Request) -> StreamingResponse:
         """The stream: `seq`-numbered events, replayable from a cookie or a header."""
         after = _resume_from(request)
+        session_id = request.query_params.get('session_id')
+        if session_id is None:
+            raise HTTPException(status_code=422, detail='session_id is required')
+        if session_id is not None and (not session_id or runtime.find_session(session_id) is None):
+            raise HTTPException(status_code=404, detail='Session is not resident')
         return StreamingResponse(
-            _stream(hub, request, after),
+            _stream(hub, request, after, session_id=session_id),
             media_type='text/event-stream',
             headers={
                 'cache-control': 'no-cache, no-transform',
@@ -1357,7 +1402,7 @@ def _tree_reply(runtime: ServerRuntime, node: Any, message: str) -> dict[str, An
     }
 
 
-async def _state(runtime: ServerRuntime) -> dict[str, Any]:
+async def _state(runtime: SessionRuntime) -> dict[str, Any]:
     """The projection the client renders the shell from."""
     composition = runtime.composition
     session = composition.session
@@ -1473,13 +1518,15 @@ def _resume_from(request: Request) -> int:
         return 0
 
 
-async def _stream(hub: EventHub, request: Request, after: int) -> AsyncIterator[bytes]:
+async def _stream(
+    hub: EventHub, request: Request, after: int, *, session_id: str | None = None
+) -> AsyncIterator[bytes]:
     """Replay and follow until disconnected or the service starts draining."""
     if getattr(request.app.state, 'stopping', False):
         return
-    async with hub.subscribe() as subscription:
+    async with hub.subscribe(session_id=session_id) as subscription:
         # Replay inside the subscription, so nothing published between the two is lost.
-        for event in hub.replay(after):
+        for event in hub.replay(after, session_id=session_id):
             yield event.to_sse().encode()
             if event.type == 'service_stopping':
                 return

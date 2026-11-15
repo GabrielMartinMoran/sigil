@@ -36,6 +36,8 @@ class StubClient:
 
     def __init__(self, state: dict[str, Any]) -> None:
         self.state_payload = state
+        self.selection_generation = 0
+        self.session_id = str((state.get('session') or {}).get('id') or '')
 
     async def state(self) -> dict[str, Any]:
         return self.state_payload
