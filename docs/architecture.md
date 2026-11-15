@@ -207,7 +207,7 @@ routing are described in [Process ownership and session ownership](#process-owne
 | --- | --- |
 | One session per process: `SessionStore.rebind`, `AgentTreeStore.bind`, `RoadmapStores.bind_session` | Many sessions; requests carry `session_id`; binding stays internal to each composition |
 | Closing the UI kills the turn | The turn survives the client; a client attaches to a turn in progress |
-| `ask_user` assumes someone is looking | A question has a deadline: `QUESTION_TIMEOUT_SECONDS`, overridable, after which it is withdrawn, the turn stops and the screen says why (see [the question deadline](#the-question-deadline)) |
+| `ask_user` assumes someone is looking | A question waits indefinitely by default; an optional deadline withdraws it and stops the turn (see [the question deadline](#the-question-deadline)) |
 | One process, one writer | One writer per turn, many readers: a written rule, and a partial unique index in the schema (`turns_one_open`) |
 
 Those four are the reason the interface is worth doing; they are also the reason
@@ -429,14 +429,13 @@ questions, in this order:
   the whole database. A row another browser accepted is work this process must not
   stop in the middle of.
 
-Connected event subscribers are deliberately **not** work. A page reconnects to
-whatever service is there, so a tab left open must not keep a process alive for ever:
-`/events` is a view, not a claim on execution.
+The service stays running without an idle deadline by default. When explicitly set,
+`--idle-grace` enables shutdown after the specified number of seconds without work.
+Connected event subscribers do not count as work for this optional idle policy.
 
 While work exists the service stays up, however much time passes. When it does not,
-the window starts: `--idle-grace` seconds (900 by default, `DEFAULT_IDLE_GRACE`) with
-no work expires it, and one poll that sees work drops the window and starts it again
-later, so a burst of short turns never adds up to a shutdown. The poll is
+the configured window starts. One poll that sees work drops the window and starts it
+again later, so a burst of short turns never adds up to a shutdown. The poll is
 `IDLE_POLL_INTERVAL` (0.5 s), and the question it asks is one lookup rather than a
 scan: `AcceptedInputs.has_open` is a single statement over `accepted_inputs_open`, the
 partial index this cut added over exactly the three open states (see
@@ -568,8 +567,8 @@ send, not a default the service imposes. An unusable `limit` or `before` is a
 
 Implementation: `views.transcript_page` is the only place the rule lives — it takes
 the items already built and returns a `TranscriptPage`; the route validates the two
-parameters and projects. See `tests/test_server_runtime.py` for the arithmetic and
-`tests/test_server_parity.py` for the query contract.
+parameters and projects. See `tests/tui/test_server_runtime.py` for the arithmetic and
+`tests/server/test_server_parity.py` for the query contract.
 
 `views.transcript_window` projects the window from the messages — it counts each
 message's parts and builds only the ones the page returns — so a page costs what it
@@ -597,9 +596,9 @@ into one block, or a call and its result into one row, holds fewer widgets than 
 items it stands for — the viewport, not the transcript, is what must not move.
 Conflating the two was a real defect: a page of 100 items that mounted 60 widgets
 moved the cursor 60 positions instead of 100, so the next ask ended 40 items short
-and those messages were never painted. `tests/test_chat_history_render.py` proves the
+and those messages were never painted. `tests/tui/test_chat_history_render.py` proves the
 two counts apart on a page of 100 items painted as 60 widgets;
-`tests/test_ui_client.py` proves a session whose projection is not one item per
+`tests/tui/test_ui_client.py` proves a session whose projection is not one item per
 widget loses no item when the page at the top is let go.
 
 Past the bound the page furthest from the reading position is let go, not the page
@@ -629,7 +628,7 @@ web — reads the newest page again, the same read the screen opened with, as so
 the reader reaches the bottom. Once per arrival: while that read is in flight, and
 after it lands, the window ends the conversation again and a reader who keeps
 scrolling at the bottom asks for nothing more. The anchor goes back to the bottom
-with it, because the bottom is what they asked for. See `tests/test_ui_client.py`
+with it, because the bottom is what they asked for. See `tests/tui/test_ui_client.py`
 for the ten cases: the window a long session mounts, the cursor a scroll asks for,
 the row that does not move, the second page, the bound and the live block, the newest
 page a reader at the top lets go of, the newest page read again at the bottom, the
@@ -717,7 +716,7 @@ transcript projection run under `asyncio.to_thread`, with their arguments resolv
 on the loop first: the database is built for it (`threading.RLock`,
 `check_same_thread=False`) and the response is assembled from what the thread
 returns. `GET /api/state` answers while a projection is still blocked in a thread,
-which is what `tests/test_server_runtime.py` asserts.
+which is what `tests/tui/test_server_runtime.py` asserts.
 
 The terminal reads it in a worker, and a read in flight absorbs the burst: five
 announcements that arrive together cost one read and at most one more, not five.
@@ -1044,7 +1043,7 @@ holds its own agent, which is a fact about the client.
 | `POST /api/fork` | Branches a new session at an instant, destroying nothing | `views.fork_view` |
 
 Every reply is a projection from `src/server/views.py`, and the parity contract in
-`tests/test_server_parity.py` compares the reply to that projection rather than to
+`tests/server/test_server_parity.py` compares the reply to that projection rather than to
 a literal, so a route cannot invent a shape the views module does not define.
 
 ### What is refused, and with which status
@@ -1322,7 +1321,7 @@ The question deadline used to be on this list. It is not any more: a question no
 has a bound and a rule for what the user sees when it passes, documented under
 [the question deadline](#the-question-deadline).
 
-The tests live in `tests/test_ui_service_client.py`: unit tests for the protocol,
+The tests live in `tests/tui/test_ui_service_client.py`: unit tests for the protocol,
 ASGI contract tests for the routes, and scripted-transport tests for the stream.
 None of them sleeps, and none needs a port.
 
@@ -1362,12 +1361,9 @@ from one table, read once, at the choke point every path goes through.
 
 ### The question deadline
 
-A question is the one place the service waits on a person, and the wait is bounded.
-`src/server/runtime_support.py` holds the deadline as `QUESTION_TIMEOUT_SECONDS` (900 s, the
-same "someone will come back" as the idle window); `SIGIL_QUESTION_TIMEOUT` overrides
-it, and the `question_timeout=` argument of `ServerRuntime` is the seam tests use. A
-value that is not a positive number of seconds raises, naming the variable: a typo
-must not quietly leave the default in place.
+A question waits for an answer without a deadline by default. To set a deadline,
+use `SIGIL_QUESTION_TIMEOUT` or the `question_timeout=` argument of `ServerRuntime`.
+The value must be a positive number of seconds; an invalid value raises an error.
 
 When the deadline passes, nothing is answered on the user's behalf. `_ask` resolves
 the waiting future with `None` — the value a cancellation already means — so
@@ -1395,7 +1391,7 @@ The terminal's half is a marking rule, and it lives in
 restarted, a connection that moved — shows `failure_notice(exc)` and returns without
 marking, and the claim on the panel is released in the `finally` so the next
 `/api/state`, or the reconnection, offers the same question again. Marking it on the
-way out instead would leave the service waiting out its deadline while the screen
+way out instead would leave the service waiting for an answer while the screen
 showed a prompt with nothing left to answer.
 
 Identity is the id (`q1`, `q2`, …), never the text: two questions asking the same
@@ -1583,8 +1579,8 @@ because both call one `_files_report`.
 
 The table is imported against the catalogue and fails at import when a row is missing
 or extra, so a new command cannot become a menu entry that silently does nothing. Two
-tests hold the same line: `tests/test_commands_ownership.py` for the table and
-`tests/test_ui_client.py` for the behaviour behind it.
+tests hold the same line: `tests/tui/test_commands_ownership.py` for the table and
+`tests/tui/test_ui_client.py` for the behaviour behind it.
 
 The three side doors — `ctrl+m`, `ctrl+l` and `ctrl+a` — call `handle_command` instead
 of `open_models`, `open_effort` and `open_agent`. A key is another door into the same
@@ -1893,8 +1889,8 @@ so nothing scheduled it and the spinner sat on `0s` for the whole turn.
 set, and drops the interval when the turn stops. The in-process path keeps the one
 `run_turn` owns, so the same second is never painted twice.
 
-The tests for these four rules are in `tests/test_debug_view.py` (the report as a
-pure function) and `tests/test_ui_client.py` (the repaint on an event, the cleared
+The tests for these four rules are in `tests/tui/test_debug_view.py` (the report as a
+pure function) and `tests/tui/test_ui_client.py` (the repaint on an event, the cleared
 answered set, the subject line, the missing position, the clock).
 
 ### The test seam, and why it is allowed to exist
@@ -1913,7 +1909,7 @@ abort — still exists behind that seam, because the ~40 widget tests that mount
 `SigilApp` assert on it directly. It is a real duplication of the turn loop that
 `src/server/session_runtime.py` already owns, and it is scheduled for deletion: when those
 tests mount a client (a fixture that starts a runtime, like
-`tests/test_ui_client.py`), `run_turn` goes with them. Until then, nothing may grow
+`tests/tui/test_ui_client.py`), `run_turn` goes with them. Until then, nothing may grow
 in it that both paths need — the moment a decision is written twice is the moment
 the two disagree.
 
@@ -1937,7 +1933,7 @@ Three gaps, each stated as it is:
 
 ### The tests
 
-`tests/test_ui_client.py` proves the wiring against the real application: real
+`tests/tui/test_ui_client.py` proves the wiring against the real application: real
 `create_app`, real `ServerRuntime`, real routes, real hub. The one substitution is
 `/events`, and it is explained where it happens: `httpx.ASGITransport` collects a
 response body and returns when the application finishes, so a stream that stays
@@ -2027,9 +2023,9 @@ no fixed sleep: the repaint is driven by the event and by the state it asks for.
 
 ### The tests
 
-`tests/test_ui_service_client.py` proves the three methods against the real
+`tests/tui/test_ui_service_client.py` proves the three methods against the real
 application (happy path, `400` for an unknown node, `409` for the root and for a
-finished node) and `tests/test_ui_client.py` proves the window: empty tree opens
+finished node) and `tests/tui/test_ui_client.py` proves the window: empty tree opens
 and says so, a service subagent appears in the list, `k` and `b` change the node in
 the service and the list shows it, `enter` paints the transcript the service
 keeps, and a published `tree_changed` repaints an open list. Every wait is for a
@@ -2090,7 +2086,7 @@ and the web client paints it as a collapsible line.
 
 ### The tests
 
-`tests/test_server_runtime.py` proves the wake against the real composition and
+`tests/tui/test_server_runtime.py` proves the wake against the real composition and
 the real engine bell (`SubagentSummoner._deliver`, the last thing `_execute` does
 for an async node): a report that lands after the turn starts exactly one turn and
 reaches the durable transcript; two reports of one squad produce one turn with

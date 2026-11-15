@@ -39,7 +39,7 @@ local MCP server in an automatically removed temporary directory.
 
 ```sh
 uv run python -m scripts.benchmark_core --rounds 5 --output /tmp/core.json
-uv run pytest -q -p no:sugar tests/test_core_benchmarks.py
+uv run pytest -q -p no:sugar tests/core/test_core_benchmarks.py
 ```
 
 Allow several minutes on a loaded machine. Do not run tests or other benchmarks
@@ -392,7 +392,7 @@ production regression coverage or a real-client latency profile.
 Executed checks:
 
 ```sh
-uv run pytest -q -p no:sugar tests/test_core_benchmarks.py tests/test_files.py tests/test_shell.py tests/test_tool_registry.py
+uv run pytest -q -p no:sugar tests/core/test_core_benchmarks.py tests/core/test_files.py tests/core/test_shell.py tests/core/test_tool_registry.py
 # 95 passed in 6.75 s
 
 uv run pytest -q -p no:sugar -n 8

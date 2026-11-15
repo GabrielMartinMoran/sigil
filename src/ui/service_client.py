@@ -356,7 +356,9 @@ class ServiceClient:
     ) -> None:
         self.session_id: str | None = None
         self.selection_generation = 0
+        self.endpoint_generation = 0
         self._selection_request = 0
+        self._recovery_lock = asyncio.Lock()
         self._transport = transport
         self._timeout = timeout
         # How to find a service again after one restarted on another port. It lives
@@ -414,6 +416,7 @@ class ServiceClient:
         previous = self._client
         self._aim(endpoint)
         self._client = self._build()
+        self.endpoint_generation += 1
         await previous.aclose()
 
     async def refresh_endpoint(self) -> bool:
@@ -434,6 +437,10 @@ class ServiceClient:
             ServiceUnavailable: the launcher gave up, or nothing answered. A caller
                 with a retry loop keeps retrying; there is nothing else to do here.
         """
+        async with self._recovery_lock:
+            return await self._refresh_endpoint()
+
+    async def _refresh_endpoint(self) -> bool:
         record('client_recovery_attempt', port=self._port, server_pid=self._server_pid)
         started = await _start_service(
             self._launch, database=self._database, endpoint_path=self._endpoint_path, wait=self._wait
@@ -590,6 +597,12 @@ class ServiceClient:
         body = {} if not worktree else {'worktree': worktree}
         return (await self._select_reply('/api/session/new', body)).get('session') or {}
 
+    async def start_in_workspace(self, root: str) -> dict[str, Any]:
+        """Start an independent conversation in an existing workspace."""
+        if self.session_id is None:
+            await self.state()
+        return await self._select_reply('/api/workspace', {'root': root})
+
     async def create_worktree(self, name: str) -> dict[str, Any]:
         """Create a worktree and select its independent session in this client."""
         return await self._select_reply('/api/worktree', {'name': name})
@@ -742,7 +755,11 @@ class ServiceClient:
         service's decision: an empty message is a `RequestRejected`, not something
         this method second-guesses.
         """
-        return await self._post('/api/turn', request.payload())
+        try:
+            return await self._post('/api/turn', request.payload())
+        except ServiceUnavailable:
+            await self.refresh_endpoint()
+            return await self._post('/api/turn', request.payload())
 
     async def abort(self) -> bool:
         """Stops the running turn. ``False`` when there was nothing to stop."""

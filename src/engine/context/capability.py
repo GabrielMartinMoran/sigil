@@ -50,6 +50,9 @@ class ContextViewCapability(AbstractCapability[Any]):
     on_view: Callable[[ViewResult], None] | None = None
     """Diagnostics callback. It must not break the request if it fails."""
 
+    on_unknown_window: Callable[[str, str], None] | None = None
+    """Report an unbudgeted subagent request without interrupting it."""
+
     provider: Callable[[], str | None] | None = None
     """The provider the next request goes to, read per request.
 
@@ -226,8 +229,17 @@ class ContextViewCapability(AbstractCapability[Any]):
         if is_root:
             self._snapshot = captured
         else:
-            self._node_requests[ctx.deps.node_id] = captured
-            self._node_budgets[ctx.deps.node_id] = budget
+            node_id = ctx.deps.node_id
+            previous_budget = self._node_budgets.get(node_id)
+            self._node_requests[node_id] = captured
+            self._node_budgets[node_id] = budget
+            if (
+                budget.window is None
+                and (previous_budget is None or previous_budget.window is not None)
+                and self.on_unknown_window is not None
+            ):
+                with contextlib.suppress(Exception):
+                    self.on_unknown_window(node_id, request_context.model.model_name)
         self._record_decision(ctx, result, budget, fingerprint)
         if self.on_view is not None:
             # Diagnostics never break the turn.
@@ -368,16 +380,18 @@ def _failed_summary(result: ViewResult, *, error_name: str | None = None) -> Vie
     return replace(result, plan=updated, diagnostics=diagnostics, summary_request=None, summary_error=error_name)
 
 
+def subagent_window_warning(node_id: str, model: str) -> str:
+    return (
+        f'Subagent #{node_id[:8]} ({model}): context window is unknown; '
+        'its requests cannot be checked against the model limit.'
+    )
+
+
 class ContextBudgetExceeded(ValueError):
     """The protected request cannot fit; never send it to the provider."""
 
 
 def _require_budget(result: ViewResult, budget: ContextBudget) -> None:
-    if result.plan is not None and budget.window is None:
-        raise ContextBudgetExceeded(
-            'Context window is unknown; select a model with a known window. '
-            'Passthrough is available only for unguarded diagnostics.'
-        )
     if result.budget_exceeded or budget.fits(result.estimated_tokens) is False:
         raise ContextBudgetExceeded(
             f'Context needs approximately {result.estimated_tokens:,} history tokens, '

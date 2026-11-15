@@ -22,6 +22,12 @@ class SessionStateStore:
         self._selection = selection
         self.shared.set_last_selection(selection)
 
+    def model_windows(self, account_id: str) -> dict[str, int]:
+        return self.shared.model_windows(account_id)
+
+    def remember_windows(self, account_id: str, windows: dict[str, int]) -> None:
+        self.shared.remember_windows(account_id, windows)
+
     def installation_id(self) -> str:
         return self.shared.installation_id()
 

@@ -499,7 +499,7 @@ def create_app(
     dist: Path | None = None,
     publisher: EndpointPublisher | None = None,
     request_shutdown: Callable[[], None] | None = None,
-    idle_grace: float = DEFAULT_IDLE_GRACE,
+    idle_grace: float | None = DEFAULT_IDLE_GRACE,
     idle_poll: float = IDLE_POLL_INTERVAL,
     session_idle_grace: float = 300,
 ) -> FastAPI:
@@ -521,12 +521,9 @@ def create_app(
     *before* the process is gone. ``None`` means "this app is not a discoverable
     service": a test that mounts the app in-process publishes nothing.
 
-    ``request_shutdown`` is how the service stops itself when there is no work left:
-    it is called once, ``idle_grace`` seconds after the last turn and background
-    agent ended and the last non-terminal queue row in the database was resolved.
-    It must end the serving loop gracefully rather than exit the process. ``None`` means nobody can stop this
-    app — an in-process mount, or a runner that owns its own lifetime — and no watch
-    is started at all, so a test never loses its server to a timer.
+    When ``idle_grace`` and ``request_shutdown`` are provided, the service requests
+    a graceful stop after that many seconds without work. By default there is no idle
+    shutdown. A runner without a shutdown callback also starts no idle watch.
     """
     auth = Auth(config.password, service_token=publisher.token if publisher is not None else None)
     throttle = LoginThrottle()
@@ -559,7 +556,7 @@ def create_app(
             reaper = asyncio.create_task(runtime.reap_sessions(grace=session_idle_grace, poll=idle_poll))
             watch = (
                 None
-                if request_shutdown is None
+                if request_shutdown is None or idle_grace is None
                 else asyncio.get_running_loop().create_task(
                     runtime.stop_when_idle(stop_service, grace=idle_grace, poll=idle_poll)
                 )

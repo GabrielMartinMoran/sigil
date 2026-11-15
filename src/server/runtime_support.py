@@ -58,24 +58,11 @@ pins the two together rather than importing across the boundary — the service 
 not depend on the client, and that direction is what keeps it a service.
 """
 
-DEFAULT_IDLE_GRACE = 900.0
-"""Seconds without work before a service stops itself.
+DEFAULT_IDLE_GRACE: float | None = None
+"""No automatic idle shutdown unless explicitly configured."""
 
-Fifteen minutes: long enough that a user reading a long answer, or stepping away
-mid-thought, is not punished with a relaunch; short enough that a forgotten
-service does not outlive the day. ``--idle-grace`` overrides it.
-"""
-
-QUESTION_TIMEOUT_SECONDS = 900.0
-"""Seconds a question waits for an answer before the turn is released.
-
-A question is the one place the server waits on a person, and until this deadline
-existed there was no bound on that wait: the turn was "busy" for ever, the service
-never went idle, and a browser that closed its tab left a process holding a session
-nobody could use. Fifteen minutes matches the idle window — the same "someone will
-come back" — and ``SIGIL_QUESTION_TIMEOUT`` or the ``question_timeout`` argument
-override it.
-"""
+QUESTION_TIMEOUT_SECONDS: float | None = None
+"""Questions wait indefinitely unless an explicit timeout is configured."""
 
 QUESTION_TIMEOUT_ENV = 'SIGIL_QUESTION_TIMEOUT'
 """Environment override for :data:`QUESTION_TIMEOUT_SECONDS`, in seconds."""
@@ -103,8 +90,8 @@ def resolve_question_timeout(
     value: float | None = None,
     *,
     env: Mapping[str, str] | None = None,
-) -> float:
-    """The question deadline: the argument, then the environment, then the default.
+) -> float | None:
+    """The question deadline: the argument, then the environment, then no deadline.
 
     Raises:
         ValueError: when the configured value is not a positive number of seconds. A

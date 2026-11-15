@@ -70,6 +70,7 @@ async def _attached(settings: SigilSettings) -> None:
         return
     try:
         try:
+            await client.start_in_workspace(str(Path.cwd()))
             state = await client.state()
         except ServiceClientError as exc:
             _refuse(str(exc))

@@ -62,6 +62,7 @@ from src.engine.agents.turn_map import library_run_id
 from src.engine.agents.turn_timing import TurnTimings
 from src.engine.attachments.content import stored_content, stored_parts, user_content
 from src.engine.bootstrap import Composition, model_settings
+from src.engine.context.capability import subagent_window_warning
 from src.engine.files.paths import execution_workspace
 from src.engine.interaction.models.question_answer import QuestionAnswer
 from src.engine.interaction.models.question_item import QuestionItem
@@ -114,7 +115,7 @@ class SessionRuntime:
         hub: EventHub,
         accepted: AcceptedInputs,
         *,
-        question_timeout: float,
+        question_timeout: float | None,
         require_worker_ownership: OwnershipGuard,
     ) -> None:
         self.composition = composition
@@ -158,6 +159,9 @@ class SessionRuntime:
         self._title_tasks: set[asyncio.Task[None]] = set()
 
         composition.extension_notice = lambda text: self._publish('notice', text=text, tone='danger')
+        composition.context_capability.on_unknown_window = lambda node, model: self._publish(
+            'notice', text=subagent_window_warning(node, model), tone='warn'
+        )
 
         # The agent asks through the hub; the browser answers over HTTP.
         composition.question_hub.set_asker(self._ask)
@@ -547,6 +551,12 @@ class SessionRuntime:
         timings = self._turn_timings = TurnTimings()
         self._timing_session_id = session.id
         self._publish('turn_started', session_id=session.id)
+        if composition.meter.window is None:
+            self._publish(
+                'notice',
+                text='Context window is unknown; this request cannot be checked against the model limit.',
+                tone='warn',
+            )
         self._name_session(session, text)
 
         budget = StepBudget(max_steps=self._budget(), role='turn')
@@ -863,14 +873,8 @@ class SessionRuntime:
     async def _ask(self, questions: list[QuestionItem]) -> list[QuestionAnswer] | None:
         """Publishes the questions and waits for the browser to answer them.
 
-        The wait has a deadline. Until it did, the only way out of a question was an
-        answer: a browser that closed its tab, or a service whose client never
-        attached, left the turn holding the session for ever. When the deadline
-        passes the question is resolved with ``None`` — the value a cancellation
-        already means — so `ask_user` takes the path it has always taken: it cancels
-        the run, the turn ends where it stood, and the prompt comes back. No answer
-        is invented on the user's behalf; the fault of a person not being there is
-        not evidence of what they would have said.
+        The wait is indefinite by default. An explicitly configured deadline withdraws
+        the question and cancels the turn without inventing an answer.
         """
         self._question_ids += 1
         pending = PendingQuestion(id=f'q{self._question_ids}', questions=questions)
@@ -1353,16 +1357,16 @@ class SessionRuntime:
     def _detach_callbacks(self) -> None:
         """Detaches the engine callbacks, idempotently: closing twice is harmless.
 
-        Seven registrations were made in ``__init__`` and each is undone with its
-        owner's own default, so a closed session is not asked to publish a tool
-        event, a retry, an extension notice or a tree change, and the model service
-        stops refusing swaps on its behalf.
+        Registrations made in ``__init__`` are undone with their owner's default,
+        so a closed session is not asked to publish tool events, notices, retries or
+        tree changes, and the model service stops refusing swaps on its behalf.
 
         ``on_idle(None)`` is not a blanket listener reset: it re-registers the
         composition's own tree relay with no session callback, so the engine keeps
         announcing changes to whoever attaches next.
         """
         self.composition.extension_notice = None
+        self.composition.context_capability.on_unknown_window = None
         self.composition.question_hub.set_asker(None)
         self.composition.model_service.is_busy = _not_busy
         self.composition.tool_logger.remove_sink(self._on_tool_event)

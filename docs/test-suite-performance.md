@@ -1,5 +1,105 @@
 # Test suite performance investigation
 
+The Python tests now have independent `core/`, `tui/`, and `server/` selections.
+Shared builders live in `tests/support/`; tests no longer import other test
+modules. See the [test guide](../tests/README.md) for commands and boundaries.
+
+The current investigation starts at commit `68ae2c2`, with **3014 passing tests
+and one skipped test**. This is a larger suite than the historical investigation
+below; its timings aren't comparable with the earlier 2047–2063-test suite.
+
+## Current sequential measurements
+
+These measurements use one pytest process, no xdist workers, no coverage
+instrumentation, and no concurrent checks. Six bounded groups keep each command
+within the execution tool's 120-second deadline. The groups preserve the
+original file selections across the split; they aren't the final directory
+boundaries, because some original modules contained multiple components.
+
+| Original selection | Before process wall | After process wall |
+| --- | ---: | ---: |
+| Core-oriented files | 31.70 s | 29.78 s |
+| Server-oriented files | 98.06 s | 31.46 s median |
+| Attached-client integration file | 51.66 s | 47.73 s |
+| Remaining TUI files, group A | 34.27 s | 29.57 s |
+| Remaining TUI files, group B | 64.91 s | 44.92 s |
+| Remaining TUI files, group C | 49.22 s | 44.28 s |
+
+The before values are single samples. The server after value is the median of
+three passing samples: **31.81, 30.60, and 31.46 seconds**. Its pytest durations
+were approximately 28–29 seconds, compared with 95.13 seconds before. The other
+after values are single samples. Treat their differences as observations, not
+stable guarantees. The profiling selections also include the inexpensive new
+isolation/fallback regressions added by that point.
+
+The illustrative sum of the six process-wall measurements is approximately
+**329.82 seconds before and 227.74 seconds after**, using the server median.
+This is **not** a complete-suite sequential timing: it includes six interpreter
+startups and uses a mixture of single samples and one median. A full sequential
+run exceeds the tool deadline, so no new full-suite sequential result or
+minimum achievable runtime is claimed. Don't compare this aggregate with the
+historical whole-suite measurements below.
+
+## Changes that reduce work and preserve contracts
+
+The largest observed reduction comes from removing unintended environmental
+work, not from adding workers or replacing the service with a mock.
+
+- Isolate `HOME` and `USERPROFILE` as well as `SIGIL_HOME`. MCP configuration
+  discovery uses `Path.home()` independently of `SIGIL_HOME`; the old sandbox
+  didn't isolate that path. A focused regression failed before the change and
+  passed afterward.
+- Give each test its own default home/database, and release that database after
+  the test. This prevents accepted inputs and default configuration from leaking
+  between tests in a worker. Keep disk-backed persistence tests and real MCP
+  process boundaries intact.
+- Block live provider-model requests by default. Deterministic test models
+  still work. The SDK serialization contract explicitly enables only its
+  installed mock HTTP transport and closes the client in `finally`.
+- Keep only the 600-turn long-history batch/performance case instead of also
+  running the 150-turn case with the same batch/count assertions. Preserve the
+  small test of rendered order and content and the large test's timing ceiling.
+- Merge the standalone attached-terminal `/theme` refusal assertion into the
+  existing parametrized local-command test. Retain all eight distinct command
+  effects, the screen-stack check, and the no-queue-write contract.
+
+The reorganization preserves the original collected cases before those two
+consolidations. Four focused regressions cover the model-request guard, home
+configuration discovery, a configured but missing provider account, and direct
+external cancellation of a running subagent. The last two replace incidental
+coverage that previously depended on the environment or cancellation scheduling.
+The final suite has **3016 passing tests and one skipped test**.
+
+## Current coverage and verification
+
+The full before/after coverage runs use the same eight-worker configuration and
+`--cov=src`. Both execute **23,379 of 25,536 production statements**: **92%**
+rounded. Comparing the executed-line sets for every production file found no
+lost or gained lines. Line coverage doesn't prove assertion quality; the two
+removed executions were separately checked for equivalent surviving assertions.
+
+The supplemental experimental Python validator still exits 1 on repository-wide
+naming and annotation conventions. It isn't a configured project gate, and no
+claim is made that it passes. No production files changed in this optimization.
+
+The independently selected suites pass: core, server, and TUI. Core collection
+was also checked in a fresh process: neither Textual nor the TUI/server
+application modules were imported. The complete suite passes with eight workers,
+and Ruff lint/format checks and diff checks pass. The existing skipped test and
+`RetryPromptPart` deprecation remain; they weren't hidden to improve timings.
+
+Raw local profiles, JUnit files, coverage JSON, and logs were written under
+`/tmp/sigil-suite-optimization/`. They aren't durable repository artifacts. The
+remaining material costs are real Textual app/keyboard/scroll workflows and
+service/process integrations. Further work needs comparable measurements and
+assertion-level evidence before replacing those boundaries.
+
+## Historical investigation
+
+The sections below retain the earlier investigation and its separate baseline.
+Their references to the latest worktree describe that historical iteration, not
+the current component split.
+
 The Python test suite remains too slow when it runs sequentially. Its historical
 baseline is **147.93 seconds**. Three passing runs of the latest test tree have
 an end-to-end median of **102.46 seconds**, with a range of **102.21–105.82

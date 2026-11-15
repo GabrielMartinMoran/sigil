@@ -28,6 +28,10 @@ class StateStore(Protocol):
 
     def set_last_selection(self, selection: Selection | None) -> None: ...
 
+    def model_windows(self, account_id: str) -> dict[str, int]: ...
+
+    def remember_windows(self, account_id: str, windows: dict[str, int]) -> None: ...
+
     def installation_id(self) -> str: ...
 
     def stored_client_id(self, alias: str) -> str | None: ...
@@ -59,6 +63,19 @@ class SqliteStateStore:
 
     def set_last_selection(self, selection: Selection | None) -> None:
         self._state.put(SELECTION_KEY, None if selection is None else selection.to_dict())
+
+    def model_windows(self, account_id: str) -> dict[str, int]:
+        raw = self._state.get(f'model_windows:{account_id}')
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            name: value for name, value in raw.items() if isinstance(name, str) and type(value) is int and value > 0
+        }
+
+    def remember_windows(self, account_id: str, windows: dict[str, int]) -> None:
+        valid = {name: value for name, value in windows.items() if type(value) is int and value > 0}
+        if valid:
+            self._state.put(f'model_windows:{account_id}', {**self.model_windows(account_id), **valid})
 
     def installation_id(self) -> str:
         """The stable id of this installation, created on first use."""

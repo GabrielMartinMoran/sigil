@@ -248,6 +248,7 @@ class Composition:
         # a cold start shows `ctx: ?` and cannot budget. The selection carries the
         # last known value, so this needs no network.
         self.meter.set_window(self.model_service.stored_window())
+        self.model_service.on_window = self.meter.set_window
         # The fixed blocks were measured by the request that produced them and are
         # written on the row; without them the budget would claim room that the
         # tool schemas and the instructions are already using.

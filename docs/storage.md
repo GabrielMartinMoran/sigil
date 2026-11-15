@@ -1358,14 +1358,14 @@ of the query the runtime actually runs:
 
 ```sh
 uv run pytest -q -p no:sugar \
-  tests/test_accepted_inputs.py::test_the_open_row_question_is_answered_from_a_partial_index
+  tests/core/test_accepted_inputs.py::test_the_open_row_question_is_answered_from_a_partial_index
 ```
 
 It asserts the plan for `OPEN_INPUTS_SQL` — the constant the runtime uses, not a
 copy of it — so it fails the moment the plan stops naming `accepted_inputs_open` or
 starts scanning, which is the regression that matters. Timings are not asserted
 anywhere: a slow shared runner would make them a flaky test, and the plan is what
-proves the shape. `tests/test_storage_migration_safety.py` upgrades a populated
+proves the shape. `tests/core/test_storage_migration_safety.py` upgrades a populated
 version 7 file and checks the rows and the plan after the step.
 
 Step 8 is also the only step added after the rest, and it changes nothing about the

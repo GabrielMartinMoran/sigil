@@ -189,7 +189,7 @@ reuse, early image deduplication, and bounded patch diagnostics.
 
 Checks run on the implementation include:
 
-- `uv run pytest -q -p no:sugar tests/test_shell.py`: 30 passed.
+- `uv run pytest -q -p no:sugar tests/core/test_shell.py`: 30 passed.
 - The focused shell/files/images/patch/context/prototype selection with
   `--durations=10`: 343 passed before the final `replace_all` adjustment. The
   affected selection was rerun after that adjustment: 121 passed.

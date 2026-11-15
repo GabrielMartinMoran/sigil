@@ -147,7 +147,7 @@ def build_parser(web: bool = True) -> argparse.ArgumentParser:
         metavar='SECONDS',
         help=(
             'seconds with no work before the service stops itself; 0 is valid and means '
-            f'stop on the first idle look (default {DEFAULT_IDLE_GRACE:g})'
+            'stop on the first idle look (default: disabled)'
         ),
     )
     parser.add_argument(

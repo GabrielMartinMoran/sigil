@@ -643,6 +643,10 @@ class TurnMixin:
         # conversation the user just loaded.
         session = self._session
         chat = self.query_one(ChatLog)
+        if self._meter.window is None:
+            await chat.add_notice(
+                'Context window is unknown; this request cannot be checked against the model limit.', style='yellow'
+            )
         # What a subagent sent while nothing was running: it travels with this
         # turn's prompt, before what the user typed, because it is the answer to
         # something the agent did earlier.

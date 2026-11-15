@@ -36,7 +36,7 @@ from src.engine.agents.profile.registry import AgentRegistry
 from src.engine.agents.retry import RetryNotice, RetryTransientModelErrors
 from src.engine.agents.tree.store import AgentTreeStore
 from src.engine.agents.tree.summoner import SubagentSummoner
-from src.engine.context.capability import ContextViewCapability
+from src.engine.context.capability import ContextViewCapability, subagent_window_warning
 from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
 from src.engine.context.meter.context_meter import ContextMeter
 from src.engine.context.scope import ScopeTracker
@@ -258,6 +258,7 @@ class SigilApp(
         # got to. The state is the projection a delta can never replace.
         self._service_state: dict[str, Any] | None = None
         self._service_cursor = 0
+        self._service_endpoint_generation = getattr(client, 'endpoint_generation', 0)
         self._service_following = False
         self._service_reported_errors: set[str] = set()
         self._service_question: str | None = None
@@ -430,6 +431,10 @@ class SigilApp(
             self._question_hub.set_asker(self.ask_question)
         if self._model_retry is not None:
             self._model_retry.on_retry = self.notify_model_retry
+        if self._context_capability is not None:
+            self._context_capability.on_unknown_window = lambda node, model: self.post_message(
+                ChatNotice(subagent_window_warning(node, model), style='yellow')
+            )
         if self._roadmap_store is not None:
             self._roadmap_store.add_listener(self.handle_roadmap_store_change)
             self._point_roadmap_at_view()
@@ -499,6 +504,8 @@ class SigilApp(
         self.theme_changed_signal.unsubscribe(self)
         if self._model_retry is not None:
             self._model_retry.on_retry = None
+        if self._context_capability is not None:
+            self._context_capability.on_unknown_window = None
         if self._tool_logger is not None and self._tool_log_sink is not None:
             self._tool_logger.remove_sink(self._tool_log_sink)
             self._tool_log_sink = None
@@ -659,6 +666,12 @@ class SigilApp(
         try:
             while self._service_following:
                 try:
+                    if (
+                        getattr(client, 'endpoint_generation', 0) != self._service_endpoint_generation
+                        and not await self.resume_after_restart()
+                    ):
+                        await asyncio.sleep(delay)
+                        continue
                     async for event in client.events(after=self._service_cursor):
                         if event.id is not None:
                             self._service_cursor = event.id
@@ -725,6 +738,8 @@ class SigilApp(
                 launch_code=exc.launch_code if isinstance(exc, ServiceUnavailable) else None,
             )
             return False
+        generation = getattr(client, 'endpoint_generation', 0)
+        changed = changed or generation != self._service_endpoint_generation
         reset_cursor = changed or self._service_state is None
         if changed:
             self._service_cursor = 0
@@ -733,6 +748,7 @@ class SigilApp(
             return False
         if reset_cursor:
             self._service_cursor = self._state_cursor()
+        self._service_endpoint_generation = generation
         await self.repaint_from_rows()
         return True
 

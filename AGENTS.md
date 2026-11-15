@@ -6,13 +6,21 @@ Textual. Run Python tooling through `uv` from the repository root.
 
 ## Test execution
 
-Use **eight pytest-xdist workers for the complete Python suite**. During
-implementation, run the smallest relevant selection first; worker startup can
-cost more than it saves for a small selection.
+Use **eight pytest-xdist workers for the complete Python suite or an entire
+component suite**. During implementation, run the smallest relevant selection
+first without workers; worker startup can cost more than it saves for a small
+selection. Run independent checks concurrently when they don't share mutable
+state or compete for resources. Don't launch several eight-worker suites at
+once; run one combined selection instead.
 
 ```sh
 # Focused example: replace the path with the affected tests.
-uv run pytest -q -p no:sugar tests/test_question_panel.py
+uv run pytest -q -p no:sugar tests/tui/test_question_panel.py
+
+# Independent component selections.
+uv run pytest -q -p no:sugar -n 8 tests/core
+uv run pytest -q -p no:sugar -n 8 tests/tui
+uv run pytest -q -p no:sugar -n 8 tests/server
 
 # Complete Python suite: default verification for code changes.
 uv run pytest -q -p no:sugar -n 8
@@ -21,6 +29,11 @@ uv run pytest -q -p no:sugar -n 8
 uv run ruff check src tests
 uv run ruff format --check src tests
 ```
+
+Test suites are separated by responsibility. Shared builders belong in
+`tests/support/`; test modules must not import other test modules. Keep engine
+selections free of TUI and server application imports. See the
+[test guide](tests/README.md) for the component boundaries and isolation rules.
 
 Run the complete suite once the code is stable, not after every small edit.
 Documentation-only changes need content, link, and diff checks rather than an

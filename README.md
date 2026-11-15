@@ -942,7 +942,7 @@ duration and its arguments.
 The group is what a profile's `permissions` rules on, together with the tool
 name: `permissions: {write: deny}` closes `write_file` and `patch_file` in one
 line. A tool declares its group once, next to its definition, and
-`tests/test_tool_groups.py` fails if the declaration and the documented table
+`tests/core/test_tool_groups.py` fails if the declaration and the documented table
 drift apart.
 
 A tool error does not cut the turn: it goes back to the model as a failed result
@@ -1788,11 +1788,11 @@ A tool call and its result are one row, and the row is the summary:
 
 ```
   │ 4 tools · 610ms
-  │ ✓ patch tests/test_roadmap.py  3 replacements · 24ms
-  │ ✓ run ['pytest tests/test_roadmap.py -q']  9 passed in 0.45s · 450ms
+  │ ✓ patch tests/core/test_roadmap.py  3 replacements · 24ms
+  │ ✓ run ['pytest tests/core/test_roadmap.py -q']  9 passed in 0.45s · 450ms
   │ ✓ run ['pytest tests/test_per_…  1 failed, 8 passed in 0.61s · 610ms
   │ ↳ 1 failed
-  │ ✓ read tests/test_roadmap.py  2 of 30 lines · 3ms
+  │ ✓ read tests/core/test_roadmap.py  2 of 30 lines · 3ms
 ```
 
 The gutter is what groups them: a run of calls reads as one column hanging under
@@ -2019,10 +2019,22 @@ layer plan is in [`proposals/model-providers.md`](proposals/model-providers.md).
 
 ```bash
 ./sigil              # run Sigil from here, with this directory as the workspace
-uv run pytest        # tests
+uv run pytest -q -p no:sugar -n 8  # complete Python suite
+uv run pytest -q -p no:sugar -n 8 tests/core    # engine and repository tooling
+uv run pytest -q -p no:sugar -n 8 tests/tui     # terminal UI and service client
+uv run pytest -q -p no:sugar -n 8 tests/server  # HTTP, runtime, and web delivery
 uv run ruff check .  # lint
 uv run ruff format   # format
 ```
+
+Use eight workers for full suites or entire components. For a small selection,
+run without workers to avoid startup overhead. Run independent checks
+concurrently when resources permit, but don't launch multiple eight-worker
+suites at once. Keep optimization benchmarks sequential to measure less work,
+not just parallel speedup.
+
+See [the test guide](tests/README.md) for component boundaries, shared test
+helpers, isolation rules, and independent web-client checks.
 
 `./sigil` and `uv run ./main.py` are the same program; the launcher is the one that
 works from another project's directory (see [Running it](#running-it)).
@@ -2047,7 +2059,7 @@ The bundle carries the hash of the sources that produced it (`web/dist/build.jso
 committed bundle no longer matches `web/src`, which is the only failure mode that
 committing `dist/` introduces. The recipe exists twice on purpose — Python in
 `src/server/webbuild.py`, Node in `web/scripts/source-hash.mjs` — because the server
-must answer without Node; `tests/test_web_dist.py` compares both so they cannot drift.
+must answer without Node; `tests/server/test_web_dist.py` compares both so they cannot drift.
 
 ### The pre-commit hook
 
