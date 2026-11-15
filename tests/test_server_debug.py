@@ -149,3 +149,44 @@ def test_should_share_off_loop_calculation_and_survive_reader_cancellation(
             await asyncio.gather(first, *([second] if second is not None else []), return_exceptions=True)
 
     asyncio.run(scenario())
+
+
+def test_debug_node_scope_never_returns_parent_or_sibling_report(runtime: ServerRuntime, tmp_path: Path) -> None:
+    from src.engine.agents.profile.models.agent_role import AgentRole
+
+    async def scenario() -> None:
+        tree = runtime.composition.summoner.tree()
+        root = tree.ensure_root('wizard')
+        first = tree.add(parent_id=root.id, name='scout', role=AgentRole.SUBAGENT, task='read')
+        second = tree.add(parent_id=root.id, name='reviewer', role=AgentRole.SUBAGENT, task='review')
+        first.messages = [
+            ModelRequest(parts=[UserPromptPart('private-child')]),
+            ModelResponse(parts=[TextPart('child')], usage=RequestUsage(input_tokens=111, output_tokens=9)),
+        ]
+        second.messages = [
+            ModelResponse(parts=[TextPart('other')], usage=RequestUsage(input_tokens=222, output_tokens=8))
+        ]
+        runtime.session.messages = [
+            ModelResponse(parts=[TextPart('parent')], usage=RequestUsage(input_tokens=900, output_tokens=10))
+        ]
+        async with _signed_in(runtime, tmp_path) as client:
+            for node_id, measured in [(first.id, 120), (second.id, 230), (None, 910), (first.id, 120)]:
+                response = await client.get('/api/debug', params={'node_id': node_id} if node_id else {})
+                assert response.status_code == 200, response.text
+                data = response.json()
+                assert data.get('node_id') == node_id
+                assert data['report']['snapshot']['measured'] == measured
+                assert 'private-child' not in response.text
+                if node_id:
+                    assert data['timing'] is None
+                    assert not data['report']['request']['captured']
+            parallel = await asyncio.gather(
+                client.get('/api/debug', params={'node_id': first.id}),
+                client.get('/api/debug', params={'node_id': second.id}),
+                client.get('/api/debug'),
+            )
+            assert [reply.json()['report']['snapshot']['measured'] for reply in parallel] == [120, 230, 910]
+            missing = await client.get('/api/debug', params={'node_id': 'missing'})
+            assert missing.status_code == 404
+
+    asyncio.run(scenario())

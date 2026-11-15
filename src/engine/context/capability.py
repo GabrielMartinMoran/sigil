@@ -70,6 +70,16 @@ class ContextViewCapability(AbstractCapability[Any]):
     _last: ViewResult | None = field(default=None, init=False, repr=False)
     _snapshot: RequestSnapshot | None = field(default=None, init=False, repr=False)
 
+    _node_requests: dict[str, RequestSnapshot] = field(default_factory=dict, init=False, repr=False)
+
+    _node_budgets: dict[str, ContextBudget] = field(default_factory=dict, init=False, repr=False)
+
+    def budget_for_node(self, node_id: str) -> ContextBudget | None:
+        return self._node_budgets.get(node_id)
+
+    def request_for_node(self, node_id: str) -> RequestSnapshot | None:
+        return self._node_requests.get(node_id)
+
     @property
     def summary_error(self) -> str | None:
         """Failure of the last root projection, never another concurrent agent's request."""
@@ -93,6 +103,8 @@ class ContextViewCapability(AbstractCapability[Any]):
         """
         self._last = None
         self._snapshot = None
+        self._node_requests.clear()
+        self._node_budgets.clear()
 
     def project(self, messages: Sequence[ModelMessage]) -> ViewResult:
         """Projects a history with the strategy, without touching the run state.
@@ -210,8 +222,12 @@ class ContextViewCapability(AbstractCapability[Any]):
         if is_root:
             self._last = result
         _require_budget(result, budget)
+        captured = snapshot_request(parameters, messages=request_context.messages, preview_chars=0)
         if is_root:
-            self._snapshot = snapshot_request(parameters, messages=request_context.messages, preview_chars=0)
+            self._snapshot = captured
+        else:
+            self._node_requests[ctx.deps.node_id] = captured
+            self._node_budgets[ctx.deps.node_id] = budget
         self._record_decision(ctx, result, budget, fingerprint)
         if self.on_view is not None:
             # Diagnostics never break the turn.

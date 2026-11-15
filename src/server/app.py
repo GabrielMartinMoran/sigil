@@ -28,7 +28,7 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -1184,7 +1184,7 @@ def create_app(
             node = runtime.node(node_id)
         except LookupError as exc:
             return _refused(exc)  # type: ignore[return-value]
-        return {'node': views.node_view(node, include_messages=True)}
+        return {'node': views.node_view(node, include_messages=True, reports=_report_nodes(runtime))}
 
     # --- session settings ----------------------------------------------
 
@@ -1218,9 +1218,15 @@ def create_app(
     debug_diagnostics = DebugDiagnostics()
 
     @app.get('/api/debug')
-    async def debug() -> dict[str, Any]:
+    async def debug(node_id: str | None = None) -> dict[str, Any]:
         """Content-free context, cache, request shape and turn measurements."""
-        return await debug_diagnostics.read(runtime)
+        if node_id is not None:
+            try:
+                node = runtime.node(node_id)
+            except LookupError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            node_id = None if node.is_root else node.id
+        return await debug_diagnostics.read(runtime, node_id)
 
     @app.get('/api/context')
     async def context() -> dict[str, Any]:

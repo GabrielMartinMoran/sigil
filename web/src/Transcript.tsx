@@ -231,6 +231,12 @@ function Bubble({ item }: { item: TranscriptItem }) {
     );
   }
 
+  if (item.kind === 'agent_message') {
+    return (
+      <div className="border-accent text-ink border-l-2 pl-3 text-sm whitespace-pre-wrap">↳ Agent: {item.text}</div>
+    );
+  }
+
   if (item.kind === 'thinking') {
     return (
       <details className="group text-ink-faint text-xs">
@@ -243,9 +249,7 @@ function Bubble({ item }: { item: TranscriptItem }) {
   }
 
   if (item.kind === 'subagent_report') {
-    // A subagent's answer travels as a durable user input, so the service recognizes
-    // the envelope and sends it as its own kind: painted as a bubble it would read as
-    // something the reader typed.
+    // The service projects the persisted type; the client never infers origin from text.
     return (
       <details className="group text-ink-faint text-xs">
         <summary className="hover:text-ink-muted cursor-pointer font-mono select-none">

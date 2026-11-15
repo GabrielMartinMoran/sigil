@@ -4359,3 +4359,39 @@ def test_should_clear_stale_service_debug_after_a_read_failure(
                 assert 'Fixed cost per request' not in _debug_body(app)
 
     asyncio.run(scenario())
+
+
+def test_debug_follows_selected_subagent_and_returns_to_it(composition: Composition, tmp_path: Path) -> None:
+    from pydantic_ai.messages import ModelResponse, TextPart
+    from pydantic_ai.usage import RequestUsage
+
+    from src.engine.agents.profile.models.agent_role import AgentRole
+    from src.ui.widgets.agent_view import AgentView
+    from src.ui.widgets.debug_view import AgentDebugView
+
+    async def scenario() -> None:
+        async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
+            tree = composition.summoner.tree()
+            root = tree.ensure_root('wizard')
+            node = tree.add(parent_id=root.id, name='scout', role=AgentRole.SUBAGENT, task='inspect')
+            node.messages = [
+                ModelResponse(parts=[TextPart('child')], usage=RequestUsage(input_tokens=111, output_tokens=9))
+            ]
+            node.finish('done')
+            app = _terminal(client, _session(runtime))
+            async with app.run_test(size=(120, 40)) as pilot:
+                await _until(pilot, lambda: app._service_state is not None, what='state')
+                await app.goto_node(node.id)
+                await pilot.press('alt+d')
+                view = app.query_one(AgentDebugView)
+                await _until(pilot, lambda: view.last_report is not None, what='subagent debug report')
+                assert view.last_report.snapshot.measured == 120
+                assert app.viewed_node_id() == node.id
+                runtime.hub.publish('tree_changed')
+                await pilot.press('alt+d')
+                assert not app.debug_visible
+                assert app.subagent_open
+                assert app.viewed_node_id() == node.id
+                assert app.query_one(AgentView).node.id == node.id
+
+    asyncio.run(scenario())

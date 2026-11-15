@@ -49,6 +49,7 @@ from src.ui.widgets.agent_view import AgentView
 from src.ui.widgets.chat_log import ChatLog, SummonBlock
 from src.ui.widgets.prompt_input import PromptInput
 from src.ui.widgets.sidebar_panel import SidebarPanel
+from src.ui.widgets.status_bar import StatusBar
 
 NO_TREE_NOTICE = 'This session has no agents yet: send a message and the tree starts with it.'
 """What the tree shortcut says when the app was built without a tree."""
@@ -339,6 +340,8 @@ class TreeMixin:
         frame later than the one it replaces is a frame with two chats.
         """
         self._viewed_node = None
+        if self.debug_visible:
+            self.set_debug_visible(False)
         if not self._restore_chat():
             return False
         self.query_one(ChatLog).anchor()
@@ -397,15 +400,32 @@ class TreeMixin:
         node = message.node
         for block in self.query(SummonBlock):
             block.set_node(node)
+        if self.debug_visible and self.viewed_node_id() == node.id:
+            self.refresh_debug()
         if self.subagent_open and self.viewed_node_id() == node.id:
             self.run_worker(self._refresh_node_view(node))
         self._refresh_tree_screen()
+        self._refresh_subagent_status()
+
+    def _refresh_subagent_status(self) -> None:
+        nodes = self.tree_nodes()
+        for block in self.query(SummonBlock):
+            for node in nodes:
+                block.set_node(node)
+        try:
+            self.query_one(StatusBar).set_subagents(
+                sum(not node.is_root and not node.status.finished for node in nodes)
+            )
+        except NoMatches:
+            pass
 
     async def _refresh_tree_from_service(self) -> None:
         """Re-reads the tree the service owns, and the node on screen with it."""
         await self.refresh_service_state()
         node_id = self.viewed_node_id()
-        if node_id is not None and self.subagent_open:
+        if self.debug_visible:
+            self.refresh_debug()
+        elif node_id is not None and self.subagent_open:
             await self._open_service_node(node_id)
 
     async def _refresh_node_view(self, node: AgentNode | None = None) -> None:
@@ -414,6 +434,8 @@ class TreeMixin:
         except NoMatches:
             return
         await view.refresh_node(node)
+        if self.debug_visible:
+            self.refresh_debug()
 
     def _refresh_tree_screen(self) -> None:
         """Keeps an open tree in step with the nodes it lists."""
@@ -469,7 +491,7 @@ class TreeMixin:
     def viewed_agent_label(self) -> str | None:
         """The name of the subagent on screen, or ``None`` when the chat is the root's."""
         node = self.viewed_agent()
-        if node is None or not self.subagent_open:
+        if node is None or not (self.subagent_open or self.debug_visible):
             return None
         return f'{node.label} #{node.short_id}'
 

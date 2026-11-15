@@ -21,6 +21,8 @@ import pytest
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from textual.app import App, ComposeResult
 
+from src.engine.agents.message_types import origin, request
+from src.engine.agents.tree.reports import report_view
 from src.ui.widgets.chat_log import ChatLog, ToolCallBlock, ToolGroupHeader
 
 
@@ -254,7 +256,9 @@ def test_restored_subagent_report_is_an_event_not_a_user_message():
         app = Harness()
         async with app.run_test():
             chat = app.query_one(ChatLog)
-            await chat.render_history([ModelRequest(parts=[UserPromptPart(text)])], subagents=[node])
+            await chat.render_history(
+                [request(text, origin('subagent_report', reports=[report_view(node)]))], subagents=[node]
+            )
             assert len(list(chat.query(SubagentReport))) == 1
             assert not list(chat.query(UserMessage))
             assert 'A long internal report' not in str(chat.query_one(SubagentReport).render())
@@ -276,7 +280,10 @@ def test_restored_report_preserves_user_text_and_does_not_hide_unmatched_prompts
             chat = app.query_one(ChatLog)
             await chat.render_history(
                 [
-                    ModelRequest(parts=[UserPromptPart(_envelope(node, node.result) + '\n\nmy actual question')]),
+                    request(
+                        _envelope(node, node.result) + '\n\nmy actual question',
+                        {**origin('subagent_report', reports=[report_view(node)]), 'user_text': 'my actual question'},
+                    ),
                     ModelRequest(parts=[UserPromptPart('[subagent invented] ordinary text')]),
                 ],
                 subagents=[node],
@@ -307,8 +314,14 @@ def test_multiple_reports_and_standalone_delivery_render_as_events():
             chat = app.query_one(ChatLog)
             await chat.render_history(
                 [
-                    ModelRequest(parts=[UserPromptPart(combined)]),
-                    ModelRequest(parts=[UserPromptPart(_envelope(first, first.result))]),
+                    request(
+                        combined,
+                        {
+                            **origin('subagent_report', reports=[report_view(first), report_view(second)]),
+                            'user_text': 'question',
+                        },
+                    ),
+                    request(_envelope(first, first.result), origin('subagent_report', reports=[report_view(first)])),
                 ],
                 subagents=[first, second],
             )

@@ -1540,6 +1540,12 @@ def test_a_report_that_lands_after_the_turn_wakes_a_turn_that_reads_it(runtime: 
     prompts = _prompts(stored)
     assert any('The tree reads bottom-up.' in text for text in prompts), prompts
     assert any(WAKE_PROMPT in text for text in prompts), prompts
+    projected = views.transcript(stored.messages)
+    reports = [item for item in projected if item['kind'] == 'subagent_report']
+    assert len(reports) == 1
+    assert reports[0]['node_id'] == node.id
+    assert reports[0]['text'] == 'The tree reads bottom-up.'
+    assert not any(WAKE_PROMPT in item.get('text', '') for item in projected)
     # The synthesis is part of the conversation, not only of the run.
     assert stored.messages[-1].parts, 'the woken turn saved nothing'
 
