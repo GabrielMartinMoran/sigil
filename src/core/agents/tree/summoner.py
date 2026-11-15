@@ -61,7 +61,7 @@ from src.core.agents.tree.models.agent_node import AgentNode
 from src.core.agents.tree.models.node_status import NodeStatus
 from src.core.agents.tree.models.summon_error import SummonError
 from src.core.agents.tree.reports import report_view
-from src.core.sessions.recovery import recover_history
+from src.core.sessions.recover_history import recover_history
 from src.core.tooling.events import CURRENT_NODE_ID
 
 if TYPE_CHECKING:

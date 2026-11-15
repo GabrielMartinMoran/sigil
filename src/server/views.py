@@ -36,7 +36,8 @@ from src.core.context.meter.snapshot import ContextSnapshot
 from src.core.mcp.tool_models.server_status import ServerStatus
 from src.core.providers.domain.model_capability import ModelCatalog
 from src.core.roadmap.models.todo_item import TodoItem
-from src.core.sessions.session_store import Session, SessionSummary
+from src.core.sessions.session import Session
+from src.core.sessions.session_summary import SessionSummary
 from src.core.sessions.titling import shorten
 from src.core.skills.loaded import loaded_skills
 from src.core.storage.accepted_inputs import _record

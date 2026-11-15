@@ -62,7 +62,7 @@ import httpx
 from pydantic import ValidationError
 
 from src.core.context.meter.debug_snapshot import DEBUG_SNAPSHOT_ADAPTER, DebugSnapshot
-from src.core.storage.database import database_path
+from src.core.storage.database_path import database_path
 from src.server.diagnostics import record
 from src.server.endpoint import Endpoint
 from src.server.launch import Launch

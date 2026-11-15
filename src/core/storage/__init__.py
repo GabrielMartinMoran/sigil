@@ -14,7 +14,8 @@ work, it is data; if you write it while configuring Sigil, it is configuration.*
 from __future__ import annotations
 
 from src.core.storage.blobs import Blobs
-from src.core.storage.database import Database, database_path
+from src.core.storage.database import Database
+from src.core.storage.database_path import database_path
 from src.core.storage.history import history_size, read_history, write_history
 
 __all__ = [

@@ -15,8 +15,10 @@ from pathlib import Path
 from typing import Protocol
 
 from src.core.providers.domain.selection import Selection
-from src.core.storage.app_state import CLIENTS_KEY, SELECTION_KEY, AppState, new_installation_id
-from src.core.storage.database import Database, database_path
+from src.core.storage.app_state import CLIENTS_KEY, SELECTION_KEY, AppState
+from src.core.storage.database import Database
+from src.core.storage.database_path import database_path
+from src.core.storage.new_installation_id import new_installation_id
 
 
 class StateStore(Protocol):

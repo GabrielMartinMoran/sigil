@@ -7,7 +7,8 @@ from typing import Protocol
 from textual.message import Message
 
 from src.core.agents.tree.models.agent_node import AgentNode
-from src.core.sessions.session_store import Session, SessionStore
+from src.core.sessions.session import Session
+from src.core.sessions.session_store import SessionStore
 
 
 class SessionView(Protocol):

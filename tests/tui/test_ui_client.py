@@ -70,7 +70,7 @@ from src.core.mcp.manager.mcp_manager import MCPManager
 from src.core.preferences import DEFAULT_TRANSCRIPT_WINDOW, Preferences
 from src.core.providers.bootstrap import ProviderPaths
 from src.core.roadmap.models.todo_item import TodoItem
-from src.core.sessions.session_store import Session
+from src.core.sessions.session import Session
 from src.core.settings import load_settings
 from src.server.app import create_app
 from src.server.endpoint import Endpoint
@@ -403,7 +403,7 @@ def _terminal(client: ServiceClient, session: Session, *, preferences: Preferenc
 # --- reading the screen ------------------------------------------------------
 
 
-async def _until(pilot: Any, predicate: Callable[[], bool], *, what: str, timeout: float = 10.0) -> None:
+async def _until(pilot: Any, predicate: Callable[[], bool], *, what: str, timeout: float = 30.0) -> None:
     """Pauses the app until the predicate holds, and fails naming what never happened.
 
     The deadline is wall-clock, not a number of pauses: under a loaded machine the

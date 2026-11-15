@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import cast
 
-from src.core.sessions.session_store import Session
+from src.core.sessions.session import Session
 from src.ui.session_view import SessionView
 from src.ui.widgets.chat_log import ChatLog
 

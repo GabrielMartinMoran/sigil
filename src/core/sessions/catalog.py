@@ -17,31 +17,13 @@ exactly the old behaviour.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from pathlib import Path
 
-from src.core.sessions.session_store import SessionStore, SessionSummary
+from src.core.sessions.catalog_entry import CatalogEntry
+from src.core.sessions.session_store import SessionStore
 from src.core.workspace.git_repository import GitRepository
 from src.core.workspace.models.workspace import Workspace
 from src.core.workspace.models.worktree import MAIN_NAME
-
-
-@dataclass(frozen=True, slots=True)
-class CatalogEntry:
-    """A session and the workspace it was created in."""
-
-    session: SessionSummary
-    workspace: Workspace
-    is_current: bool
-
-    @property
-    def label(self) -> str:
-        """Workspace label shown next to the session."""
-        return self.workspace.label
-
-    @property
-    def is_worktree(self) -> bool:
-        return self.workspace.is_worktree
 
 
 def workspaces(root: str | os.PathLike[str]) -> list[Workspace]:

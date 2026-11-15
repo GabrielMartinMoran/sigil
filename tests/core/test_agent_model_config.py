@@ -56,7 +56,7 @@ def test_invalid_agent_model_config_is_reported(tmp_path: Path) -> None:
 def test_composition_applies_default_only_for_new_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from src.core.bootstrap import Composition
     from src.core.providers.bootstrap import ProviderPaths
-    from src.core.sessions.session_store import Session
+    from src.core.sessions.session import Session
     from src.core.settings import load_settings
     from tests.support.provider_service import _add, _service
 

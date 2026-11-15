@@ -20,8 +20,9 @@ from textual.color import Color
 
 from src.core.agents.profile.models.agent_role import AgentRole
 from src.core.agents.tree.agent_tree_store import AgentTreeStore
-from src.core.sessions.catalog import CatalogEntry
-from src.core.sessions.session_store import Session, SessionStore
+from src.core.sessions.catalog_entry import CatalogEntry
+from src.core.sessions.session import Session
+from src.core.sessions.session_store import SessionStore
 from src.core.workspace.models.workspace import Workspace
 from src.ui.sigil_app import SigilApp
 from src.ui.widgets.agent_tree_screen import AgentTreeScreen

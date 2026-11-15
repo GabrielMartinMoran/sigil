@@ -11,7 +11,8 @@ from src.core.agents.rollback import Rollback, RollbackError
 from src.core.roadmap.models.todo_item import TodoItem
 from src.core.roadmap.roadmap_stores import RoadmapStores
 from src.core.sessions.session_store import SessionStore
-from src.core.storage.database import Database, database_path
+from src.core.storage.database import Database
+from src.core.storage.database_path import database_path
 
 
 def _turn(index: int) -> list:

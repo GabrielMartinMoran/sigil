@@ -8,8 +8,8 @@ from pydantic_ai.models.test import TestModel
 from textual.widgets import OptionList
 
 from src.core.mcp.config.loader import load_config
-from src.core.mcp.deferred import MCPGateway
 from src.core.mcp.manager.mcp_manager import MCPManager
+from src.core.mcp.mcp_gateway import MCPGateway
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
 from src.ui.widgets.mcp_screen import MCPScreen

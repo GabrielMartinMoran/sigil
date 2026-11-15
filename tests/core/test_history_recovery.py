@@ -23,7 +23,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 
-from src.core.sessions.recovery import recover_history
+from src.core.sessions.recover_history import recover_history
 
 
 def _cut_mid_tool_call() -> list:

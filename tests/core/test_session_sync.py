@@ -99,8 +99,10 @@ def test_recovery_preserves_subagents_and_does_not_change_default_session(tmp_pa
 
 
 def test_a_recovery_checkpoint_links_and_delivers_in_one_transaction(tmp_path: Path) -> None:
-    from src.core.storage.accepted_inputs import AcceptedInputs, DeliveryConfirmation
-    from src.core.storage.database import Database, database_path
+    from src.core.storage.accepted_inputs import AcceptedInputs
+    from src.core.storage.database import Database
+    from src.core.storage.database_path import database_path
+    from src.core.storage.delivery_confirmation import DeliveryConfirmation
 
     base = tmp_path / 'state'
     store = SessionStore(cwd=tmp_path, base_dir=base)
@@ -144,7 +146,8 @@ def test_a_recovery_checkpoint_links_and_delivers_in_one_transaction(tmp_path: P
 
 
 def test_a_failed_recovery_delivery_rolls_back_the_recovery_copy(tmp_path: Path) -> None:
-    from src.core.storage.accepted_inputs import AcceptedInputs, DeliveryConfirmation
+    from src.core.storage.accepted_inputs import AcceptedInputs
+    from src.core.storage.delivery_confirmation import DeliveryConfirmation
 
     base = tmp_path / 'state'
     store = SessionStore(cwd=tmp_path, base_dir=base)
@@ -182,7 +185,8 @@ def test_characterize_current_recovery_missing_root_and_child_plans(tmp_path: Pa
     from src.core.agents.tree.agent_tree_store import AgentTreeStore
     from src.core.roadmap.models.todo_item import TodoItem
     from src.core.roadmap.roadmap_store import RoadmapStore
-    from src.core.storage.database import Database, database_path
+    from src.core.storage.database import Database
+    from src.core.storage.database_path import database_path
 
     base = tmp_path / 'state'
     store = SessionStore(cwd=tmp_path, base_dir=base)
@@ -231,7 +235,8 @@ def test_characterize_current_roadmap_only_conflict_leaks_to_winner(tmp_path: Pa
     """Writing the local plan to the winner is a defect, not the contract; update assertions when fixed."""
     from src.core.roadmap.models.todo_item import TodoItem
     from src.core.roadmap.roadmap_store import RoadmapStore
-    from src.core.storage.database import Database, database_path
+    from src.core.storage.database import Database
+    from src.core.storage.database_path import database_path
 
     base = tmp_path / 'state'
     store = SessionStore(cwd=tmp_path, base_dir=base)

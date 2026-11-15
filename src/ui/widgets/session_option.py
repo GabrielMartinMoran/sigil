@@ -7,7 +7,7 @@ from datetime import datetime
 from rich.text import Text
 from textual.widgets.option_list import Option
 
-from src.core.sessions.catalog import CatalogEntry
+from src.core.sessions.catalog_entry import CatalogEntry
 
 
 def session_option(entry: CatalogEntry) -> Option:

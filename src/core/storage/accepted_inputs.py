@@ -2,17 +2,12 @@
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import json
 import sqlite3
-import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal
 
-from src.core.attachments.image_metadata import new_image_id
+from src.core.storage.accept import _record
+from src.core.storage.accepted_input import AcceptedInput, InputState
 from src.core.storage.database import Database
 
 OPEN_INPUTS_SQL = "SELECT 1 FROM accepted_inputs WHERE state IN ('accepted', 'claimed', 'delivered') LIMIT 1"
@@ -24,8 +19,6 @@ grows and this runs on a timer, so the match is what keeps the poll a lookup ins
 of a scan.
 """
 
-InputKind = Literal['turn', 'steer']
-InputState = Literal['accepted', 'claimed', 'delivered', 'finished', 'stopped', 'interrupted']
 _TRANSITIONS = {
     'accepted': {'claimed', 'stopped', 'interrupted'},
     'claimed': {'stopped', 'interrupted'},
@@ -34,125 +27,6 @@ _TRANSITIONS = {
     'stopped': set(),
     'interrupted': set(),
 }
-
-
-@dataclass(frozen=True, slots=True)
-class StoredImage:
-    data: bytes
-    media_type: str
-    image_id: str
-
-
-@dataclass(frozen=True, slots=True)
-class AcceptedInput:
-    session_id: str
-    request_id: str
-    sequence: int
-    text: str
-    images: tuple[StoredImage, ...]
-    kind: InputKind
-    state: InputState
-    attempt_id: str | None
-    library_run_id: str | None
-    created_at: str
-    updated_at: str
-    origin: dict[str, Any] | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ImageInput:
-    data: bytes
-    media_type: str
-
-
-def _canonical(text: str, images: list[ImageInput], origin: dict[str, Any] | None = None) -> str:
-    return json.dumps(
-        {
-            **({'origin': origin} if origin else {}),
-            'version': 1,
-            'text': text,
-            'images': [
-                {'data': base64.b64encode(image.data).decode('ascii'), 'media_type': image.media_type}
-                for image in images
-            ],
-        },
-        ensure_ascii=True,
-        sort_keys=True,
-        separators=(',', ':'),
-    )
-
-
-def _record(row: sqlite3.Row) -> AcceptedInput:
-    payload = json.loads(row['payload'])
-    if payload['version'] != 1:
-        raise ValueError('Unsupported accepted input payload version')
-    images = tuple(
-        StoredImage(base64.b64decode(image['data'], validate=True), image['media_type'], image['image_id'])
-        for image in payload['images']
-    )
-    return AcceptedInput(
-        row['session_id'],
-        row['request_id'],
-        row['sequence'],
-        payload['text'],
-        images,
-        row['kind'],
-        row['state'],
-        row['attempt_id'],
-        row['library_run_id'],
-        row['created_at'],
-        row['updated_at'],
-        payload.get('origin'),
-    )
-
-
-class InputConflictError(ValueError):
-    """A request identifier was reused with different content."""
-
-
-def accept(
-    conn: sqlite3.Connection,
-    session_id: str,
-    request_id: str,
-    text: str,
-    images: list[ImageInput],
-    kind: InputKind,
-    origin: dict[str, Any] | None = None,
-) -> AcceptedInput:
-    parsed = uuid.UUID(request_id)
-    if parsed.version != 4 or parsed.variant != uuid.RFC_4122 or str(parsed) != request_id:
-        raise ValueError('request_id must be a canonical UUIDv4')
-    if kind not in ('turn', 'steer'):
-        raise ValueError('Invalid input kind')
-    canonical = _canonical(text, images, origin)
-    fingerprint = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
-    row = conn.execute(
-        'SELECT * FROM accepted_inputs WHERE session_id = ? AND request_id = ?', (session_id, request_id)
-    ).fetchone()
-    if row is not None:
-        existing = _record(row)
-        stored_images = [ImageInput(image.data, image.media_type) for image in existing.images]
-        if row['fingerprint'] != fingerprint or _canonical(existing.text, stored_images, existing.origin) != canonical:
-            raise InputConflictError('Request ID was reused with different content')
-        return existing
-    payload = json.loads(canonical)
-    for image in payload['images']:
-        image['image_id'] = new_image_id()
-    encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(',', ':'))
-    sequence = conn.execute(
-        'SELECT COALESCE(MAX(sequence), 0) + 1 FROM accepted_inputs WHERE session_id = ?', (session_id,)
-    ).fetchone()[0]
-    now = datetime.now(UTC).isoformat()
-    conn.execute(
-        'INSERT INTO accepted_inputs (session_id, request_id, sequence, payload, fingerprint, kind, state, created_at, updated_at) '
-        "VALUES (?, ?, ?, ?, ?, ?, 'accepted', ?, ?)",
-        (session_id, request_id, sequence, encoded, fingerprint, kind, now, now),
-    )
-    return _record(
-        conn.execute(
-            'SELECT * FROM accepted_inputs WHERE session_id = ? AND request_id = ?', (session_id, request_id)
-        ).fetchone()
-    )
 
 
 class AcceptedInputs:
@@ -264,103 +138,3 @@ class AcceptedInputs:
                 'SELECT * FROM accepted_inputs WHERE session_id = ? AND request_id = ?', (session_id, request_id)
             ).fetchone()
         )
-
-
-def _is_recovery_destination(conn: sqlite3.Connection, original_session_id: str, destination_id: str) -> bool:
-    """Whether ``destination_id`` is a recovery copy already linked to the original."""
-    return (
-        conn.execute(
-            'SELECT 1 FROM recovery_links WHERE original_session_id = ? AND destination_id = ?',
-            (original_session_id, destination_id),
-        ).fetchone()
-        is not None
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class DeliveryConfirmation:
-    """The facts that must agree before an input counts as delivered.
-
-    The session and request name the acceptance; the attempt and run are the ones
-    that actually carried the message. A missing identifier is not a delivery, and
-    passing them explicitly keeps the checkpoint from confirming a whole session by
-    coincidence.
-    """
-
-    session_id: str
-    request_id: str
-    attempt_id: str
-    library_run_id: str
-
-    def __post_init__(self) -> None:
-        if not self.session_id or not self.request_id or not self.attempt_id or not self.library_run_id:
-            raise ValueError('A delivery confirmation needs a session, request, attempt and run')
-
-
-class DeliveryConflictError(ValueError):
-    """A delivery fact does not match the claimed input or its checkpoint."""
-
-
-def confirm_delivery(
-    conn: sqlite3.Connection,
-    confirmations: Sequence[DeliveryConfirmation],
-    *,
-    destination_id: str,
-) -> int:
-    """Records the delivery of explicitly named claimed inputs.
-
-    The caller owns the transaction and must already have written the transcript
-    that carries these messages. Each confirmation is checked against its accepted
-    row: the session that accepted it, a claimed state, and the attempt and run that
-    carried it. The destination must be that session or a recovery copy already
-    linked to it. A mismatch raises before the transaction can commit, so the
-    delivery fact, the input state and the transcript land together or not at all.
-    """
-    if conn is None:
-        raise ValueError('Delivery must be confirmed inside the checkpoint transaction')
-    if not destination_id:
-        raise ValueError('A delivery needs a destination session')
-    if conn.execute('SELECT 1 FROM sessions WHERE id = ?', (destination_id,)).fetchone() is None:
-        raise DeliveryConflictError('Destination session does not exist')
-    seen: set[tuple[str, str]] = set()
-    now = datetime.now(UTC).isoformat()
-    for confirmation in confirmations:
-        key = (confirmation.session_id, confirmation.request_id)
-        if key in seen:
-            raise DeliveryConflictError('Duplicate delivery confirmation')
-        seen.add(key)
-        row = conn.execute(
-            'SELECT state, attempt_id, library_run_id FROM accepted_inputs WHERE session_id = ? AND request_id = ?',
-            key,
-        ).fetchone()
-        if row is None:
-            raise LookupError('Accepted input not found for its session')
-        if row['state'] != 'claimed':
-            raise DeliveryConflictError('Only a claimed input can be delivered')
-        if row['attempt_id'] != confirmation.attempt_id:
-            raise DeliveryConflictError('Delivery does not match the recorded attempt')
-        if row['library_run_id'] is not None and row['library_run_id'] != confirmation.library_run_id:
-            raise DeliveryConflictError('Delivery does not match the recorded run')
-        if destination_id != confirmation.session_id and not _is_recovery_destination(
-            conn, confirmation.session_id, destination_id
-        ):
-            raise DeliveryConflictError('Delivery destination is not the accepting session or its recovery copy')
-        if (
-            conn.execute('SELECT 1 FROM input_deliveries WHERE session_id = ? AND request_id = ?', key).fetchone()
-            is not None
-        ):
-            raise DeliveryConflictError('A delivery fact already exists for this input')
-        conn.execute(
-            'INSERT INTO input_deliveries '
-            '(session_id, request_id, checkpointed, destination_id, destination_session_id) '
-            'VALUES (?, ?, 1, ?, ?)',
-            (*key, destination_id, destination_id),
-        )
-        updated = conn.execute(
-            "UPDATE accepted_inputs SET state = 'delivered', library_run_id = ?, updated_at = ? "
-            "WHERE session_id = ? AND request_id = ? AND state = 'claimed'",
-            (confirmation.library_run_id, now, *key),
-        ).rowcount
-        if updated != 1:
-            raise DeliveryConflictError('Delivery lost its claimed input')
-    return len(seen)

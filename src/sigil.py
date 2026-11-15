@@ -39,7 +39,7 @@ from dotenv import load_dotenv
 from src.core.agents.profile.agent_registry import AgentRegistry
 from src.core.preferences import PreferencesStore
 from src.core.roadmap.roadmap_stores import RoadmapStores
-from src.core.sessions.session_store import Session
+from src.core.sessions.session import Session
 from src.core.settings import SigilSettings, load_settings
 from src.core.themes import ThemeRegistry
 from src.ui.service_client import ServiceClient

@@ -17,7 +17,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from src.core.sessions import titling
-from src.core.sessions.session_store import Session, SessionStore
+from src.core.sessions.session import Session
+from src.core.sessions.session_store import SessionStore
 from src.core.sessions.titling import TITLE_INSTRUCTION, clean_title, first_user_message, generate_title, shorten
 
 # --- helpers ----------------------------------------------------------------

@@ -6,7 +6,8 @@ from pathlib import Path
 from src.core.agents.message_types import origin
 from src.core.sessions.session_store import SessionStore
 from src.core.storage.accepted_inputs import AcceptedInputs
-from src.core.storage.database import Database, database_path
+from src.core.storage.database import Database
+from src.core.storage.database_path import database_path
 
 
 def _report() -> dict:

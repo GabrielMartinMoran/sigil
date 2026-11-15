@@ -23,8 +23,8 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 
 from src.core.mcp.config.loader import load_config
-from src.core.mcp.deferred import MCPGateway
 from src.core.mcp.manager.mcp_manager import MCPManager
+from src.core.mcp.mcp_gateway import MCPGateway
 from src.core.mcp.pending_toolset import PendingToolset
 from tests.support.mcp_deferred import (
     SERVER_SCRIPT,

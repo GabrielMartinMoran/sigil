@@ -19,18 +19,13 @@ next step.
 from __future__ import annotations
 
 import json
-import uuid
 
 from src.core.storage.database import Database
+from src.core.storage.new_installation_id import new_installation_id
 
 INSTALLATION_KEY = 'installation_id'
 SELECTION_KEY = 'last_selection'
 CLIENTS_KEY = 'oauth_clients'
-
-
-def new_installation_id() -> str:
-    """A stable, opaque installation identifier in the form OpenAI accepts."""
-    return uuid.uuid4().urn
 
 
 class AppState:

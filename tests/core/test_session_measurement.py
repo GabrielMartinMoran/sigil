@@ -19,7 +19,8 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserProm
 
 from src.core.context.meter.context_meter import ContextMeter
 from src.core.sessions.session_store import SessionStore
-from src.core.storage.database import Database, database_path
+from src.core.storage.database import Database
+from src.core.storage.database_path import database_path
 from src.core.storage.schema import USER_VERSION
 
 

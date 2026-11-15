@@ -30,7 +30,7 @@ from src.core.agents.rollback import Checkpoint, ForkOutcome, RollbackOutcome
 from src.core.agents.tree.models.agent_node import AgentNode
 from src.core.agents.tree.reports import WAKE_PROMPT
 from src.core.bootstrap import Composition
-from src.core.sessions.session_store import Session
+from src.core.sessions.session import Session
 from src.core.storage.accepted_inputs import AcceptedInputs
 from src.server.diagnostics import record
 from src.server.event_hub import EventHub

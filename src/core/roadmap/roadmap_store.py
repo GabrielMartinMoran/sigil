@@ -22,7 +22,8 @@ from pathlib import Path
 from src.core.providers.domain.provider_account import now_iso
 from src.core.roadmap.models.todo_item import TodoItem
 from src.core.roadmap.models.todo_status import TODO_STATUSES, TodoStatus
-from src.core.storage.database import Database, database_path
+from src.core.storage.database import Database
+from src.core.storage.database_path import database_path
 from src.core.storage.roadmap import (
     delete_items,
     read_plan,

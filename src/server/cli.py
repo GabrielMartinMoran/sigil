@@ -223,7 +223,7 @@ def _run(args: argparse.Namespace, *, web: bool = True) -> int:
             super().handle_exit(sig, frame)
 
     from src.core.settings import load_settings
-    from src.core.storage.database import database_path
+    from src.core.storage.database_path import database_path
 
     # The lock is taken before the engine is built, and it is held until the process
     # closes. `Composition` reads settings, the MCP config and the skill registry, so

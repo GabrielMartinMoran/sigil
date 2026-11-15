@@ -7,14 +7,12 @@ from pathlib import Path
 import pytest
 
 from src.core.sessions.session_store import SessionStore
-from src.core.storage.accepted_inputs import (
-    AcceptedInputs,
-    DeliveryConfirmation,
-    DeliveryConflictError,
-    ImageInput,
-    InputConflictError,
-    confirm_delivery,
-)
+from src.core.storage.accepted_inputs import AcceptedInputs
+from src.core.storage.confirm_delivery import confirm_delivery
+from src.core.storage.delivery_confirmation import DeliveryConfirmation
+from src.core.storage.delivery_conflict_error import DeliveryConflictError
+from src.core.storage.image_input import ImageInput
+from src.core.storage.input_conflict_error import InputConflictError
 
 
 def _confirm(
@@ -100,7 +98,7 @@ def test_injected_enqueue_failure_rolls_back_draft(tmp_path: Path) -> None:
 
 
 def test_canonical_encoding_preserves_unicode_order_and_content() -> None:
-    from src.core.storage.accepted_inputs import _canonical
+    from src.core.storage.accept import _canonical
 
     first = ImageInput(b'first\x00', 'image/png')
     second = ImageInput(b'second', 'image/jpeg')
@@ -113,7 +111,7 @@ def test_canonical_encoding_preserves_unicode_order_and_content() -> None:
 
 
 def test_multiple_images_retry_uses_persisted_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.core.storage import accepted_inputs as module
+    from src.core.storage import accept as module
 
     ids = iter(['img_first', 'img_second', 'img_unwanted'])
     monkeypatch.setattr(module, 'new_image_id', lambda: next(ids))
@@ -250,7 +248,8 @@ def test_direct_transition_to_delivered_is_rejected_with_and_without_conn(tmp_pa
 def test_a_checkpoint_writes_transcript_and_delivery_together(tmp_path: Path) -> None:
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
-    from src.core.storage.database import Database, database_path
+    from src.core.storage.database import Database
+    from src.core.storage.database_path import database_path
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'db')
     session = store.draft_session()
@@ -484,7 +483,7 @@ def test_persisted_payload_and_fingerprint_are_versioned(tmp_path: Path) -> None
     import hashlib
     import json
 
-    from src.core.storage.accepted_inputs import _canonical
+    from src.core.storage.accept import _canonical
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'db')
     session = store.draft_session()
@@ -500,7 +499,7 @@ def test_persisted_payload_and_fingerprint_are_versioned(tmp_path: Path) -> None
 
 
 def test_digest_collision_cannot_hide_different_content(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.core.storage import accepted_inputs as module
+    from src.core.storage import accept as module
 
     class ConstantDigest:
         def hexdigest(self) -> str:

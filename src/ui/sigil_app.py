@@ -48,10 +48,11 @@ from src.core.mcp.manager.mcp_manager import MCPManager
 from src.core.preferences import Preferences, PreferencesStore
 from src.core.providers.service import ModelService
 from src.core.roadmap.roadmap_stores import RoadmapStores
-from src.core.sessions.session_store import Session, SessionStore
+from src.core.sessions.session import Session
+from src.core.sessions.session_store import SessionStore
 from src.core.settings import SigilSettings, load_settings
 from src.core.shell import running as running_commands
-from src.core.storage.database import database_path
+from src.core.storage.database_path import database_path
 from src.core.themes import ThemeRegistry
 from src.core.tooling.logging import ToolLoggerHub
 from src.core.tooling.presentation import ToolSummary

@@ -200,7 +200,8 @@ def test_failed_migration_rolls_back_and_can_be_retried(tmp_path: Path, monkeypa
 
 
 def _accept_in_process(base: Path, session_id: str, request_id: str, ready: Any, start: Any, results: Any) -> None:
-    from src.core.storage.accepted_inputs import ImageInput, accept
+    from src.core.storage.accept import accept
+    from src.core.storage.image_input import ImageInput
 
     db = Database(base)
     ready.put(True)

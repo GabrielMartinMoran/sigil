@@ -9,7 +9,8 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from src.core.sessions.session_store import SessionStore, cwd_hash
+from src.core.sessions.cwd_hash import cwd_hash
+from src.core.sessions.session_store import SessionStore
 
 
 def _sample_messages():
@@ -183,7 +184,7 @@ def test_stale_writer_must_not_discard_newer_conversation(tmp_path: Path) -> Non
     import pytest
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
-    from src.core.sessions.session_store import SessionConflictError
+    from src.core.sessions.session_conflict_error import SessionConflictError
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'state')
     first = store.create_session()
@@ -204,7 +205,7 @@ def test_stale_writer_cannot_replace_divergent_same_length_history(tmp_path: Pat
     import pytest
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
-    from src.core.sessions.session_store import SessionConflictError
+    from src.core.sessions.session_conflict_error import SessionConflictError
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'state')
     first = store.create_session()

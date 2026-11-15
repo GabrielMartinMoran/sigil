@@ -3,7 +3,8 @@ import pytest
 from src.core.bootstrap import Composition
 from src.core.providers.bootstrap import ProviderPaths
 from src.core.settings import load_settings
-from src.core.storage.accepted_inputs import AcceptedInputs, ImageInput
+from src.core.storage.accepted_inputs import AcceptedInputs
+from src.core.storage.image_input import ImageInput
 from src.server.event_hub import EventHub
 from src.server.server_runtime import ServerRuntime
 
@@ -26,7 +27,8 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from src.core.sessions.session_store import SessionStore
-from src.core.storage.database import Database, database_path
+from src.core.storage.database import Database
+from src.core.storage.database_path import database_path
 
 
 def test_delivery_event_snapshots_and_reopened_history(tmp_path: Path) -> None:
@@ -408,7 +410,8 @@ def test_a_late_steer_is_stopped_and_never_becomes_a_turn(runtime: ServerRuntime
 
 
 def test_abort_finishes_an_already_confirmed_delivery(runtime: ServerRuntime) -> None:
-    from src.core.storage.accepted_inputs import DeliveryConfirmation, confirm_delivery
+    from src.core.storage.confirm_delivery import confirm_delivery
+    from src.core.storage.delivery_confirmation import DeliveryConfirmation
 
     runtime.start()
     store = runtime.composition.store
@@ -525,7 +528,7 @@ def test_durable_read_separates_pending_from_delivered(tmp_path: Path, monkeypat
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
     from src.core.sessions.session_store import SessionStore
-    from src.core.storage.accepted_inputs import DeliveryConfirmation
+    from src.core.storage.delivery_confirmation import DeliveryConfirmation
     from src.server import views
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
@@ -580,7 +583,7 @@ def test_durable_read_exposes_recovery_and_keeps_conflict_separate(
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
     from src.core.sessions.session_store import SessionStore
-    from src.core.storage.accepted_inputs import DeliveryConfirmation
+    from src.core.storage.delivery_confirmation import DeliveryConfirmation
     from src.server import views
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))

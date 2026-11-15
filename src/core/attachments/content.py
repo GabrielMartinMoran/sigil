@@ -19,7 +19,7 @@ from collections.abc import Sequence
 from pydantic_ai.messages import BinaryContent, UserContent
 
 from src.core.attachments.image_attachment import ImageAttachment
-from src.core.storage.accepted_inputs import StoredImage
+from src.core.storage.stored_image import StoredImage
 
 TEXT_ONLY = ''
 """What a message with no images sends: just its text."""

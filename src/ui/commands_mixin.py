@@ -9,8 +9,10 @@ from typing import Any
 
 from src.core.context.meter.render import render_report
 from src.core.mcp.tool_models.server_status import ServerStatus
-from src.core.sessions.catalog import CatalogEntry, catalog
-from src.core.sessions.session_store import Session, SessionSummary
+from src.core.sessions.catalog import catalog
+from src.core.sessions.catalog_entry import CatalogEntry
+from src.core.sessions.session import Session
+from src.core.sessions.session_summary import SessionSummary
 from src.core.workspace.arguments import parse_new_args
 from src.core.workspace.models.usage_error import UsageError
 from src.core.workspace.models.workspace import Workspace

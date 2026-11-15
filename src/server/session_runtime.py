@@ -66,8 +66,10 @@ from src.core.context.capability import subagent_window_warning
 from src.core.files.paths import execution_workspace
 from src.core.interaction.models.question_answer import QuestionAnswer
 from src.core.interaction.models.question_item import QuestionItem
-from src.core.sessions.recovery import recover_history
-from src.core.storage.accepted_inputs import AcceptedInput, AcceptedInputs, DeliveryConfirmation
+from src.core.sessions.recover_history import recover_history
+from src.core.storage.accepted_input import AcceptedInput
+from src.core.storage.accepted_inputs import AcceptedInputs
+from src.core.storage.delivery_confirmation import DeliveryConfirmation
 from src.core.tooling.outputs import present_output
 from src.server.event_hub import EventHub
 from src.server.incoming_image import IncomingImage
@@ -631,7 +633,7 @@ class SessionRuntime:
         try:
             composition.store.save(session, confirmations=confirmations)
         except Exception as exc:  # a conflicting winner keeps the turn alive
-            from src.core.sessions.session_store import SessionConflictError
+            from src.core.sessions.session_conflict_error import SessionConflictError
 
             if not isinstance(exc, SessionConflictError):
                 raise

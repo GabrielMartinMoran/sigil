@@ -25,8 +25,6 @@ from pathlib import Path
 
 from src.core.storage.schema import MIGRATIONS, SCHEMA, USER_VERSION
 
-DEFAULT_DATABASE_NAME = 'sigil.db'
-
 _PRAGMAS = (
     'PRAGMA journal_mode = WAL',
     'PRAGMA synchronous = FULL',
@@ -196,12 +194,4 @@ def _execute_statements(conn: sqlite3.Connection, script: str) -> None:
         raise ValueError('Incomplete schema statement')
 
 
-def database_path(base_dir: str | Path | None = None) -> Path:
-    """``<base>/sigil.db``, with the base resolved by the caller."""
-    from src.core.paths import sigil_home
-
-    base = Path(base_dir) if base_dir is not None else sigil_home()
-    return base / DEFAULT_DATABASE_NAME
-
-
-__all__ = ['DEFAULT_DATABASE_NAME', 'MAX_INSTANCES', 'Database', 'database_path']
+__all__ = ['Database']

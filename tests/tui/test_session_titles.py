@@ -21,8 +21,9 @@ from pydantic_ai.models.test import TestModel
 from textual.widgets import OptionList
 
 from src.core.providers.factory.unconfigured import UnconfiguredModel
-from src.core.sessions.catalog import CatalogEntry
-from src.core.sessions.session_store import Session, SessionStore
+from src.core.sessions.catalog_entry import CatalogEntry
+from src.core.sessions.session import Session
+from src.core.sessions.session_store import SessionStore
 from src.core.sessions.titling import TITLE_INSTRUCTION
 from src.core.workspace.models.workspace import Workspace
 from src.core.workspace.workspace_manager import WorkspaceManager

@@ -55,7 +55,7 @@ from src.core.attachments.content import user_content
 from src.core.attachments.image_attachment import ImageAttachment
 from src.core.files.paths import execution_workspace
 from src.core.providers.domain.thinking import settings_value as thinking_settings
-from src.core.sessions.recovery import recover_history
+from src.core.sessions.recover_history import recover_history
 from src.ui.attention import Attention
 from src.ui.chat_notice import ChatNotice
 from src.ui.outgoing_image import OutgoingImage

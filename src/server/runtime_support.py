@@ -22,7 +22,8 @@ from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, User
 from src.core.attachments.image_error import ImageError
 from src.core.attachments.images import MAX_IMAGE_BYTES, prepare_image
 from src.core.context.media_compatibility import PORTABLE_IMAGE_TYPES
-from src.core.storage.accepted_inputs import AcceptedInput, ImageInput
+from src.core.storage.accepted_input import AcceptedInput
+from src.core.storage.image_input import ImageInput
 from src.server.incoming_image import IncomingImage
 from src.server.pending_question import PendingQuestion
 

@@ -16,7 +16,8 @@ from pathlib import Path
 
 from src.core.providers.domain.provider_account import ProviderAccount
 from src.core.providers.domain.provider_error import AliasError
-from src.core.storage.database import Database, database_path
+from src.core.storage.database import Database
+from src.core.storage.database_path import database_path
 
 
 class SqliteAccountStore:

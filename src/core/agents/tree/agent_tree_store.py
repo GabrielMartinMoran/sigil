@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from src.core.agents.tree.agent_tree import AgentTree
 
 if TYPE_CHECKING:
-    from src.core.sessions.session_store import Session
+    from src.core.sessions.session import Session
 
 
 class AgentTreeStore:

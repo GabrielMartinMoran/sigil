@@ -20,7 +20,8 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
 from src.core.mcp.config.loader import load_config
-from src.core.mcp.deferred import MCPGateway, build_manager
+from src.core.mcp.deferred import build_manager
+from src.core.mcp.mcp_gateway import MCPGateway
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
 from src.ui.widgets.sidebar_panel import SidebarPanel

@@ -10,7 +10,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import OptionList, Static
 
-from src.core.sessions.catalog import CatalogEntry
+from src.core.sessions.catalog_entry import CatalogEntry
 from src.ui.widgets.session_option import session_option
 
 

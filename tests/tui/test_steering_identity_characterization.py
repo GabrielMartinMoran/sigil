@@ -18,7 +18,8 @@ from pydantic_ai.models.test import TestModel
 
 from src.core.attachments.image_attachment import ImageAttachment
 from src.core.sessions.session_store import SessionStore
-from src.core.storage.database import Database, database_path
+from src.core.storage.database import Database
+from src.core.storage.database_path import database_path
 from src.ui.sigil_app import SigilApp
 from tests.support.ui import wait_for_turn
 

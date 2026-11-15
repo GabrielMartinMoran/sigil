@@ -25,7 +25,8 @@ from src.core.agents.profile.models.agent_role import AgentRole
 from src.core.agents.tree.agent_tree import AgentTree
 from src.core.providers.domain.selection import Selection
 from src.core.sessions.session_store import SessionStore
-from src.core.storage.database import Database, database_path
+from src.core.storage.database import Database
+from src.core.storage.database_path import database_path
 from src.core.storage.history import history_size
 
 

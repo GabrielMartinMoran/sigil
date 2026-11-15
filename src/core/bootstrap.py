@@ -62,7 +62,7 @@ from src.core.interaction.models.question_option import QuestionOption
 from src.core.interaction.question_hub import QuestionHub
 from src.core.interaction.tools import register_interaction_tools
 from src.core.mcp.config.loader import load_config
-from src.core.mcp.deferred import MCPGateway
+from src.core.mcp.mcp_gateway import MCPGateway
 from src.core.mcp.shutdown import read_shutdown_timeout
 from src.core.mcp.tools import register_mcp_tools
 from src.core.paths import providers_dir
@@ -80,7 +80,8 @@ from src.core.providers.store.session_state_store import SessionStateStore
 from src.core.providers.store.state_store import SqliteStateStore
 from src.core.roadmap.roadmap_stores import RoadmapStores
 from src.core.roadmap.tools import register_roadmap_tools
-from src.core.sessions.session_store import Session, SessionStore
+from src.core.sessions.session import Session
+from src.core.sessions.session_store import SessionStore
 from src.core.settings import SigilSettings
 from src.core.shell.running import RunningCommands
 from src.core.shell.tools import register_shell_tools
