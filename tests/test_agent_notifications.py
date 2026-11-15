@@ -60,7 +60,7 @@ def test_should_keep_instructions_out_of_table_when_parent_steers_child(env: Env
 
     env.summoner.send_message(sender_id=None, target_id=worker.id, text='change direction')
 
-    assert 'change direction' in worker.run.enqueued[0]
+    assert 'change direction' in worker.run.enqueued[0].parts[0].content
     assert env.tree().notifications.for_receiver(worker.id) == ()
 
 

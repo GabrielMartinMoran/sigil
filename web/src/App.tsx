@@ -25,6 +25,8 @@ export function App() {
   const notice = useStore((store) => store.notice);
   const state = useStore((store) => store.state);
   const items = useStore((store) => store.items);
+  const runningSubagents =
+    state?.tree.nodes.filter((node) => node.parent_id !== null && node.status === 'running').length ?? 0;
   const question = useStore((store) => store.state?.question ?? null);
   const boot = useStore((store) => store.boot);
 
@@ -93,6 +95,10 @@ export function App() {
           <NotificationToggle />
           {state?.busy ? (
             <span className="text-accent shrink-0 animate-pulse font-mono text-[11px]">working</span>
+          ) : runningSubagents ? (
+            <span className="text-accent shrink-0 font-mono text-[11px]">
+              {runningSubagents} subagent{runningSubagents === 1 ? '' : 's'} running
+            </span>
           ) : null}
         </header>
 

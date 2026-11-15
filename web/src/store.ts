@@ -559,6 +559,11 @@ export const useStore = create<Store>((set, get) => ({
       case 'notice':
         set({ notice: text(data.text) });
         return;
+      case 'tree_changed':
+        void get()
+          .refresh()
+          .catch(() => undefined);
+        return;
       case 'question':
       case 'question_closed':
       case 'state_changed':

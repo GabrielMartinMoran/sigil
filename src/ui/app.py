@@ -1316,6 +1316,7 @@ class SigilApp(
         # The tree travels in the state, so every state applied keeps an open tree
         # window in step — the `tree_changed` event lands here like any other refresh.
         self._refresh_tree_screen()
+        self._refresh_subagent_status()
         question = state.get('question')
         if isinstance(question, dict):
             identifier = str(question.get('id') or '')
@@ -1327,11 +1328,6 @@ class SigilApp(
 
     def action_toggle_debug(self) -> None:
         """`alt+d`: replaces the chat with the agent debug view."""
-        if self.subagent_open:
-            # The two views replace the same space. Opening the debug view closes
-            # the node one here and not on a worker: a frame with both is a frame
-            # with two conversations and no way to tell which one is on screen.
-            self.show_chat()
         self.toggle_debug()
 
     def action_toggle_tree(self) -> None:

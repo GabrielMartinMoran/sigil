@@ -12,8 +12,10 @@ from textual.css.query import NoMatches
 from src.engine.context.meter.debug import DebugReport, build_debug_report
 from src.engine.context.meter.debug_render import render_debug_report
 from src.engine.context.meter.debug_wire import DebugSnapshot
+from src.engine.context.meter.node_debug import node_debug_report
 from src.engine.context.meter.request import RequestSnapshot
 from src.ui.service_client import ServiceClientError
+from src.ui.widgets.agent_view import AgentView
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.debug_view import AgentDebugView
 from src.ui.widgets.prompt_input import PromptInput
@@ -53,19 +55,27 @@ class DebugMixin:
             view = self.query_one(AgentDebugView)
             chat = self.query_one(ChatLog)
             prompt = self.query_one(PromptInput)
+            agent_view = self.query_one(AgentView)
         except NoMatches:
             return
         view.display = visible
         # It replaces, it does not coexist: the space is the same and the view is the same
-        # conversation told from the other side. The input stays active and
-        # focused, on purpose: the view refreshes on every step of the turn, so
-        # you can send a prompt and watch live what context and cache it costs.
-        chat.display = not visible
+        # conversation told from the other side. Only the root composer stays
+        # active; inspecting a subagent must not send prompts to its parent.
+        node_id = self.viewed_node_id()
+        agent_view.display = not visible and node_id is not None
+        chat.display = not visible and node_id is None
+        prompt.disabled = node_id is not None
         if visible:
+            if self.debug_from_service():
+                view.show_unavailable('Loading agent debug…')
             self.refresh_debug(immediate=True)
         else:
             self._cancel_debug_refresh()
-        prompt.focus()
+        if node_id is None:
+            prompt.focus()
+        else:
+            self._release_prompt_focus()
 
     # --- reporte ---------------------------------------------------------
 
@@ -75,21 +85,29 @@ class DebugMixin:
 
     async def read_service_debug_report(self) -> DebugSnapshot:
         """Read the server's full report; never measure local empty history."""
-        return await self._client.debug()
+        node_id = self.viewed_node_id()
+        return await self._client.debug(node_id=node_id) if node_id else await self._client.debug()
 
     @work(exclusive=True, group=SERVICE_DEBUG)
     async def refresh_service_debug(self) -> None:
         """Fetch once per coalesced burst and reject responses for another session."""
         if not self.debug_visible:
             return
+        node_id = self.viewed_node_id()
         try:
             snapshot = await self.read_service_debug_report()
         except ServiceClientError:
-            self._debug_unavailable()
+            if node_id == self.viewed_node_id():
+                self._debug_unavailable()
             return
         state = self._service_state or {}
         session_id = (state.get('session') or {}).get('id')
-        if not self.debug_visible or (session_id and snapshot.session_id != session_id):
+        if (
+            not self.debug_visible
+            or node_id != self.viewed_node_id()
+            or snapshot.node_id != node_id
+            or (session_id and snapshot.session_id != session_id)
+        ):
             return
         try:
             view = self.query_one(AgentDebugView)
@@ -111,6 +129,9 @@ class DebugMixin:
 
     def debug_report(self, messages: Sequence[ModelMessage] | None = None) -> DebugReport:
         """Builds the debug report with the current log and the next request projection."""
+        node = self.node(self.viewed_node_id())
+        if node is not None and not node.is_root:
+            return node_debug_report(node, self._context_capability)
         history = list(self._history if messages is None else messages)
         capability = self._context_capability
         request: RequestSnapshot | None = None
@@ -142,7 +163,7 @@ class DebugMixin:
         """
         if not self.debug_visible:
             return
-        if self.debug_from_service():
+        if self.debug_from_service() or self.viewed_node_id() is not None:
             self._debug_pending = None
         else:
             run = getattr(self, '_current_run', None)
@@ -195,5 +216,5 @@ class DebugMixin:
             return f'{text}\n\n{snapshot.timing}' if snapshot.timing else text
 
         report = render_debug_report(self.debug_report())
-        timings = getattr(self, '_turn_timings', None)
+        timings = getattr(self, '_turn_timings', None) if self.viewed_node_id() is None else None
         return report if timings is None else f'{report}\n\n{timings.render()}'

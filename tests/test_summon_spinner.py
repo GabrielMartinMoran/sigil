@@ -60,3 +60,11 @@ def test_background_summon_tracks_node_until_completion():
     node.start()
     block.set_node(node)
     assert 'finished' in block._meta_line().plain
+
+
+def test_background_result_spins_before_tree_event():
+    block = SummonBlock('summon', {'agent': 'scout', 'mode': 'async', 'task': 'inspect'})
+    block.set_result('#abcd1234 (Scout) is working in the background.')
+    assert SPINNER_FRAMES[0] in block._spawn_header().plain
+    block._advance_pending()
+    assert SPINNER_FRAMES[1] in block._spawn_header().plain

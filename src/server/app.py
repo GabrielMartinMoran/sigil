@@ -27,6 +27,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
+from weakref import WeakKeyDictionary
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -1217,7 +1218,7 @@ def create_app(
             node = owner.node(node_id)
         except LookupError as exc:
             return _refused(exc)  # type: ignore[return-value]
-        return {'node': views.node_view(node, include_messages=True)}
+        return {'node': views.node_view(node, include_messages=True, reports=_report_nodes(owner))}
 
     # --- session settings ----------------------------------------------
 
@@ -1250,14 +1251,20 @@ def create_app(
             return _conflict(exc)  # type: ignore[return-value]
         return {'session': views.session_view(session)}
 
-    debug_diagnostics: dict[SessionRuntime, DebugDiagnostics] = {}
+    debug_diagnostics: WeakKeyDictionary[SessionRuntime, DebugDiagnostics] = WeakKeyDictionary()
 
     @app.get('/api/debug')
-    async def debug(session_id: str | None = None) -> dict[str, Any]:
-        """Content-free context, cache, request shape and turn measurements."""
+    async def debug(session_id: str | None = None, node_id: str | None = None) -> dict[str, Any]:
+        """Diagnostics for the selected session and, optionally, one of its nodes."""
         owner = selected_session(session_id)
+        if node_id is not None:
+            try:
+                node = owner.node(node_id)
+            except LookupError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            node_id = None if node.is_root else node.id
         diagnostics = debug_diagnostics.setdefault(owner, DebugDiagnostics())
-        return await diagnostics.read(owner)
+        return await diagnostics.read(owner, node_id)
 
     @app.get('/api/context')
     async def context(session_id: str | None = None) -> dict[str, Any]:

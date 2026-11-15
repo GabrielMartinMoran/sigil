@@ -469,8 +469,12 @@ def test_a_parent_steers_a_running_child_with_an_instruction(tmp_path):
     message = env.summoner.send_message(sender_id=root.id, target_id=node.id, text='go left instead')
 
     assert 'queued' in message
-    assert 'go left instead' in run.enqueued[0]
-    assert 'instruction from your parent' in run.enqueued[0]
+    from src.engine.agents.message_types import type_of
+
+    delivered = run.enqueued[0]
+    assert 'go left instead' in delivered.parts[0].content
+    assert 'instruction from your parent' in delivered.parts[0].content
+    assert type_of(delivered, delivered.parts[0])['type'] == 'agent_message'
 
 
 def test_a_parent_cannot_message_a_child_that_is_not_running(tmp_path):

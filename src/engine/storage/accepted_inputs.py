@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from src.engine.attachments.image_attachment import new_image_id
 from src.engine.storage.database import Database
@@ -70,6 +70,7 @@ class AcceptedInput:
     library_run_id: str | None
     created_at: str
     updated_at: str
+    origin: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,9 +93,10 @@ class DeliveryConfirmation:
             raise ValueError('A delivery confirmation needs a session, request, attempt and run')
 
 
-def _canonical(text: str, images: list[ImageInput]) -> str:
+def _canonical(text: str, images: list[ImageInput], origin: dict[str, Any] | None = None) -> str:
     return json.dumps(
         {
+            **({'origin': origin} if origin else {}),
             'version': 1,
             'text': text,
             'images': [
@@ -128,18 +130,25 @@ def _record(row: sqlite3.Row) -> AcceptedInput:
         row['library_run_id'],
         row['created_at'],
         row['updated_at'],
+        payload.get('origin'),
     )
 
 
 def accept(
-    conn: sqlite3.Connection, session_id: str, request_id: str, text: str, images: list[ImageInput], kind: InputKind
+    conn: sqlite3.Connection,
+    session_id: str,
+    request_id: str,
+    text: str,
+    images: list[ImageInput],
+    kind: InputKind,
+    origin: dict[str, Any] | None = None,
 ) -> AcceptedInput:
     parsed = uuid.UUID(request_id)
     if parsed.version != 4 or parsed.variant != uuid.RFC_4122 or str(parsed) != request_id:
         raise ValueError('request_id must be a canonical UUIDv4')
     if kind not in ('turn', 'steer'):
         raise ValueError('Invalid input kind')
-    canonical = _canonical(text, images)
+    canonical = _canonical(text, images, origin)
     fingerprint = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
     row = conn.execute(
         'SELECT * FROM accepted_inputs WHERE session_id = ? AND request_id = ?', (session_id, request_id)
@@ -147,7 +156,7 @@ def accept(
     if row is not None:
         existing = _record(row)
         stored_images = [ImageInput(image.data, image.media_type) for image in existing.images]
-        if row['fingerprint'] != fingerprint or _canonical(existing.text, stored_images) != canonical:
+        if row['fingerprint'] != fingerprint or _canonical(existing.text, stored_images, existing.origin) != canonical:
             raise InputConflictError('Request ID was reused with different content')
         return existing
     payload = json.loads(canonical)

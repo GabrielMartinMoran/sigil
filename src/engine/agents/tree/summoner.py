@@ -49,14 +49,17 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic_ai.exceptions import RunCancelled, UserError
+from pydantic_ai.messages import ModelRequest
 from pydantic_ai.usage import UsageLimits
 
+from src.engine.agents.message_types import MessageTypes, origin, request
 from src.engine.agents.profile.models.agent_not_found import AgentNotFound
 from src.engine.agents.step_budget import StepBudget
 from src.engine.agents.tree.models.agent_message import AgentMessage
 from src.engine.agents.tree.models.agent_node import AgentNode
 from src.engine.agents.tree.models.node_status import NodeStatus
 from src.engine.agents.tree.models.summon_error import SummonError
+from src.engine.agents.tree.reports import report_view
 from src.engine.sessions.recovery import recover_history
 from src.engine.tooling.events import CURRENT_NODE_ID
 
@@ -459,7 +462,7 @@ class SubagentSummoner:
                 deps=SigilDeps(node_id=node.id),
                 message_history=list(node.messages) or None,
                 usage_limits=UsageLimits(request_limit=None),
-                capabilities=[budget],
+                capabilities=[budget, MessageTypes(initial=origin('agent_message'))],
                 model_settings=selected.settings,
                 **({'model': selected.model} if selected.model is not None else {}),
             ) as run:
@@ -625,7 +628,7 @@ class SubagentSummoner:
             self._notify(target)
             return f'Notification {notice.id} delivered to {target.label} #{target.short_id}; pending ACK.'
         message = AgentMessage(sender_id=sender.id, sender_name=sender.name, kind=kind, text=body)
-        if not _enqueue(self._run_of(target), message.render()):
+        if not _enqueue(self._run_of(target), request(message.render(), origin('agent_message'))):
             raise SummonError(self._unreachable(tree, sender, target, body))
         self._announce_delivery(target)
         return f'Instruction queued for {target.label} #{target.short_id} as steering.'
@@ -794,7 +797,13 @@ class SubagentSummoner:
         parent = tree.parent(node.id)
         while parent is not None:
             run = self._run_of(parent)
-            if run is not None and _enqueue(run, text):
+            if run is not None and _enqueue(
+                run,
+                request(
+                    text,
+                    origin('subagent_report', reports=[report_view(node)]),
+                ),
+            ):
                 self._announce_delivery(node)
                 return True
             parent = tree.parent(parent.id)
@@ -839,7 +848,7 @@ class SubagentSummoner:
             pass
 
 
-def _enqueue(run: Any, text: str) -> bool:
+def _enqueue(run: Any, text: str | ModelRequest) -> bool:
     """Injects a message into a live run. ``False`` when that run is closed."""
     try:
         run.enqueue(text)

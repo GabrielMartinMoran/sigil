@@ -520,9 +520,12 @@ class ServiceClient:
             self._select_session(payload.get('session') or {})
         return payload
 
-    async def debug(self) -> DebugSnapshot:
+    async def debug(self, *, node_id: str | None = None) -> DebugSnapshot:
         """Full diagnostics measured by the service, never by the attached TUI."""
-        payload = await self._get('/api/debug')
+        from urllib.parse import urlencode
+
+        path = '/api/debug' + ('?' + urlencode({'node_id': node_id}) if node_id else '')
+        payload = await self._get(path)
         try:
             return DEBUG_SNAPSHOT_ADAPTER.validate_python(payload)
         except ValidationError:

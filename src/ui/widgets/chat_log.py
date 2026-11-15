@@ -49,6 +49,7 @@ from textual.selection import Selection
 from textual.timer import Timer
 from textual.widgets import Static
 
+from src.engine.agents.message_types import input_views
 from src.engine.agents.tree.models.agent_node import AgentNode
 from src.engine.attachments.content import describe_attachments, images_in
 from src.engine.attachments.image_attachment import ImageAttachment
@@ -58,7 +59,6 @@ from src.engine.tooling.presentation import ToolSummary, display_name
 from src.ui.markdown_theme import markdown_themes
 from src.ui.messages import NodeOpened, RollbackRequested
 from src.ui.palette import color
-from src.ui.subagent_reports import split_reports
 from src.ui.widgets.empty_logo import logo_lines
 from src.ui.widgets.reading import ReadOnlyScroll
 from src.ui.widgets.rows import fit
@@ -981,6 +981,9 @@ class SummonBlock(ToolCallBlock):
         if named:
             self._node_name = named.group(1)
         self._status = self._read_status(text, ok=ok)
+        self._background_running = self._status == 'working'
+        if self._background_running and self.is_mounted and self._pending_timer is None:
+            self._pending_timer = self.set_interval(SPINNER_INTERVAL, self._advance_pending)
         self._update_content()
 
     def set_error(self, message: str) -> None:
@@ -1604,9 +1607,7 @@ class ChatLog(ReadOnlyScroll):
         # After clearing, the new history follows the bottom again.
         self.anchor()
 
-    async def render_history(
-        self, messages: list[ModelMessage], *, subagents: Sequence[AgentNode] = (), from_agent: bool = False
-    ) -> None:
+    async def render_history(self, messages: list[ModelMessage], *, subagents: Sequence[AgentNode] = ()) -> None:
         """Rebuilds the history from the pydantic-ai messages.
 
         Tool calls and their returns come in separate messages, so the return is
@@ -1669,23 +1670,19 @@ class ChatLog(ReadOnlyScroll):
                         # The transcript is read ordered by `seq`, so the position in
                         # this list *is* the seq. That is what makes the click map to
                         # a turn without a side channel.
-                        content = part.content
-                        text = (
-                            content
-                            if isinstance(content, str)
-                            else next((item for item in content if isinstance(item, str)), '')
-                        )
-                        reports, remaining = split_reports(text, subagents)
-                        batches.extend(
-                            SubagentReport(label=node.label, short_id=node.short_id, node_id=node.id)
-                            for node in reports
-                        )
-                        if reports and not isinstance(content, str):
-                            content = [remaining if item is text else item for item in content]
-                        elif reports:
-                            content = remaining
-                        if not reports or remaining or (not isinstance(content, str) and images_in(content)):
-                            batches.append(_user_widget(content, seq=position, from_agent=from_agent))
+                        for view in input_views(message, part):
+                            if view['kind'] == 'subagent_report':
+                                batches.append(
+                                    SubagentReport(
+                                        label=view['label'], short_id=view['short_id'], node_id=view['node_id']
+                                    )
+                                )
+                            else:
+                                batches.append(
+                                    _user_widget(
+                                        view['content'], seq=position, from_agent=view['kind'] == 'agent_message'
+                                    )
+                                )
                     elif isinstance(part, (ToolReturnPart, RetryPromptPart)) and part.tool_name:
                         ok = isinstance(part, ToolReturnPart) and part.outcome == 'success'
                         block = open_tools.pop(part.tool_call_id, None)
@@ -1814,6 +1811,12 @@ class ChatLog(ReadOnlyScroll):
         already mounted below it.
         """
         widgets = self._page_widgets(items)
+        tree_nodes = getattr(self.app, 'tree_nodes', None) if self.is_mounted else None
+        if callable(tree_nodes):
+            for block in widgets:
+                if isinstance(block, SummonBlock):
+                    for node in tree_nodes():
+                        block.set_node(node)
         # The newest page is the whole window, and it records both counts plus the
         # position the service reported: a page kept only as its widgets could not say
         # where the window starts once it is no longer the newest one.
@@ -1889,7 +1892,13 @@ class ChatLog(ReadOnlyScroll):
             # Anything that is not a continuation of the same response closes it.
             current = None
             current_index = None
-            if kind == 'user':
+            if kind == 'agent_message':
+                blocks.append(_user_widget(str(item.get('text') or ''), from_agent=True))
+                follows_tool_block = False
+            elif kind == 'agent_notice':
+                blocks.append(Static(Text(str(item.get('text') or ''), style='dim')))
+                follows_tool_block = False
+            elif kind == 'user':
                 blocks.append(
                     UserMessage(
                         _item_user_renderable(str(item.get('text') or ''), item.get('attachments') or ()),

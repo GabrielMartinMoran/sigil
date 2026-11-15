@@ -47,6 +47,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import UsageLimits
 
+from src.engine.agents.message_types import MessageTypes, origin
 from src.engine.agents.model_config import AgentModelConfig
 from src.engine.agents.model_defaults import ConfigScope, ModelDefaultsState
 from src.engine.agents.profile.models.agent_profile import AgentProfile
@@ -56,6 +57,7 @@ from src.engine.agents.step_budget import StepBudget
 from src.engine.agents.tree.models.agent_node import AgentNode
 from src.engine.agents.tree.models.node_status import NodeStatus
 from src.engine.agents.tree.models.summon_error import SummonError
+from src.engine.agents.tree.reports import report_view
 from src.engine.agents.turn_map import library_run_id
 from src.engine.agents.turn_timing import TurnTimings
 from src.engine.attachments.content import stored_content, stored_parts, user_content
@@ -244,6 +246,17 @@ class SessionRuntime:
     async def send(
         self, text: str, request_id: str | None = None, images: Sequence[IncomingImage] = ()
     ) -> dict[str, Any]:
+        """Accept user input without allowing clients to assign internal types."""
+        return await self._accept_message(text, request_id, images)
+
+    async def _accept_message(
+        self,
+        text: str,
+        request_id: str | None = None,
+        images: Sequence[IncomingImage] = (),
+        *,
+        message_origin: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Accepts a message durably; the consumer turns it or steers it.
 
         ``accepted`` keeps its meaning, ``request_id`` is the durable identity, and
@@ -276,7 +289,9 @@ class SessionRuntime:
             'SELECT kind, state FROM accepted_inputs WHERE session_id = ? AND request_id = ?',
             (self.session.id, identifier),
         )
-        accepted = self.composition.store.accept_input(self.session, identifier, cleaned, payload, kind)
+        accepted = self.composition.store.accept_input(
+            self.session, identifier, cleaned, payload, kind, origin=message_origin
+        )
         self._settled.clear()
         self._wake.set()
         if existing is None:
@@ -328,10 +343,14 @@ class SessionRuntime:
             return False
         if self._subagent_working():
             return False
+        nodes = [node for node in self.composition.summoner.waiting() if str(node.status) in ('done', 'failed')]
+        snapshots = [report_view(node) for node in nodes]
         reports = self.composition.summoner.take_reports()
         if not reports:
             return False
-        await self.send('\n\n'.join([*reports, WAKE_PROMPT]))
+        await self._accept_message(
+            '\n\n'.join([*reports, WAKE_PROMPT]), message_origin=origin('subagent_report', reports=snapshots)
+        )
         return True
 
     async def _consume(self) -> None:
@@ -561,7 +580,11 @@ class SessionRuntime:
                 async with agent.iter(
                     prompt,
                     message_history=history,
-                    capabilities=[ProcessEventStream(handler=self._stream), budget],
+                    capabilities=[
+                        ProcessEventStream(handler=self._stream),
+                        budget,
+                        MessageTypes(initial=(accepted.origin or origin()) if accepted else origin()),
+                    ],
                     model_settings=model_settings(composition.model_service),
                     usage_limits=UsageLimits(request_limit=None),
                 ) as run:

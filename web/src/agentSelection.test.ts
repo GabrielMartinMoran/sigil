@@ -63,3 +63,8 @@ void test('busy or pending selection does not submit another request', async () 
   assert.equal(await useStore.getState().selectAgent('reviewer'), false);
   assert.deepEqual(calls, []);
 });
+
+void test('tree changes refresh the authoritative subagent state', () => {
+  useStore.getState().applyEvent('tree_changed', {});
+  assert.deepEqual(calls, [{ path: '/api/state?session_id=session-a', body: null }]);
+});

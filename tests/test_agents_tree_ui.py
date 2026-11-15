@@ -292,17 +292,40 @@ def test_opening_the_debug_view_closes_the_node_view():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             first = _fill(app)
+            first.messages = [ModelRequest(parts=[UserPromptPart('child history')])]
+            app._history = [
+                ModelRequest(parts=[UserPromptPart('parent history')]),
+                ModelRequest(parts=[UserPromptPart('more parent')]),
+            ]
             async with app.run_test(size=(120, 40)) as pilot:
                 await app.open_subagent(first)
                 await pilot.pause()
                 assert app.subagent_open is True
 
-                app.action_toggle_debug()
-                await pilot.pause()
-
+                await pilot.press('alt+d')
                 assert app.subagent_open is False
                 assert app.debug_visible is True
+                from src.ui.widgets.debug_view import AgentDebugView
+
+                assert len(app.query_one(AgentDebugView).last_report.log) == 1
+                assert app.viewed_node_id() == first.id
                 assert app.query_one(ChatLog).display is False
+                assert app.query_one(PromptInput).disabled is True
+                await pilot.press('alt+d')
+                assert app.debug_visible is False
+                assert app.subagent_open is True
+                assert app.viewed_node_id() == first.id
+                assert app.query_one(AgentView).node.id == first.id
+                second = next(node for node in app.tree_nodes() if not node.is_root and node.id != first.id)
+                await pilot.press('alt+d')
+                await app.goto_node(second.id)
+                assert app.debug_visible is False
+                assert app.viewed_node_id() == second.id
+                await pilot.press('alt+d')
+                await pilot.press('alt+d')
+                assert app.subagent_open is True
+                assert app.viewed_node_id() == second.id
+                assert app.query_one(PromptInput).disabled is True
 
     asyncio.run(inner())
 
@@ -537,13 +560,14 @@ def test_node_view_refreshes_when_a_message_changes_without_a_count_change():
 
 
 def test_subagent_instructions_are_distinct_from_user_messages():
+    from src.engine.agents.message_types import origin, request
     from src.ui.widgets.chat_log import AgentMessageBlock, UserMessage
 
     async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             node = _fill(app, running='researcher')
-            node.messages = [ModelRequest(parts=[UserPromptPart('Investigate the project')])]
+            node.messages = [request('Investigate the project', origin('agent_message'))]
             async with app.run_test():
                 await app.open_subagent(node)
                 view = app.query_one(AgentView)

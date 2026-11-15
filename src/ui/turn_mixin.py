@@ -48,7 +48,9 @@ from textual import work
 from textual.css.query import NoMatches
 from textual.widgets import Static
 
+from src.engine.agents.message_types import MessageTypes, origin
 from src.engine.agents.step_budget import StepBudget
+from src.engine.agents.tree.reports import report_view
 from src.engine.agents.turn_timing import TurnTimings
 from src.engine.attachments.content import user_content
 from src.engine.attachments.image_attachment import ImageAttachment
@@ -644,8 +646,14 @@ class TurnMixin:
         # What a subagent sent while nothing was running: it travels with this
         # turn's prompt, before what the user typed, because it is the answer to
         # something the agent did earlier.
+        waiting = self._summoner.waiting() if self._summoner is not None else []
+        snapshots = [report_view(node) for node in waiting]
+        initial_origin = origin()
         pending = self._take_subagent_messages()
         if pending:
+            initial_origin = origin('subagent_report', reports=snapshots)
+            if not self._wake_pending:
+                initial_origin['user_text'] = text
             text = '\n\n'.join([*pending, text])
             if self._wake_pending:
                 # The turn exists because of these reports: the agent should not
@@ -713,7 +721,7 @@ class TurnMixin:
                 async with self._agent.iter(
                     user_content(text, attachments),
                     message_history=history,
-                    capabilities=[ProcessEventStream(handler=handler), budget],
+                    capabilities=[ProcessEventStream(handler=handler), budget, MessageTypes(initial=initial_origin)],
                     model_settings=self.model_settings(),
                     usage_limits=UsageLimits(request_limit=None),
                 ) as run:

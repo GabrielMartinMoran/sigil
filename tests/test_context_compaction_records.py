@@ -231,6 +231,13 @@ def test_child_request_does_not_replace_root_debug_snapshot_or_budget():
     assert capability.last_view is root_view
     assert capability.last_request is root_snapshot
     assert meter.budget() == root_budget
+    child_snapshot = capability.request_for_node('child')
+    assert child_snapshot is not None and child_snapshot.captured
+    assert child_snapshot.instructions_tokens > root_snapshot.instructions_tokens
+    assert capability.budget_for_node('child').instructions > root_budget.instructions
+    capability.reset()
+    assert capability.request_for_node('child') is None
+    assert capability.budget_for_node('child') is None
 
 
 def test_failed_prepared_request_retains_its_events_when_the_tail_is_reprepared():

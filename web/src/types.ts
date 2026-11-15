@@ -16,7 +16,7 @@ export type Attachment = {
 };
 
 export type TranscriptItem = {
-  kind: 'user' | 'assistant' | 'thinking' | 'tool_call' | 'tool_result' | 'subagent_report';
+  kind: 'user' | 'agent_message' | 'assistant' | 'thinking' | 'tool_call' | 'tool_result' | 'subagent_report';
   index: number;
   text?: string;
   /** Present on a user message that carried pictures; never the payload itself. */

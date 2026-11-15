@@ -1,18 +1,13 @@
-"""A woken turn is a report, not something the reader typed.
-
-A subagent's answer reaches the parent as an ordinary `user-prompt` part — the
-envelope followed by the wake sentence — because that is what makes it a durable row
-that survives a crash. The consequence lands on the projection: a client that paints
-the items has no tree, so the recognition has to happen where the items are built.
-"""
+"""Typed subagent reports project compactly without depending on the tree."""
 
 from __future__ import annotations
 
 import pytest
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
+from src.engine.agents.message_types import origin, request
 from src.engine.agents.tree.models.agent_node import AgentNode, NodeStatus
-from src.engine.agents.tree.reports import WAKE_PROMPT, split_reports
+from src.engine.agents.tree.reports import WAKE_PROMPT, report_view
 from src.engine.agents.tree.summoner import _envelope
 from src.server import views
 
@@ -41,7 +36,9 @@ def _turn(text: str) -> list[object]:
 def test_a_woken_turn_projects_as_a_report_and_not_as_a_user_message() -> None:
     """The squad's words are the squad's: they are not painted as the reader's."""
     node = _node()
-    items = views.transcript(_turn(_wake_prompt(node)), reports=(node,))
+    items = views.transcript(
+        [request(_wake_prompt(node), origin('subagent_report', reports=[report_view(node)]))], reports=(node,)
+    )
 
     assert [item['kind'] for item in items] == ['subagent_report']
     report = items[0]
@@ -55,14 +52,16 @@ def test_a_woken_turn_projects_as_a_report_and_not_as_a_user_message() -> None:
 def test_the_wake_sentence_does_not_survive_as_a_message_of_its_own() -> None:
     """The wake prompt is the service talking to itself, not a turn in the log."""
     node = _node()
-    items = views.transcript(_turn(_wake_prompt(node)), reports=(node,))
+    items = views.transcript(
+        [request(_wake_prompt(node), origin('subagent_report', reports=[report_view(node)]))], reports=(node,)
+    )
 
     assert all(item.get('text') != WAKE_PROMPT for item in items)
     assert 'user' not in [item['kind'] for item in items]
 
 
 def test_text_the_user_typed_is_never_swallowed_by_the_recognition() -> None:
-    """Recognition is an exact match against a saved result, not a marker."""
+    """A human message is never classified by its content."""
     node = _node()
     typed = f'look at this: {_envelope(node, node.result or "")}'
     items = views.transcript(_turn(typed), reports=(node,))
@@ -83,7 +82,14 @@ def test_a_report_followed_by_a_real_message_keeps_both() -> None:
     """The report is recognized and the rest is still the user's line."""
     node = _node()
     text = f'{_wake_prompt(node)}\n\nand now fix the tests'
-    items = views.transcript(_turn(text), reports=(node,))
+    items = views.transcript(
+        [
+            request(
+                text, {**origin('subagent_report', reports=[report_view(node)]), 'user_text': 'and now fix the tests'}
+            )
+        ],
+        reports=(node,),
+    )
 
     assert [item['kind'] for item in items] == ['subagent_report', 'user']
     assert items[1]['text'] == 'and now fix the tests'
@@ -102,7 +108,7 @@ def _conversation(node: AgentNode) -> list[object]:
     return [
         ModelRequest(parts=[UserPromptPart(content='a question')]),
         ModelResponse(parts=[TextPart(content='an answer')]),
-        ModelRequest(parts=[UserPromptPart(content=_wake_prompt(node))]),
+        request(_wake_prompt(node), origin('subagent_report', reports=[report_view(node)])),
         ModelRequest(parts=[UserPromptPart(content='after the report')]),
         ModelResponse(parts=[TextPart(content='a second answer')]),
     ]
@@ -122,12 +128,3 @@ def test_a_window_agrees_with_the_whole_projection_about_reports(limit: int | No
     assert window.first_index == oracle.first_index
     assert window.has_more == oracle.has_more
     assert window.total == oracle.total
-
-
-def test_the_split_reports_only_what_matches_and_returns_the_rest() -> None:
-    """The engine rule on its own: the envelope goes, the tail stays."""
-    node = _node()
-    reports, remaining = split_reports(f'{_wake_prompt(node)}\ntrailing words', [node])
-
-    assert [found.id for found in reports] == [node.id]
-    assert remaining == 'trailing words'

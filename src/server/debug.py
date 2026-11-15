@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.engine.context.meter.debug import build_debug_report
 from src.engine.context.meter.debug_wire import DEBUG_REPORT_ADAPTER
+from src.engine.context.meter.node_debug import node_debug_report
 from src.engine.context.meter.request import RequestSnapshot
 
 if TYPE_CHECKING:
@@ -51,16 +52,40 @@ class DebugDiagnostics:
         self._report: dict[str, Any] | None = None
         self._inflight: asyncio.Task[dict[str, Any]] | None = None
 
-    async def read(self, runtime: ServerRuntime | SessionRuntime) -> dict[str, Any]:
+    async def read(self, runtime: ServerRuntime | SessionRuntime, node_id: str | None = None) -> dict[str, Any]:
         """Shield shared calculation from disconnects and exclusive TUI workers."""
         if self._inflight is None or self._inflight.done():
-            self._inflight = asyncio.create_task(self._read_snapshot(runtime))
+            self._inflight = asyncio.create_task(self._read_snapshot(runtime, node_id))
         result = await asyncio.shield(self._inflight)
-        if result['session_id'] != runtime.session.id:
-            return await self.read(runtime)
+        if result['session_id'] != runtime.session.id or result.get('node_id') != node_id:
+            return await self.read(runtime, node_id)
         return result
 
-    async def _read_snapshot(self, runtime: ServerRuntime | SessionRuntime) -> dict[str, Any]:
+    async def _read_snapshot(
+        self, runtime: ServerRuntime | SessionRuntime, node_id: str | None = None
+    ) -> dict[str, Any]:
+        if node_id is not None:
+            node = runtime.node(node_id)
+            messages = node.run.all_messages() if node.run is not None else node.messages
+            owner_session_id = runtime.session.id
+            key = (
+                owner_session_id,
+                node.id,
+                runtime.hub.last_seq,
+                id(node.messages),
+                len(messages),
+                id(runtime.composition.context_capability.request_for_node(node.id)),
+            )
+            if key != self._key or self._report is None:
+                history = [replace(message, parts=[copy(part) for part in message.parts]) for message in messages]
+                snapshot = replace(node, messages=history, run=None)
+                capability = copy(runtime.composition.context_capability)
+                capability.strategy = capability._strategy_for_now()
+                capability.provider = None
+                report = await asyncio.to_thread(node_debug_report, snapshot, capability)
+                self._report = DEBUG_REPORT_ADAPTER.dump_python(report, mode='json')
+                self._key = key
+            return {'session_id': owner_session_id, 'node_id': node.id, 'report': self._report, 'timing': None}
         session_runtime = getattr(runtime, 'session_runtime', runtime)
         composition = runtime.composition
         capability = composition.context_capability

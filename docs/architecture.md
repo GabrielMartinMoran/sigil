@@ -2073,21 +2073,20 @@ leaves the reports for the wake that follows it; and a report an interrupted run
 left behind is never re-executed — the row is durable, so `start` marks it
 `interrupted` and `claim_next` does not claim it.
 
-The prompt is the reports' envelopes followed by `WAKE_PROMPT`, word for word the
-terminal's sentence, so both clients paint a woken turn as reports and not as
-something the user typed.
+The model prompt is the reports' envelopes followed by `WAKE_PROMPT`. Display
+classification is separate from that text: the service persists the input's
+`origin` and report snapshots with the accepted row. Each run's `MessageTypes`
+capability restores per-part types in message metadata after the model library
+merges request envelopes.
 
-That last part is the projection's job, not the renderer's. A woken turn is a
-`user-prompt` part like any other, so `views.transcript` recognizes the envelope —
-`src.engine.agents.tree.reports.split_reports`, an exact match against a result the
-tree already saved — and emits one `subagent_report` item per report, with the node's
-id, label and short id, instead of a `user` item. The wake sentence goes with the
-envelope it came with; anything written after it stays as the user's line. A window
-counts those items the same way (`_part_count`), so a page cannot start in the wrong
-place, and a caller that passes no nodes gets exactly the answer it had before. The
-terminal paints the item as its `SubagentReport` card — a click opens that execution —
-and the web client as its own collapsible line. The card names the report; the words
-live in the node, which is the same thing the in-process renderer does.
+Both transcript adapters use `src.engine.agents.message_types.input_views`.
+It emits one `subagent_report` item per saved snapshot, keeps explicitly marked
+user text as a user item, distinguishes agent messages, and hides internal
+notices. Untyped historical parts remain user input, even when their text looks
+like a report; neither prompt text nor the current tree determines the type.
+Window counts use the same projection policy, so pagination preserves item
+boundaries. The terminal paints a report as its clickable `SubagentReport` card,
+and the web client paints it as a collapsible line.
 
 ### The tests
 

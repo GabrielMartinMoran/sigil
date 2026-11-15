@@ -16,6 +16,7 @@ class DebugSnapshot:
     session_id: str
     report: DebugReport
     timing: str | None = None
+    node_id: str | None = None
 
 
 DEBUG_REPORT_ADAPTER = TypeAdapter(DebugReport)

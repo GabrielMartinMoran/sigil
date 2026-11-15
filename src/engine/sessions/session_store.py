@@ -21,6 +21,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 
@@ -364,17 +365,24 @@ class SessionStore:
         )
 
     def accept_input(
-        self, session: Session, request_id: str, text: str, images: list[ImageInput], kind: InputKind
+        self,
+        session: Session,
+        request_id: str,
+        text: str,
+        images: list[ImageInput],
+        kind: InputKind,
+        *,
+        origin: dict[str, Any] | None = None,
     ) -> AcceptedInput:
         """Accept one input, materializing a draft in the same transaction."""
         if not session._draft:
             with self.database.transaction() as conn:
-                return accept(conn, session.id, request_id, text, images, kind)
+                return accept(conn, session.id, request_id, text, images, kind, origin)
         pending: list[AcceptedInput] = []
         candidate = replace(session)
 
         def enqueue(conn: sqlite3.Connection) -> None:
-            pending.append(accept(conn, session.id, request_id, text, images, kind))
+            pending.append(accept(conn, session.id, request_id, text, images, kind, origin))
 
         self.save(candidate, _inside_transaction=enqueue)
         session.updated_at = candidate.updated_at

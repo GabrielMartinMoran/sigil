@@ -149,7 +149,10 @@ class AgentView(Vertical):
             chat = self.transcript
             await chat.clear()
             if messages != b'[]':
-                await chat.render_history(list(ModelMessagesTypeAdapter.validate_json(messages)), from_agent=True)
+                await chat.render_history(
+                    list(ModelMessagesTypeAdapter.validate_json(messages)),
+                    subagents=self.app.tree_nodes() if hasattr(self.app, 'tree_nodes') else (),
+                )
                 chat.finalize(close_pending=status.finished)
             elif status is NodeStatus.RUNNING:
                 await chat.add_notice('Waiting for the first step…', style='dim')
