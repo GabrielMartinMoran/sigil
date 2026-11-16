@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from pydantic import TypeAdapter
 
-from src.core.context.meter.debug import DebugReport
+from src.core.context.meter.debug_report import DebugReport
 
 
 @dataclass(frozen=True, slots=True)

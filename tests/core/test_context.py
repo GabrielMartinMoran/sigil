@@ -19,12 +19,13 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from src.core.context.capability import ContextViewCapability
 from src.core.context.context_budget import ContextBudget
+from src.core.context.context_view_capability import ContextViewCapability
 from src.core.context.instructions.workspace_instructions import WorkspaceInstructions
 from src.core.context.meter.context_meter import ContextMeter
 from src.core.context.meter.render import render_report
-from src.core.context.scope import ScopeSink, ScopeTracker
+from src.core.context.scope_sink import ScopeSink
+from src.core.context.scope_tracker import ScopeTracker
 from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 from src.core.context.strategy.passthrough_strategy import PassthroughStrategy
 from src.core.context.strategy.turns import split_prompts

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from src.core.context.instructions.workspace_instructions import WorkspaceInstructions
-from src.core.context.scope import ScopeTracker
+from src.core.context.scope_tracker import ScopeTracker
 from src.core.roadmap.roadmap_stores import RoadmapStores
 from src.core.sessions.session_store import SessionStore
 from src.core.skills.skill_registry import SkillRegistry

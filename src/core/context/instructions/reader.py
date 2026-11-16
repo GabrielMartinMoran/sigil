@@ -2,18 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
-
-@dataclass(frozen=True, slots=True)
-class CacheEntry:
-    """Content read from a file, with the invalidation key."""
-
-    mtime_ns: int
-    size: int
-    content: str
-    truncated: bool
+from src.core.context.instructions.cache_entry import CacheEntry
 
 
 def read_cached(path: Path, *, max_chars: int, cache: dict[Path, CacheEntry]) -> CacheEntry | None:

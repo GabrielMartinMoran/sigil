@@ -3,22 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 
+from src.core.context.meter.prompt_usage import PromptUsage
+from src.core.context.meter.tool_result_usage import ToolResultUsage
 from src.core.context.strategy.turns import split_prompts
 from src.core.context.tokens import estimate_message_tokens, estimate_tokens, part_text
-
-
-@dataclass(frozen=True, slots=True)
-class PromptUsage:
-    """Cost of one turn of the conversation."""
-
-    index: int
-    label: str
-    tokens: int
-    messages: int
 
 
 def _turn_label(turn: Sequence[ModelMessage]) -> str:
@@ -46,15 +37,6 @@ def turn_usage(messages: Sequence[ModelMessage]) -> list[PromptUsage]:
             )
         )
     return usage
-
-
-@dataclass(frozen=True, slots=True)
-class ToolResultUsage:
-    """Cost of a tool result, to find the ones that eat the window."""
-
-    tool_name: str
-    tokens: int
-    chars: int
 
 
 def heaviest_tool_results(messages: Sequence[ModelMessage], limit: int = 5) -> list[ToolResultUsage]:

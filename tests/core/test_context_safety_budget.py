@@ -10,9 +10,9 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
 
 from src.core.bootstrap import build_strategy
-from src.core.context.capability import ContextViewCapability
 from src.core.context.compaction.events import RECORD_KEY
 from src.core.context.context_budget import ContextBudget
+from src.core.context.context_view_capability import ContextViewCapability
 from src.core.context.meter.context_meter import ContextMeter
 from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 from src.core.settings import load_settings
@@ -48,7 +48,8 @@ def test_should_allow_unknown_window_and_record_the_missing_protection() -> None
 
 
 def test_should_use_measured_input_and_new_output_when_prefix_matches() -> None:
-    from src.core.context.input_estimate import estimate_input, history_fingerprint
+    from src.core.context.estimate_input import estimate_input
+    from src.core.context.history_fingerprint import history_fingerprint
 
     prefix = [ModelRequest(parts=[UserPromptPart('work')])]
     record = {'input_fingerprint': history_fingerprint(prefix), 'fixed_tokens': 200}
@@ -85,7 +86,7 @@ def test_should_reject_invalid_safety_configuration(values: dict[str, str]) -> N
 def test_should_reserve_reported_output_for_opaque_reasoning_after_compaction() -> None:
     from pydantic_ai.messages import ThinkingPart
 
-    from src.core.context.input_estimate import estimate_input
+    from src.core.context.estimate_input import estimate_input
 
     response = ModelResponse(
         parts=[ThinkingPart(content='', signature='encrypted', provider_name='openai'), TextPart('answer')],

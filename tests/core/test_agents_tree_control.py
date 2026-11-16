@@ -33,7 +33,7 @@ from src.core.agents.tree.models.node_status import NodeStatus
 from src.core.agents.tree.models.summon_error import SummonError
 from src.core.agents.tree.rendering import render_peers
 from src.core.agents.tree.tools import register_tree_tools
-from src.core.context.capability import ContextViewCapability
+from src.core.context.context_view_capability import ContextViewCapability
 from src.core.context.meter.context_meter import ContextMeter
 from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 from tests.support.agents_tree_control import (

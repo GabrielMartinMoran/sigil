@@ -20,11 +20,11 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.usage import RequestUsage
 
-from src.core.context.capability import ContextViewCapability
 from src.core.context.compaction.events import RECORD_KEY
 from src.core.context.compaction.identity import legacy_part_key, part_key
-from src.core.context.compaction.maintenance import receipts
+from src.core.context.compaction.receipts import receipts
 from src.core.context.context_budget import ContextBudget
+from src.core.context.context_view_capability import ContextViewCapability
 from src.core.context.meter.context_meter import ContextMeter
 from src.core.context.meter.cost import session_cost
 from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
@@ -162,7 +162,7 @@ def test_should_keep_ambiguous_reasoning_identities_instead_of_dropping_protecte
 
 
 def test_should_refuse_ambiguous_checkpoint_boundary() -> None:
-    from src.core.context.compaction.summary import summary_request
+    from src.core.context.compaction.summary_request_builder import summary_request
 
     timestamp = datetime(2026, 1, 1, tzinfo=UTC)
     messages = [ModelRequest(parts=[UserPromptPart('same', timestamp=timestamp)]) for _ in range(5)]

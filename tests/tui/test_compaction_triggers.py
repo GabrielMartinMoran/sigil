@@ -1,6 +1,6 @@
 """Compaction triggers remain explicit through persistence and display."""
 
-from src.core.context.compaction.events import CompactionEvent
+from src.core.context.compaction.compaction_event import CompactionEvent
 from src.core.context.compaction.projection import prepare
 from src.core.context.context_budget import ContextBudget
 from src.ui.widgets.debug_body import _compaction_label

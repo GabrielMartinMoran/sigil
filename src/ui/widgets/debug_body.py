@@ -9,9 +9,9 @@ from rich.console import Group, RenderableType
 from rich.table import Table
 from rich.text import Text
 
-from src.core.context.compaction.events import CompactionEvent
+from src.core.context.compaction.compaction_event import CompactionEvent
 from src.core.context.meter.cache import format_call_cost, format_call_time
-from src.core.context.meter.debug import DebugReport
+from src.core.context.meter.debug_report import DebugReport
 from src.ui.widgets.debug_styles import DYNAMIC_STYLE, PART_STYLES, cache_style, context_style
 
 

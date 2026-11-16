@@ -44,7 +44,7 @@ def test_real_agent_snapshot_excludes_the_response_it_has_not_received_yet() -> 
     from pydantic_ai import Agent
     from pydantic_ai.models.test import TestModel
 
-    from src.core.context.capability import ContextViewCapability
+    from src.core.context.context_view_capability import ContextViewCapability
     from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 
     async def run() -> None:

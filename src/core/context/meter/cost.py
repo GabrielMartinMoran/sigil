@@ -29,63 +29,19 @@ at all: the total is then a **floor**, marked `+`, instead of a smaller lie.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from genai_prices import calc_price
 from pydantic_ai.messages import ModelMessage, ModelResponse
 
 from src.core.context.compaction.maintenance import maintenance_responses
+from src.core.context.meter.session_cost import SessionCost
 
 EXACT_DECIMALS = 4
 """Decimals of `/context`. One request can cost a fraction of a cent."""
 
 SMALLEST_SHOWN = Decimal(1).scaleb(-EXACT_DECIMALS)
 """Below this an amount is a floor, not a zero: `< $0.0001`."""
-
-
-@dataclass(frozen=True, slots=True)
-class SessionCost:
-    """The bill of a session, and how much of it is known.
-
-    ``total`` is ``None`` only when there are requests and none of them could be
-    priced: a real zero (nothing sent yet) is ``Decimal(0)``.
-    """
-
-    total: Decimal | None = None
-    reported: int = 0
-    """Requests priced by the provider itself: the amount it is going to charge."""
-    estimated: int = 0
-    """Requests priced from a table: what they cost at the published rate."""
-    unpriced: int = 0
-    """Requests with usage that no table and no provider could price."""
-    unmeasured: int = 0
-    """Requests with no usage at all: an old session, or a provider that omits it."""
-
-    @property
-    def priced(self) -> int:
-        """Requests inside ``total``."""
-        return self.reported + self.estimated
-
-    @property
-    def requests(self) -> int:
-        """Requests the session sent, priced or not."""
-        return self.priced + self.unpriced + self.unmeasured
-
-    @property
-    def approximate(self) -> bool:
-        """Part of the total is a list price rather than a charge."""
-        return self.estimated > 0
-
-    @property
-    def partial(self) -> bool:
-        """Something was left out, so the total is a floor."""
-        return self.unpriced > 0 or self.unmeasured > 0
-
-    @property
-    def exact(self) -> bool:
-        """Every request was priced, and by the provider itself."""
-        return self.priced > 0 and not self.approximate and not self.partial
 
 
 def _amount(value: object) -> Decimal | None:

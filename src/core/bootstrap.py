@@ -50,12 +50,13 @@ from src.core.agents.tree.subagent_summoner import SubagentSummoner
 from src.core.agents.tree.summoner import current_agent_model
 from src.core.agents.tree.tools import register_tree_tools
 from src.core.attachments.tools import register_image_tools
-from src.core.context.capability import ContextViewCapability
 from src.core.context.compaction.compaction_policy import CompactionPolicy
 from src.core.context.compaction.coordinator import PolicyLookup
+from src.core.context.context_view_capability import ContextViewCapability
 from src.core.context.instructions.workspace_instructions import WorkspaceInstructions
 from src.core.context.meter.context_meter import ContextMeter
-from src.core.context.scope import ScopeSink, ScopeTracker
+from src.core.context.scope_sink import ScopeSink
+from src.core.context.scope_tracker import ScopeTracker
 from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 from src.core.context.strategy.context_strategy import ContextStrategy
 from src.core.context.strategy.passthrough_strategy import PassthroughStrategy

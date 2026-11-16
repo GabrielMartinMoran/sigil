@@ -60,7 +60,7 @@ from src.core.attachments.images import prepare_image
 from src.core.bootstrap import Composition
 from src.core.commands.catalog import owned_by
 from src.core.commands.command_owner import CommandOwner
-from src.core.context.meter.debug import DebugReport
+from src.core.context.meter.debug_report import DebugReport
 from src.core.context.meter.debug_snapshot import DebugSnapshot
 from src.core.interaction.models.question_item import QuestionItem
 from src.core.interaction.models.question_option import QuestionOption

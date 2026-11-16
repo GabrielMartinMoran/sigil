@@ -19,7 +19,8 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from src.core.context.images_cache import ImageVerdict, decide, occurrences
+from src.core.context.image_verdict import ImageVerdict
+from src.core.context.images_cache import decide, occurrences
 
 # --- helpers ---------------------------------------------------------------
 

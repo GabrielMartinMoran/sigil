@@ -195,7 +195,8 @@ def test_timeline_preserves_unmeasured_steps_and_previous_turn_while_waiting() -
 
 
 def test_timeline_marks_compaction_at_its_step() -> None:
-    from src.core.context.compaction.events import CompactionEvent, CompactionReason
+    from src.core.context.compaction.compaction_event import CompactionEvent
+    from src.core.context.compaction.compaction_reason import CompactionReason
 
     messages = [
         ModelRequest(parts=[UserPromptPart('first')]),

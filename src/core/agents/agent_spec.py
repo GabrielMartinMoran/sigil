@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from src.core.agents.profile.agent_registry import AgentRegistry
     from src.core.agents.retry_transient_model_errors import RetryTransientModelErrors
     from src.core.context.instructions.workspace_instructions import WorkspaceInstructions
-    from src.core.context.scope import ScopeTracker
+    from src.core.context.scope_tracker import ScopeTracker
     from src.core.skills.skill_registry import SkillRegistry
 
 

@@ -342,7 +342,7 @@ def test_switching_clears_the_scope(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     monkeypatch.chdir(repo)
 
     async def inner() -> None:
-        from src.core.context.scope import ScopeTracker
+        from src.core.context.scope_tracker import ScopeTracker
 
         scope = ScopeTracker(repo)
         app = _app(repo, tmp_path, scope=scope)

@@ -11,12 +11,12 @@ from typing import TYPE_CHECKING, Any
 from src.core.context.meter.debug import build_debug_report
 from src.core.context.meter.debug_snapshot import DEBUG_REPORT_ADAPTER
 from src.core.context.meter.node_debug import node_debug_report
-from src.core.context.meter.request import RequestSnapshot
+from src.core.context.meter.request_snapshot import RequestSnapshot
 
 if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
 
-    from src.core.context.capability import ContextViewCapability
+    from src.core.context.context_view_capability import ContextViewCapability
     from src.core.providers.snapshot import ModelSnapshot
     from src.server.server_runtime import ServerRuntime
     from src.server.session_runtime import SessionRuntime

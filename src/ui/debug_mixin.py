@@ -9,11 +9,12 @@ from pydantic_ai.messages import ModelMessage
 from textual import work
 from textual.css.query import NoMatches
 
-from src.core.context.meter.debug import DebugReport, build_debug_report
+from src.core.context.meter.debug import build_debug_report
 from src.core.context.meter.debug_render import render_debug_report
+from src.core.context.meter.debug_report import DebugReport
 from src.core.context.meter.debug_snapshot import DebugSnapshot
 from src.core.context.meter.node_debug import node_debug_report
-from src.core.context.meter.request import RequestSnapshot
+from src.core.context.meter.request_snapshot import RequestSnapshot
 from src.ui.service_client_error import ServiceClientError
 from src.ui.widgets.agent_debug_view import AgentDebugView
 from src.ui.widgets.agent_view import AgentView

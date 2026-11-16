@@ -9,7 +9,7 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
 
-from src.core.context.meter.debug import DebugReport
+from src.core.context.meter.debug_report import DebugReport
 from src.ui.widgets.debug_body import build_debug_body, build_debug_header
 from src.ui.widgets.read_only_scroll import ReadOnlyScroll
 

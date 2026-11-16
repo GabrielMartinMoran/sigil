@@ -10,7 +10,7 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-from src.core.context.capability import ContextViewCapability
+from src.core.context.context_view_capability import ContextViewCapability
 from src.core.context.meter.context_meter import ContextMeter
 from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 from src.core.sessions.session_store import SessionStore
@@ -272,7 +272,8 @@ def test_rendered_debug_tables_do_not_contain_message_content() -> None:
 
 def test_dynamic_instruction_rows_are_highlighted_without_coloring_static_rows() -> None:
     from src.core.context.meter.debug import build_debug_report
-    from src.core.context.meter.request import InstructionRow, RequestSnapshot
+    from src.core.context.meter.instruction_row import InstructionRow
+    from src.core.context.meter.request_snapshot import RequestSnapshot
     from src.ui.widgets.debug_body import _fixed_cost_table
 
     report = build_debug_report(
@@ -315,7 +316,8 @@ def test_debug_refresh_uses_live_history_instead_of_stale_session() -> None:
 def test_should_roundtrip_content_free_report_without_losing_styled_tables() -> None:
     from src.core.context.meter.debug import build_debug_report
     from src.core.context.meter.debug_snapshot import DEBUG_REPORT_ADAPTER
-    from src.core.context.meter.request import InstructionRow, RequestSnapshot
+    from src.core.context.meter.instruction_row import InstructionRow
+    from src.core.context.meter.request_snapshot import RequestSnapshot
     from tests.support.ui import render_text
 
     report = build_debug_report(

@@ -19,7 +19,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
 
-from src.core.context.meter.cost import SessionCost
+from src.core.context.meter.session_cost import SessionCost
 from src.core.mcp.config.loader import load_config
 from src.core.mcp.manager.mcp_manager import MCPManager
 from src.core.roadmap.models.todo_item import TodoItem

@@ -9,8 +9,8 @@ from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, TextPa
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 
-from src.core.context.capability import ContextViewCapability
 from src.core.context.compaction.records import recorded_state
+from src.core.context.context_view_capability import ContextViewCapability
 from src.core.context.meter.context_meter import ContextMeter
 from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 from tests.support.context_compaction_records import history

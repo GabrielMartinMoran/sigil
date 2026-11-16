@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 
+from src.core.context.compaction.summary_budget_exceeded import SummaryBudgetExceeded
 from src.core.context.context_budget import ContextBudget
 from src.core.context.tokens import estimate_messages_tokens
 
@@ -77,10 +78,6 @@ record the correction or unresolved conflict rather than silently assuming eithe
 
 SUMMARY_OUTPUT_TOKENS = 4096
 SUMMARY_TIMEOUT_SECONDS = 90
-
-
-class SummaryBudgetExceeded(ValueError):
-    """The auxiliary request cannot safely fit; no model call was made."""
 
 
 def _text_value(value: Any) -> Any:

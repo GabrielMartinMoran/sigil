@@ -9,8 +9,8 @@ from pydantic_ai.messages import ModelMessage
 
 from src.core.context.context_budget import DEFAULT_OUTPUT_RESERVE, DEFAULT_SAFETY_MARGIN_PERCENT, ContextBudget
 from src.core.context.meter.context_report import ContextReport
+from src.core.context.meter.context_snapshot import ContextSnapshot
 from src.core.context.meter.cost import session_cost
-from src.core.context.meter.snapshot import ContextSnapshot
 from src.core.context.meter.usage import heaviest_tool_results, turn_usage
 from src.core.context.strategy.view_result import ViewResult
 from src.core.context.tokens import estimate_messages_tokens, measured_tokens, projected_tokens

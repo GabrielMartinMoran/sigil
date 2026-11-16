@@ -2,10 +2,10 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserProm
 from pydantic_ai.usage import RequestUsage
 
 from src.core.context.context_budget import ContextBudget
+from src.core.context.meter.context_snapshot import ContextSnapshot
 from src.core.context.meter.debug import build_debug_report
 from src.core.context.meter.debug_render import render_debug_report
-from src.core.context.meter.request import RequestSnapshot
-from src.core.context.meter.snapshot import ContextSnapshot
+from src.core.context.meter.request_snapshot import RequestSnapshot
 
 
 def test_debug_turns_keep_steering_in_its_run() -> None:

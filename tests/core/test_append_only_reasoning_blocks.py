@@ -2,8 +2,10 @@
 
 from pydantic_ai.messages import ModelResponse, TextPart, ThinkingPart
 
+from src.core.context.compaction.compaction_event import POLICY_VERSION
+from src.core.context.compaction.compaction_state import CompactionState
 from src.core.context.compaction.coordinator import apply, plan
-from src.core.context.compaction.events import POLICY_VERSION, RECORD_KEY, CompactionState
+from src.core.context.compaction.events import RECORD_KEY
 
 
 def test_pressure_retains_the_five_newest_reasoning_parts_in_one_response() -> None:

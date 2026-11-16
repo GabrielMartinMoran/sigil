@@ -3,35 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
-from decimal import Decimal
+from dataclasses import replace
 
 from pydantic_ai.messages import ModelMessage, ModelResponse
 
+from src.core.context.compaction.compaction_event import POLICY_VERSION
 from src.core.context.compaction.compaction_policy import CompactionPolicy
-from src.core.context.compaction.events import POLICY_VERSION, RECORD_KEY
+from src.core.context.compaction.events import RECORD_KEY
 from src.core.context.context_budget import ContextBudget
+from src.core.context.replay_report import ReplayReport
 from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 from src.core.context.tokens import part_tokens
 from src.core.tooling.compaction_policies import ALL_COMPACTORS
-
-
-@dataclass(frozen=True, slots=True)
-class ReplayReport:
-    requests: int
-    input_tokens: int
-    common_prefix_tokens: int
-    compactions: int
-    summary_requests: int
-    blocked: bool
-
-    def input_cost(self, *, uncached: Decimal, cached: Decimal) -> Decimal:
-        """Hypothetical input-only cost per million tokens; no writes or auxiliary calls."""
-        if min(uncached, cached) < 0:
-            raise ValueError('prices must be non-negative')
-        return (
-            (self.input_tokens - self.common_prefix_tokens) * uncached + self.common_prefix_tokens * cached
-        ) / 1_000_000
 
 
 def _prefix_tokens(previous: Sequence[ModelMessage], current: Sequence[ModelMessage]) -> int:

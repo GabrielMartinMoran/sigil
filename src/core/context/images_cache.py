@@ -27,46 +27,13 @@ was ever there.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
-from enum import StrEnum
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart
 
 from src.core.agents.turn_map import library_run_id
+from src.core.context.image_occurrence import ImageOccurrence
+from src.core.context.image_verdict import ImageVerdict
 from src.core.context.images import image_part_tokens, is_image_part
-
-
-class ImageVerdict(StrEnum):
-    """What happens to one image occurrence in the view."""
-
-    KEEP = 'keep'
-    SUPERSEDED = 'superseded'
-    """A newer copy of the same picture is attached further on."""
-    EXPIRED = 'expired'
-    """Its turn is older than the window."""
-    OVER_BUDGET = 'over_budget'
-    """The pixel cap was spent before reaching it."""
-
-    @property
-    def travels(self) -> bool:
-        return self is ImageVerdict.KEEP
-
-
-@dataclass(frozen=True, slots=True)
-class ImageOccurrence:
-    """One image part, where it lives and when it was loaded."""
-
-    identifier: str
-    turn: str | None
-    turn_index: int
-    tokens: int
-    message_index: int
-    part_index: int
-    item_index: int
-
-    @property
-    def position(self) -> tuple[int, int, int]:
-        return (self.message_index, self.part_index, self.item_index)
 
 
 def occurrences(messages: Sequence[ModelMessage]) -> list[ImageOccurrence]:

@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from src.core.context.meter.cost import SessionCost
+from src.core.context.meter.session_cost import SessionCost
 from src.ui.widgets.context_state import ContextState
 
 

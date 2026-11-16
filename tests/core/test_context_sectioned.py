@@ -29,7 +29,7 @@ def test_skill_sections_escape_content_and_preserve_resource_states(tmp_path: Pa
 def test_skill_catalog_precedes_project_and_loaded_skills(tmp_path: Path) -> None:
     from src.core.agents.agent import create_agent
     from src.core.context.instructions.workspace_instructions import WorkspaceInstructions
-    from src.core.context.scope import ScopeTracker
+    from src.core.context.scope_tracker import ScopeTracker
 
     agent = create_agent(
         SkillRegistry([('project', tmp_path)]), workspace=WorkspaceInstructions(tmp_path), scope=ScopeTracker(tmp_path)

@@ -5,12 +5,13 @@ from __future__ import annotations
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.usage import RequestUsage
 
-from src.core.context.compaction.events import CompactionEvent, CompactionReason
+from src.core.context.compaction.compaction_event import CompactionEvent
+from src.core.context.compaction.compaction_reason import CompactionReason
 from src.core.context.context_budget import ContextBudget
+from src.core.context.meter.context_snapshot import ContextSnapshot
 from src.core.context.meter.debug import build_debug_report
 from src.core.context.meter.debug_render import render_debug_report
-from src.core.context.meter.request import RequestSnapshot
-from src.core.context.meter.snapshot import ContextSnapshot
+from src.core.context.meter.request_snapshot import RequestSnapshot
 
 _EMPTY = ContextSnapshot(measured=None, projected=None, window=None, budget=ContextBudget(window=None))
 

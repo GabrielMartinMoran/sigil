@@ -121,7 +121,7 @@ def test_startup_notices_are_rendered(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_subagent_unknown_window_notice_is_rendered_and_detached(tmp_path: Path) -> None:
-    from src.core.context.capability import ContextViewCapability
+    from src.core.context.context_view_capability import ContextViewCapability
     from src.core.context.meter.context_meter import ContextMeter
     from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 
@@ -468,10 +468,10 @@ def test_checkpoint_throttles_writes_but_force_saves(monkeypatch: pytest.MonkeyP
 
 def test_context_command_shows_breakdown_and_scope(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    from src.core.context.capability import ContextViewCapability
+    from src.core.context.context_view_capability import ContextViewCapability
     from src.core.context.instructions.workspace_instructions import WorkspaceInstructions
     from src.core.context.meter.context_meter import ContextMeter
-    from src.core.context.scope import ScopeTracker
+    from src.core.context.scope_tracker import ScopeTracker
     from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 
     async def inner() -> None:

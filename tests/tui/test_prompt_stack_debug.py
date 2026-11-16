@@ -2,7 +2,10 @@
 
 from src.core.context.meter.context_meter import ContextMeter
 from src.core.context.meter.debug import build_debug_report
-from src.core.context.meter.request import InstructionRow, PromptSection, RequestSnapshot, ToolRow
+from src.core.context.meter.instruction_row import InstructionRow
+from src.core.context.meter.prompt_section import PromptSection
+from src.core.context.meter.request_snapshot import RequestSnapshot
+from src.core.context.meter.tool_row import ToolRow
 from src.ui.widgets.debug_body import build_debug_body
 from tests.support.ui import render_text
 

@@ -10,8 +10,8 @@ from __future__ import annotations
 import dataclasses
 import json
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field, replace
+from collections.abc import Callable, Sequence
+from dataclasses import asdict, replace
 from typing import Any
 
 from pydantic_ai.messages import (
@@ -26,12 +26,11 @@ from pydantic_ai.messages import (
 )
 
 from src.core.context.compaction.clock import step_count
+from src.core.context.compaction.compaction_event import CompactionEvent
+from src.core.context.compaction.compaction_plan import CompactionPlan
 from src.core.context.compaction.compaction_policy import DEFAULT_POLICY, CompactionPolicy
-from src.core.context.compaction.events import (
-    CompactionEvent,
-    CompactionReason,
-    CompactionState,
-)
+from src.core.context.compaction.compaction_reason import CompactionReason
+from src.core.context.compaction.compaction_state import CompactionState
 from src.core.context.compaction.identity import boundary_index, part_key
 from src.core.context.compaction.records import recorded_state
 from src.core.context.strategy.rewriting import accepts_replayed_reasoning
@@ -41,16 +40,6 @@ from src.core.tooling.encoded import encoded
 from src.core.tooling.tool_compactor import ToolCompactor
 
 PolicyLookup = Callable[[str], ToolCompactor | None]
-
-
-@dataclass(frozen=True, slots=True)
-class CompactionPlan:
-    state: CompactionState = field(default_factory=CompactionState)
-    events: tuple[CompactionEvent, ...] = ()
-    recorded_events: int = 0
-    """How many of ``events`` came from the transcript instead of this projection."""
-    exceptions: tuple[str, ...] = ()
-    effective_policy: Mapping[str, Any] = field(default_factory=dict)
 
 
 def plan(

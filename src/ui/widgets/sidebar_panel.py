@@ -33,7 +33,7 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
 
-from src.core.context.meter.cost import SessionCost
+from src.core.context.meter.session_cost import SessionCost
 from src.core.roadmap.models.todo_item import TodoItem
 from src.core.roadmap.roadmap_store import RoadmapStore
 from src.ui.money_format import compact_usd

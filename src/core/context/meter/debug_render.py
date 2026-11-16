@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from src.core.context.compaction.events import CompactionEvent
+from src.core.context.compaction.compaction_event import CompactionEvent
 from src.core.context.meter.cache import format_call_cost, format_call_time
-from src.core.context.meter.debug import DebugMessage, DebugReport
+from src.core.context.meter.debug_message import DebugMessage
+from src.core.context.meter.debug_report import DebugReport
 
 
 def _n(value: float | None) -> str:

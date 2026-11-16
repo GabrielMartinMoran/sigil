@@ -14,7 +14,7 @@ from pydantic_ai.messages import (
 from src.core.context.meter.context_meter import ContextMeter
 from src.core.context.meter.debug import build_debug_report
 from src.core.context.meter.debug_render import render_debug_report
-from src.core.context.meter.request import RequestSnapshot
+from src.core.context.meter.request_snapshot import RequestSnapshot
 from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 from tests.support.context_compaction_records import history, pressured_window, run_recorded
 

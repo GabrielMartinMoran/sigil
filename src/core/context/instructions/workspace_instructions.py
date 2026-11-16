@@ -18,6 +18,7 @@ import os
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
+from src.core.context.instructions.cache_entry import CacheEntry
 from src.core.context.instructions.constants import (
     AGENTS_FILENAME,
     FALLBACK_FILENAME,
@@ -25,7 +26,7 @@ from src.core.context.instructions.constants import (
     MAX_TOTAL_CHARS,
 )
 from src.core.context.instructions.instruction_block import InstructionBlock
-from src.core.context.instructions.reader import CacheEntry, read_cached
+from src.core.context.instructions.reader import read_cached
 from src.core.context.instructions.workspace_file import WorkspaceFile
 
 

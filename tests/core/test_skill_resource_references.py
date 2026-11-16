@@ -57,7 +57,7 @@ def test_partial_resource_rebuilds_after_compaction_and_multiple_sqlite_resumes(
     from pydantic_ai.models.test import TestModel
 
     from src.core.agents.agent import create_agent
-    from src.core.context.capability import ContextViewCapability
+    from src.core.context.context_view_capability import ContextViewCapability
     from src.core.context.meter.context_meter import ContextMeter
     from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
     from src.core.sessions.session_store import SessionStore

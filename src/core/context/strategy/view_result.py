@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING
 from pydantic_ai.messages import ModelMessage
 
 if TYPE_CHECKING:
-    from src.core.context.compaction.coordinator import CompactionPlan
-    from src.core.context.compaction.events import CompactionEvent
-    from src.core.context.compaction.summary import SummaryRequest
+    from src.core.context.compaction.compaction_event import CompactionEvent
+    from src.core.context.compaction.compaction_plan import CompactionPlan
+    from src.core.context.compaction.summary_request import SummaryRequest
 
 
 @dataclass(frozen=True, slots=True)

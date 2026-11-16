@@ -14,10 +14,12 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 
-from src.core.context.capability import ContextBudgetExceeded, ContextViewCapability
+from src.core.context.compaction.context_policy_version_error import ContextPolicyVersionError
 from src.core.context.compaction.events import RECORD_KEY
-from src.core.context.compaction.records import ContextPolicyVersionError, recorded_state
+from src.core.context.compaction.records import recorded_state
 from src.core.context.context_budget import ContextBudget
+from src.core.context.context_budget_exceeded import ContextBudgetExceeded
+from src.core.context.context_view_capability import ContextViewCapability
 from src.core.context.meter.context_meter import ContextMeter
 from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 from src.core.sessions.session_store import SessionStore

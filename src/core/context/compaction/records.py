@@ -9,18 +9,11 @@ from typing import Any
 from pydantic_ai.messages import ModelMessage, ThinkingPart
 
 from src.core.context.compaction.clock import step_of_message, tool_call_steps
-from src.core.context.compaction.events import (
-    LEGACY_POLICY_VERSION,
-    POLICY_VERSION,
-    RECORD_KEY,
-    CompactionEvent,
-    CompactionState,
-)
+from src.core.context.compaction.compaction_event import POLICY_VERSION, CompactionEvent
+from src.core.context.compaction.compaction_state import CompactionState
+from src.core.context.compaction.context_policy_version_error import ContextPolicyVersionError
+from src.core.context.compaction.events import LEGACY_POLICY_VERSION, RECORD_KEY
 from src.core.context.compaction.identity import legacy_part_key, part_key
-
-
-class ContextPolicyVersionError(ValueError):
-    """A newer policy record needs an explicit migration, not silent reinterpretation."""
 
 
 def recorded_state(messages: Sequence[ModelMessage]) -> tuple[CompactionState, tuple[CompactionEvent, ...]]:

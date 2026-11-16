@@ -16,12 +16,8 @@ usage, which is what tells whether the prompt prefix is stable.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
-from datetime import datetime
-from decimal import Decimal
-from typing import Annotated
+from dataclasses import replace
 
-from pydantic import PlainSerializer
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -37,88 +33,27 @@ from pydantic_ai.messages import (
 )
 
 from src.core.agents.turn_map import library_run_id
-from src.core.context.compaction.events import CompactionEvent
-from src.core.context.meter.cache import CacheSummary, RequestCacheRow, cache_summary, request_cache_rows
+from src.core.context.compaction.compaction_event import CompactionEvent
+from src.core.context.meter.cache import cache_summary, request_cache_rows
+from src.core.context.meter.context_snapshot import ContextSnapshot
 from src.core.context.meter.cost import request_amount
-from src.core.context.meter.request import RequestSnapshot
-from src.core.context.meter.snapshot import ContextSnapshot
+from src.core.context.meter.debug_message import DebugMessage
+from src.core.context.meter.debug_part import DebugPart
+from src.core.context.meter.debug_projection import DebugProjection
+from src.core.context.meter.debug_report import DebugReport
+from src.core.context.meter.debug_turn import DebugTurn
+from src.core.context.meter.request_cache_row import RequestCacheRow
+from src.core.context.meter.request_snapshot import RequestSnapshot
 from src.core.context.strategy.view_result import ViewResult
 from src.core.context.tokens import estimate_message_tokens, estimate_tokens, part_text, part_tokens, tool_return_text
 
 # The immutable maps inside an event have an explicit content-free wire shape.
-DebugEvent = Annotated[CompactionEvent, PlainSerializer(CompactionEvent.as_row)]
 
 DEFAULT_PART_CHARS = 700
 """How many characters of each part are shown. The real cost goes separately, in tokens."""
 
 DEFAULT_PART_LINES = 6
 """How many preview lines are shown. A tool result is 1% signal and 99% lines."""
-
-
-@dataclass(frozen=True, slots=True)
-class DebugPart:
-    """One part of a message, with its cost and a bounded preview."""
-
-    kind: str
-    label: str
-    tokens: int
-    chars: int
-    preview: str
-    unknown_tokens: bool = False
-    clipped_chars: int = 0
-    """Characters not shown because of the preview clipping."""
-
-    @property
-    def clipped(self) -> bool:
-        return self.clipped_chars > 0
-
-
-@dataclass(frozen=True, slots=True)
-class DebugMessage:
-    """A message with its parts, measured in tokens."""
-
-    index: int
-    role: str
-    """``request`` (what goes into the model) or ``response`` (what the model produced)."""
-    tokens: int
-    parts: tuple[DebugPart, ...] = ()
-    instructions: tuple[str, ...] = ()
-    """Names of the instruction blocks that travel with this request."""
-
-    @property
-    def kinds(self) -> str:
-        """One-line summary: ``user · tool_return ×3``."""
-        if not self.parts:
-            return '(empty)'
-        counts: dict[str, int] = {}
-        for part in self.parts:
-            counts[part.kind] = counts.get(part.kind, 0) + 1
-        return ' · '.join(f'{kind} ×{count}' if count > 1 else kind for kind, count in counts.items())
-
-
-@dataclass(frozen=True, slots=True)
-class DebugTurn:
-    index: int
-    last_input: int | None
-    input_total: int
-    cache_read: int
-    unmeasured: int
-    measured: int
-    cache_ratio: float | None
-    events: tuple[DebugEvent, ...] = ()
-    """The compaction boundaries that fell inside this turn."""
-    steps: tuple[RequestCacheRow | None, ...] = ()
-    steps_before: int = 0
-    step_events: tuple[tuple[DebugEvent, ...], ...] = ()
-    step_costs: tuple[Decimal | None, ...] = ()
-    """Available charges, with estimated values identified separately."""
-    step_cost_estimated: tuple[bool, ...] = ()
-    step_timestamps: tuple[datetime | None, ...] = ()
-
-    @property
-    def context_used(self) -> int | None:
-        """The prompt size of the turn's last request: what the turn cost in context."""
-        return self.last_input
 
 
 def _turn_groups(messages: list[ModelMessage]) -> list[list[ModelMessage]]:
@@ -223,51 +158,6 @@ def debug_turns(
             )
         )
     return tuple(turns)
-
-
-@dataclass(frozen=True, slots=True)
-class DebugProjection:
-    """Content-free projection metadata; never retain messages or summary text."""
-
-    diagnostics: dict[str, object] | None = None
-    budget_exceeded: bool = False
-    summary_error: str | None = None
-    events: tuple[DebugEvent, ...] = ()
-    recorded_events: int = 0
-
-
-@dataclass(frozen=True, slots=True)
-class DebugReport:
-    """Everything the debug view paints."""
-
-    snapshot: ContextSnapshot
-    request: RequestSnapshot
-    cache: CacheSummary
-    turns: tuple[DebugTurn, ...] = ()
-    log: tuple[DebugMessage, ...] = ()
-    view: tuple[DebugMessage, ...] = ()
-    view_result: DebugProjection | None = None
-    log_tokens: int = 0
-    view_tokens: int = 0
-    window: int | None = None
-    effort: str | None = None
-    model: str | None = None
-    strategies_note: str = ''
-
-    @property
-    def dropped_tokens(self) -> int:
-        """Log tokens the agent will not see on the next request."""
-        return max(0, self.log_tokens - self.view_tokens)
-
-    @property
-    def reduction_percent(self) -> float | None:
-        if not self.log_tokens:
-            return None
-        return self.dropped_tokens / self.log_tokens * 100.0
-
-    @property
-    def has_view(self) -> bool:
-        return self.view_result is not None
 
 
 def _clip(text: str, limit: int, max_lines: int) -> tuple[str, int]:

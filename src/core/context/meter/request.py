@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from pydantic_ai.messages import ThinkingPart
 
+from src.core.context.meter.instruction_row import InstructionRow
+from src.core.context.meter.prompt_section import PromptSection
+from src.core.context.meter.request_snapshot import RequestSnapshot
+from src.core.context.meter.tool_row import ToolRow
 from src.core.context.tokens import estimate_tokens, part_tokens
 
 if TYPE_CHECKING:
@@ -32,70 +35,6 @@ _PROMPT_KINDS = {
 }
 
 _KNOWN_PROMPT_KINDS = frozenset(_PROMPT_KINDS.values()) | {'thinking', 'text', 'compaction'}
-
-
-@dataclass(frozen=True, slots=True)
-class InstructionRow:
-    """An instruction block as it was sent."""
-
-    name: str
-    dynamic: bool
-    """Whether the content is recomputed on every request (and can therefore break the prefix)."""
-    tokens: int
-    preview: str
-
-
-@dataclass(frozen=True, slots=True)
-class ToolRow:
-    """A tool schema as it was sent."""
-
-    name: str
-    tokens: int
-    deferred: bool = False
-    """Whether the schema was deferred (it does not travel until the history reveals it)."""
-
-
-@dataclass(frozen=True, slots=True)
-class PromptSection:
-    """A sent history part's identity and cost, never its contents."""
-
-    kind: str
-    label: str
-    tokens: int | None
-
-
-@dataclass(frozen=True, slots=True)
-class RequestSnapshot:
-    """Fixed sections and content-free history costs of the last prepared request."""
-
-    instructions: tuple[InstructionRow, ...] = ()
-    tools: tuple[ToolRow, ...] = ()
-    native_tools: int = 0
-    """Native provider tools (they do not travel as a JSON schema)."""
-
-    sections: tuple[PromptSection, ...] = ()
-    history_captured: bool = False
-    skills: dict[str, int] = field(default_factory=dict)
-    captured: bool = False
-    """Whether the snapshot comes from a real request. When false, the zeros are not a measurement.
-
-    It happens in a freshly loaded session with `/load`: there is history, but no
-    request ran in this process and therefore there are no observed instructions or
-    tools.
-    """
-
-    @property
-    def instructions_tokens(self) -> int:
-        return sum(row.tokens for row in self.instructions)
-
-    @property
-    def tools_tokens(self) -> int:
-        return sum(row.tokens for row in self.tools)
-
-    @property
-    def dynamic_instructions(self) -> tuple[InstructionRow, ...]:
-        """Blocks recomputed per request: candidates to invalidate the cache."""
-        return tuple(row for row in self.instructions if row.dynamic)
 
 
 def _preview(text: str, limit: int = 120) -> str:

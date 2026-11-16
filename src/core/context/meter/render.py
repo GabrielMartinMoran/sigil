@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from src.core.context.meter.context_report import ContextReport
-from src.core.context.meter.cost import SessionCost, format_usd
+from src.core.context.meter.cost import format_usd
+from src.core.context.meter.session_cost import SessionCost
 
 
 def _fmt_tokens(value: int | None) -> str:

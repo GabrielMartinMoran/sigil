@@ -19,19 +19,17 @@ from dataclasses import replace
 from pydantic_ai.messages import ModelMessage, ThinkingPart, ToolCallPart, ToolReturnPart
 
 from src.core.context.compaction.clock import step_count
+from src.core.context.compaction.compaction_event import CompactionEvent
+from src.core.context.compaction.compaction_plan import CompactionPlan
 from src.core.context.compaction.compaction_policy import DEFAULT_POLICY, CompactionPolicy
-from src.core.context.compaction.coordinator import (
-    CompactionPlan,
-    PolicyLookup,
-    apply,
-    exceptions,
-    plan,
-)
-from src.core.context.compaction.events import CompactionEvent, CompactionReason
+from src.core.context.compaction.compaction_reason import CompactionReason
+from src.core.context.compaction.coordinator import PolicyLookup, apply, exceptions, plan
 from src.core.context.compaction.maintenance import last_summary_failure
 from src.core.context.compaction.projection_measurements import ProjectionMeasurements
 from src.core.context.compaction.records import last_projection_error
-from src.core.context.compaction.summary import Summary, SummaryRequest, summary_request
+from src.core.context.compaction.summary import Summary
+from src.core.context.compaction.summary_request import SummaryRequest
+from src.core.context.compaction.summary_request_builder import summary_request
 from src.core.context.context_budget import ContextBudget
 from src.core.context.strategy.rewriting import apply_image_removals, image_removals
 from src.core.context.strategy.view_result import ViewResult

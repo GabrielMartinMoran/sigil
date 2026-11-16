@@ -6,10 +6,11 @@ import logging
 from copy import copy
 
 from src.core.agents.tree.models.agent_node import AgentNode
-from src.core.context.capability import ContextViewCapability
+from src.core.context.context_view_capability import ContextViewCapability
 from src.core.context.meter.context_meter import ContextMeter
-from src.core.context.meter.debug import DebugReport, build_debug_report
-from src.core.context.meter.request import RequestSnapshot
+from src.core.context.meter.debug import build_debug_report
+from src.core.context.meter.debug_report import DebugReport
+from src.core.context.meter.request_snapshot import RequestSnapshot
 
 
 def node_debug_report(node: AgentNode, capability: ContextViewCapability | None) -> DebugReport:

@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
     from src.core.agents.profile.agent_registry import AgentRegistry
     from src.core.context.instructions.workspace_instructions import WorkspaceInstructions
-    from src.core.context.scope import ScopeTracker
+    from src.core.context.scope_tracker import ScopeTracker
     from src.core.skills.skill_registry import SkillRegistry
 
 _SIGIL_PROMPT = os.path.join(os.path.dirname(__file__), 'prompts', 'sigil.md')

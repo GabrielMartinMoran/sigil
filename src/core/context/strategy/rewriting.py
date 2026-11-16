@@ -14,8 +14,9 @@ from pydantic_ai.messages import (
 )
 
 from src.core.context.compaction.identity import part_key
+from src.core.context.image_verdict import ImageVerdict
 from src.core.context.images import is_image_part
-from src.core.context.images_cache import ImageVerdict, decide
+from src.core.context.images_cache import decide
 
 
 def accepts_replayed_reasoning(part: ThinkingPart, provider: str | None) -> bool:

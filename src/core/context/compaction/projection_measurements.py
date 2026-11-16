@@ -12,7 +12,8 @@ from collections.abc import Sequence
 from pydantic_ai.messages import ModelMessage
 
 from src.core.context.context_budget import ContextBudget
-from src.core.context.input_estimate import InputEstimate, estimate_input
+from src.core.context.estimate_input import estimate_input
+from src.core.context.input_estimate import InputEstimate
 from src.core.context.tokens import estimate_messages_tokens
 
 

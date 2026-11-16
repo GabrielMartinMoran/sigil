@@ -6,8 +6,8 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
-from src.core.context.capability import ContextViewCapability
 from src.core.context.compaction.records import recorded_state
+from src.core.context.context_view_capability import ContextViewCapability
 from src.core.context.meter.context_meter import ContextMeter
 from src.core.context.meter.debug import debug_turns
 from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy

@@ -2,12 +2,13 @@
 
 from dataclasses import replace
 
-from src.core.context.compaction.events import CompactionEvent
+from src.core.context.compaction.compaction_event import CompactionEvent
 from src.core.context.meter.context_meter import ContextMeter
-from src.core.context.meter.debug import DebugTurn, build_debug_report
+from src.core.context.meter.debug import build_debug_report
 from src.core.context.meter.debug_render import render_debug_report
 from src.core.context.meter.debug_snapshot import DEBUG_REPORT_ADAPTER
-from src.core.context.meter.request import RequestSnapshot
+from src.core.context.meter.debug_turn import DebugTurn
+from src.core.context.meter.request_snapshot import RequestSnapshot
 from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 
 

@@ -54,10 +54,10 @@ from src.core.agents.tree.subagent_summoner import SubagentSummoner
 from src.core.agents.tree.tools import register_tree_tools, render_tree_table
 from src.core.attachments.images import prepare_image
 from src.core.attachments.tools import image_id_for, register_image_tools
-from src.core.context.capability import ContextViewCapability
 from src.core.context.compaction.events import RECORD_KEY
 from src.core.context.context_budget import ContextBudget
-from src.core.context.input_estimate import history_fingerprint
+from src.core.context.context_view_capability import ContextViewCapability
+from src.core.context.history_fingerprint import history_fingerprint
 from src.core.context.meter.context_meter import ContextMeter
 from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 from src.core.files.models.file_content import FileContent
