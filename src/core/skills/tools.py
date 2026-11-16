@@ -26,7 +26,6 @@ from src.core.skills.tool_models.resource_content import ResourceContent
 from src.core.skills.tool_models.script_run_result import ScriptRunResult
 from src.core.skills.tool_models.skill_resource_info import SkillResourceInfo
 from src.core.skills.tool_models.skill_summary import SkillSummary
-from src.core.tooling.catalog import ToolCatalog
 from src.core.tooling.compaction_policies import (
     LIST_SKILLS_COMPACTOR,
     LOAD_SKILL_COMPACTOR,
@@ -34,8 +33,10 @@ from src.core.tooling.compaction_policies import (
     RUN_SKILL_SCRIPT_COMPACTOR,
 )
 from src.core.tooling.logging import ToolLogger
-from src.core.tooling.permission import ToolGroup, ToolPermission
-from src.core.tooling.registrar import ToolRegistrar
+from src.core.tooling.tool_catalog import ToolCatalog
+from src.core.tooling.tool_group import ToolGroup
+from src.core.tooling.tool_permission import ToolPermission
+from src.core.tooling.tool_registrar import ToolRegistrar
 
 _SKILLS = ToolPermission(groups=(ToolGroup.SKILLS,))
 _SKILL_RESOURCE = ToolPermission(groups=(ToolGroup.SKILLS,), resource='name')

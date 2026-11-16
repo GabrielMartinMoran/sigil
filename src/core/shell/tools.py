@@ -10,12 +10,14 @@ from typing import Any
 from src.core.shell.models.run_tool_output import RunToolOutput
 from src.core.shell.runner import execute_commands
 from src.core.shell.running import RunningCommands
-from src.core.tooling.catalog import ToolCatalog
 from src.core.tooling.compaction_policies import RUN_COMPACTOR
 from src.core.tooling.logging import ToolLogger
-from src.core.tooling.permission import ResourceKind, ToolGroup, ToolPermission
-from src.core.tooling.presentation import ToolSummary
-from src.core.tooling.registrar import ToolRegistrar
+from src.core.tooling.resource_kind import ResourceKind
+from src.core.tooling.tool_catalog import ToolCatalog
+from src.core.tooling.tool_group import ToolGroup
+from src.core.tooling.tool_permission import ToolPermission
+from src.core.tooling.tool_registrar import ToolRegistrar
+from src.core.tooling.tool_summary import ToolSummary
 from src.core.web.download import DEFAULT_TIMEOUT
 
 _SHELL = ToolPermission(groups=(ToolGroup.RUN,), resource='cmds', kind=ResourceKind.COMMAND)

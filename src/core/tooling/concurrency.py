@@ -19,37 +19,12 @@ separate step.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 
-
-@dataclass(frozen=True, slots=True)
-class SiblingCall:
-    """A call emitted before the current one in the same response."""
-
-    tool_name: str
-    args: dict[str, Any]
-    tool_call_id: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class ConcurrencyContext:
-    """What a guard sees when deciding whether the call can run in parallel."""
-
-    tool_name: str
-    """Name of the tool that is about to run."""
-
-    args: dict[str, Any]
-    """Effective args of the call, with the defaults applied."""
-
-    tool_call_id: str | None
-    """Id of the current call, if the model or the framework assigned one."""
-
-    siblings: tuple[SiblingCall, ...]
-    """Calls emitted before this one in the same response, in order."""
-
+from src.core.tooling.concurrency_context import ConcurrencyContext
+from src.core.tooling.sibling_call import SiblingCall
 
 ConcurrencyGuard = Callable[[ConcurrencyContext], str | None]
 """Returns the reason for the conflict, or ``None`` if the call can run."""
@@ -109,14 +84,4 @@ def earlier_siblings(
     return tuple(_as_sibling(part) for part in parts[:index])
 
 
-__all__ = [
-    'ConcurrencyContext',
-    'ConcurrencyGuard',
-    'SiblingCall',
-    'ToolConflict',
-    'earlier_siblings',
-]
-
-
-class ToolConflict(Exception):
-    """The call cannot run alongside its siblings of the same response."""
+__all__ = ['ConcurrencyContext', 'SiblingCall', 'earlier_siblings']

@@ -18,49 +18,14 @@ a tool's signature changes.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
-from enum import StrEnum
+from collections.abc import Mapping
 from typing import Any
 
-PERMISSION_METADATA_KEY = 'sigil_permission'
+from src.core.tooling.resource_kind import ResourceKind
+from src.core.tooling.tool_group import ToolGroup
+from src.core.tooling.tool_permission import PERMISSION_METADATA_KEY, ToolPermission
+
 """Key of the declaration inside ``ToolDefinition.metadata``."""
-
-
-class ToolGroup(StrEnum):
-    """The coarse vocabulary a profile can rule on.
-
-    One group per tool, chosen by what the tool *does* and not by the module it
-    lives in: an agent that must not touch the disk denies ``read`` and ``write``
-    and keeps the rest.
-    """
-
-    RUN = 'run'
-    """Executes a process: the shell, and the scripts bundled inside a skill."""
-
-    READ = 'read'
-    """Reads a file. The path is the resource."""
-
-    WRITE = 'write'
-    """Creates or edits a file. The path is the resource."""
-
-    WEB = 'web'
-    """Reaches the network. The search query or the URL is the resource."""
-
-    SKILLS = 'skills'
-    """Lists, loads and reads Agent Skills and their bundled resources."""
-
-    MCP = 'mcp'
-    """The meta-tools over MCP servers, resources and prompts."""
-
-    ASK = 'ask'
-    """Talks to the user mid-turn."""
-
-    ROADMAP = 'roadmap'
-    """Publishes the task roadmap the UI shows."""
-
-    SUMMON = 'summon'
-    """Starts, resumes, steers and stops subagents: the tree, as one capability."""
 
 
 BUILTIN_TOOLS: Mapping[str, ToolGroup] = {
@@ -110,47 +75,6 @@ ALL_SCOPES = frozenset({'*', 'all'})
 ``*: deny`` does not even parse and the rule has to be quoted as ``'*': deny``.
 The unquoted spelling is the one the docs use, and both reach the same rule.
 """
-
-
-class ResourceKind(StrEnum):
-    """How the resource value is normalized before it meets a pattern."""
-
-    TEXT = 'text'
-    """Matched as given: a search query, a skill name, a server name."""
-
-    PATH = 'path'
-    """Matched as a path, both workspace-relative and absolute."""
-
-    COMMAND = 'command'
-    """Matched as a shell command, with its whitespace collapsed."""
-
-
-@dataclass(frozen=True, slots=True)
-class ToolPermission:
-    """What a tool is, for the permission filter of the active profile."""
-
-    groups: tuple[str, ...]
-    """Coarse categories the tool belongs to; matched as exact names."""
-
-    resource: str | None = None
-    """Argument whose value the resource patterns are matched against."""
-
-    kind: ResourceKind = ResourceKind.TEXT
-    """How that value is normalized before matching."""
-
-    resolve_resource: Callable[[Mapping[str, Any]], tuple[str, ...]] | None = None
-    """Resolve resources that cannot be trusted directly from arguments."""
-
-    def metadata(self) -> dict[str, Any]:
-        """The declaration as tool metadata."""
-        return {
-            PERMISSION_METADATA_KEY: {
-                'groups': [str(group) for group in self.groups],
-                'resource': self.resource,
-                'kind': str(self.kind),
-                'resolve_resource': self.resolve_resource,
-            }
-        }
 
 
 def has_wildcard(scope: str) -> bool:

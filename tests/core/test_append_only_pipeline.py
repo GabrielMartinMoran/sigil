@@ -63,6 +63,26 @@ def test_crossing_the_trigger_reduces_old_payloads_and_reasoning_in_one_batch() 
     assert result.summary_request is not None
 
 
+def test_compaction_preserves_failed_tool_results_and_bounds_long_errors() -> None:
+    for error in ('short error', 'error details ' * 100):
+        messages = conversation(30)
+        original = dataclasses.replace(messages[2].parts[0], content=error, outcome='failed')
+        messages[2] = dataclasses.replace(messages[2], parts=[original])
+
+        result = AppendOnlyStrategy(lookup=ALL_COMPACTORS.get).view(messages, budget_for(messages, share=0.9))
+
+        reduced = next(
+            part for part in parts_of(result.messages) if isinstance(part, ToolReturnPart) and part.tool_call_id == 'c0'
+        )
+        assert reduced.outcome == 'failed'
+        if len(error) <= 600:
+            assert reduced.content == error
+        else:
+            assert len(reduced.content) <= 600
+            assert 'error truncated:' in reduced.content
+        assert messages[2].parts[0] == original
+
+
 def test_default_thresholds_trigger_compaction_and_request_a_summary_only_if_needed() -> None:
     strategy = AppendOnlyStrategy()
     below_trigger = conversation(30)

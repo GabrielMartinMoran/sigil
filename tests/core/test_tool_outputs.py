@@ -67,10 +67,10 @@ def test_should_allow_tools_to_declare_output_without_changing_model_result() ->
     from pydantic_ai import Agent
     from pydantic_ai.models.test import TestModel
 
-    from src.core.tooling.logging import ToolLoggerHub
-    from src.core.tooling.outputs import ToolOutput
-    from src.core.tooling.presentation import ToolSummary
-    from src.core.tooling.registrar import ToolRegistrar
+    from src.core.tooling.tool_logger_hub import ToolLoggerHub
+    from src.core.tooling.tool_output import ToolOutput
+    from src.core.tooling.tool_registrar import ToolRegistrar
+    from src.core.tooling.tool_summary import ToolSummary
 
     events = []
     agent = Agent(TestModel(call_tools=[]))

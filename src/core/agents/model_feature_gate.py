@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.capabilities import AbstractCapability
 
-from src.core.tooling.registrar import REQUIRES_METADATA_KEY
+from src.core.tooling.tool_registrar import REQUIRES_METADATA_KEY
 
 if TYPE_CHECKING:
     from pydantic_ai.messages import ToolCallPart

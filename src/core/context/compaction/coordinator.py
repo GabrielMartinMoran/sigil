@@ -36,8 +36,9 @@ from src.core.context.compaction.identity import boundary_index, part_key
 from src.core.context.compaction.records import recorded_state
 from src.core.context.strategy.rewriting import accepts_replayed_reasoning
 from src.core.context.tokens import estimate_tokens
-from src.core.sessions.titling import shorten
-from src.core.tooling.compaction import GENERIC_COMPACTOR, ToolCompactor, contains_binary, encoded
+from src.core.tooling.compaction import GENERIC_COMPACTOR, contains_binary, shorten
+from src.core.tooling.encoded import encoded
+from src.core.tooling.tool_compactor import ToolCompactor
 
 PolicyLookup = Callable[[str], ToolCompactor | None]
 

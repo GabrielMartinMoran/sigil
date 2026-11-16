@@ -9,9 +9,11 @@ from typing import Any
 
 from src.core.mcp.config_models.mcp_server_spec import MCPServerSpec
 from src.core.mcp.server.naming import display_name
-from src.core.tooling.events import ToolCallEvent, preview
-from src.core.tooling.logging import ToolLogger, emit_tool_event
+from src.core.tooling.emit_tool_event import emit_tool_event
+from src.core.tooling.events import preview
+from src.core.tooling.logging import ToolLogger
 from src.core.tooling.outputs import present_output
+from src.core.tooling.tool_call_event import ToolCallEvent
 
 
 def tool_hook(spec: MCPServerSpec, logger: ToolLogger | None) -> Callable[..., Any]:

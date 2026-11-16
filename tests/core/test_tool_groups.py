@@ -35,7 +35,8 @@ from src.core.roadmap.tools import register_roadmap_tools
 from src.core.shell.tools import register_shell_tools
 from src.core.skills.skill_registry import SkillRegistry
 from src.core.skills.tools import register_skill_tools
-from src.core.tooling.permission import BUILTIN_TOOLS, GROUP_NAMES, PERMISSION_METADATA_KEY, ToolGroup, permission_of
+from src.core.tooling.permission import BUILTIN_TOOLS, GROUP_NAMES, PERMISSION_METADATA_KEY, permission_of
+from src.core.tooling.tool_group import ToolGroup
 from src.core.web.tools import register_web_tools
 
 

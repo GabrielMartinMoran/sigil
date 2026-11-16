@@ -9,21 +9,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel
 
-from src.core.tooling.presentation import ToolSummary
+from src.core.tooling.tool_output import ToolOutput
 
 MAX_OUTPUT_CHARS = 40_000
 MAX_ITEMS = 100
-
-
-@dataclass(frozen=True, slots=True)
-class ToolOutput:
-    text: str
-    summary: ToolSummary | None = None
 
 
 OutputPresenter = Callable[[Any], ToolOutput]

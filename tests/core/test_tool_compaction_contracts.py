@@ -26,8 +26,11 @@ from src.core.skills.tool_models.loaded_skill import LoadedSkill
 from src.core.skills.tool_models.resource_content import ResourceContent as SkillResourceContent
 from src.core.skills.tool_models.script_run_result import ScriptRunResult
 from src.core.skills.tool_models.skill_summary import SkillSummary
-from src.core.tooling.compaction import GENERIC_COMPACTOR, ToolCompactor, compact_json, encoded, normalize, shorten
+from src.core.tooling.compaction import GENERIC_COMPACTOR, compact_json, shorten
 from src.core.tooling.compaction_policies import ALL_COMPACTORS
+from src.core.tooling.encoded import encoded
+from src.core.tooling.normalize import normalize
+from src.core.tooling.tool_compactor import ToolCompactor
 from src.core.web.models.page_content import PageContent
 from src.core.web.models.search_response import SearchResponse
 from src.core.web.models.search_result import SearchResult
@@ -121,6 +124,21 @@ def test_every_compactor_handles_its_arguments(name) -> None:
     reduced = compactor.compact_input(args)
     assert isinstance(reduced, dict)
     assert len(encoded(reduced)) <= len(encoded(args))
+
+
+def test_file_compaction_handles_plain_text_and_preserves_line_breaks() -> None:
+    content = 'first line\nsecond line\n' * 100
+    compactor = ALL_COMPACTORS['read_file']
+
+    plain = compactor.compact_output(content)
+    assert plain.startswith('first line\nsecond line\n')
+    assert 'tool result truncated:' in plain
+    assert len(plain) <= 800
+
+    structured = compactor.compact_output({'path': 'file.py', 'content': content})
+    assert structured['path'] == 'file.py'
+    assert structured['content'].startswith('first line\nsecond line\n')
+    assert len(structured['content']) <= 800
 
 
 def test_generic_json_preserves_validity_and_aggregate_budget_with_escaping() -> None:

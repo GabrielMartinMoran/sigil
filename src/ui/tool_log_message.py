@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from textual.message import Message
 
-from src.core.tooling.events import ToolCallEvent
+from src.core.tooling.tool_call_event import ToolCallEvent
 
 
 class ToolLogMessage(Message):

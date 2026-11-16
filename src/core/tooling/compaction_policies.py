@@ -22,9 +22,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from src.core.sessions.titling import shorten
-from src.core.tooling.compaction import Compactor, ToolCompactor, contains_binary
+from src.core.tooling.compaction import contains_binary, shorten
 from src.core.tooling.compaction_constants import SEMANTIC_COMPACT_CHARS
+from src.core.tooling.tool_compactor import Compactor, ToolCompactor
 
 
 def _limit(name: str) -> int:

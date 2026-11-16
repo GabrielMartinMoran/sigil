@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.core.tooling.events import ToolCallEvent
+from src.core.tooling.tool_call_event import ToolCallEvent
 from src.ui.tool_log_message import ToolLogMessage
 
 if TYPE_CHECKING:

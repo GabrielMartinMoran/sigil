@@ -44,7 +44,7 @@ from src.core.agents.tree.models.agent_node import AgentNode
 from src.core.attachments.content import describe_attachments, images_in
 from src.core.attachments.image_attachment import ImageAttachment
 from src.core.context.images import image_size
-from src.core.tooling.presentation import ToolSummary
+from src.core.tooling.tool_summary import ToolSummary
 from src.ui.palette import color
 from src.ui.widgets.agent_message_block import AgentMessageBlock
 from src.ui.widgets.assistant_block import AssistantBlock

@@ -28,7 +28,8 @@ from typing import TYPE_CHECKING, Any
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ToolFailed
 
-from src.core.tooling.permission import ResourceKind, permission_of, resource_values
+from src.core.tooling.permission import permission_of, resource_values
+from src.core.tooling.resource_kind import ResourceKind
 
 if TYPE_CHECKING:
     from pydantic_ai.messages import ToolCallPart

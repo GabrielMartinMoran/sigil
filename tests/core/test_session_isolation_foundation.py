@@ -152,7 +152,8 @@ def test_conflict_guard_resolves_relative_and_absolute_paths_in_given_root(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     from src.core.files.conflicts import same_file_conflict
-    from src.core.tooling.concurrency import ConcurrencyContext, SiblingCall
+    from src.core.tooling.concurrency_context import ConcurrencyContext
+    from src.core.tooling.sibling_call import SiblingCall
 
     root = tmp_path / 'project'
     root.mkdir()
@@ -648,7 +649,8 @@ def test_registered_tool_callbacks_follow_the_bound_root(tmp_path: Path, monkeyp
 
     from src.core.files.conflicts import same_file_conflict
     from src.core.files.paths import execution_workspace
-    from src.core.tooling.concurrency import ConcurrencyContext, SiblingCall
+    from src.core.tooling.concurrency_context import ConcurrencyContext
+    from src.core.tooling.sibling_call import SiblingCall
 
     composed, bound, outside = (tmp_path / name for name in ('composed', 'bound', 'outside'))
     for root in (composed, bound, outside):

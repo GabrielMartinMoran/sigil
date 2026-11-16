@@ -42,7 +42,8 @@ from typing import Any
 
 from src.core.agents.profile.models.agent_parse_error import AgentParseError
 from src.core.files.paths import workspace_root
-from src.core.tooling.permission import ALL_SCOPES, ResourceKind, scope_is_known, scope_problem
+from src.core.tooling.permission import ALL_SCOPES, scope_is_known, scope_problem
+from src.core.tooling.resource_kind import ResourceKind
 
 _HOME_PREFIXES = ('~/', '$HOME/', '${HOME}/')
 _WHITESPACE = re.compile(r'\s+')

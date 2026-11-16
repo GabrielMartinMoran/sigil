@@ -11,11 +11,11 @@ from pydantic_ai import RunContext
 
 from sigil_tools import ToolContext
 from src.core.extensions.manager import ExtensionManager
-from src.core.tooling.catalog import ToolCatalog
 from src.core.tooling.compaction import GENERIC_COMPACTOR
 from src.core.tooling.logging import ToolLogger
 from src.core.tooling.outputs import register_output
-from src.core.tooling.registrar import ToolRegistrar
+from src.core.tooling.tool_catalog import ToolCatalog
+from src.core.tooling.tool_registrar import ToolRegistrar
 
 
 def register_extensions(

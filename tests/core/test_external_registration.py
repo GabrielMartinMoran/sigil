@@ -7,7 +7,7 @@ from pydantic_ai.models.function import FunctionModel
 
 from src.core.extensions.manager import ExtensionManager
 from src.core.extensions.registration import register_extensions
-from src.core.tooling.catalog import ToolCatalog
+from src.core.tooling.tool_catalog import ToolCatalog
 
 
 def test_external_tool_reaches_agent_and_declares_compaction(tmp_path: Path) -> None:

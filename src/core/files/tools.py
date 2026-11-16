@@ -27,12 +27,15 @@ from src.core.files.text import (
     preview,
     split_lines,
 )
-from src.core.tooling.catalog import ToolCatalog
 from src.core.tooling.compaction_policies import PATCH_FILE_COMPACTOR, READ_FILE_COMPACTOR, WRITE_FILE_COMPACTOR
 from src.core.tooling.logging import ToolLogger
-from src.core.tooling.permission import ResourceKind, ToolGroup, ToolPermission
-from src.core.tooling.presentation import ToolSummary, human_bytes
-from src.core.tooling.registrar import ToolRegistrar
+from src.core.tooling.presentation import human_bytes
+from src.core.tooling.resource_kind import ResourceKind
+from src.core.tooling.tool_catalog import ToolCatalog
+from src.core.tooling.tool_group import ToolGroup
+from src.core.tooling.tool_permission import ToolPermission
+from src.core.tooling.tool_registrar import ToolRegistrar
+from src.core.tooling.tool_summary import ToolSummary
 
 _READ = ToolPermission(groups=(ToolGroup.READ,), resource='path', kind=ResourceKind.PATH)
 _WRITE = ToolPermission(groups=(ToolGroup.WRITE,), resource='path', kind=ResourceKind.PATH)

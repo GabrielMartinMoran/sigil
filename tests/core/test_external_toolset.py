@@ -6,7 +6,7 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
 from src.core.extensions.extension_toolset import ExtensionToolset
-from src.core.tooling.catalog import ToolCatalog
+from src.core.tooling.tool_catalog import ToolCatalog
 
 
 def test_lazy_load_and_execute_project_tool_after_authorization(tmp_path: Path) -> None:

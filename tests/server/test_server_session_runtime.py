@@ -37,7 +37,7 @@ from src.core.interaction.models.question_item import QuestionItem
 from src.core.interaction.models.question_option import QuestionOption
 from src.core.settings import load_settings
 from src.core.storage.accepted_inputs import AcceptedInputs
-from src.core.tooling.events import ToolCallEvent
+from src.core.tooling.tool_call_event import ToolCallEvent
 from src.server import session_runtime as session_runtime_module
 from src.server.event_hub import EventHub
 from src.server.ownership_error import OwnershipError

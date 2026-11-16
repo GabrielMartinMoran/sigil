@@ -54,8 +54,8 @@ from src.core.settings import SigilSettings, load_settings
 from src.core.shell import running as running_commands
 from src.core.storage.database_path import database_path
 from src.core.themes import ThemeRegistry
-from src.core.tooling.logging import ToolLoggerHub
-from src.core.tooling.presentation import ToolSummary
+from src.core.tooling.tool_logger_hub import ToolLoggerHub
+from src.core.tooling.tool_summary import ToolSummary
 from src.core.workspace.workspace_manager import WorkspaceManager
 from src.server.diagnostics import record
 from src.ui.activity_mixin import ActivityMixin

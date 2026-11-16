@@ -8,11 +8,12 @@ from typing import Any, Literal
 
 from ddgs import DDGS
 
-from src.core.tooling.catalog import ToolCatalog
 from src.core.tooling.compaction_policies import READ_URL_COMPACTOR, WEB_SEARCH_COMPACTOR
 from src.core.tooling.logging import ToolLogger
-from src.core.tooling.permission import ToolGroup, ToolPermission
-from src.core.tooling.registrar import ToolRegistrar
+from src.core.tooling.tool_catalog import ToolCatalog
+from src.core.tooling.tool_group import ToolGroup
+from src.core.tooling.tool_permission import ToolPermission
+from src.core.tooling.tool_registrar import ToolRegistrar
 from src.core.web.limits import MAX_PAGE_CHARS, MAX_SEARCH_RESULTS
 from src.core.web.models.page_content import PageContent
 from src.core.web.models.search_response import SearchResponse

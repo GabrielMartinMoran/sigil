@@ -87,8 +87,8 @@ from src.core.shell.running import RunningCommands
 from src.core.shell.tools import register_shell_tools
 from src.core.skills.skill_registry import SkillRegistry
 from src.core.skills.tools import register_skill_tools
-from src.core.tooling.catalog import ToolCatalog
-from src.core.tooling.logging import ToolLoggerHub
+from src.core.tooling.tool_catalog import ToolCatalog
+from src.core.tooling.tool_logger_hub import ToolLoggerHub
 from src.core.web.tools import register_web_tools
 from src.core.workspace.workspace_manager import WorkspaceManager
 

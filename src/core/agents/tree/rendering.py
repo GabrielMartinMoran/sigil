@@ -6,7 +6,8 @@ import html
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from src.core.tooling.permission import ResourceKind, ToolGroup
+from src.core.tooling.resource_kind import ResourceKind
+from src.core.tooling.tool_group import ToolGroup
 
 if TYPE_CHECKING:
     from src.core.agents.profile.agent_registry import AgentRegistry

@@ -21,7 +21,7 @@ from rich.text import Text
 from src.core.preferences import PreferencesStore
 from src.core.sessions.session_store import SessionStore
 from src.core.shell.models.run_tool_output import RunToolOutput
-from src.core.tooling.presentation import ToolSummary
+from src.core.tooling.tool_summary import ToolSummary
 from src.ui.sigil_app import SigilApp
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.rows import fit

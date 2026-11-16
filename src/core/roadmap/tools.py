@@ -12,11 +12,12 @@ from src.core.roadmap.models.todo_item import TodoItem
 from src.core.roadmap.models.todo_status import TodoStatus
 from src.core.roadmap.roadmap_store import RoadmapStore
 from src.core.roadmap.roadmap_stores import RoadmapStores
-from src.core.tooling.catalog import ToolCatalog
 from src.core.tooling.compaction_policies import UPDATE_ROADMAP_COMPACTOR
 from src.core.tooling.logging import ToolLogger
-from src.core.tooling.permission import ToolGroup, ToolPermission
-from src.core.tooling.registrar import ToolRegistrar
+from src.core.tooling.tool_catalog import ToolCatalog
+from src.core.tooling.tool_group import ToolGroup
+from src.core.tooling.tool_permission import ToolPermission
+from src.core.tooling.tool_registrar import ToolRegistrar
 
 _ROADMAP = ToolPermission(groups=(ToolGroup.ROADMAP,))
 

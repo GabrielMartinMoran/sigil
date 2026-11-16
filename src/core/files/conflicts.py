@@ -12,7 +12,7 @@ from pathlib import Path
 
 from src.core.files.models.file_tool_error import FileToolError
 from src.core.files.paths import resolve
-from src.core.tooling.concurrency import ConcurrencyContext
+from src.core.tooling.concurrency_context import ConcurrencyContext
 
 MUTATING_TOOLS = frozenset({'patch_file', 'write_file'})
 """Tools that rewrite a file and therefore cannot overlap."""

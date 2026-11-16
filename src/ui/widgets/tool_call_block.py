@@ -15,7 +15,8 @@ from textual.widgets import Static
 
 from src.core.files.text import preview
 from src.core.tooling.outputs import present_output
-from src.core.tooling.presentation import ToolSummary, display_name
+from src.core.tooling.presentation import display_name
+from src.core.tooling.tool_summary import ToolSummary
 from src.ui.palette import color
 from src.ui.widgets.chat_style import FAILURE_LINES, GUTTER
 from src.ui.widgets.chat_text import format_duration, format_tool_args, link_urls, output_lines, truncate_output

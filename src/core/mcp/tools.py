@@ -15,7 +15,6 @@ from src.core.mcp.tool_models.prompt_result_info import PromptResultInfo
 from src.core.mcp.tool_models.resource_content import ResourceContent
 from src.core.mcp.tool_models.resource_info import ResourceInfo
 from src.core.mcp.tool_models.server_status import ServerStatus
-from src.core.tooling.catalog import ToolCatalog
 from src.core.tooling.compaction_policies import (
     GET_MCP_PROMPT_COMPACTOR,
     LIST_MCP_PROMPTS_COMPACTOR,
@@ -24,8 +23,10 @@ from src.core.tooling.compaction_policies import (
     READ_MCP_RESOURCE_COMPACTOR,
 )
 from src.core.tooling.logging import ToolLogger
-from src.core.tooling.permission import ToolGroup, ToolPermission
-from src.core.tooling.registrar import ToolRegistrar
+from src.core.tooling.tool_catalog import ToolCatalog
+from src.core.tooling.tool_group import ToolGroup
+from src.core.tooling.tool_permission import ToolPermission
+from src.core.tooling.tool_registrar import ToolRegistrar
 
 _MCP = ToolPermission(groups=(ToolGroup.MCP,))
 _MCP_SERVER = ToolPermission(groups=(ToolGroup.MCP,), resource='server')

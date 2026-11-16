@@ -32,7 +32,6 @@ from pydantic_ai.exceptions import ToolFailed
 from src.core.agents.tree.models.summon_error import SummonError
 from src.core.agents.tree.rendering import SUMMON_GROUP, SUMMON_TOOL
 from src.core.agents.tree.summoner import SigilDeps, SubagentSummoner, SummonMode
-from src.core.tooling.catalog import ToolCatalog
 from src.core.tooling.compaction_policies import (
     ACK_NOTIFICATIONS_COMPACTOR,
     KILL_SUBAGENT_COMPACTOR,
@@ -41,8 +40,9 @@ from src.core.tooling.compaction_policies import (
     SUMMON_COMPACTOR,
 )
 from src.core.tooling.logging import ToolLogger
-from src.core.tooling.permission import ToolPermission
-from src.core.tooling.registrar import ToolRegistrar
+from src.core.tooling.tool_catalog import ToolCatalog
+from src.core.tooling.tool_permission import ToolPermission
+from src.core.tooling.tool_registrar import ToolRegistrar
 
 if TYPE_CHECKING:
     from pydantic_ai import Agent

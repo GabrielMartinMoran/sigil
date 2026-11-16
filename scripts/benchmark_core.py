@@ -83,8 +83,8 @@ from src.core.skills.rendering import render_loaded_skills
 from src.core.skills.skill_registry import SkillRegistry
 from src.core.skills.tools import register_skill_tools
 from src.core.storage.database import Database
-from src.core.tooling.logging import ToolLoggerHub
 from src.core.tooling.outputs import present_output
+from src.core.tooling.tool_logger_hub import ToolLoggerHub
 from src.core.tooling.wrapper import wrap_tool
 from src.core.web.tools import register_web_tools
 

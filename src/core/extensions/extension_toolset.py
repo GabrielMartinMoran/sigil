@@ -14,9 +14,9 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 from sigil_tools import ToolContext
 from src.core.extensions.manager import ExtensionManager
 from src.core.extensions.registration import register_extensions
-from src.core.tooling.catalog import ToolCatalog
 from src.core.tooling.logging import ToolLogger
 from src.core.tooling.outputs import unregister_output
+from src.core.tooling.tool_catalog import ToolCatalog
 
 
 class ExtensionToolset(AbstractToolset[Any]):

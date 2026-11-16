@@ -251,7 +251,9 @@ def test_the_shipped_set_has_an_agent_and_a_subagent() -> None:
 def test_the_shipped_scout_exposes_research_without_direct_mutation_tools() -> None:
     """Shell access is unrestricted; read-only behavior is a prompt contract."""
     from src.core.agents.profile.permissions import Effect
-    from src.core.tooling.permission import BUILTIN_TOOLS, ResourceKind, ToolGroup
+    from src.core.tooling.permission import BUILTIN_TOOLS
+    from src.core.tooling.resource_kind import ResourceKind
+    from src.core.tooling.tool_group import ToolGroup
 
     permissions = AgentRegistry([('builtin', _builtin_root())], active='scout').require('scout').permissions
     allowed = {

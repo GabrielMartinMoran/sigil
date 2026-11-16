@@ -32,7 +32,8 @@ from src.core.agents.profile.models.agent_parse_error import AgentParseError
 from src.core.agents.profile.permissions import Effect, ToolPermissions, parse_permissions
 from src.core.agents.profile.tool_permissions_capability import DENIED_PREFIX
 from src.core.mcp.tools import register_mcp_tools
-from src.core.tooling.permission import ToolGroup, ToolPermission
+from src.core.tooling.tool_group import ToolGroup
+from src.core.tooling.tool_permission import ToolPermission
 
 FRONTMATTER = '---\nname: {name}\ndescription: hi\n{extra}---\nbody\n'
 

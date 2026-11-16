@@ -26,10 +26,11 @@ The rules a declaration must keep:
 
 from __future__ import annotations
 
-import json
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Any
+
+from src.core.tooling.encoded import encoded
+from src.core.tooling.tool_compactor import ToolCompactor
 
 GENERIC_LIMIT_CHARS = 500
 """What an external tool keeps when nobody can say what matters in its payload."""
@@ -41,7 +42,6 @@ The label says *what* was shortened —a tool result, an argument— because "so
 missing" is not enough to decide whether the call has to be made again.
 """
 
-Compactor = Callable[[Any], Any]
 """``value -> compacted value``. Pure and total."""
 
 
@@ -59,22 +59,6 @@ def shorten(text: str, limit: int, *, label: str = '') -> str:
         notice = OMITTED.format(label=prefix, omitted=len(text) - head)
         head = max(0, limit - len(notice))
     return text[:head] + notice
-
-
-def normalize(value: Any) -> Any:
-    """Live models and their stored JSON form use exactly the same policy path."""
-    if callable(getattr(value, 'model_dump', None)):
-        return normalize(value.model_dump())
-    if isinstance(value, Mapping):
-        return {key: normalize(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [normalize(item) for item in value]
-    return value
-
-
-def encoded(value: Any) -> str:
-    """The JSON size used by the generic policy, including escaping and separators."""
-    return json.dumps(normalize(value), ensure_ascii=False, default=str)
 
 
 def contains_binary(value: Any) -> bool:
@@ -164,44 +148,6 @@ def compact_json(value: Any, limit: int = GENERIC_LIMIT_CHARS) -> str:
     return text
 
 
-@dataclass(frozen=True, slots=True)
-class ToolCompactor:
-    """What a tool keeps of its arguments and of its result when it is compacted."""
-
-    input: Compactor
-    """Reduces the arguments of the call."""
-
-    output: Compactor
-    """Reduces the result of the call."""
-
-    preserve: frozenset[str] = frozenset()
-    """Argument names that are never shortened: paths, ids, and anything an error names."""
-
-    def __post_init__(self) -> None:
-        if not callable(self.input) or not callable(self.output):
-            raise TypeError('A tool compactor requires callable input and output formatters')
-
-    def compact_input(self, args: Any) -> Any:
-        return self._bounded(args, self.input, preserve=self.preserve)
-
-    def compact_output(self, value: Any) -> Any:
-        return self._bounded(value, self.output)
-
-    @staticmethod
-    def _bounded(value: Any, compact: Compactor, *, preserve: frozenset[str] = frozenset()) -> Any:
-        """Never expand a value: the original wins when the compactor does not shrink it."""
-        normalized = normalize(value)
-        candidate = compact(normalized)
-        if isinstance(candidate, Mapping) and isinstance(normalized, Mapping):
-            merged: dict[str, Any] = {**candidate, **{key: normalized[key] for key in preserve if key in normalized}}
-            if 'truncated' not in merged and 'omitted' not in merged:
-                omitted = sorted((set(normalized) - set(merged)) | set(merged.get('omitted_fields', [])))
-                if omitted:
-                    merged['omitted_fields'] = omitted
-            candidate = merged
-        return candidate if len(encoded(candidate)) < len(encoded(normalized)) else normalized
-
-
 GENERIC_COMPACTOR = ToolCompactor(input=compact_text, output=compact_text)
 """Policy of a tool that did not declare one: sizes only, no semantics.
 
@@ -210,15 +156,4 @@ only honest thing to reduce.
 """
 
 
-__all__ = [
-    'GENERIC_COMPACTOR',
-    'GENERIC_LIMIT_CHARS',
-    'Compactor',
-    'ToolCompactor',
-    'compact_json',
-    'compact_text',
-    'contains_binary',
-    'encoded',
-    'normalize',
-    'shorten',
-]
+__all__ = ['ToolCompactor', 'compact_json', 'compact_text', 'contains_binary', 'encoded', 'shorten']

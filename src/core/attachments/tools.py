@@ -37,11 +37,12 @@ from src.core.attachments.images import prepare_image
 from src.core.attachments.library import find_image
 from src.core.files.models.file_tool_error import FileToolError
 from src.core.files.paths import resolve
-from src.core.tooling.catalog import ToolCatalog
 from src.core.tooling.compaction_policies import VIEW_IMAGE_COMPACTOR
 from src.core.tooling.logging import ToolLogger
-from src.core.tooling.permission import ToolGroup, ToolPermission
-from src.core.tooling.registrar import ToolRegistrar
+from src.core.tooling.tool_catalog import ToolCatalog
+from src.core.tooling.tool_group import ToolGroup
+from src.core.tooling.tool_permission import ToolPermission
+from src.core.tooling.tool_registrar import ToolRegistrar
 from src.core.web.download import download_image
 from src.core.web.download_error import DownloadError
 

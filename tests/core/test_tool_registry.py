@@ -6,9 +6,10 @@ from typing import get_type_hints
 
 import pytest
 
-from src.core.tooling.events import ToolCallEvent
-from src.core.tooling.logging import ToolLoggerHub
-from src.core.tooling.registrar import ToolRegistrar, register_tool
+from src.core.tooling.registrar import register_tool
+from src.core.tooling.tool_call_event import ToolCallEvent
+from src.core.tooling.tool_logger_hub import ToolLoggerHub
+from src.core.tooling.tool_registrar import ToolRegistrar
 from src.core.tooling.wrapper import wrap_tool
 
 

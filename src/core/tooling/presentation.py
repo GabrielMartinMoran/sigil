@@ -24,10 +24,10 @@ conversation.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
-Status = Literal['good', 'bad', 'neutral']
+from src.core.tooling.tool_summary import ToolSummary
+
 """How the call went, from the tool's point of view."""
 
 SUMMARY_LIMIT = 120
@@ -35,19 +35,6 @@ SUMMARY_LIMIT = 120
 
 MAX_HUMAN_BYTES = 1024
 """Above this, a size is shown in KB: `840 B` says more than `0.8 KB`."""
-
-
-@dataclass(frozen=True, slots=True)
-class ToolSummary:
-    """What a tool says about a finished call, and how it went.
-
-    It travels in the tool event and the UI paints it, so it is a value object and
-    not a renderable: a presenter that returned a Rich `Text` would be deciding
-    colors from the engine.
-    """
-
-    text: str
-    status: Status = 'neutral'
 
 
 Describe = Callable[[Mapping[str, Any], Any], ToolSummary | None]

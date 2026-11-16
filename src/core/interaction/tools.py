@@ -9,11 +9,12 @@ from pydantic_ai import RunContext
 from src.core.interaction.models.question_item import QuestionItem
 from src.core.interaction.models.question_result import QuestionResult
 from src.core.interaction.question_hub import QuestionHub
-from src.core.tooling.catalog import ToolCatalog
 from src.core.tooling.compaction_policies import ASK_USER_COMPACTOR
 from src.core.tooling.logging import ToolLogger
-from src.core.tooling.permission import ToolGroup, ToolPermission
-from src.core.tooling.registrar import ToolRegistrar
+from src.core.tooling.tool_catalog import ToolCatalog
+from src.core.tooling.tool_group import ToolGroup
+from src.core.tooling.tool_permission import ToolPermission
+from src.core.tooling.tool_registrar import ToolRegistrar
 
 _ASK = ToolPermission(groups=(ToolGroup.ASK,))
 

@@ -800,9 +800,10 @@ def test_restricted_profile_resumes_allowed_worker_by_id_through_agent(tmp_path:
 
 
 def test_concurrent_subagents_tag_their_tool_events_without_leaking_to_parent(tmp_path: Path) -> None:
-    from src.core.tooling.events import CURRENT_NODE_ID, ToolCallEvent
-    from src.core.tooling.logging import emit_tool_event
-    from src.core.tooling.registrar import ToolRegistrar
+    from src.core.tooling.emit_tool_event import emit_tool_event
+    from src.core.tooling.events import CURRENT_NODE_ID
+    from src.core.tooling.tool_call_event import ToolCallEvent
+    from src.core.tooling.tool_registrar import ToolRegistrar
 
     env = make_env(tmp_path)
     events = []

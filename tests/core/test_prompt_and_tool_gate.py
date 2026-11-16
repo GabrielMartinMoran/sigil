@@ -134,7 +134,7 @@ def test_the_real_prompt_hides_images_when_the_model_cannot_read_them() -> None:
 
 
 def _definition(name: str, *, requires: tuple[str, ...] = ()) -> ToolDefinition:
-    from src.core.tooling.registrar import REQUIRES_METADATA_KEY
+    from src.core.tooling.tool_registrar import REQUIRES_METADATA_KEY
 
     metadata = {REQUIRES_METADATA_KEY: list(requires)} if requires else None
     return ToolDefinition(name=name, parameters_json_schema={'type': 'object'}, metadata=metadata)
