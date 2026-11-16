@@ -22,7 +22,8 @@ from textual.binding import Binding
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from src.core.providers.domain.model_capability import ModelCapability, ModelCatalog
+from src.core.providers.domain.model_capability import ModelCapability
+from src.core.providers.domain.model_catalog import ModelCatalog
 from src.ui.widgets.model_choice import ModelChoice
 from src.ui.widgets.provider_modal import ProviderModal
 

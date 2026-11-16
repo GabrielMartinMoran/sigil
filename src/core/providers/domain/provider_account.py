@@ -8,43 +8,16 @@ and the ``alias`` is only a human label the user is free to change.
 
 from __future__ import annotations
 
-import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 
 from src.core.providers.domain.auth_method import AuthMethod
-from src.core.providers.domain.provider_error import AliasError
+from src.core.providers.domain.normalize_alias import normalize_alias
 from src.core.providers.domain.provider_kind import ProviderKind
+from src.core.providers.domain.provider_now_iso import now_iso
 from src.core.providers.domain.provider_variant import ProviderVariant
 
-ALIAS_PATTERN = re.compile(r'^[A-Za-z0-9][A-Za-z0-9 _.-]{0,31}$')
 """Letters, digits, space and a few separators; starts with a letter or digit."""
-
-ALIAS_MAX_LENGTH = 32
-
-
-def now_iso() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def normalize_alias(raw: str) -> str:
-    """Validates an alias and collapses its inner whitespace.
-
-    Raises:
-        AliasError: When it is empty, too long, or has a forbidden character.
-    """
-    alias = ' '.join(raw.split())
-    if not alias:
-        raise AliasError('The alias cannot be empty.')
-    if len(alias) > ALIAS_MAX_LENGTH:
-        raise AliasError(f'The alias can be at most {ALIAS_MAX_LENGTH} characters.')
-    if not ALIAS_PATTERN.match(alias):
-        raise AliasError(
-            'The alias may only contain letters, digits, spaces, dots, dashes and underscores, '
-            'and it must start with a letter or a digit.'
-        )
-    return alias
 
 
 @dataclass(frozen=True, slots=True)

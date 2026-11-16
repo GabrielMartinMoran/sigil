@@ -8,16 +8,11 @@ static list when the provider is down.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping
-from typing import Any, Protocol
+from typing import Any
 
-from src.core.providers.domain.model_capability import ModelCapability
-from src.core.providers.domain.provider_account import ProviderAccount
-from src.core.providers.domain.provider_error import CatalogError
+from src.core.providers.catalog.model_catalog_source import JSONValue
+from src.core.providers.domain.catalog_error import CatalogError
 
-JSONValue = Any
-
-FetchJson = Callable[[str, Mapping[str, str], float], Awaitable[JSONValue]]
 """``fetch(url, headers, timeout) -> parsed JSON``.
 
 Raising is fine: the service turns any failure into the static fallback.
@@ -25,34 +20,6 @@ Raising is fine: the service turns any failure into the static fallback.
 
 DEFAULT_TIMEOUT = 6.0
 """Seconds. A catalogue is a convenience; it must never stall a turn."""
-
-
-class ModelCatalogSource(Protocol):
-    """Fetches the model list of one account."""
-
-    def supports(self, account: ProviderAccount) -> bool:
-        """Whether this source knows how to answer for ``account``."""
-        ...
-
-    async def models(
-        self,
-        account: ProviderAccount,
-        *,
-        secret: str | None,
-        fetch_json: FetchJson,
-    ) -> tuple[ModelCapability, ...]:
-        """The catalogue, in the order the provider listed it.
-
-        Args:
-            account: Whose catalogue to read.
-            secret: API key, when the endpoint requires one.
-            fetch_json: Injected HTTP call, so tests never hit the network.
-
-        Raises:
-            CatalogError: When the payload is unusable. The service catches it
-                and keeps the static list.
-        """
-        ...
 
 
 def as_list(payload: JSONValue, *, key: str = 'data') -> list[dict[str, Any]]:

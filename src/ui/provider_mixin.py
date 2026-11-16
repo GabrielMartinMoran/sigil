@@ -17,14 +17,16 @@ from src.core.agents.config_scope import ConfigScope
 from src.core.agents.model_defaults_state import ModelDefaultsState
 from src.core.agents.profile.models.agent_profile import AgentProfile
 from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.providers.domain.alias_error import AliasError
 from src.core.providers.domain.auth_method import AuthMethod
-from src.core.providers.domain.model_capability import ModelCapability, ModelCatalog
+from src.core.providers.domain.model_capability import ModelCapability
+from src.core.providers.domain.model_catalog import ModelCatalog
 from src.core.providers.domain.provider_account import ProviderAccount
-from src.core.providers.domain.provider_error import AliasError, ProviderError
+from src.core.providers.domain.provider_error import ProviderError
 from src.core.providers.domain.provider_kind import ProviderKind
 from src.core.providers.domain.provider_variant import ProviderVariant
 from src.core.providers.domain.thinking import EFFORT_LEVELS
-from src.core.providers.snapshot import ModelSnapshot
+from src.core.providers.model_snapshot import ModelSnapshot
 from src.ui.chat_notice import ChatNotice
 from src.ui.defaults_rows import (
     _projected_config,

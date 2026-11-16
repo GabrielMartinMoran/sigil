@@ -4,7 +4,7 @@ from src.core.providers.domain.model_capability import ModelCapability
 from src.core.providers.domain.provider_account import ProviderAccount
 from src.core.providers.domain.provider_kind import ProviderKind
 from src.core.providers.domain.selection import Selection
-from src.core.providers.snapshot import ModelSnapshot
+from src.core.providers.model_snapshot import ModelSnapshot
 from src.ui.effort_label import effort_label
 from tests.support.ui import render_text
 

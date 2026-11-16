@@ -20,7 +20,8 @@ from pydantic_ai.models.test import TestModel
 from textual.app import App
 from textual.widgets import Input, OptionList
 
-from src.core.providers.domain.model_capability import ModelCapability, ModelCatalog
+from src.core.providers.domain.model_capability import ModelCapability
+from src.core.providers.domain.model_catalog import ModelCatalog
 from src.core.providers.domain.thinking import EFFORT_LEVELS
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp

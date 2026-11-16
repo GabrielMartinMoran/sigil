@@ -68,7 +68,7 @@ from src.core.mcp.config.loader import load_config
 from src.core.mcp.deferred import build_manager
 from src.core.mcp.manager.mcp_manager import MCPManager
 from src.core.preferences import DEFAULT_TRANSCRIPT_WINDOW, Preferences
-from src.core.providers.bootstrap import ProviderPaths
+from src.core.providers.provider_paths import ProviderPaths
 from src.core.roadmap.models.todo_item import TodoItem
 from src.core.sessions.session import Session
 from src.core.settings import load_settings

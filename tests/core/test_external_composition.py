@@ -9,7 +9,7 @@ from pydantic_ai.models.function import FunctionModel
 
 from src.core.bootstrap import Composition
 from src.core.interaction.models.question_answer import QuestionAnswer
-from src.core.providers.bootstrap import ProviderPaths
+from src.core.providers.provider_paths import ProviderPaths
 from src.core.settings import load_settings
 
 

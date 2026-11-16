@@ -15,16 +15,18 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from src.core.providers.bootstrap import ProviderPaths, build_service
+from src.core.providers.bootstrap import build_service
 from src.core.providers.catalog.probe import ProbeResult
 from src.core.providers.catalog.static_source import (
     OPENCODE_FALLBACK,
     OPENROUTER_FALLBACK,
     fallback_capability,
 )
-from src.core.providers.domain.model_capability import ModelCapability, ModelCatalog
+from src.core.providers.domain.model_capability import ModelCapability
+from src.core.providers.domain.model_catalog import ModelCatalog
 from src.core.providers.domain.provider_kind import ProviderKind
-from src.core.providers.factory.unconfigured import UnconfiguredModel
+from src.core.providers.factory.unconfigured_model import UnconfiguredModel
+from src.core.providers.provider_paths import ProviderPaths
 
 DEEPSEEK = ModelCapability(
     name='deepseek-v4.1-flash',

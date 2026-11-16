@@ -8,21 +8,20 @@ from pathlib import Path
 import pytest
 
 from src.core.providers.catalog.probe import ProbeResult
-from src.core.providers.domain.provider_error import (
-    AccountNotFound,
-    AliasError,
-    BusyError,
-    CredentialError,
-    LastAccountError,
-    NoAccountError,
-    ProviderError,
-    SecretRejectedError,
-)
+from src.core.providers.domain.account_not_found import AccountNotFound
+from src.core.providers.domain.alias_error import AliasError
+from src.core.providers.domain.api_key_secret import ApiKeySecret
+from src.core.providers.domain.busy_error import BusyError
+from src.core.providers.domain.credential_error import CredentialError
+from src.core.providers.domain.last_account_error import LastAccountError
+from src.core.providers.domain.no_account_error import NoAccountError
+from src.core.providers.domain.o_auth_secret import OAuthSecret
+from src.core.providers.domain.provider_error import ProviderError
 from src.core.providers.domain.provider_kind import ProviderKind
 from src.core.providers.domain.provider_variant import ProviderVariant
-from src.core.providers.domain.secret import ApiKeySecret, OAuthSecret
+from src.core.providers.domain.secret_rejected_error import SecretRejectedError
 from src.core.providers.domain.selection import Selection
-from src.core.providers.store.secret_store import FileSecretStore
+from src.core.providers.store.file_secret_store import FileSecretStore
 from tests.support.provider_service import (
     _add,
     _Flow,

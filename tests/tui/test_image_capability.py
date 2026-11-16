@@ -26,7 +26,7 @@ from src.core.providers.domain.provider_account import ProviderAccount
 from src.core.providers.domain.provider_kind import ProviderKind
 from src.core.providers.domain.provider_variant import ProviderVariant
 from src.core.providers.domain.selection import Selection
-from src.core.providers.snapshot import ModelSnapshot
+from src.core.providers.model_snapshot import ModelSnapshot
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
 from src.ui.widgets.chat_log import ChatLog

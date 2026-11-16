@@ -21,11 +21,13 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from textual.widgets import OptionList
 
-from src.core.providers.bootstrap import ProviderPaths, build_service
+from src.core.providers.bootstrap import build_service
 from src.core.providers.catalog.probe import ProbeResult
-from src.core.providers.domain.model_capability import ModelCapability, ModelCatalog
+from src.core.providers.domain.model_capability import ModelCapability
+from src.core.providers.domain.model_catalog import ModelCatalog
 from src.core.providers.domain.provider_kind import ProviderKind
-from src.core.providers.factory.unconfigured import UnconfiguredModel
+from src.core.providers.factory.unconfigured_model import UnconfiguredModel
+from src.core.providers.provider_paths import ProviderPaths
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
 from src.ui.widgets.effort_screen import EffortScreen

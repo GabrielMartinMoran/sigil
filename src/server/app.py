@@ -42,8 +42,10 @@ from src.core.agents.prompt_of_turn import prompt_of_turn
 from src.core.agents.rollback_error import RollbackError
 from src.core.agents.tree.models.summon_error import SummonError
 from src.core.context.meter.cost import session_cost
-from src.core.providers.domain.auth_method import AuthMethod, auth_methods_for
-from src.core.providers.domain.provider_error import BusyError, ProviderError
+from src.core.providers.domain.auth_method import AuthMethod
+from src.core.providers.domain.auth_methods_for import auth_methods_for
+from src.core.providers.domain.busy_error import BusyError
+from src.core.providers.domain.provider_error import ProviderError
 from src.core.providers.domain.provider_kind import ProviderKind
 from src.core.providers.domain.thinking import EFFORT_LEVELS, parse_choice
 from src.core.sessions.catalog import catalog

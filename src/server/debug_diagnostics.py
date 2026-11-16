@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
 
     from src.core.context.context_view_capability import ContextViewCapability
-    from src.core.providers.snapshot import ModelSnapshot
+    from src.core.providers.model_snapshot import ModelSnapshot
     from src.server.server_runtime import ServerRuntime
     from src.server.session_runtime import SessionRuntime
 

@@ -370,7 +370,7 @@ def test_load_across_worktrees_restores_the_workspace_and_the_model(
     price, which is exactly what the selection exists to prevent.
     """
     from src.core.providers.domain.selection import Selection
-    from src.core.providers.snapshot import ModelSnapshot
+    from src.core.providers.model_snapshot import ModelSnapshot
 
     class FakeService:
         def __init__(self) -> None:

@@ -20,14 +20,15 @@ from typing import Any
 import httpx2
 import pytest
 
-from src.core.providers.catalog.catalog_service import ModelCatalogService
+from src.core.providers.catalog.model_catalog_service import ModelCatalogService
 from src.core.providers.catalog.openai_source import OpenAISource
 from src.core.providers.catalog.plan_transport import path_for, plan_fetch_json, resolver_for
+from src.core.providers.domain.api_key_secret import ApiKeySecret
 from src.core.providers.domain.auth_method import AuthMethod
+from src.core.providers.domain.o_auth_secret import OAuthSecret
 from src.core.providers.domain.provider_account import ProviderAccount
 from src.core.providers.domain.provider_kind import ProviderKind
 from src.core.providers.domain.provider_variant import ProviderVariant
-from src.core.providers.domain.secret import ApiKeySecret, OAuthSecret
 
 MODELS_URL = 'https://api.openai.com/v1/models'
 

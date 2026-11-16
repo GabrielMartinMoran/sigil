@@ -9,15 +9,17 @@ from pathlib import Path
 
 import pytest
 
+from src.core.providers.domain.alias_error import AliasError
+from src.core.providers.domain.api_key_secret import ApiKeySecret
+from src.core.providers.domain.credential_error import CredentialError
+from src.core.providers.domain.o_auth_secret import OAuthSecret
 from src.core.providers.domain.provider_account import ProviderAccount
-from src.core.providers.domain.provider_error import AliasError, CredentialError
 from src.core.providers.domain.provider_kind import ProviderKind
-from src.core.providers.domain.secret import ApiKeySecret, OAuthSecret
 from src.core.providers.domain.selection import Selection
 from src.core.providers.store.atomic import MODE_PRIVATE, read_json, write_json
-from src.core.providers.store.secret_store import FileSecretStore
+from src.core.providers.store.file_secret_store import FileSecretStore
 from src.core.providers.store.sqlite_account_store import SqliteAccountStore
-from src.core.providers.store.state_store import SqliteStateStore
+from src.core.providers.store.sqlite_state_store import SqliteStateStore
 
 
 def _mode(path: Path) -> int:

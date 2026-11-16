@@ -19,9 +19,11 @@ from textual.binding import Binding
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from src.core.providers.domain.auth_method import AuthMethod, auth_methods_for
+from src.core.providers.domain.auth_method import AuthMethod
+from src.core.providers.domain.auth_methods_for import auth_methods_for
 from src.core.providers.domain.provider_kind import ProviderKind
-from src.core.providers.domain.provider_variant import ProviderVariant, variants_for
+from src.core.providers.domain.provider_variant import ProviderVariant
+from src.core.providers.domain.variants_for import variants_for
 from src.ui.widgets.new_account import NewAccount
 from src.ui.widgets.provider_modal import ProviderModal
 

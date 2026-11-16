@@ -8,18 +8,22 @@ from pydantic_ai.models.openrouter import OpenRouterModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 
+from src.core.providers.domain.api_key_secret import ApiKeySecret
 from src.core.providers.domain.auth_method import AuthMethod
+from src.core.providers.domain.credential_error import CredentialError
 from src.core.providers.domain.model_capability import ModelCapability
+from src.core.providers.domain.o_auth_secret import OAuthSecret
 from src.core.providers.domain.provider_account import ProviderAccount
-from src.core.providers.domain.provider_error import CredentialError, ProviderError
+from src.core.providers.domain.provider_error import ProviderError
 from src.core.providers.domain.provider_kind import ProviderKind
 from src.core.providers.domain.provider_variant import ProviderVariant
-from src.core.providers.domain.secret import ApiKeySecret, OAuthSecret
-from src.core.providers.factory.openai_builder import OpenAIKeyBuilder, OpenAIOAuthBuilder
+from src.core.providers.factory.builder_registry import BuilderRegistry
+from src.core.providers.factory.model_router import ModelRouter
+from src.core.providers.factory.open_a_i_key_builder import OpenAIKeyBuilder
+from src.core.providers.factory.open_a_i_o_auth_builder import OpenAIOAuthBuilder
 from src.core.providers.factory.opencode_builder import opencode_headers
 from src.core.providers.factory.openrouter_builder import OpenRouterBuilder
-from src.core.providers.factory.registry import BuilderRegistry, ModelRouter
-from src.core.providers.factory.unconfigured import NO_PROVIDER_MESSAGE, UnconfiguredModel
+from src.core.providers.factory.unconfigured_model import NO_PROVIDER_MESSAGE, UnconfiguredModel
 
 KEY = ApiKeySecret(key='sk-test')
 
@@ -282,7 +286,7 @@ def test_unconfigured_model_refuses_a_request_with_an_actionable_message() -> No
 
     from pydantic_ai import Agent
 
-    from src.core.providers.factory.unconfigured import NoProviderError
+    from src.core.providers.factory.no_provider_error import NoProviderError
 
     async def inner() -> None:
         agent = Agent(UnconfiguredModel(), instructions='x')

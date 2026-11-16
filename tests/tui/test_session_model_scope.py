@@ -18,7 +18,7 @@ import pytest
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 
 from src.core.bootstrap import Composition
-from src.core.providers.bootstrap import ProviderPaths
+from src.core.providers.provider_paths import ProviderPaths
 from src.core.sessions.session_store import SessionStore
 from src.core.settings import load_settings
 from tests.support.provider_service import _add, _service

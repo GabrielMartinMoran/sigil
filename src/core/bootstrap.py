@@ -72,18 +72,19 @@ from src.core.mcp.mcp_gateway import MCPGateway
 from src.core.mcp.shutdown import read_shutdown_timeout
 from src.core.mcp.tools import register_mcp_tools
 from src.core.paths import providers_dir
-from src.core.providers.bootstrap import ProviderPaths, build_service
+from src.core.providers.bootstrap import build_service
 from src.core.providers.domain.provider_error import ProviderError
 from src.core.providers.domain.selection import Selection
 from src.core.providers.domain.thinking import settings_value as thinking_settings
-from src.core.providers.factory.unconfigured import UnconfiguredModel
+from src.core.providers.factory.unconfigured_model import UnconfiguredModel
 from src.core.providers.login.chatgpt_login_flow import ChatGPTLoginFlow
 from src.core.providers.login.credential_source import chatgpt_provider_factory
-from src.core.providers.service import ModelService
-from src.core.providers.snapshot import ModelSnapshot
-from src.core.providers.store.secret_store import FileSecretStore
+from src.core.providers.model_service import ModelService
+from src.core.providers.model_snapshot import ModelSnapshot
+from src.core.providers.provider_paths import ProviderPaths
+from src.core.providers.store.file_secret_store import FileSecretStore
 from src.core.providers.store.session_state_store import SessionStateStore
-from src.core.providers.store.state_store import SqliteStateStore
+from src.core.providers.store.sqlite_state_store import SqliteStateStore
 from src.core.roadmap.roadmap_stores import RoadmapStores
 from src.core.roadmap.tools import register_roadmap_tools
 from src.core.sessions.session import Session

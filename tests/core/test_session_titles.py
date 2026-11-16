@@ -230,7 +230,7 @@ def test_naming_goes_through_the_router_the_agent_holds() -> None:
     The agent holds the ``ModelRouter`` in production, so this is the path that
     actually runs: the title has to reach whichever model the router points at now.
     """
-    from src.core.providers.factory.registry import ModelRouter
+    from src.core.providers.factory.model_router import ModelRouter
 
     router = ModelRouter(FunctionModel(_answer('A first name')))
     assert asyncio.run(generate_title(router, 'the login form is broken')) == 'A first name'

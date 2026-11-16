@@ -16,7 +16,7 @@ from pydantic_ai.models.test import TestModel
 from src.core.agents.profile.models.agent_role import AgentRole
 from src.core.agents.tree.models.agent_node import AgentNode
 from src.core.bootstrap import Composition
-from src.core.providers.bootstrap import ProviderPaths
+from src.core.providers.provider_paths import ProviderPaths
 from src.core.settings import load_settings
 from src.server.app import create_app
 from src.server.event_hub import EventHub

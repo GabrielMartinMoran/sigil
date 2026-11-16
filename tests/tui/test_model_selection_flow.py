@@ -10,7 +10,8 @@ from unittest.mock import AsyncMock, Mock
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-from src.core.providers.domain.model_capability import ModelCapability, ModelCatalog
+from src.core.providers.domain.model_capability import ModelCapability
+from src.core.providers.domain.model_catalog import ModelCatalog
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
 from src.ui.widgets.effort_choice import EffortChoice

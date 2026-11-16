@@ -6,7 +6,7 @@ import uuid
 
 from pydantic import BaseModel, Field
 
-from src.core.providers.domain.provider_account import now_iso
+from src.core.providers.domain.provider_now_iso import now_iso
 from src.core.roadmap.models.todo_status import TodoStatus
 
 

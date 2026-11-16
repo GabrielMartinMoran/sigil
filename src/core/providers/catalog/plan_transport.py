@@ -30,10 +30,10 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
-from src.core.providers.catalog.source import FetchJson
+from src.core.providers.catalog.model_catalog_source import FetchJson
+from src.core.providers.domain.o_auth_secret import OAuthSecret
 from src.core.providers.domain.provider_account import ProviderAccount
 from src.core.providers.domain.provider_kind import ProviderKind
-from src.core.providers.domain.secret import OAuthSecret
 from src.core.providers.store.secret_store import SecretStore
 
 PLAN_BASE_URL = 'https://api.openai.com/v1'
@@ -44,10 +44,6 @@ ProviderFactory = Callable[[OAuthSecret, ProviderAccount], Any]
 
 TransportFor = Callable[[ProviderAccount], FetchJson | None]
 """The transport to read one account's catalogue with, or ``None`` for the default."""
-
-
-class PlanTransportError(RuntimeError):
-    """The plan's client could not be built. The caller falls back to the plain path."""
 
 
 def path_for(url: str, base_url: str) -> str:
@@ -127,12 +123,4 @@ def resolver_for(store: SecretStore, factory: ProviderFactory | None) -> Transpo
     return resolve
 
 
-__all__ = [
-    'PLAN_BASE_URL',
-    'PlanTransportError',
-    'ProviderFactory',
-    'TransportFor',
-    'path_for',
-    'plan_fetch_json',
-    'resolver_for',
-]
+__all__ = ['PLAN_BASE_URL']

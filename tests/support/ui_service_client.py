@@ -190,7 +190,7 @@ class _Catalog:
         return self._catalog()
 
     def _catalog(self) -> Any:
-        from src.core.providers.domain.model_capability import ModelCatalog
+        from src.core.providers.domain.model_catalog import ModelCatalog
 
         return ModelCatalog(models=self._models, source='remote')
 

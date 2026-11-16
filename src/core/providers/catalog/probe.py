@@ -21,11 +21,10 @@ only ``401``/``403`` reject an account and everything else is a warning.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Literal
 
 import httpx
 
+from src.core.providers.catalog.probe_result import ProbeResult
 from src.core.providers.domain.provider_account import ProviderAccount
 from src.core.providers.domain.provider_kind import ProviderKind
 from src.core.providers.domain.provider_variant import ProviderVariant
@@ -37,24 +36,6 @@ OPENAI_MODELS_URL = 'https://api.openai.com/v1/models'
 OPENCODE_GO_COMPLETIONS_URL = 'https://opencode.ai/inference/go/openai/v1/chat/completions'
 OPENCODE_GO_PROBE_MODEL = 'glm-5.3'
 """A model the Go plan lists, used only to make the endpoint look at the key."""
-
-ProbeOutcome = Literal['valid', 'rejected', 'unknown']
-
-
-@dataclass(frozen=True, slots=True)
-class ProbeResult:
-    """What the probe could establish."""
-
-    outcome: ProbeOutcome
-    detail: str = ''
-
-    @property
-    def is_rejected(self) -> bool:
-        return self.outcome == 'rejected'
-
-    @property
-    def is_valid(self) -> bool:
-        return self.outcome == 'valid'
 
 
 async def probe_credential(

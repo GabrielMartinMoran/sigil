@@ -19,7 +19,7 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
-from src.core.providers.domain.provider_account import now_iso
+from src.core.providers.domain.provider_now_iso import now_iso
 from src.core.roadmap.models.todo_item import TodoItem
 from src.core.roadmap.models.todo_status import TODO_STATUSES, TodoStatus
 from src.core.storage.database import Database

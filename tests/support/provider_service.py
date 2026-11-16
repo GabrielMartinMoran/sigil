@@ -5,15 +5,17 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from src.core.providers.bootstrap import ProviderPaths, build_service
-from src.core.providers.catalog.catalog_service import ModelCatalogService
+from src.core.providers.bootstrap import build_service
+from src.core.providers.catalog.model_catalog_service import ModelCatalogService
 from src.core.providers.catalog.probe import ProbeResult
-from src.core.providers.domain.model_capability import ModelCapability, ModelCatalog
+from src.core.providers.domain.model_capability import ModelCapability
+from src.core.providers.domain.model_catalog import ModelCatalog
+from src.core.providers.domain.o_auth_secret import OAuthSecret
 from src.core.providers.domain.provider_kind import ProviderKind
 from src.core.providers.domain.provider_variant import ProviderVariant
-from src.core.providers.domain.secret import OAuthSecret
-from src.core.providers.factory.unconfigured import UnconfiguredModel
-from src.core.providers.service import ModelService
+from src.core.providers.factory.unconfigured_model import UnconfiguredModel
+from src.core.providers.model_service import ModelService
+from src.core.providers.provider_paths import ProviderPaths
 
 CATALOG = ModelCatalog(
     models=(

@@ -55,7 +55,7 @@ def test_invalid_agent_model_config_is_reported(tmp_path: Path) -> None:
 
 def test_composition_applies_default_only_for_new_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from src.core.bootstrap import Composition
-    from src.core.providers.bootstrap import ProviderPaths
+    from src.core.providers.provider_paths import ProviderPaths
     from src.core.sessions.session import Session
     from src.core.settings import load_settings
     from tests.support.provider_service import _add, _service
@@ -110,8 +110,8 @@ def test_a_subagent_model_carries_the_window_its_model_reports(tmp_path: Path, m
     panel already read it from the model, so a subagent must use that same source.
     """
     from src.core.bootstrap import Composition
-    from src.core.providers.bootstrap import ProviderPaths
     from src.core.providers.domain.provider_kind import ProviderKind
+    from src.core.providers.provider_paths import ProviderPaths
     from src.core.settings import load_settings
     from tests.support.provider_service import _add, _service
 
@@ -139,9 +139,9 @@ def test_should_load_the_subagent_account_catalog_before_building_its_model(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, catalog_available: bool
 ) -> None:
     from src.core.bootstrap import Composition
-    from src.core.providers.bootstrap import ProviderPaths
-    from src.core.providers.catalog.catalog_service import ModelCatalogService
+    from src.core.providers.catalog.model_catalog_service import ModelCatalogService
     from src.core.providers.domain.provider_kind import ProviderKind
+    from src.core.providers.provider_paths import ProviderPaths
     from src.core.settings import load_settings
     from tests.support.provider_service import _add, _service
 

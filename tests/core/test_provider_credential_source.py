@@ -16,9 +16,9 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from src.core.providers.domain.o_auth_secret import OAuthSecret
 from src.core.providers.domain.provider_account import ProviderAccount
 from src.core.providers.domain.provider_kind import ProviderKind
-from src.core.providers.domain.secret import OAuthSecret
 from src.core.providers.login.credential_source import StoredCredentialSource, chatgpt_provider_factory
 
 

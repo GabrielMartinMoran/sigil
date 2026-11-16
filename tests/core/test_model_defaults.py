@@ -214,7 +214,7 @@ def test_should_treat_a_single_file_as_the_only_destination(tmp_path: Path, monk
 def test_should_apply_a_saved_default_without_a_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The write is only half the feature: the router has to read it next time."""
     from src.core.bootstrap import Composition
-    from src.core.providers.bootstrap import ProviderPaths
+    from src.core.providers.provider_paths import ProviderPaths
     from src.core.settings import load_settings
     from tests.support.provider_service import _add, _service
 

@@ -9,7 +9,7 @@ from pydantic_ai.models.test import TestModel
 from pytest import MonkeyPatch
 
 from src.core.bootstrap import Composition
-from src.core.providers.bootstrap import ProviderPaths
+from src.core.providers.provider_paths import ProviderPaths
 from src.core.settings import SigilSettings
 
 

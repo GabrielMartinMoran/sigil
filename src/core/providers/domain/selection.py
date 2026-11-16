@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.core.providers.domain.model_capability import normalize_efforts
+from src.core.providers.domain.normalize_efforts import normalize_efforts
 from src.core.providers.domain.thinking import DEFAULT_CHOICE, ThinkingChoice, ThinkingEffort
 
 

@@ -48,7 +48,7 @@ from src.core.interaction.models.question_option import QuestionOption
 from src.core.interaction.question_hub import QuestionHub
 from src.core.mcp.manager.mcp_manager import MCPManager
 from src.core.preferences import Preferences, PreferencesStore
-from src.core.providers.service import ModelService
+from src.core.providers.model_service import ModelService
 from src.core.roadmap.roadmap_stores import RoadmapStores
 from src.core.sessions.session import Session
 from src.core.sessions.session_store import SessionStore

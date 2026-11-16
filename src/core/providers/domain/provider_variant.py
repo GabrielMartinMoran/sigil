@@ -1,11 +1,4 @@
-"""Product variants inside a provider family.
-
-OpenCode sells two products with the same account system but different
-endpoints and very different catalogues: *Zen* (pay as you go, public model
-list) and *Go* (subscription, no model list endpoint). Every other family has a
-single variant, so ``DEFAULT`` is the absence of a choice rather than a real
-alternative.
-"""
+"""Which provider implementation a variant uses."""
 
 from __future__ import annotations
 
@@ -27,12 +20,3 @@ VARIANT_LABELS: dict[ProviderVariant, str] = {
     ProviderVariant.ZEN: 'Zen',
     ProviderVariant.GO: 'Go',
 }
-
-
-def variants_for(kind: str) -> tuple[ProviderVariant, ...]:
-    """Variants the UI offers for ``kind``."""
-    from src.core.providers.domain.provider_kind import ProviderKind
-
-    if kind == ProviderKind.OPENCODE:
-        return (ProviderVariant.ZEN, ProviderVariant.GO)
-    return (ProviderVariant.DEFAULT,)

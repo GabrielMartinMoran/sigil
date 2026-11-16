@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic_ai.messages import ModelMessage, ModelSettingsDeltaPart
 
-from src.core.providers.snapshot import ModelSnapshot
+from src.core.providers.model_snapshot import ModelSnapshot
 
 
 class ModelViewMixin:

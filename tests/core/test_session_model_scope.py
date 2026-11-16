@@ -18,7 +18,7 @@ import pytest
 
 from src.core.bootstrap import Composition
 from src.core.mcp.config.loader import load_config
-from src.core.providers.bootstrap import ProviderPaths
+from src.core.providers.provider_paths import ProviderPaths
 from src.core.sessions.session_store import SessionStore
 from src.core.settings import load_settings
 from tests.support.provider_service import _add, _service

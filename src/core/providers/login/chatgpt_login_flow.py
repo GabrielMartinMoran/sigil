@@ -23,9 +23,9 @@ from dataclasses import dataclass
 
 from pydantic_ai.exceptions import UserError
 
+from src.core.providers.domain.login_error import LoginError
+from src.core.providers.domain.o_auth_secret import OAuthSecret
 from src.core.providers.domain.provider_account import ProviderAccount
-from src.core.providers.domain.provider_error import LoginError
-from src.core.providers.domain.secret import OAuthSecret
 from src.core.providers.store.state_store import StateStore
 
 APP_NAME = 'Sigil'

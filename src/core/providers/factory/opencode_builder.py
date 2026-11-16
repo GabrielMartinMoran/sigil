@@ -26,11 +26,9 @@ from src.core.providers.domain.provider_account import ProviderAccount
 from src.core.providers.domain.provider_kind import ProviderKind
 from src.core.providers.domain.provider_variant import ProviderVariant
 from src.core.providers.domain.secret import SecretMaterial
-from src.core.providers.factory.builder import (
-    SIGIL_VERSION,
-    DialectUnsupportedError,
-    require_api_key,
-)
+from src.core.providers.factory.builder import require_api_key
+from src.core.providers.factory.dialect_unsupported_error import DialectUnsupportedError
+from src.core.providers.factory.opencode_headers import opencode_headers
 
 GO_BASE_URL = 'https://opencode.ai/inference/go/openai/v1'
 ZEN_OPENAI_BASE_URL = 'https://opencode.ai/inference/openai/v1'
@@ -46,11 +44,6 @@ same name.
 MESSAGES_DIALECT = 'messages'
 RESPONSES_DIALECT = 'responses'
 CHAT_DIALECT = 'chat-completions'
-
-
-def opencode_headers(session_id: str) -> dict[str, str]:
-    """Headers OpenCode expects from a third-party client."""
-    return {'User-Agent': f'sigil/{SIGIL_VERSION}', 'x-opencode-session': session_id}
 
 
 class OpenCodeBuilder:

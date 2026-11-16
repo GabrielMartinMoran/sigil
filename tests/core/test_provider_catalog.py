@@ -11,11 +11,12 @@ import json
 from pathlib import Path
 
 from src.core.providers.catalog.catalog_cache import CatalogCache
-from src.core.providers.catalog.catalog_service import ModelCatalogService, best_effort_window
+from src.core.providers.catalog.catalog_service import best_effort_window
+from src.core.providers.catalog.model_catalog_service import ModelCatalogService
 from src.core.providers.catalog.openai_source import OpenAISource
 from src.core.providers.catalog.openai_source import parse_models as parse_openai
-from src.core.providers.catalog.opencode_source import parse_entry as parse_opencode_entry
-from src.core.providers.catalog.opencode_source import parse_models as parse_opencode
+from src.core.providers.catalog.opencode_parse_models import parse_entry as parse_opencode_entry
+from src.core.providers.catalog.opencode_parse_models import parse_models as parse_opencode
 from src.core.providers.catalog.openrouter_source import parse_models as parse_openrouter
 from src.core.providers.catalog.static_source import fallback_models
 from src.core.providers.domain.provider_account import ProviderAccount
@@ -257,7 +258,8 @@ def test_cache_invalidation() -> None:
 
 
 def _catalog(tag: str):
-    from src.core.providers.domain.model_capability import ModelCapability, ModelCatalog
+    from src.core.providers.domain.model_capability import ModelCapability
+    from src.core.providers.domain.model_catalog import ModelCatalog
 
     return ModelCatalog(models=(ModelCapability(name=tag),), source='remote')
 

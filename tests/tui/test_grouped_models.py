@@ -9,7 +9,8 @@ from textual.app import App, ComposeResult
 from textual.widgets import Input
 
 from src.core.preferences import PreferencesStore
-from src.core.providers.domain.model_capability import ModelCapability, ModelCatalog
+from src.core.providers.domain.model_capability import ModelCapability
+from src.core.providers.domain.model_catalog import ModelCatalog
 from src.ui.widgets.account_catalog import AccountCatalog
 from src.ui.widgets.grouped_model_screen import GroupedModelScreen
 

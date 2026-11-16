@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from src.core.providers.catalog.catalog_service import ModelCatalogService, _describe
+from src.core.providers.catalog.model_catalog_service import ModelCatalogService, _describe
 from src.core.providers.catalog.openai_source import OpenAISource
 from src.core.providers.domain.auth_method import AuthMethod
 from src.core.providers.domain.provider_account import ProviderAccount

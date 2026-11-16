@@ -111,7 +111,7 @@ async def _drop_task(owner: SessionRuntime) -> None:
 
 
 def _paths(tmp_path: Path):
-    from src.core.providers.bootstrap import ProviderPaths
+    from src.core.providers.provider_paths import ProviderPaths
 
     home = tmp_path / '.sigil'
     home.mkdir(exist_ok=True)

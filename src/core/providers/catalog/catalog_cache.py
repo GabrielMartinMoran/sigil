@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
-from src.core.providers.domain.model_capability import ModelCatalog
+from src.core.providers.domain.model_catalog import ModelCatalog
 
 DEFAULT_TTL = 600.0
 """Seconds a fetched catalogue stays fresh. Ten minutes."""

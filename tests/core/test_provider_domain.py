@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import pytest
 
-from src.core.providers.domain.auth_method import AuthMethod, auth_methods_for
-from src.core.providers.domain.model_capability import ModelCapability, ModelCatalog, normalize_efforts
-from src.core.providers.domain.provider_account import (
-    ALIAS_MAX_LENGTH,
-    ProviderAccount,
-    normalize_alias,
-)
-from src.core.providers.domain.provider_error import AliasError
+from src.core.providers.domain.alias_error import AliasError
+from src.core.providers.domain.auth_method import AuthMethod
+from src.core.providers.domain.auth_methods_for import auth_methods_for
+from src.core.providers.domain.model_capability import ModelCapability
+from src.core.providers.domain.model_catalog import ModelCatalog
+from src.core.providers.domain.normalize_alias import ALIAS_MAX_LENGTH, normalize_alias
+from src.core.providers.domain.normalize_efforts import normalize_efforts
+from src.core.providers.domain.provider_account import ProviderAccount
 from src.core.providers.domain.provider_kind import ProviderKind
-from src.core.providers.domain.provider_variant import ProviderVariant, variants_for
+from src.core.providers.domain.provider_variant import ProviderVariant
 from src.core.providers.domain.selection import Selection
 from src.core.providers.domain.thinking import (
     is_effort_level,
@@ -21,6 +21,7 @@ from src.core.providers.domain.thinking import (
     parse_choice,
     settings_value,
 )
+from src.core.providers.domain.variants_for import variants_for
 
 
 def test_normalize_alias_collapses_inner_whitespace() -> None:
@@ -54,7 +55,7 @@ def test_account_display_name_shows_kind_and_variant() -> None:
 
 def test_snapshot_display_name_names_the_model_and_where_it_comes_from() -> None:
     """A notice that says which model is active has to say which account too."""
-    from src.core.providers.snapshot import ModelSnapshot
+    from src.core.providers.model_snapshot import ModelSnapshot
 
     account = ProviderAccount.create('work', ProviderKind.OPENROUTER)
     snapshot = ModelSnapshot(

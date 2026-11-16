@@ -39,7 +39,7 @@ from src.core.context.images import image_size
 from src.core.context.meter.context_snapshot import ContextSnapshot
 from src.core.context.meter.session_cost import SessionCost
 from src.core.mcp.tool_models.server_status import ServerStatus
-from src.core.providers.domain.model_capability import ModelCatalog
+from src.core.providers.domain.model_catalog import ModelCatalog
 from src.core.roadmap.models.todo_item import TodoItem
 from src.core.sessions.session import Session
 from src.core.sessions.session_summary import SessionSummary

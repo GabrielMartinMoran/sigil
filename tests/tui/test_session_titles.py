@@ -20,7 +20,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from textual.widgets import OptionList
 
-from src.core.providers.factory.unconfigured import UnconfiguredModel
+from src.core.providers.factory.unconfigured_model import UnconfiguredModel
 from src.core.sessions.catalog_entry import CatalogEntry
 from src.core.sessions.session import Session
 from src.core.sessions.session_store import SessionStore

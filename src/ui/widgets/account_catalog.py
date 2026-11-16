@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.core.providers.domain.model_capability import ModelCatalog
+from src.core.providers.domain.model_catalog import ModelCatalog
 
 
 @dataclass(frozen=True, slots=True)

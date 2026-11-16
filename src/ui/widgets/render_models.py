@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from src.core.providers.domain.model_capability import ModelCatalog
+from src.core.providers.domain.model_catalog import ModelCatalog
 
 
 def render_models(catalog: ModelCatalog) -> Sequence[str]:

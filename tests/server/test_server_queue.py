@@ -1,7 +1,7 @@
 import pytest
 
 from src.core.bootstrap import Composition
-from src.core.providers.bootstrap import ProviderPaths
+from src.core.providers.provider_paths import ProviderPaths
 from src.core.settings import load_settings
 from src.core.storage.accepted_inputs import AcceptedInputs
 from src.core.storage.image_input import ImageInput

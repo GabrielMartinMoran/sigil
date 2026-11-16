@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from src.core.providers.domain.thinking import EFFORT_LEVELS, label
-from src.core.providers.snapshot import ModelSnapshot
+from src.core.providers.model_snapshot import ModelSnapshot
 
 
 def effort_label(model: ModelSnapshot, in_effect: str) -> str:
