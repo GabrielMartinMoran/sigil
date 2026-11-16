@@ -28,12 +28,12 @@ from src.core.agents.tree.agent_tree_store import AgentTreeStore
 from src.core.agents.tree.subagent_summoner import SubagentSummoner
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.agent_tree_rows import node_row, status_text
-from src.ui.widgets.agent_tree_screen import AgentTreeScreen
-from src.ui.widgets.agent_view import AgentView
-from src.ui.widgets.agent_view_text import build_agent_header, elapsed_text
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.prompt_input import PromptInput
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.models.agent_tree_rows import node_row, status_text
+from src.ui.widgets.panels.agent_view import AgentView
+from src.ui.widgets.panels.agent_view_text import build_agent_header, elapsed_text
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.screens.agent_tree_screen import AgentTreeScreen
 from tests.support.ui import render_text, wait_until
 
 pytestmark = pytest.mark.usefixtures('memory_databases')
@@ -307,7 +307,7 @@ def test_opening_the_debug_view_closes_the_node_view() -> None:
                 await pilot.press('alt+d')
                 assert app.subagent_open is False
                 assert app.debug_visible is True
-                from src.ui.widgets.agent_debug_view import AgentDebugView
+                from src.ui.widgets.panels.agent_debug_view import AgentDebugView
 
                 assert len(app.query_one(AgentDebugView).last_report.log) == 1
                 assert app.viewed_node_id() == first.id
@@ -475,7 +475,7 @@ def test_loading_another_session_swaps_the_tree() -> None:
 def test_running_node_keeps_unreturned_calls_pending_and_finishes_them_on_cancel() -> None:
     from pydantic_ai.messages import ModelResponse, ToolCallPart
 
-    from src.ui.widgets.tool_call_block import ToolCallBlock
+    from src.ui.widgets.chat.tool_call_block import ToolCallBlock
 
     async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -499,7 +499,7 @@ def test_running_node_keeps_unreturned_calls_pending_and_finishes_them_on_cancel
 def test_overlapping_refreshes_do_not_mix_transcript_snapshots() -> None:
     from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
 
-    from src.ui.widgets.tool_call_block import ToolCallBlock
+    from src.ui.widgets.chat.tool_call_block import ToolCallBlock
 
     async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -544,7 +544,7 @@ def test_overlapping_refreshes_do_not_mix_transcript_snapshots() -> None:
 def test_node_view_refreshes_when_a_message_changes_without_a_count_change() -> None:
     from pydantic_ai.messages import ModelResponse, TextPart
 
-    from src.ui.widgets.assistant_block import AssistantBlock
+    from src.ui.widgets.chat.assistant_block import AssistantBlock
 
     async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -564,8 +564,8 @@ def test_node_view_refreshes_when_a_message_changes_without_a_count_change() -> 
 def test_subagent_instructions_are_distinct_from_user_messages() -> None:
     from src.core.agents.origin import origin
     from src.core.agents.request import request
-    from src.ui.widgets.agent_message_block import AgentMessageBlock
-    from src.ui.widgets.user_message import UserMessage
+    from src.ui.widgets.chat.agent_message_block import AgentMessageBlock
+    from src.ui.widgets.chat.user_message import UserMessage
 
     async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:

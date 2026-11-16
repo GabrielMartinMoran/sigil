@@ -24,10 +24,10 @@ from textual.widgets import OptionList
 from src.core.agents.profile.agent_registry import AgentRegistry
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.agent_picker_screen import AgentPickerScreen
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.prompt_input import PromptInput
-from src.ui.widgets.status_bar import StatusBar
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.panels.status_bar import StatusBar
+from src.ui.widgets.screens.agent_picker_screen import AgentPickerScreen
 from tests.support.ui import wait_until
 
 FRONTMATTER = '---\nname: {name}\ndescription: {description}\n{extra}---\n{body}\n'
@@ -357,8 +357,8 @@ def test_new_session_binds_the_inherited_agent_so_its_model_resolves(tmp_path: P
 
 
 def test_service_picker_uses_server_rows_without_local_profiles() -> None:
-    from src.ui.agent_mixin import AgentMixin
-    from src.ui.widgets.agent_picker_screen import _row
+    from src.ui.mixins.agent_mixin import AgentMixin
+    from src.ui.widgets.screens.agent_picker_screen import _row
 
     rows = [
         {

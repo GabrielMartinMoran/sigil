@@ -15,10 +15,10 @@ from src.core.context.meter.context_meter import ContextMeter
 from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.agent_debug_view import AgentDebugView
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.debug_body import build_debug_body, build_debug_header
-from src.ui.widgets.prompt_input import PromptInput
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.panels.agent_debug_view import AgentDebugView
+from src.ui.widgets.panels.debug_body import build_debug_body, build_debug_header
+from src.ui.widgets.panels.prompt_input import PromptInput
 from tests.support.ui import wait_for_turn
 
 pytestmark = pytest.mark.usefixtures('memory_databases')
@@ -274,7 +274,7 @@ def test_dynamic_instruction_rows_are_highlighted_without_coloring_static_rows()
     from src.core.context.meter.debug import build_debug_report
     from src.core.context.meter.instruction_row import InstructionRow
     from src.core.context.meter.request_snapshot import RequestSnapshot
-    from src.ui.widgets.debug_body import _fixed_cost_table
+    from src.ui.widgets.panels.debug_body import _fixed_cost_table
 
     report = build_debug_report(
         [],
@@ -334,7 +334,7 @@ def test_should_roundtrip_content_free_report_without_losing_styled_tables() -> 
 def test_should_dispatch_debug_events_without_requiring_a_mounted_chat() -> None:
     from types import SimpleNamespace
 
-    from src.ui.service_event import ServiceEvent
+    from src.ui.client.service_event import ServiceEvent
 
     refreshes: list[bool] = []
     host = SimpleNamespace(refresh_debug=lambda: refreshes.append(True))

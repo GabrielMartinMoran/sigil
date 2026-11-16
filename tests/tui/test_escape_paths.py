@@ -19,9 +19,9 @@ from pydantic_ai.models.test import TestModel
 
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.prompt_input import PromptInput
-from src.ui.widgets.status_bar import StatusBar
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.panels.status_bar import StatusBar
 
 
 def _app(tmp: str, agent: Agent) -> SigilApp:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from src.ui.money_format import UNKNOWN, compact_usd
+from src.ui.render.money_format import UNKNOWN, compact_usd
 
 
 def test_a_cent_or_more_is_shown_with_two_decimals() -> None:

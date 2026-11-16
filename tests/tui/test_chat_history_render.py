@@ -23,9 +23,9 @@ from textual.app import App, ComposeResult
 from src.core.agents.origin import origin
 from src.core.agents.request import request
 from src.core.agents.tree.reports import report_view
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.tool_call_block import ToolCallBlock
-from src.ui.widgets.tool_group_header import ToolGroupHeader
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.chat.tool_call_block import ToolCallBlock
+from src.ui.widgets.chat.tool_group_header import ToolGroupHeader
 
 
 def history(turns: int) -> list:
@@ -182,7 +182,7 @@ def test_restored_parallel_tool_results_match_call_ids() -> None:
 def test_history_shows_opaque_reasoning_without_exposing_signature() -> None:
     from pydantic_ai.messages import ThinkingPart
 
-    from src.ui.widgets.assistant_block import AssistantBlock
+    from src.ui.widgets.chat.assistant_block import AssistantBlock
     from tests.support.ui import render_text
 
     async def inner() -> None:
@@ -244,8 +244,8 @@ def test_restored_subagent_report_is_an_event_not_a_user_message() -> None:
     from src.core.agents.profile.models.agent_role import AgentRole
     from src.core.agents.tree.models.agent_node import AgentNode
     from src.core.agents.tree.subagent_summoner import _envelope
-    from src.ui.widgets.subagent_report import SubagentReport
-    from src.ui.widgets.user_message import UserMessage
+    from src.ui.widgets.chat.subagent_report import SubagentReport
+    from src.ui.widgets.chat.user_message import UserMessage
 
     async def inner() -> None:
         node = AgentNode(id='12345678abcd', name='researcher', role=AgentRole.SUBAGENT, parent_id='root', depth=1)
@@ -272,8 +272,8 @@ def test_restored_report_preserves_user_text_and_does_not_hide_unmatched_prompts
     from src.core.agents.profile.models.agent_role import AgentRole
     from src.core.agents.tree.models.agent_node import AgentNode
     from src.core.agents.tree.subagent_summoner import _envelope
-    from src.ui.widgets.subagent_report import SubagentReport
-    from src.ui.widgets.user_message import UserMessage
+    from src.ui.widgets.chat.subagent_report import SubagentReport
+    from src.ui.widgets.chat.user_message import UserMessage
 
     async def inner() -> None:
         node = AgentNode(id='12345678abcd', name='researcher', role=AgentRole.SUBAGENT, parent_id='root', depth=1)
@@ -304,8 +304,8 @@ def test_multiple_reports_and_standalone_delivery_render_as_events() -> None:
     from src.core.agents.profile.models.agent_role import AgentRole
     from src.core.agents.tree.models.agent_node import AgentNode
     from src.core.agents.tree.subagent_summoner import _envelope
-    from src.ui.widgets.subagent_report import SubagentReport
-    from src.ui.widgets.user_message import UserMessage
+    from src.ui.widgets.chat.subagent_report import SubagentReport
+    from src.ui.widgets.chat.user_message import UserMessage
 
     async def inner() -> None:
         first = AgentNode(id='aaaaaaaa1234', name='one', role=AgentRole.SUBAGENT, parent_id='root', depth=1)
@@ -338,7 +338,7 @@ def test_multiple_reports_and_standalone_delivery_render_as_events() -> None:
 
 
 def test_rejected_tool_without_start_uses_original_call_arguments() -> None:
-    from src.ui.widgets.summon_block import SummonBlock
+    from src.ui.widgets.chat.summon_block import SummonBlock
 
     async def inner() -> None:
         app = Harness()
@@ -364,8 +364,8 @@ def test_streamed_refusal_recovers_call_arguments_by_id() -> None:
 
     from pydantic_ai.messages import FunctionToolResultEvent
 
-    from src.ui.turn_mixin import TurnMixin
-    from src.ui.widgets.summon_block import SummonBlock
+    from src.ui.mixins.turn_mixin import TurnMixin
+    from src.ui.widgets.chat.summon_block import SummonBlock
 
     async def inner() -> None:
         app = Harness()

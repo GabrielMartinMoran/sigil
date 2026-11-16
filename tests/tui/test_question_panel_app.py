@@ -20,9 +20,9 @@ from src.core.interaction.question_hub import QuestionHub
 from src.core.interaction.tools import register_interaction_tools
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.prompt_input import PromptInput
-from src.ui.widgets.question_panel import QuestionPanel
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.panels.question_panel import QuestionPanel
 from tests.support.ui import fill_chat, wait_for_turn
 
 pytestmark = pytest.mark.usefixtures('memory_databases')

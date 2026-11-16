@@ -15,7 +15,7 @@ from textual.widgets import Input, OptionList, Static
 from src.core.interaction.models.question_answer import QuestionAnswer
 from src.core.interaction.models.question_item import QuestionItem
 from src.core.interaction.models.question_option import QuestionOption
-from src.ui.widgets.question_panel import CUSTOM_ID, QuestionPanel
+from src.ui.widgets.panels.question_panel import CUSTOM_ID, QuestionPanel
 
 
 def _question(text: str = 'What do we do?') -> QuestionItem:

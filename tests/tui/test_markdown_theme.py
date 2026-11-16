@@ -6,7 +6,7 @@ from typing import ClassVar
 from rich.color import Color
 from rich.console import Console
 
-from src.ui.widgets.linked_markdown import LinkedMarkdown
+from src.ui.widgets.chat.linked_markdown import LinkedMarkdown
 
 
 class App:

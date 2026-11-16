@@ -13,10 +13,10 @@ from textual.app import App, ComposeResult
 from textual.theme import Theme
 
 from src.core.theming.theme_registry import ThemeRegistry
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.empty_logo import LOGO, SMALL_LOGO, logo_lines
-from src.ui.widgets.subagent_report import SubagentReport
-from src.ui.widgets.user_message import UserMessage
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.chat.empty_logo import LOGO, SMALL_LOGO, logo_lines
+from src.ui.widgets.chat.subagent_report import SubagentReport
+from src.ui.widgets.chat.user_message import UserMessage
 
 INK = next(glyph for glyph in LOGO[0] if glyph != ' ')
 

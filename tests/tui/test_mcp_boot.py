@@ -24,7 +24,7 @@ from src.core.mcp.deferred import build_manager
 from src.core.mcp.mcp_gateway import MCPGateway
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.sidebar_panel import SidebarPanel
+from src.ui.widgets.panels.sidebar_panel import SidebarPanel
 from tests.support.ui import wait_until
 
 SERVER_SCRIPT = '''\

@@ -64,7 +64,7 @@ def test_the_app_offers_those_defaults_under_textuals_own_name() -> None:
     called anything else is never called, and a `$muted` only Sigil knows fails
     to parse — at startup, on the whole app.
     """
-    from src.ui.preferences_mixin import PreferencesMixin
+    from src.ui.mixins.preferences_mixin import PreferencesMixin
 
     assert 'muted' in PreferencesMixin.get_theme_variable_defaults(object.__new__(PreferencesMixin))
 

@@ -5,7 +5,7 @@ from src.core.providers.domain.provider_account import ProviderAccount
 from src.core.providers.domain.provider_kind import ProviderKind
 from src.core.providers.domain.selection import Selection
 from src.core.providers.model_snapshot import ModelSnapshot
-from src.ui.effort_label import effort_label
+from src.ui.state.effort_label import effort_label
 from tests.support.ui import render_text
 
 
@@ -22,7 +22,7 @@ def test_effort_label_falls_back_to_the_selection() -> None:
 
 
 def test_assistant_block_renders_markdown_and_collapses_reasoning() -> None:
-    from src.ui.widgets.assistant_block import AssistantBlock
+    from src.ui.widgets.chat.assistant_block import AssistantBlock
 
     collapsed = AssistantBlock(reasoning_visible=False)
     collapsed.add_thinking('thinking hard')
@@ -42,8 +42,8 @@ def test_assistant_block_renders_markdown_and_collapses_reasoning() -> None:
 
 
 def test_assistant_block_without_reasoning_is_just_markdown() -> None:
-    from src.ui.widgets.assistant_block import AssistantBlock
-    from src.ui.widgets.linked_markdown import LinkedMarkdown
+    from src.ui.widgets.chat.assistant_block import AssistantBlock
+    from src.ui.widgets.chat.linked_markdown import LinkedMarkdown
 
     block = AssistantBlock(reasoning_visible=False)
     block.add_text('# Hello')
@@ -54,7 +54,7 @@ def test_assistant_block_without_reasoning_is_just_markdown() -> None:
 def test_assistant_block_without_content_is_empty_text() -> None:
     from rich.text import Text
 
-    from src.ui.widgets.assistant_block import AssistantBlock
+    from src.ui.widgets.chat.assistant_block import AssistantBlock
 
     block = AssistantBlock()
     block.finalize()
@@ -63,7 +63,7 @@ def test_assistant_block_without_content_is_empty_text() -> None:
 
 
 def test_collapsed_reasoning_reports_how_much_it_hides() -> None:
-    from src.ui.widgets.assistant_block import AssistantBlock
+    from src.ui.widgets.chat.assistant_block import AssistantBlock
 
     block = AssistantBlock(reasoning_visible=False)
     block.add_thinking('one\ntwo\nthree')
@@ -74,7 +74,7 @@ def test_collapsed_reasoning_reports_how_much_it_hides() -> None:
 
 
 def test_unavailable_reasoning_is_only_shown_when_expanded() -> None:
-    from src.ui.widgets.assistant_block import AssistantBlock
+    from src.ui.widgets.chat.assistant_block import AssistantBlock
 
     block = AssistantBlock()
     block.add_thinking('')

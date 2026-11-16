@@ -62,43 +62,43 @@ from src.core.tooling.tool_logger_hub import ToolLoggerHub
 from src.core.tooling.tool_summary import ToolSummary
 from src.core.workspace.workspace_manager import WorkspaceManager
 from src.server.launch.diagnostics import record
-from src.ui.activity_mixin import ActivityMixin
-from src.ui.agent_mixin import AgentMixin
-from src.ui.attention import Attention
-from src.ui.chat_notice import ChatNotice
-from src.ui.chat_tool_log_sink import ChatToolLogSink
-from src.ui.commands_mixin import CommandsMixin
-from src.ui.debug_mixin import DebugMixin
-from src.ui.desktop_notifications import send_notification
-from src.ui.menu_mixin import MenuMixin
-from src.ui.model_retry_notice import ModelRetryNotice
-from src.ui.model_view_mixin import ModelViewMixin
-from src.ui.notification_context import NotificationContext
-from src.ui.preferences_mixin import PreferencesMixin
-from src.ui.provider_mixin import ProviderMixin
-from src.ui.roadmap_changed import RoadmapChanged
-from src.ui.rollback_mixin import RollbackMixin
-from src.ui.service_client import ServiceClient
-from src.ui.service_client_error import ServiceClientError
-from src.ui.service_event import ServiceEvent
-from src.ui.service_unavailable import ServiceUnavailable
-from src.ui.sidebar_mixin import SidebarMixin
-from src.ui.stream_interrupted import StreamInterrupted
-from src.ui.title_mixin import TitleMixin
-from src.ui.tool_log_message import ToolLogMessage
-from src.ui.tree_mixin import TreeMixin
-from src.ui.turn_mixin import TurnMixin
-from src.ui.turn_notices import failure_notice
-from src.ui.unauthorized import Unauthorized
-from src.ui.widgets.agent_debug_view import AgentDebugView
-from src.ui.widgets.agent_view import AgentView
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.command_menu import CommandMenu
-from src.ui.widgets.prompt_input import PromptInput
-from src.ui.widgets.question_panel import QuestionPanel
-from src.ui.widgets.sidebar_panel import SidebarPanel
-from src.ui.widgets.status_bar import StatusBar
-from src.ui.workspace_mixin import WorkspaceMixin
+from src.ui.client.service_client import ServiceClient
+from src.ui.client.service_client_error import ServiceClientError
+from src.ui.client.service_event import ServiceEvent
+from src.ui.client.service_unavailable import ServiceUnavailable
+from src.ui.client.stream_interrupted import StreamInterrupted
+from src.ui.client.unauthorized import Unauthorized
+from src.ui.messages.attention import Attention
+from src.ui.messages.chat_notice import ChatNotice
+from src.ui.messages.desktop_notifications import send_notification
+from src.ui.messages.model_retry_notice import ModelRetryNotice
+from src.ui.messages.notification_context import NotificationContext
+from src.ui.messages.roadmap_changed import RoadmapChanged
+from src.ui.messages.tool_log_message import ToolLogMessage
+from src.ui.mixins.activity_mixin import ActivityMixin
+from src.ui.mixins.agent_mixin import AgentMixin
+from src.ui.mixins.commands_mixin import CommandsMixin
+from src.ui.mixins.debug_mixin import DebugMixin
+from src.ui.mixins.menu_mixin import MenuMixin
+from src.ui.mixins.model_view_mixin import ModelViewMixin
+from src.ui.mixins.preferences_mixin import PreferencesMixin
+from src.ui.mixins.provider_mixin import ProviderMixin
+from src.ui.mixins.rollback_mixin import RollbackMixin
+from src.ui.mixins.sidebar_mixin import SidebarMixin
+from src.ui.mixins.title_mixin import TitleMixin
+from src.ui.mixins.tree_mixin import TreeMixin
+from src.ui.mixins.turn_mixin import TurnMixin
+from src.ui.mixins.workspace_mixin import WorkspaceMixin
+from src.ui.render.chat_tool_log_sink import ChatToolLogSink
+from src.ui.state.turn_notices import failure_notice
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.panels.agent_debug_view import AgentDebugView
+from src.ui.widgets.panels.agent_view import AgentView
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.panels.question_panel import QuestionPanel
+from src.ui.widgets.panels.sidebar_panel import SidebarPanel
+from src.ui.widgets.panels.status_bar import StatusBar
+from src.ui.widgets.screens.command_menu import CommandMenu
 
 SERVICE_EVENTS = 'service-events'
 """Worker group of the loop that follows the service's event stream."""
@@ -601,7 +601,7 @@ class SigilApp(
         if self._workspace_manager is None and self._client is None:
             return
         if self._diff_timer is None:
-            from src.ui.activity_mixin import DIFF_REFRESH_INTERVAL
+            from src.ui.mixins.activity_mixin import DIFF_REFRESH_INTERVAL
 
             self._diff_timer = self.set_interval(DIFF_REFRESH_INTERVAL, self.refresh_diff)
 

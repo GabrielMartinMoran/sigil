@@ -21,7 +21,7 @@ from textual._xterm_parser import XTermParser
 
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.status_bar import StatusBar
+from src.ui.widgets.panels.status_bar import StatusBar
 
 
 def _parse_escape_bytes() -> list[object]:

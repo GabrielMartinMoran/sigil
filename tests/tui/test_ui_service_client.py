@@ -43,18 +43,18 @@ from src.server.launch.service_starting import ServiceStarting
 from src.server.runtime.event_hub import EventHub
 from src.server.runtime.pending_question import PendingQuestion
 from src.server.runtime.server_runtime import ServerRuntime
-from src.ui.outgoing_image import OutgoingImage
-from src.ui.payload_too_large import PayloadTooLarge
-from src.ui.request_rejected import RequestRejected
-from src.ui.service_busy import ServiceBusy
-from src.ui.service_client import ServiceClient
-from src.ui.service_client_error import ServiceClientError
-from src.ui.service_unavailable import ServiceUnavailable
-from src.ui.sse_decoder import SseDecoder
-from src.ui.stream_interrupted import StreamInterrupted
-from src.ui.turn_request import TurnRequest
-from src.ui.unauthorized import Unauthorized
-from src.ui.unexpected_response import UnexpectedResponse
+from src.ui.client.outgoing_image import OutgoingImage
+from src.ui.client.payload_too_large import PayloadTooLarge
+from src.ui.client.request_rejected import RequestRejected
+from src.ui.client.service_busy import ServiceBusy
+from src.ui.client.service_client import ServiceClient
+from src.ui.client.service_client_error import ServiceClientError
+from src.ui.client.service_unavailable import ServiceUnavailable
+from src.ui.client.sse_decoder import SseDecoder
+from src.ui.client.stream_interrupted import StreamInterrupted
+from src.ui.client.turn_request import TurnRequest
+from src.ui.client.unauthorized import Unauthorized
+from src.ui.client.unexpected_response import UnexpectedResponse
 from tests.support.server_parity import _busy, _composition
 from tests.support.ui_service_client import (
     TOKEN,

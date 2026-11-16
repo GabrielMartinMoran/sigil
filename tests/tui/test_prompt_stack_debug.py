@@ -6,7 +6,7 @@ from src.core.context.meter.instruction_row import InstructionRow
 from src.core.context.meter.prompt_section import PromptSection
 from src.core.context.meter.request_snapshot import RequestSnapshot
 from src.core.context.meter.tool_row import ToolRow
-from src.ui.widgets.debug_body import build_debug_body
+from src.ui.widgets.panels.debug_body import build_debug_body
 from tests.support.ui import render_text
 
 
@@ -31,7 +31,7 @@ def test_stack_shows_ordered_blocks_and_unknown_sizes() -> None:
 
 
 def test_stack_colors_dynamic_context_and_leaves_history_white() -> None:
-    from src.ui.widgets.debug_body import _prompt_stack
+    from src.ui.widgets.panels.debug_body import _prompt_stack
 
     request = RequestSnapshot(
         captured=True,
@@ -76,7 +76,7 @@ def test_stack_uses_semantic_order_for_each_known_block() -> None:
         sections=(PromptSection('user', 'user', 1), PromptSection('dynamic', 'Agent context', 1)),
     )
     report = build_debug_report([], snapshot=ContextMeter().snapshot([]), request=request)
-    from src.ui.widgets.debug_body import _prompt_stack
+    from src.ui.widgets.panels.debug_body import _prompt_stack
 
     output = render_text(_prompt_stack(report), width=100)
     labels = (

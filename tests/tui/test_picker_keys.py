@@ -25,9 +25,9 @@ from src.core.providers.domain.model_catalog import ModelCatalog
 from src.core.providers.domain.thinking import EFFORT_LEVELS
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.effort_screen import EffortScreen
-from src.ui.widgets.model_picker_screen import ModelPickerScreen
-from src.ui.widgets.prompt_input import PromptInput
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.screens.effort_screen import EffortScreen
+from src.ui.widgets.screens.model_picker_screen import ModelPickerScreen
 
 CATALOG = ModelCatalog(
     models=(
@@ -268,7 +268,7 @@ def test_the_app_binds_what_can_actually_reach_it() -> None:
 
 
 def test_the_pickers_are_reached_through_the_prompt_input() -> None:
-    from src.ui.widgets.prompt_input import CTRL_EFFORT, CTRL_MODELS
+    from src.ui.widgets.panels.prompt_input import CTRL_EFFORT, CTRL_MODELS
 
     assert CTRL_MODELS == 'ctrl+m'
     assert CTRL_EFFORT == 'ctrl+l'

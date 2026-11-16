@@ -10,8 +10,8 @@ from pydantic_ai.models.test import TestModel
 
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.tool_call_block import ToolCallBlock
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.chat.tool_call_block import ToolCallBlock
 
 
 def test_should_not_underline_expanded_output_on_focus(tmp_path: Path) -> None:

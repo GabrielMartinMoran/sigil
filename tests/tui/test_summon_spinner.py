@@ -1,5 +1,5 @@
-from src.ui.widgets.status_bar import SPINNER_FRAMES
-from src.ui.widgets.summon_block import SummonBlock
+from src.ui.widgets.chat.summon_block import SummonBlock
+from src.ui.widgets.panels.status_bar import SPINNER_FRAMES
 
 
 def test_pending_summon_animates_and_stops_when_finished() -> None:

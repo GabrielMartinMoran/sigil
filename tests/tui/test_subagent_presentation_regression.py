@@ -1,6 +1,6 @@
 import asyncio
 
-from src.ui.widgets.status_bar import StatusBar
+from src.ui.widgets.panels.status_bar import StatusBar
 
 
 def test_status_bar_counts_background_subagents_at_rest() -> None:

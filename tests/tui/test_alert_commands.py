@@ -15,10 +15,10 @@ from src.core.commands.command_owner import CommandOwner
 from src.core.config.preferences import Preferences
 from src.core.config.preferences_store import PreferencesStore
 from src.core.sessions.session_store import SessionStore
-from src.ui.help_text import HELP_TEXT
+from src.ui.render.help_text import HELP_TEXT
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.prompt_input import PromptInput
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.panels.prompt_input import PromptInput
 from tests.support.ui import render_text
 
 
@@ -64,7 +64,7 @@ def test_should_show_status_without_sending_or_mutating(tmp_path: Path, monkeypa
         app = make_app(tmp_path)
         sender = Mock()
         monkeypatch.setattr('src.ui.sigil_app.send_notification', sender)
-        monkeypatch.setattr('src.ui.preferences_mixin.notification_command', lambda _: None)
+        monkeypatch.setattr('src.ui.mixins.preferences_mixin.notification_command', lambda _: None)
         async with app.run_test():
             await app.handle_command('/alerts')
             text = '\n'.join(render_text(child.render()) for child in app.query_one(ChatLog).children)

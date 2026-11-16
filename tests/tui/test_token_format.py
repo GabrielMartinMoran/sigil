@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.ui.token_format import UNKNOWN, compact_tokens
+from src.ui.render.token_format import UNKNOWN, compact_tokens
 
 
 def test_below_a_thousand_is_shown_as_is() -> None:

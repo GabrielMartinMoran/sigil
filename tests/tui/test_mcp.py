@@ -6,7 +6,7 @@ FastMCP client.
 """
 
 from src.core.mcp.tool_models.server_status import ServerStatus
-from src.ui.mcp_report import format_mcp_status
+from src.ui.state.mcp_report import format_mcp_status
 
 # --- state report -----------------------------------------------------------
 

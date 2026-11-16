@@ -80,39 +80,39 @@ from src.server.launch.server_config import ServerConfig
 from src.server.runtime.event import Event
 from src.server.runtime.event_hub import EventHub
 from src.server.runtime.server_runtime import ServerRuntime
-from src.ui import command_transport
-from src.ui.command_transport import TRANSPORT
-from src.ui.commands_mixin import BUSY_UNKNOWN
-from src.ui.outgoing_image import OutgoingImage
-from src.ui.payload_too_large import PayloadTooLarge
-from src.ui.render_service_context import render_service_context
-from src.ui.request_rejected import RequestRejected
-from src.ui.rollback_mixin import _turn_for_seq
-from src.ui.service_busy import ServiceBusy
-from src.ui.service_client import ServiceClient
-from src.ui.service_unavailable import ServiceUnavailable
+from src.ui.client import command_transport
+from src.ui.client.command_transport import TRANSPORT
+from src.ui.client.outgoing_image import OutgoingImage
+from src.ui.client.payload_too_large import PayloadTooLarge
+from src.ui.client.request_rejected import RequestRejected
+from src.ui.client.service_busy import ServiceBusy
+from src.ui.client.service_client import ServiceClient
+from src.ui.client.service_unavailable import ServiceUnavailable
+from src.ui.client.transport import Transport
+from src.ui.client.transport_state import TransportState
+from src.ui.client.turn_request import TurnRequest
+from src.ui.client.unauthorized import Unauthorized
+from src.ui.mixins.commands_mixin import BUSY_UNKNOWN
+from src.ui.mixins.rollback_mixin import _turn_for_seq
+from src.ui.mixins.tree_mixin import _nodes_from_tree
+from src.ui.mixins.turn_mixin import ABORT_HINT
+from src.ui.render.token_format import compact_tokens
 from src.ui.sigil_app import SigilApp
-from src.ui.token_format import compact_tokens
-from src.ui.transport import Transport
-from src.ui.transport_state import TransportState
-from src.ui.tree_mixin import _nodes_from_tree
-from src.ui.turn_mixin import ABORT_HINT
-from src.ui.turn_notices import failure_notice, pending_request
-from src.ui.turn_request import TurnRequest
-from src.ui.unauthorized import Unauthorized
-from src.ui.widgets.agent_debug_view import AgentDebugView
-from src.ui.widgets.agent_tree_screen import AgentTreeScreen
-from src.ui.widgets.agent_view import AgentView
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.chat_text import format_tool_args
-from src.ui.widgets.mcp_screen import MCPScreen
-from src.ui.widgets.prompt_input import PromptInput
-from src.ui.widgets.question_panel import QuestionPanel
-from src.ui.widgets.rollback_screen import RollbackScreen
-from src.ui.widgets.sidebar_panel import SidebarPanel
-from src.ui.widgets.status_bar import StatusBar
-from src.ui.widgets.tool_call_block import ToolCallBlock
-from src.ui.widgets.tree_action import TreeAction
+from src.ui.state.render_service_context import render_service_context
+from src.ui.state.turn_notices import failure_notice, pending_request
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.chat.chat_text import format_tool_args
+from src.ui.widgets.chat.tool_call_block import ToolCallBlock
+from src.ui.widgets.models.tree_action import TreeAction
+from src.ui.widgets.panels.agent_debug_view import AgentDebugView
+from src.ui.widgets.panels.agent_view import AgentView
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.panels.question_panel import QuestionPanel
+from src.ui.widgets.panels.sidebar_panel import SidebarPanel
+from src.ui.widgets.panels.status_bar import StatusBar
+from src.ui.widgets.screens.agent_tree_screen import AgentTreeScreen
+from src.ui.widgets.screens.mcp_screen import MCPScreen
+from src.ui.widgets.screens.rollback_screen import RollbackScreen
 from tests.support.agents import write_profile
 from tests.support.provider_service import _add, _service
 from tests.support.server_parity import _busy
@@ -1302,7 +1302,7 @@ def test_a_core_command_says_who_serves_it_and_leaves_the_screen_alone(
 def test_agent_picker_uses_service_catalog_from_both_entry_points(
     entry: str, composition: Composition, tmp_path: Path
 ) -> None:
-    from src.ui.widgets.agent_picker_screen import AgentPickerScreen
+    from src.ui.widgets.screens.agent_picker_screen import AgentPickerScreen
 
     async def inner() -> None:
         async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
@@ -1979,7 +1979,7 @@ def test_model_switch_changes_the_services_model(composition: Composition, tmp_p
 def test_rollback_truncates_the_services_session_and_restores_the_prompt(
     composition: Composition, tmp_path: Path
 ) -> None:
-    from src.ui.widgets.rollback_screen import ROLLBACK_ONLY
+    from src.ui.widgets.screens.rollback_screen import ROLLBACK_ONLY
 
     async def inner() -> None:
         async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
@@ -2013,7 +2013,7 @@ def test_the_restored_prompt_brings_its_image_back_to_the_composer(composition: 
     compared bytes would be measuring the encoder, and would break the day it
     changed its mind about compression.
     """
-    from src.ui.widgets.rollback_screen import ROLLBACK_ONLY
+    from src.ui.widgets.screens.rollback_screen import ROLLBACK_ONLY
 
     color = (10, 120, 200)
 
@@ -2051,7 +2051,7 @@ def test_the_restored_prompt_brings_its_image_back_to_the_composer(composition: 
 
 
 def test_fork_creates_a_session_in_the_service_and_keeps_this_one(composition: Composition, tmp_path: Path) -> None:
-    from src.ui.widgets.rollback_screen import FORK
+    from src.ui.widgets.screens.rollback_screen import FORK
 
     async def inner() -> None:
         async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
@@ -3451,7 +3451,7 @@ def test_the_attached_turn_clock_ticks_while_the_service_runs_one(
 
     async def inner() -> None:
         clock = {'now': 1000.0}
-        monkeypatch.setattr('src.ui.activity_mixin.time', SimpleNamespace(monotonic=lambda: clock['now']))
+        monkeypatch.setattr('src.ui.mixins.activity_mixin.time', SimpleNamespace(monotonic=lambda: clock['now']))
         async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
             app = _terminal(client, _session(runtime))
             async with app.run_test(size=(100, 40)) as pilot:
@@ -3500,7 +3500,7 @@ def test_a_row_the_service_painted_wears_the_theme_and_follows_a_switch(
     """
     from rich.color import Color
 
-    from src.ui.widgets.assistant_block import AssistantBlock
+    from src.ui.widgets.chat.assistant_block import AssistantBlock
 
     composition = _composition(tmp_path, monkeypatch, output='## Heading\n\nbody')
 
@@ -3566,7 +3566,7 @@ def test_the_attached_defaults_screen_paints_what_the_service_reads(composition:
     profile missing from the list is exactly the default the user came to set.
     """
     from src.core.agents.config_scope import ConfigScope
-    from src.ui.widgets.model_defaults_screen import ModelDefaultsScreen
+    from src.ui.widgets.screens.model_defaults_screen import ModelDefaultsScreen
 
     config = Path(os.environ['SIGIL_CONFIG'])
     config.write_text(
@@ -3612,9 +3612,9 @@ def test_a_default_written_from_an_attached_terminal_goes_through_the_service(
     notice naming it is proof the screen reports the projection the route answered
     with instead of a sentence it made up.
     """
-    from src.ui.widgets.effort_screen import EffortScreen
-    from src.ui.widgets.grouped_model_screen import GroupedModelScreen
-    from src.ui.widgets.model_defaults_screen import ModelDefaultsScreen
+    from src.ui.widgets.screens.effort_screen import EffortScreen
+    from src.ui.widgets.screens.grouped_model_screen import GroupedModelScreen
+    from src.ui.widgets.screens.model_defaults_screen import ModelDefaultsScreen
 
     config = Path(os.environ['SIGIL_CONFIG'])
 
@@ -3656,9 +3656,9 @@ def test_a_default_the_service_refuses_says_so_and_changes_nothing(composition: 
     writer — answers `409` with the engine's sentence, and the file it would have
     rewritten is unchanged: there is no second copy here that could disagree with it.
     """
-    from src.ui.widgets.effort_screen import EffortScreen
-    from src.ui.widgets.grouped_model_screen import GroupedModelScreen
-    from src.ui.widgets.model_defaults_screen import ModelDefaultsScreen
+    from src.ui.widgets.screens.effort_screen import EffortScreen
+    from src.ui.widgets.screens.grouped_model_screen import GroupedModelScreen
+    from src.ui.widgets.screens.model_defaults_screen import ModelDefaultsScreen
 
     config = Path(os.environ['SIGIL_CONFIG'])
     before = config.read_text(encoding='utf-8')
@@ -4312,7 +4312,7 @@ def test_should_coalesce_service_debug_reads_skip_unchanged_paints_and_stop_when
 def test_should_clear_stale_service_debug_after_a_read_failure(
     composition: Composition, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from src.ui.unexpected_response import UnexpectedResponse
+    from src.ui.client.unexpected_response import UnexpectedResponse
 
     async def scenario() -> None:
         async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):
@@ -4366,8 +4366,8 @@ def test_debug_follows_selected_subagent_and_returns_to_it(composition: Composit
     from pydantic_ai.usage import RequestUsage
 
     from src.core.agents.profile.models.agent_role import AgentRole
-    from src.ui.widgets.agent_debug_view import AgentDebugView
-    from src.ui.widgets.agent_view import AgentView
+    from src.ui.widgets.panels.agent_debug_view import AgentDebugView
+    from src.ui.widgets.panels.agent_view import AgentView
 
     async def scenario() -> None:
         async with _service_under_test(composition, tmp_path) as (runtime, _transport, client):

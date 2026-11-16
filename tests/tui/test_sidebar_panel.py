@@ -26,13 +26,13 @@ from src.core.roadmap.models.todo_item import TodoItem
 from src.core.roadmap.roadmap_store import RoadmapStore
 from src.core.roadmap.roadmap_stores import RoadmapStores
 from src.core.sessions.session_store import SessionStore
-from src.ui.sidebar_mixin import SidebarMixin
+from src.ui.mixins.sidebar_mixin import SidebarMixin
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.context_state import ContextState
-from src.ui.widgets.mcp_server_state import MCPServerState
-from src.ui.widgets.model_state import ModelState
-from src.ui.widgets.sidebar_panel import SidebarPanel
-from src.ui.widgets.status_bar import StatusBar
+from src.ui.widgets.models.context_state import ContextState
+from src.ui.widgets.models.mcp_server_state import MCPServerState
+from src.ui.widgets.models.model_state import ModelState
+from src.ui.widgets.panels.sidebar_panel import SidebarPanel
+from src.ui.widgets.panels.status_bar import StatusBar
 
 
 def _panel() -> SidebarPanel:
@@ -277,7 +277,7 @@ def test_status_bar_starts_at_rest() -> None:
 
 
 def test_status_bar_carries_the_workspace_badge() -> None:
-    from src.ui.widgets.workspace_badge import WorkspaceBadge
+    from src.ui.widgets.models.workspace_badge import WorkspaceBadge
 
     bar = StatusBar()
     bar.set_workspace(WorkspaceBadge(label='fix-login', branch='sigil/fix-login', is_worktree=True))

@@ -21,9 +21,9 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
 from src.core.sessions.session_store import SessionStore
-from src.ui.attention import Attention
+from src.ui.messages.attention import Attention
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.chat_log import ChatLog
+from src.ui.widgets.chat.chat_log import ChatLog
 
 
 class StubClient:

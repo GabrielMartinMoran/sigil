@@ -19,7 +19,7 @@ def report(messages: list, *, window: int = 100000):
 
 
 def test_skill_metrics_render_in_text_and_debug_view() -> None:
-    from src.ui.widgets.debug_body import build_debug_body
+    from src.ui.widgets.panels.debug_body import build_debug_body
 
     metrics = {
         'instructions_tokens': 100,

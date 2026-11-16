@@ -17,9 +17,9 @@ from src.core.roadmap.roadmap_stores import RoadmapStores
 from src.core.sessions.session_store import SessionStore
 from src.core.workspace.workspace_manager import WorkspaceManager
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.sidebar_panel import SidebarPanel
-from src.ui.widgets.status_bar import StatusBar
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.panels.sidebar_panel import SidebarPanel
+from src.ui.widgets.panels.status_bar import StatusBar
 from tests.support.ui import wait_until
 
 

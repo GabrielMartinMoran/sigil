@@ -25,8 +25,8 @@ from src.core.sessions.session import Session
 from src.core.sessions.session_store import SessionStore
 from src.core.workspace.models.workspace import Workspace
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.agent_tree_screen import AgentTreeScreen
-from src.ui.widgets.session_picker import SessionPicker
+from src.ui.widgets.screens.agent_tree_screen import AgentTreeScreen
+from src.ui.widgets.screens.session_picker import SessionPicker
 
 MIN_CONTRAST = 3.0
 

@@ -3,7 +3,7 @@
 from src.core.context.compaction.compaction_event import CompactionEvent
 from src.core.context.compaction.projection import prepare
 from src.core.context.context_budget import ContextBudget
-from src.ui.widgets.debug_body import _compaction_label
+from src.ui.widgets.panels.debug_body import _compaction_label
 from tests.support.append_only_pipeline import conversation
 
 

@@ -13,7 +13,7 @@ from pydantic_ai.messages import (
 )
 from rich.console import Console
 
-from src.ui.stream_renderer import StreamRenderer
+from src.ui.render.stream_renderer import StreamRenderer
 
 
 class _FakeEvents:

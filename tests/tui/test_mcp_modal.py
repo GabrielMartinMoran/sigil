@@ -12,14 +12,14 @@ from src.core.mcp.manager.mcp_manager import MCPManager
 from src.core.mcp.mcp_gateway import MCPGateway
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.mcp_screen import MCPScreen
-from src.ui.widgets.prompt_input import PromptInput
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.screens.mcp_screen import MCPScreen
 from tests.support.ui import wait_until
 
 
 def test_only_enabled_servers_show_their_tools() -> None:
     from src.core.mcp.tool_models.server_status import ServerStatus
-    from src.ui.widgets.mcp_screen import _row
+    from src.ui.widgets.screens.mcp_screen import _row
 
     status = ServerStatus(name='server', transport='stdio', enabled=True, prefix='', source='config', tools=['read'])
     assert 'read' in _row(status).plain

@@ -20,10 +20,10 @@ from src.core.agents.config_scope import ConfigScope
 from src.core.agents.model_defaults import read_defaults, save_default
 from src.core.agents.profile.models.agent_profile import AgentProfile
 from src.core.agents.profile.models.agent_role import AgentRole
-from src.ui.defaults_rows import defaults_rows
-from src.ui.widgets.defaults_choice import DefaultsChoice
-from src.ui.widgets.defaults_row import DefaultsRow
-from src.ui.widgets.model_defaults_screen import ModelDefaultsScreen
+from src.ui.state.defaults_rows import defaults_rows
+from src.ui.widgets.models.defaults_choice import DefaultsChoice
+from src.ui.widgets.models.defaults_row import DefaultsRow
+from src.ui.widgets.screens.model_defaults_screen import ModelDefaultsScreen
 from tests.support.ui import render_text, wait_until
 
 
@@ -287,7 +287,7 @@ def test_should_head_each_role_and_the_orphans_apart(tmp_path: Path) -> None:
 
 
 def test_should_say_where_each_kind_of_default_takes_effect() -> None:
-    from src.ui.provider_mixin import _effect_note
+    from src.ui.mixins.provider_mixin import _effect_note
 
     default = DefaultsRow(None, 'Default for new conversations', '')
     agent = DefaultsRow('wizard', 'Wizard', '', role=AgentRole.AGENT)
@@ -321,8 +321,8 @@ def _sigil_app(root: Path, service, paths: tuple[Path, Path]):
 
 
 def test_should_write_the_default_model_chosen_from_the_chat(tmp_path: Path) -> None:
-    from src.ui.widgets.effort_screen import EffortScreen
-    from src.ui.widgets.grouped_model_screen import GroupedModelScreen
+    from src.ui.widgets.screens.effort_screen import EffortScreen
+    from src.ui.widgets.screens.grouped_model_screen import GroupedModelScreen
     from tests.support.provider_commands import _submit, _texts
     from tests.support.provider_setup import _prepared
 
@@ -354,8 +354,8 @@ def test_should_write_the_default_model_chosen_from_the_chat(tmp_path: Path) -> 
 
 def test_should_say_when_the_other_file_still_overrides_the_write(tmp_path: Path) -> None:
     """Writing the user's file while the project sets the same agent is not a lie."""
-    from src.ui.widgets.effort_screen import EffortScreen
-    from src.ui.widgets.grouped_model_screen import GroupedModelScreen
+    from src.ui.widgets.screens.effort_screen import EffortScreen
+    from src.ui.widgets.screens.grouped_model_screen import GroupedModelScreen
     from tests.support.provider_commands import _submit, _texts
     from tests.support.provider_setup import _prepared
 

@@ -15,10 +15,10 @@ from src.core.config.preferences import Preferences
 from src.core.interaction.models.question_item import QuestionItem
 from src.core.interaction.models.question_option import QuestionOption
 from src.core.sessions.session_store import SessionStore
-from src.ui.attention import Attention
-from src.ui.notification_context import NotificationContext
+from src.ui.messages.attention import Attention
+from src.ui.messages.notification_context import NotificationContext
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.prompt_input import PromptInput
+from src.ui.widgets.panels.prompt_input import PromptInput
 
 
 def make_app(tmp_path: Path) -> SigilApp:

@@ -25,14 +25,14 @@ from PIL import Image
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-import src.ui.widgets.prompt_input as prompt_module
+import src.ui.widgets.panels.prompt_input as prompt_module
 from src.core.attachments.clipboard_unavailable import ClipboardUnavailable
 from src.core.attachments.image_attachment import ImageAttachment
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
-from src.ui.steer import Steer
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.prompt_input import PromptInput
+from src.ui.state.steer import Steer
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.panels.prompt_input import PromptInput
 from tests.support.ui import render_text
 
 pytestmark = pytest.mark.usefixtures('memory_databases')

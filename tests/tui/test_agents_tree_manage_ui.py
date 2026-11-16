@@ -25,10 +25,10 @@ from src.core.agents.tree.models.node_status import NodeStatus
 from src.core.agents.tree.subagent_summoner import SubagentSummoner
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.agent_tree_rows import node_row, state_of, status_text
-from src.ui.widgets.agent_tree_screen import AgentTreeScreen
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.tree_action import TreeAction
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.models.agent_tree_rows import node_row, state_of, status_text
+from src.ui.widgets.models.tree_action import TreeAction
+from src.ui.widgets.screens.agent_tree_screen import AgentTreeScreen
 from tests.support.ui import render_text
 
 

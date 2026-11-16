@@ -25,11 +25,11 @@ from src.core.sessions.session_store import SessionStore
 from src.core.shell import kill_all as kill_all_commands
 from src.core.shell.runner import execute_command
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.assistant_block import AssistantBlock
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.command_menu import CommandMenu
-from src.ui.widgets.prompt_input import PromptInput
-from src.ui.widgets.status_bar import StatusBar
+from src.ui.widgets.chat.assistant_block import AssistantBlock
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.panels.status_bar import StatusBar
+from src.ui.widgets.screens.command_menu import CommandMenu
 from tests.support.ui import wait_for_turn
 
 
@@ -216,7 +216,7 @@ def test_a_message_that_misses_the_last_seam_comes_back_to_the_prompt() -> None:
             async with app.run_test(size=(100, 40)):
                 # What `_take_undelivered` sees after a turn whose queue closed
                 # before the message could be delivered.
-                from src.ui.steer import Steer
+                from src.ui.state.steer import Steer
 
                 widget = await app.query_one(ChatLog).add_user('late', queued=True)
                 app._steering.append(Steer(text='late', widget=widget))
@@ -536,7 +536,7 @@ def test_any_other_key_cancels_the_abort_request() -> None:
 
 def test_the_abort_request_expires_on_its_own(monkeypatch: pytest.MonkeyPatch) -> None:
     """Three seconds pass: the question goes away, the agent keeps working."""
-    import src.ui.turn_mixin as turnmod
+    import src.ui.mixins.turn_mixin as turnmod
 
     async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:

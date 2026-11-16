@@ -12,9 +12,9 @@ from textual.widgets import Input, OptionList
 
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.command_palette_screen import CommandPaletteScreen
-from src.ui.widgets.prompt_input import PromptInput
-from src.ui.widgets.text_prompt_screen import TextPromptScreen
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.screens.command_palette_screen import CommandPaletteScreen
+from src.ui.widgets.screens.text_prompt_screen import TextPromptScreen
 
 
 def make_app(tmp_path: Path) -> SigilApp:

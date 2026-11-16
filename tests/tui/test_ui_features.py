@@ -25,11 +25,11 @@ from src.core.sessions.session_store import SessionStore
 from src.core.theming.theme_registry import ThemeRegistry
 from src.core.tooling.presentation import display_name
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.prompt_input import PromptInput
-from src.ui.widgets.sidebar_panel import SidebarPanel
-from src.ui.widgets.status_bar import StatusBar
-from src.ui.widgets.theme_picker_screen import ThemePickerScreen
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.panels.sidebar_panel import SidebarPanel
+from src.ui.widgets.panels.status_bar import StatusBar
+from src.ui.widgets.screens.theme_picker_screen import ThemePickerScreen
 from tests.support.ui import render_text, wait_for_turn
 
 pytestmark = pytest.mark.usefixtures('memory_databases')
@@ -269,7 +269,7 @@ def test_without_git_the_bar_says_nothing_about_changes() -> None:
 
 def test_the_diff_summary_paints_additions_green_and_deletions_red() -> None:
     from src.core.workspace.models.diff_stat import DiffStat
-    from src.ui.widgets.status_bar import StatusBar as Bar
+    from src.ui.widgets.panels.status_bar import StatusBar as Bar
 
     bar = Bar()
     bar.set_diff(DiffStat(added=12, removed=3))
@@ -433,7 +433,7 @@ def test_reasoning_is_collapsed_by_default() -> None:
                 await chat.add_thinking('secret reasoning')
                 chat.finalize()
 
-                from src.ui.widgets.assistant_block import AssistantBlock
+                from src.ui.widgets.chat.assistant_block import AssistantBlock
 
                 block = next(child for child in chat.children if isinstance(child, AssistantBlock))
                 text = render_text(block._build())
@@ -453,7 +453,7 @@ def test_the_command_expands_and_collapses_in_place() -> None:
                 await chat.add_thinking('secret reasoning')
                 chat.finalize()
 
-                from src.ui.widgets.assistant_block import AssistantBlock
+                from src.ui.widgets.chat.assistant_block import AssistantBlock
 
                 block = next(child for child in chat.children if isinstance(child, AssistantBlock))
 
@@ -524,7 +524,7 @@ def test_a_tool_call_and_its_result_share_one_block() -> None:
                 await chat.add_tool_call('read_file', {'path': 'a.py'})
                 await chat.add_tool_result('read_file', 'line one\nline two')
 
-                from src.ui.widgets.tool_call_block import ToolCallBlock
+                from src.ui.widgets.chat.tool_call_block import ToolCallBlock
 
                 blocks = [child for child in chat.children if isinstance(child, ToolCallBlock)]
                 assert len(blocks) == 1
@@ -541,7 +541,7 @@ def test_a_tool_call_and_its_result_share_one_block() -> None:
 
 
 def test_the_block_indents_the_output_under_a_gutter() -> None:
-    from src.ui.widgets.tool_call_block import ToolCallBlock
+    from src.ui.widgets.chat.tool_call_block import ToolCallBlock
 
     block = ToolCallBlock('run', {'command': 'ls'})
     block.set_result('a.txt\nb.txt')
@@ -550,7 +550,7 @@ def test_the_block_indents_the_output_under_a_gutter() -> None:
 
 
 def test_long_output_is_truncated_with_a_count() -> None:
-    from src.ui.widgets.tool_call_block import ToolCallBlock
+    from src.ui.widgets.chat.tool_call_block import ToolCallBlock
 
     block = ToolCallBlock('run', {'command': 'seq 100'})
     block.set_result('\n'.join(str(i) for i in range(40)))
@@ -570,7 +570,7 @@ def test_a_pending_call_is_marked_as_running() -> None:
                 await chat.add_tool_call('run', {'command': 'sleep 10'})
                 await pilot.pause()
 
-                from src.ui.widgets.tool_call_block import ToolCallBlock
+                from src.ui.widgets.chat.tool_call_block import ToolCallBlock
 
                 block = next(child for child in chat.children if isinstance(child, ToolCallBlock))
                 assert 'running' in render_text(block._build())
@@ -581,7 +581,7 @@ def test_a_pending_call_is_marked_as_running() -> None:
 
 def test_indentation_of_the_output_is_kept() -> None:
     """A diff or a snippet is unreadable without its leading whitespace."""
-    from src.ui.widgets.tool_call_block import ToolCallBlock
+    from src.ui.widgets.chat.tool_call_block import ToolCallBlock
 
     block = ToolCallBlock('read_file', {'path': 'a.py'})
     block.set_result('def f():\n    return 1')
@@ -590,7 +590,7 @@ def test_indentation_of_the_output_is_kept() -> None:
 
 
 def test_several_arguments_are_readable() -> None:
-    from src.ui.widgets.chat_text import format_tool_args
+    from src.ui.widgets.chat.chat_text import format_tool_args
 
     assert format_tool_args({'path': 'a.py'}) == 'a.py'
     assert format_tool_args({'path': 'a.py', 'limit': 10}) == 'path=a.py, limit=10'
@@ -770,7 +770,7 @@ def _git(cwd: Path, *args: str) -> None:
 def test_markdown_uses_theme_colors_and_repaints_on_theme_change() -> None:
     from rich.color import Color
 
-    from src.ui.widgets.assistant_block import AssistantBlock
+    from src.ui.widgets.chat.assistant_block import AssistantBlock
 
     async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:

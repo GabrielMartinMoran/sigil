@@ -14,8 +14,8 @@ from pathlib import Path
 from textual.widgets import OptionList
 
 from src.core.sessions.session_store import SessionStore
-from src.ui.widgets.effort_screen import EffortScreen
-from src.ui.widgets.sidebar_panel import SidebarPanel
+from src.ui.widgets.panels.sidebar_panel import SidebarPanel
+from src.ui.widgets.screens.effort_screen import EffortScreen
 from tests.support.provider_commands import _app, _submit, _texts
 from tests.support.provider_setup import _prepared
 from tests.support.ui import wait_until

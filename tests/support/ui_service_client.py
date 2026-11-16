@@ -26,8 +26,8 @@ from src.server.launch.endpoint_publisher import EndpointPublisher
 from src.server.launch.server_config import ServerConfig
 from src.server.runtime.event_hub import EventHub
 from src.server.runtime.server_runtime import ServerRuntime
-from src.ui.outgoing_image import OutgoingImage
-from src.ui.service_client import ServiceClient
+from src.ui.client.outgoing_image import OutgoingImage
+from src.ui.client.service_client import ServiceClient
 from tests.support.server_parity import _composition
 
 PASSWORD = 'secret-pass'

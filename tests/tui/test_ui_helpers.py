@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from textual.pilot import Pilot
 
-from src.ui.widgets.chat_log import ChatLog
+from src.ui.widgets.chat.chat_log import ChatLog
 from tests.support.ui import ChatApp, fill_chat, wait_until
 
 

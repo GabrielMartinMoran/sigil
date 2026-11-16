@@ -37,7 +37,7 @@ from src.core.agents.tree.agent_tree_store import AgentTreeStore
 from src.core.agents.tree.subagent_summoner import SubagentSummoner
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.agent_tree_screen import AgentTreeScreen
+from src.ui.widgets.screens.agent_tree_screen import AgentTreeScreen
 
 pytestmark = pytest.mark.usefixtures('memory_databases')
 

@@ -16,11 +16,11 @@ import pytest
 
 from src.core.commands.catalog import COMMANDS, match_commands, owned_by
 from src.core.commands.command_owner import CommandOwner
-from src.ui.command_transport import TRANSPORT, transport_for, unavailable_notice
-from src.ui.transport import Transport
-from src.ui.transport_state import TransportState
+from src.ui.client.command_transport import TRANSPORT, transport_for, unavailable_notice
+from src.ui.client.transport import Transport
+from src.ui.client.transport_state import TransportState
 
-HANDLERS = Path(__file__).resolve().parents[2] / 'src' / 'ui' / 'commands_mixin.py'
+HANDLERS = Path(__file__).resolve().parents[2] / 'src' / 'ui' / 'mixins' / 'commands_mixin.py'
 
 CLIENT_COMMANDS = frozenset(
     {
@@ -98,7 +98,7 @@ def test_matching_still_works_across_both_owners() -> None:
 
 
 def test_the_help_lists_both_groups_and_loses_nothing() -> None:
-    from src.ui.help_text import HELP_TEXT
+    from src.ui.render.help_text import HELP_TEXT
 
     assert 'Session' in HELP_TEXT
     assert 'This client' in HELP_TEXT
@@ -115,7 +115,7 @@ def test_the_help_never_promises_an_edit_the_service_can_refuse() -> None:
     row does not promise that it always lands.
     """
 
-    from src.ui.help_text import HELP_TEXT
+    from src.ui.render.help_text import HELP_TEXT
 
     command = next(command for command in COMMANDS if command.name == '/default-models')
     assert 'Set the model each agent starts on' not in command.description
@@ -136,8 +136,8 @@ def test_a_listing_mark_comes_from_the_transport_row(monkeypatch: pytest.MonkeyP
     that opens its screen and writes through the service.
     """
 
-    from src.ui import command_transport
-    from src.ui.command_transport import MARK_SERVICE_OWNED, listing_mark
+    from src.ui.client import command_transport
+    from src.ui.client.command_transport import MARK_SERVICE_OWNED, listing_mark
 
     row = transport_for('/default-models')
     assert row is not None
@@ -305,7 +305,7 @@ def test_the_transport_table_refuses_two_rows_for_one_command() -> None:
 
     It fails where the table is built, not at the moment a user types the command.
     """
-    from src.ui.command_transport import _covering
+    from src.ui.client.command_transport import _covering
 
     duplicate = Transport('/theme', CommandOwner.CLIENT, TransportState.CLIENT)
     with pytest.raises(ValueError, match='more than once'):
@@ -329,8 +329,8 @@ def test_the_menu_marks_only_the_row_the_table_refuses(
     """
     from textual.app import App
 
-    from src.ui import command_transport
-    from src.ui.widgets.command_menu import CommandMenu
+    from src.ui.client import command_transport
+    from src.ui.widgets.screens.command_menu import CommandMenu
     from tests.support.ui import render_text
 
     class MenuHost(App[None]):

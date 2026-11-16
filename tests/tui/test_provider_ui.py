@@ -18,14 +18,14 @@ from src.core.providers.domain.model_catalog import ModelCatalog
 from src.core.providers.domain.provider_account import ProviderAccount
 from src.core.providers.domain.provider_kind import ProviderKind
 from src.core.providers.domain.provider_variant import ProviderVariant
-from src.ui.widgets.account_form_screen import AccountFormScreen
-from src.ui.widgets.confirm_screen import ConfirmScreen
-from src.ui.widgets.model_choice import ModelChoice
-from src.ui.widgets.model_picker_screen import ModelPickerScreen
-from src.ui.widgets.new_account import NewAccount
-from src.ui.widgets.provider_action import ProviderAction
-from src.ui.widgets.provider_screen import ProviderScreen
-from src.ui.widgets.text_prompt_screen import TextPromptScreen
+from src.ui.widgets.models.model_choice import ModelChoice
+from src.ui.widgets.models.new_account import NewAccount
+from src.ui.widgets.models.provider_action import ProviderAction
+from src.ui.widgets.screens.account_form_screen import AccountFormScreen
+from src.ui.widgets.screens.confirm_screen import ConfirmScreen
+from src.ui.widgets.screens.model_picker_screen import ModelPickerScreen
+from src.ui.widgets.screens.provider_screen import ProviderScreen
+from src.ui.widgets.screens.text_prompt_screen import TextPromptScreen
 
 CATALOG = ModelCatalog(
     models=(
@@ -167,7 +167,7 @@ def test_picker_marks_the_current_model() -> None:
 
 
 def _row_text(model):
-    from src.ui.widgets.model_picker_screen import _row
+    from src.ui.widgets.screens.model_picker_screen import _row
 
     return _row(model, current='openai/gpt-4o-mini')
 

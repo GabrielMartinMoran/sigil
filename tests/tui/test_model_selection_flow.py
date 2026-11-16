@@ -14,10 +14,10 @@ from src.core.providers.domain.model_capability import ModelCapability
 from src.core.providers.domain.model_catalog import ModelCatalog
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.effort_choice import EffortChoice
-from src.ui.widgets.effort_screen import EffortScreen
-from src.ui.widgets.grouped_model_choice import GroupedModelChoice
-from src.ui.widgets.grouped_model_screen import GroupedModelScreen
+from src.ui.widgets.models.effort_choice import EffortChoice
+from src.ui.widgets.models.grouped_model_choice import GroupedModelChoice
+from src.ui.widgets.screens.effort_screen import EffortScreen
+from src.ui.widgets.screens.grouped_model_screen import GroupedModelScreen
 
 
 def _account(account_id: str, alias: str, provider: str = 'OpenRouter') -> SimpleNamespace:

@@ -12,9 +12,9 @@ from src.core.roadmap.models.todo_item import TodoItem
 from src.core.roadmap.roadmap_stores import RoadmapStores
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.prompt_input import PromptInput
-from src.ui.widgets.sidebar_panel import SidebarPanel
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.panels.sidebar_panel import SidebarPanel
 
 
 def test_roadmap_panel_shows_and_updates(monkeypatch: pytest.MonkeyPatch) -> None:

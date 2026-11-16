@@ -43,9 +43,9 @@ from src.core.config.sigil_settings import SigilSettings
 from src.core.roadmap.roadmap_stores import RoadmapStores
 from src.core.sessions.session import Session
 from src.core.theming.theme_registry import ThemeRegistry
-from src.ui.service_client import ServiceClient
-from src.ui.service_client_error import ServiceClientError
-from src.ui.service_unavailable import ServiceUnavailable
+from src.ui.client.service_client import ServiceClient
+from src.ui.client.service_client_error import ServiceClientError
+from src.ui.client.service_unavailable import ServiceUnavailable
 from src.ui.sigil_app import SigilApp
 
 

@@ -27,10 +27,10 @@ from src.core.sessions.session_store import SessionStore
 from src.core.sessions.titling import TITLE_INSTRUCTION
 from src.core.workspace.models.workspace import Workspace
 from src.core.workspace.workspace_manager import WorkspaceManager
-from src.ui import window_title
+from src.ui.render import window_title
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.session_option import session_option
-from src.ui.widgets.session_picker import SessionPicker
+from src.ui.widgets.models.session_option import session_option
+from src.ui.widgets.screens.session_picker import SessionPicker
 
 # --- helpers ----------------------------------------------------------------
 

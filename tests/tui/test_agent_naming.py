@@ -22,9 +22,9 @@ from pydantic_ai.messages import ModelMessagesTypeAdapter
 
 from src.core.agents.profile.models.agent_role import AgentRole
 from src.core.agents.tree.agent_tree_store import AgentTreeStore
-from src.ui.widgets.agent_tree_rows import node_row
-from src.ui.widgets.agent_view_text import build_agent_header
-from src.ui.widgets.summon_block import SummonBlock
+from src.ui.widgets.chat.summon_block import SummonBlock
+from src.ui.widgets.models.agent_tree_rows import node_row
+from src.ui.widgets.panels.agent_view_text import build_agent_header
 from tests.support.ui import render_text
 
 

@@ -28,11 +28,11 @@ from src.core.agents.profile.models.agent_role import AgentRole
 from src.core.agents.tree.agent_tree_store import AgentTreeStore
 from src.core.agents.tree.subagent_summoner import SubagentSummoner
 from src.core.sessions.session_store import SessionStore
-from src.ui.node_opened import NodeOpened
+from src.ui.messages.node_opened import NodeOpened
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.agent_view import AgentView
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.summon_block import SummonBlock
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.chat.summon_block import SummonBlock
+from src.ui.widgets.panels.agent_view import AgentView
 from tests.support.ui import render_text, wait_until
 
 
@@ -224,7 +224,7 @@ def test_opening_by_click_also_restores_the_chat_on_escape() -> None:
 
 def test_only_the_spawn_block_is_clickable() -> None:
     """The rest of the chat stays text: a file read is not a way in."""
-    from src.ui.widgets.block_for import block_for
+    from src.ui.widgets.chat.block_for import block_for
 
     plain = block_for('read_file', {'path': 'x'}, classes='tool-call')
     plain.set_result('contents')

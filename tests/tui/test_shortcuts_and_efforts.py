@@ -30,10 +30,10 @@ from src.core.providers.factory.unconfigured_model import UnconfiguredModel
 from src.core.providers.provider_paths import ProviderPaths
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.effort_screen import EffortScreen
-from src.ui.widgets.grouped_model_screen import GroupedModelScreen
-from src.ui.widgets.model_picker_screen import ModelPickerScreen
-from src.ui.widgets.prompt_input import PromptInput
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.screens.effort_screen import EffortScreen
+from src.ui.widgets.screens.grouped_model_screen import GroupedModelScreen
+from src.ui.widgets.screens.model_picker_screen import ModelPickerScreen
 from tests.support.ui import wait_until
 
 DEEPSEEK = ModelCapability(

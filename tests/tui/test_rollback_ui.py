@@ -19,13 +19,13 @@ from pydantic_ai.models.test import TestModel
 from src.core.agents.rollback import Rollback
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.point import Point
-from src.ui.widgets.prompt_input import PromptInput
-from src.ui.widgets.rollback_choice import RollbackChoice
-from src.ui.widgets.rollback_options import action_option, point_option
-from src.ui.widgets.rollback_screen import ROLLBACK_ONLY, RollbackScreen
-from src.ui.widgets.user_message import UserMessage
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.chat.user_message import UserMessage
+from src.ui.widgets.models.point import Point
+from src.ui.widgets.models.rollback_choice import RollbackChoice
+from src.ui.widgets.models.rollback_options import action_option, point_option
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.screens.rollback_screen import ROLLBACK_ONLY, RollbackScreen
 from tests.support.ui import render_text
 
 
@@ -433,7 +433,7 @@ def test_rollback_restores_visible_assistant_answers() -> None:
                 chat = app.query_one(ChatLog)
                 await app.apply_rollback(chat, RollbackChoice(turn_id=point.turn_id, action=ROLLBACK_ONLY))
                 await pilot.pause()
-                from src.ui.widgets.assistant_block import AssistantBlock
+                from src.ui.widgets.chat.assistant_block import AssistantBlock
 
                 blocks = list(chat.query(AssistantBlock))
                 assert len(blocks) == 1

@@ -12,7 +12,7 @@ from src.core.context.context_budget import ContextBudget
 from src.core.context.meter.context_snapshot import ContextSnapshot
 from src.core.context.meter.debug import build_debug_report
 from src.core.context.meter.request_snapshot import RequestSnapshot
-from src.ui.widgets.debug_body import build_debug_body
+from src.ui.widgets.panels.debug_body import build_debug_body
 
 _EMPTY = ContextSnapshot(measured=None, projected=None, window=None, budget=ContextBudget(window=None))
 
@@ -55,7 +55,7 @@ def test_the_tui_table_names_the_events_and_never_the_conversation() -> None:
 def test_timeline_distinguishes_estimated_from_provider_reported_step_costs() -> None:
     from decimal import Decimal
 
-    from src.ui.widgets.debug_body import _turn_timeline
+    from src.ui.widgets.panels.debug_body import _turn_timeline
 
     messages = [
         ModelRequest(parts=[UserPromptPart(content='go')], run_id='a'),

@@ -11,9 +11,9 @@ from pydantic_ai.models.test import TestModel
 from src.core.sessions.session_store import SessionStore
 from src.core.tooling.tool_summary import ToolSummary
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.tool_call_block import ToolCallBlock
-from src.ui.widgets.tool_group_header import ToolGroupHeader
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.chat.tool_call_block import ToolCallBlock
+from src.ui.widgets.chat.tool_group_header import ToolGroupHeader
 from tests.support.ui import render_text
 
 

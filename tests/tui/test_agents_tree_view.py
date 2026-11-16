@@ -19,7 +19,7 @@ from textual.widgets import Input, OptionList
 
 from src.core.agents.profile.models.agent_role import AgentRole
 from src.core.agents.tree.agent_tree_store import AgentTreeStore
-from src.ui.widgets.agent_tree_rows import (
+from src.ui.widgets.models.agent_tree_rows import (
     BAR,
     BRANCH,
     INDENT,
@@ -32,9 +32,9 @@ from src.ui.widgets.agent_tree_rows import (
     node_row,
     status_text,
 )
-from src.ui.widgets.agent_tree_screen import AgentTreeScreen
-from src.ui.widgets.gap import Gap
-from src.ui.widgets.status_bar import SPINNER_FRAMES
+from src.ui.widgets.models.gap import Gap
+from src.ui.widgets.panels.status_bar import SPINNER_FRAMES
+from src.ui.widgets.screens.agent_tree_screen import AgentTreeScreen
 from tests.support.ui import render_text
 
 # --- a small, deterministic squad --------------------------------------------
@@ -558,7 +558,7 @@ def test_a_projection_becomes_the_rows_the_screen_draws() -> None:
     ancestry once the tree has depth, and a running row carries the frame the screen
     is on while the trunk — running for the session's whole life — does not.
     """
-    from src.ui.tree_mixin import _nodes_from_tree
+    from src.ui.mixins.tree_mixin import _nodes_from_tree
 
     nodes = _nodes_from_tree(_projection())
     screen = AgentTreeScreen(nodes)

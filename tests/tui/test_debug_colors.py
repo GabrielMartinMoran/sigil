@@ -18,7 +18,7 @@ from pydantic_ai.usage import RequestUsage
 from src.core.context.meter.context_meter import ContextMeter
 from src.core.context.meter.debug import build_debug_report
 from src.core.context.meter.request import snapshot_request
-from src.ui.widgets import debug_body as ui
+from src.ui.widgets.panels import debug_body as ui
 from tests.support.ui import render_text
 
 
@@ -152,7 +152,7 @@ def test_threshold_boundaries_are_inclusive(ratio, cache, context) -> None:
 
 
 def test_display_thresholds_are_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.ui.widgets import debug_styles
+    from src.ui.widgets.panels import debug_styles
 
     monkeypatch.setattr(debug_styles, 'CACHE_HIT_GOOD_RATIO', 0.6)
     monkeypatch.setattr(debug_styles, 'CONTEXT_DANGER_RATIO', 0.6)

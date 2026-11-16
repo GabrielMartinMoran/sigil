@@ -21,7 +21,7 @@ from pydantic_ai.models.test import TestModel
 from src.core.agents.tree.reports import WAKE_PROMPT
 from src.core.composition.composition import Composition
 from src.core.config.load_settings import load_settings
-from src.ui.subagent_reports import WAKE_PROMPT as TERMINAL_WAKE_PROMPT
+from src.ui.state.subagent_reports import WAKE_PROMPT as TERMINAL_WAKE_PROMPT
 
 
 @pytest.fixture

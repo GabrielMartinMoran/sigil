@@ -27,11 +27,11 @@ from src.core.interaction.models.question_option import QuestionOption
 from src.core.interaction.question_hub import QuestionHub
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.prompt_input import PromptInput
-from src.ui.widgets.question_panel import QuestionPanel
-from src.ui.widgets.sidebar_panel import SidebarPanel
-from src.ui.widgets.status_bar import StatusBar
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.panels.question_panel import QuestionPanel
+from src.ui.widgets.panels.sidebar_panel import SidebarPanel
+from src.ui.widgets.panels.status_bar import StatusBar
 from tests.support.ui import fill_chat
 
 pytestmark = pytest.mark.usefixtures('memory_databases')
@@ -510,7 +510,7 @@ def test_the_composer_border_follows_the_focus() -> None:
 def test_assistant_markdown_can_be_selected() -> None:
     from textual.selection import SELECT_ALL
 
-    from src.ui.widgets.assistant_block import AssistantBlock
+    from src.ui.widgets.chat.assistant_block import AssistantBlock
 
     async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -530,7 +530,7 @@ def test_assistant_markdown_can_be_selected() -> None:
 
 
 def test_assistant_markdown_link_opens_in_browser() -> None:
-    from src.ui.widgets.assistant_block import AssistantBlock
+    from src.ui.widgets.chat.assistant_block import AssistantBlock
 
     async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -551,7 +551,7 @@ def test_assistant_markdown_link_opens_in_browser() -> None:
 
 
 def test_assistant_plain_url_opens_in_browser() -> None:
-    from src.ui.widgets.assistant_block import AssistantBlock
+    from src.ui.widgets.chat.assistant_block import AssistantBlock
 
     async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -571,7 +571,7 @@ def test_assistant_plain_url_opens_in_browser() -> None:
 
 
 def test_error_notice_is_also_shown_as_a_toast() -> None:
-    from src.ui.chat_notice import ChatNotice
+    from src.ui.messages.chat_notice import ChatNotice
 
     async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -587,7 +587,7 @@ def test_error_notice_is_also_shown_as_a_toast() -> None:
 
 
 def test_url_in_notice_opens_in_browser() -> None:
-    from src.ui.widgets.link_notice import LinkNotice
+    from src.ui.widgets.chat.link_notice import LinkNotice
 
     async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:

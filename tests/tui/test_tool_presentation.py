@@ -23,10 +23,10 @@ from src.core.sessions.session_store import SessionStore
 from src.core.shell.models.run_tool_output import RunToolOutput
 from src.core.tooling.tool_summary import ToolSummary
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.rows import fit
-from src.ui.widgets.tool_call_block import ToolCallBlock
-from src.ui.widgets.tool_group_header import ToolGroupHeader
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.chat.rows import fit
+from src.ui.widgets.chat.tool_call_block import ToolCallBlock
+from src.ui.widgets.chat.tool_group_header import ToolGroupHeader
 from tests.support.ui import ChatApp
 
 OK = RunToolOutput(returncode=0, stdout='.........\n9 passed in 0.45s\n')

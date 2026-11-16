@@ -30,9 +30,9 @@ from src.core.agents.profile.models.agent_role import AgentRole
 from src.core.agents.tree.agent_tree_store import AgentTreeStore
 from src.core.agents.tree.subagent_summoner import SubagentSummoner
 from src.core.sessions.session_store import SessionStore
-from src.ui.attention import Attention
+from src.ui.messages.attention import Attention
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.chat_log import ChatLog
+from src.ui.widgets.chat.chat_log import ChatLog
 
 
 def _app(tmp: str, *, with_summoner: bool = False) -> SigilApp:
@@ -170,8 +170,8 @@ def test_the_chat_says_the_turn_was_woken_and_not_typed() -> None:
 
 
 def test_a_summon_renders_as_a_spawn_and_not_as_a_tool_call() -> None:
-    from src.ui.widgets.block_for import block_for
-    from src.ui.widgets.summon_block import SummonBlock
+    from src.ui.widgets.chat.block_for import block_for
+    from src.ui.widgets.chat.summon_block import SummonBlock
 
     block = block_for(
         'summon',
@@ -191,7 +191,7 @@ def test_a_summon_renders_as_a_spawn_and_not_as_a_tool_call() -> None:
 
 
 def test_a_resumed_summon_says_so() -> None:
-    from src.ui.widgets.summon_block import SummonBlock
+    from src.ui.widgets.chat.summon_block import SummonBlock
 
     block = SummonBlock('summon', {'agent': 'scout', 'task': 'keep going', 'agent_id': 'abcdef1234'})
     text = _text_of(block)
@@ -202,7 +202,7 @@ def test_a_resumed_summon_says_so() -> None:
 
 def test_a_resume_paints_the_id_once() -> None:
     """The header carries the id of a resume; the meta line does not repeat it."""
-    from src.ui.widgets.summon_block import SummonBlock
+    from src.ui.widgets.chat.summon_block import SummonBlock
 
     block = SummonBlock('summon', {'task': 'keep going', 'agent_id': 'abcdef1234', 'mode': 'async'})
     block.set_result('#abcdef1234 (Scout) is working in the background.')
@@ -213,7 +213,7 @@ def test_a_resume_paints_the_id_once() -> None:
 
 
 def test_an_exhausted_subagent_reads_as_out_of_steps() -> None:
-    from src.ui.widgets.summon_block import SummonBlock
+    from src.ui.widgets.chat.summon_block import SummonBlock
 
     block = SummonBlock('summon', {'agent': 'scout', 'task': 'go', 'mode': 'sync'})
     block.set_result('[subagent Scout (scout #abcd1234, sync) out of steps]\npartial')
@@ -221,7 +221,7 @@ def test_an_exhausted_subagent_reads_as_out_of_steps() -> None:
 
 
 def test_a_refused_summon_reads_as_refused() -> None:
-    from src.ui.widgets.summon_block import SummonBlock
+    from src.ui.widgets.chat.summon_block import SummonBlock
 
     block = SummonBlock('summon', {'agent': 'nobody', 'task': 'go'})
     block.set_error('Unknown subagent')
@@ -264,8 +264,8 @@ def test_the_notification_waits_for_the_last_subagent() -> None:
 
 
 def test_a_plain_tool_is_still_a_plain_block() -> None:
-    from src.ui.widgets.block_for import block_for
-    from src.ui.widgets.tool_call_block import ToolCallBlock
+    from src.ui.widgets.chat.block_for import block_for
+    from src.ui.widgets.chat.tool_call_block import ToolCallBlock
 
     assert type(block_for('read_file', {'path': 'x'}, classes='tool-call')) is ToolCallBlock
 

@@ -20,7 +20,7 @@ from src.core.interaction.tools import register_interaction_tools
 from src.core.sessions.session_store import SessionStore
 from src.core.workspace.workspace_manager import WorkspaceManager
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.question_panel import QuestionPanel
+from src.ui.widgets.panels.question_panel import QuestionPanel
 
 
 def _make_app(tmp: str, agent: Agent, hub: QuestionHub, *, workspace: Path | None = None) -> SigilApp:

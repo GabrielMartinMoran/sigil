@@ -8,18 +8,18 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
+import src.ui.mixins.turn_mixin as turnmod
 import src.ui.sigil_app as appmod
-import src.ui.turn_mixin as turnmod
 from src.core.commands.catalog import COMMANDS
 from src.core.sessions.session_store import SessionStore
 from src.core.tooling.tool_logger_hub import ToolLoggerHub
 from src.core.tooling.tool_registrar import ToolRegistrar
 from src.ui.sigil_app import SigilApp
-from src.ui.widgets.assistant_block import AssistantBlock
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.command_menu import CommandMenu
-from src.ui.widgets.prompt_input import PromptInput
-from src.ui.widgets.tool_call_block import ToolCallBlock
+from src.ui.widgets.chat.assistant_block import AssistantBlock
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.chat.tool_call_block import ToolCallBlock
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.screens.command_menu import CommandMenu
 from tests.support.ui import render_text, wait_for_turn
 
 
@@ -514,9 +514,9 @@ def test_context_command_shows_breakdown_and_scope(monkeypatch: pytest.MonkeyPat
 
 def test_child_tool_events_do_not_enter_parent_chat() -> None:
     from src.core.tooling.tool_call_event import ToolCallEvent
-    from src.ui.tool_log_message import ToolLogMessage
-    from src.ui.widgets.chat_log import ChatLog
-    from src.ui.widgets.tool_call_block import ToolCallBlock
+    from src.ui.messages.tool_log_message import ToolLogMessage
+    from src.ui.widgets.chat.chat_log import ChatLog
+    from src.ui.widgets.chat.tool_call_block import ToolCallBlock
 
     async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:

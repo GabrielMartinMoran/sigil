@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, ToolReturnPart
 
 from src.server.api.views import transcript
-from src.ui.widgets.tool_call_block import ToolCallBlock
+from src.ui.widgets.chat.tool_call_block import ToolCallBlock
 
 
 def test_should_render_persisted_tool_results_identically_in_both_clients() -> None:
