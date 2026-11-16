@@ -366,6 +366,11 @@ class ServiceClient:
         except ValidationError:
             raise UnexpectedResponse('The service returned an invalid debug report.') from None
 
+    async def compact(self, mode: str) -> dict[str, Any]:
+        """Request manual compaction for the selected service session."""
+        request = self._client.build_request('POST', '/api/context/compact', json={'mode': mode}, timeout=100.0)
+        return await self._send(request)
+
     async def context(self) -> dict[str, Any]:
         """The meter's projection: how full the window is, what it costs.
 

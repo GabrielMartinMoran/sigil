@@ -31,7 +31,8 @@ import asyncio
 import time
 import uuid
 from collections.abc import Sequence
-from typing import Any
+from dataclasses import replace
+from typing import Any, Literal
 
 from pydantic_ai.capabilities import ProcessEventStream
 from pydantic_ai.exceptions import RunCancelled
@@ -68,6 +69,7 @@ from src.core.attachments.content import stored_content, stored_parts, user_cont
 from src.core.composition.composition import Composition
 from src.core.composition.model_settings import model_settings
 from src.core.context.capability import subagent_window_warning
+from src.core.context.compaction.manual_compaction_result import ManualCompactionResult
 from src.core.files.paths import execution_workspace
 from src.core.interaction.models.question_answer import QuestionAnswer
 from src.core.interaction.models.question_item import QuestionItem
@@ -135,6 +137,9 @@ class SessionRuntime:
         # cannot change how long it is allowed to wait.
         self._question_timeout = question_timeout
         self._task: asyncio.Task[None] | None = None
+        self._compacting = False
+        self._compaction_done = asyncio.Event()
+        self._compaction_done.set()
         self._run: Any = None
         self._turn_timings: TurnTimings | None = None
         self._timing_session_id: str | None = None
@@ -207,7 +212,7 @@ class SessionRuntime:
 
     @property
     def busy(self) -> bool:
-        return self._task is not None and not self._task.done()
+        return self._compacting or (self._task is not None and not self._task.done())
 
     def ensure_workers(self) -> None:
         """Starts the durable consumer and the MCP loader on the running loop.
@@ -280,6 +285,8 @@ class SessionRuntime:
         refusal leaves nothing behind; ``images`` in the response carries the
         identifiers that were persisted, which a retry gets back unchanged.
         """
+        if self._compacting:
+            raise ValueError('Context compaction is in progress; try again when it finishes.')
         cleaned = text.strip()
         if not cleaned:
             raise ValueError('The message is empty.')
@@ -367,6 +374,9 @@ class SessionRuntime:
         """Claims and runs accepted inputs, oldest first, until closed."""
         while not self._closing:
             try:
+                if self._compacting:
+                    await self._compaction_done.wait()
+                    continue
                 item = self._claim_next()
                 if item is None:
                     # Nothing was typed, but a subagent may have answered: the
@@ -439,7 +449,7 @@ class SessionRuntime:
 
     def abort(self) -> bool:
         """Stops the turn: the shell commands die, then the run unwinds."""
-        if not self.busy:
+        if self._task is None or self._task.done():
             return False
         self._aborting = True
         self.composition.shell_commands.kill_all()
@@ -1033,6 +1043,65 @@ class SessionRuntime:
         """
         node = self.node(node_id)
         return node, self.composition.background_subagent(node.id)
+
+    async def compact(self, mode: Literal['deterministic', 'llm']) -> ManualCompactionResult:
+        """Reserve this session while a manual projection is prepared and committed."""
+        from src.core.context.compaction.manual import compact
+        from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
+
+        self._refuse_while_busy('compact the context')
+        if not self._settled.is_set() or self._subagent_working() or self._has_open_input():
+            raise RuntimeError('Wait for pending work to finish before compacting the context.')
+        strategy = self.composition.context_capability._strategy_for_now()
+        if not isinstance(strategy, AppendOnlyStrategy):
+            raise RuntimeError('Manual compaction requires the append-only context strategy.')  # noqa: TRY004
+        self._compacting = True
+        self._compaction_done.clear()
+        try:
+            session = self.session
+            original_messages = session.messages
+            candidate = replace(session, messages=list(original_messages))
+            selected = self.composition.root_run_model()
+            try:
+                result = await compact(
+                    candidate.messages,
+                    strategy,
+                    self.composition.meter.budget(),
+                    mode=mode,
+                    model=selected.model,
+                    model_settings=selected.settings,
+                )
+            except BaseException:
+                self._commit_compaction(session, original_messages, candidate)
+                raise
+            self._commit_compaction(session, original_messages, candidate)
+            return result
+        finally:
+            self._compacting = False
+            self._compaction_done.set()
+            self._wake.set()
+
+    def _has_open_input(self) -> bool:
+        return (
+            self.composition.store.database.one(
+                "SELECT 1 FROM accepted_inputs WHERE session_id = ? AND state IN ('accepted', 'claimed', 'delivered') LIMIT 1",
+                (self.session.id,),
+            )
+            is not None
+        )
+
+    def _commit_compaction(self, session: Any, original: list[Any], candidate: Any) -> None:
+        if candidate.messages == original:
+            return
+        if self.session is not session or session.messages is not original or self._has_open_input():
+            raise RuntimeError('The session changed during compaction; try again.')
+        self.composition.store.save(candidate)
+        session.messages = candidate.messages
+        session.updated_at = candidate.updated_at
+        session._persisted_at = candidate._persisted_at
+        session._baseline = candidate._baseline
+        session._draft = candidate._draft
+        self._publish_state('context')
 
     def set_external_files(self, allow: bool) -> Any:
         """Allows or denies file access outside the workspace for this session.

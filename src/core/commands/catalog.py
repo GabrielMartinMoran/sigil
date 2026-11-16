@@ -37,6 +37,7 @@ COMMANDS: tuple[Command, ...] = (
     Command('/external-files', 'Show or set outside-workspace file access (allow/deny)'),
     Command('/mcp', 'Show MCP server status'),
     Command('/context', 'Show the context usage breakdown'),
+    Command('/compact', 'Reduce history: --deterministic (default) or --llm'),
     Command(
         '/rollback',
         'Go back to before a message: roll back (files included) or fork the conversation',

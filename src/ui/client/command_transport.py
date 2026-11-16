@@ -112,6 +112,13 @@ _ROWS: tuple[Transport, ...] = (
         reason='the service measures the session and prices it.',
     ),
     Transport(
+        name='/compact',
+        owner=CommandOwner.CORE,
+        state=TransportState.DELEGATED,
+        route='/api/context/compact',
+        reason='the service owns the session and its context decisions.',
+    ),
+    Transport(
         name='/rollback',
         owner=CommandOwner.CORE,
         state=TransportState.DELEGATED,

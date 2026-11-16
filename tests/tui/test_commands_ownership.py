@@ -276,6 +276,7 @@ def test_a_delegated_row_has_a_route_and_is_dispatched_to_its_handler() -> None:
     delegated = {row.name for row in TRANSPORT if row.state is TransportState.DELEGATED}
     assert delegated == {
         '/agent',
+        '/compact',
         '/context',
         '/default-models',
         '/effort',

@@ -980,3 +980,132 @@ def test_session_shutdown_cancels_and_awaits_its_background_title_task(
         assert cleaned.is_set()
 
     asyncio.run(run())
+
+
+def test_manual_compaction_persists_without_a_turn(runtime: ServerRuntime) -> None:
+    from src.core.context.compaction.records import recorded_state
+    from tests.support.context_compaction_records import history
+
+    owner = runtime.session_runtime
+    owner.session.messages = history(30)
+    owner.composition.store.save(owner.session)
+    result = asyncio.run(owner.compact('deterministic'))
+    assert result.status == 'complete'
+    loaded = owner.composition.store.load(owner.session.id)
+    assert loaded is not None
+    assert recorded_state(loaded.messages)[0].compacted_calls
+
+
+def test_manual_compaction_reserves_session_and_releases_on_cancellation(
+    runtime: ServerRuntime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.core.context.compaction import manual
+    from tests.support.context_compaction_records import history
+
+    async def check() -> None:
+        owner = runtime.session_runtime
+        owner.session.messages = history(30)
+        owner.composition.store.save(owner.session)
+        started = asyncio.Event()
+        blocked = asyncio.Event()
+
+        async def generate(*args: Any, **kwargs: Any) -> str:
+            started.set()
+            await blocked.wait()
+            return 'summary'
+
+        monkeypatch.setattr(manual, 'generate_summary', generate)
+        task = asyncio.create_task(owner.compact('llm'))
+        await asyncio.wait_for(started.wait(), timeout=2)
+        assert owner.busy
+        assert owner.abort() is False
+        with pytest.raises(ValueError, match='compaction'):
+            await owner.send('concurrent message')
+        with pytest.raises(RuntimeError):
+            await owner.compact('deterministic')
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not owner.busy
+        assert owner.composition.store.load(owner.session.id).messages == owner.session.messages
+
+    asyncio.run(check())
+
+
+def test_failed_manual_summary_records_attempt_without_compaction(
+    runtime: ServerRuntime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.core.context.compaction import manual
+    from src.core.context.compaction.receipts import receipts
+    from src.core.context.compaction.records import recorded_state
+    from tests.support.context_compaction_records import history
+
+    async def check() -> None:
+        owner = runtime.session_runtime
+        owner.session.messages = history(30)
+        owner.composition.store.save(owner.session)
+
+        async def generate(*args: Any, **kwargs: Any) -> str:
+            kwargs['on_start']()
+            raise ValueError('provider failed')
+
+        monkeypatch.setattr(manual, 'generate_summary', generate)
+        with pytest.raises(ValueError):
+            await owner.compact('llm')
+        assert not owner.busy
+        loaded = owner.composition.store.load(owner.session.id)
+        assert loaded is not None
+        assert receipts(loaded.messages)[-1]['status'] == 'failed'
+        assert recorded_state(loaded.messages)[0].summary is None
+
+    asyncio.run(check())
+
+
+def test_manual_llm_compaction_survives_session_reload(runtime: ServerRuntime) -> None:
+    from src.core.context.compaction.records import recorded_state
+    from tests.support.context_compaction_records import history
+
+    owner = runtime.session_runtime
+    owner.session.messages = history(30)
+    owner.composition.store.save(owner.session)
+    result = asyncio.run(owner.compact('llm'))
+    assert result.status == 'complete'
+    saved = owner.composition.store.load(owner.session.id)
+    assert saved is not None
+    assert recorded_state(saved.messages)[0].summary == 'done'
+
+
+def test_manual_compaction_refuses_to_overwrite_newer_session(
+    runtime: ServerRuntime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.core.context.compaction import manual
+    from src.core.context.compaction.records import recorded_state
+    from tests.support.context_compaction_records import history
+
+    async def check() -> None:
+        owner = runtime.session_runtime
+        owner.session.messages = history(30)
+        owner.composition.store.save(owner.session)
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def generate(*args: Any, **kwargs: Any) -> str:
+            started.set()
+            await release.wait()
+            return 'short summary'
+
+        monkeypatch.setattr(manual, 'generate_summary', generate)
+        task = asyncio.create_task(owner.compact('llm'))
+        await asyncio.wait_for(started.wait(), timeout=2)
+        changed = owner.composition.store.load(owner.session.id)
+        assert changed is not None
+        changed.title = 'newer title'
+        owner.composition.store.save(changed)
+        release.set()
+        with pytest.raises(RuntimeError, match='changed'):
+            await task
+        saved = owner.composition.store.load(owner.session.id)
+        assert saved is not None and saved.title == 'newer title'
+        assert recorded_state(saved.messages)[0].summary is None
+        assert not owner.busy
+
+    asyncio.run(check())
