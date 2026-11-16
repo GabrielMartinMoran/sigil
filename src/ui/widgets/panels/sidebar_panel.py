@@ -25,9 +25,10 @@ scrollbar in a column that is 34 characters wide.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Any
 
+from rich.console import Console, ConsoleOptions, RenderResult
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -62,7 +63,7 @@ ROADMAP_STYLE = {
     'in_progress': 'bold blue',
     'pending': '',
     'blocked': 'bold yellow',
-    'done': 'green strike',
+    'done': 'green',
 }
 ROADMAP_FALLBACK_ICON = '·'
 
@@ -73,6 +74,16 @@ UNREPORTED = 'the service did not report it'
 missing key supports none of them, and a zero would be worse: it reads as a
 measurement the service never made.
 """
+
+
+class _SidebarContent:
+    """Build at render width so note indentation follows terminal resizes."""
+
+    def __init__(self, panel: SidebarPanel) -> None:
+        self.panel = panel
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        yield self.panel._build(width=options.max_width, console=console)
 
 
 class SidebarPanel(Vertical):
@@ -200,9 +211,7 @@ class SidebarPanel(Vertical):
     def refresh_palette(self) -> None:
         """Rebuilds the text after a theme change.
 
-        The panel's content is a Rich `Text` built once per state change, and the
-        widget caches it. Without this the section headings and the roadmap icons
-        keep the colors of the theme the app started with.
+        Refresh the widget so the next render uses the active theme.
         """
         self._repaint()
 
@@ -213,19 +222,19 @@ class SidebarPanel(Vertical):
         and from a worker, and both can land before `compose` has run.
         """
         try:
-            self.query_one('#sidebar-body', Static).update(self._build())
+            self.query_one('#sidebar-body', Static).update(_SidebarContent(self))
         except Exception:  # noqa: BLE001 - not mounted yet; `on_mount` paints it
             return
 
     # --- rendering ----------------------------------------------------------
 
-    def _build(self) -> Text:
+    def _build(self, *, width: int = 0, console: Console | None = None) -> Text:
         text = Text()
         self._append_agent(text)
         self._append_model(text)
         self._append_skills(text)
         self._append_mcp(text)
-        self._append_roadmap(text)
+        self._append_roadmap(text, width=width, console=console)
         return text
 
     @property
@@ -335,7 +344,7 @@ class SidebarPanel(Vertical):
                 text.append(f' {FAIL_MARK} ', style='bold red')
                 text.append(f'{server.name}\n', style='red')
 
-    def _append_roadmap(self, text: Text) -> None:
+    def _append_roadmap(self, text: Text, *, width: int = 0, console: Console | None = None) -> None:
         """The plan of the task, last in the panel.
 
         It goes at the end on purpose: the model, the skills and the servers are
@@ -359,14 +368,25 @@ class SidebarPanel(Vertical):
         if not items:
             text.append(' No tasks yet.\n', style='dim')
             return
-        for item in items:
+        for index, item in enumerate(items):
+            if index:
+                text.append('\n')
             style = ROADMAP_STYLE.get(item.status, '')
             icon = ROADMAP_ICON.get(item.status, ROADMAP_FALLBACK_ICON)
             text.append(f' {icon} ', style=style)
             text.append(item.title, style=style)
             text.append('\n')
             if item.notes:
-                text.append(f'   {item.notes}\n', style='dim')
+                lines: Iterable[Text]
+                if width > 4:
+                    lines = Text(item.notes).wrap(console or Console(), width - 4)
+                else:
+                    lines = (Text(line) for line in item.notes.split('\n'))
+                for line in lines:
+                    line.rstrip()
+                    text.append('  │ ', style=color(self, 'muted'))
+                    text.append(line.plain, style=color(self, 'muted'))
+                    text.append('\n')
 
 
 def _percent_text(percent: float | None) -> str:

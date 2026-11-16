@@ -526,3 +526,46 @@ def test_the_in_process_sidebar_still_reads_its_local_plan(tmp_path: Path) -> No
             assert 'the service did not report it' not in panel.text
 
     asyncio.run(inner())
+
+
+def test_roadmap_notes_wrap_under_their_task_and_keep_multiline_content() -> None:
+    panel = _panel()
+    panel.update_roadmap(
+        [
+            TodoItem(title='First', status='done', notes='Alpha beta gamma delta\nSecond line'),
+            TodoItem(title='Next', notes='Another note'),
+        ]
+    )
+
+    text = panel._build(width=18).plain
+    assert '✓ First\n  │ Alpha beta\n  │ gamma delta\n  │ Second line\n\n ○ Next\n  │ Another note' in text
+
+
+def test_roadmap_notes_reflow_at_different_widths() -> None:
+    panel = _panel()
+    panel.update_roadmap([TodoItem(title='Task', notes='One two three four')])
+
+    narrow = panel._build(width=12).plain
+    wide = panel._build(width=30).plain
+    assert '  │ One two\n  │ three\n  │ four' in narrow
+    assert '  │ One two three four' in wide
+
+
+def test_sidebar_renderable_uses_the_actual_console_width() -> None:
+    from io import StringIO
+
+    from rich.console import Console
+
+    from src.ui.widgets.panels.sidebar_panel import _SidebarContent
+
+    panel = _panel()
+    panel.update_roadmap([TodoItem(title='Task', notes='One two three four')])
+    content = _SidebarContent(panel)
+
+    def rendered(width: int) -> str:
+        output = StringIO()
+        Console(file=output, width=width, force_terminal=False).print(content, end='')
+        return output.getvalue()
+
+    assert '  │ One two\n  │ three\n  │ four' in rendered(12)
+    assert '  │ One two three four' in rendered(30)
