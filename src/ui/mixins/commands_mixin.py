@@ -388,8 +388,8 @@ class CommandsMixin:
         to stop here would cancel a turn a user started somewhere else. So nothing is
         sent on the way out — the stream is closed by `on_unmount`, the service keeps
         running, and its idle shutdown is what ends it once no work is left (see
-        [idle shutdown](../docs/architecture.md#idle-shutdown)). Stopping work is a
-        deliberate act, never a side effect of closing a window.
+        `docs/technical/architecture/service-runtime.md#idle-shutdown`). Stopping work
+        is a deliberate act, never a side effect of closing a window.
 
         In-process there is no service and no one else: the run and the shell
         commands are this process's, so they are killed before the save below, and
@@ -735,7 +735,8 @@ class CommandsMixin:
         An attached terminal paints the service's numbers, never this process's
         meter: the session it is looking at is the service's, and a local meter
         would report a second, disagreeing truth about it. The scope section is
-        absent because no endpoint projects it (see docs/architecture.md).
+        absent because no endpoint projects it
+        (see docs/technical/architecture/terminal-client.md).
         """
         if self._client is not None:
             await self._service_context(self._client, chat)
