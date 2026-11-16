@@ -32,10 +32,10 @@ import pytest
 from pydantic_ai.models.test import TestModel
 
 from src.core.agents.retry_notice import RetryNotice
-from src.core.bootstrap import Composition
+from src.core.composition import Composition
 from src.core.interaction.models.question_item import QuestionItem
 from src.core.interaction.models.question_option import QuestionOption
-from src.core.settings import load_settings
+from src.core.load_settings import load_settings
 from src.core.storage.accepted_inputs import AcceptedInputs
 from src.core.tooling.tool_call_event import ToolCallEvent
 from src.server import session_runtime as session_runtime_module

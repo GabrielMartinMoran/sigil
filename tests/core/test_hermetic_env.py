@@ -13,12 +13,12 @@ from pathlib import Path
 import dotenv
 import pytest
 
-from src.core.settings import (
+from src.core.load_settings import load_settings
+from src.core.sigil_settings import (
     DEFAULT_CONTEXT_STRATEGY,
     DEFAULT_MAX_STEPS,
     DEFAULT_MODEL_MAX_ATTEMPTS,
     SigilSettings,
-    load_settings,
 )
 
 REPO = Path(__file__).resolve().parents[2]

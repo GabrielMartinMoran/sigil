@@ -12,11 +12,15 @@ import os
 import subprocess
 import time
 
-from src.core.shell import running
+from src.core.shell.drain import drain
+from src.core.shell.drain_result import DrainResult
 from src.core.shell.guard import SELF_GUARD_ENV, is_self_invocation
+from src.core.shell.kill_process_group import kill_process_group
 from src.core.shell.limits import MAX_TIMEOUT
 from src.core.shell.models.run_tool_output import RunToolOutput
-from src.core.shell.process import DrainResult, drain, kill_process_group, spawn
+from src.core.shell.running_commands import RunningCommands
+from src.core.shell.spawn import spawn
+from src.core.shell.track import _default as running_default
 from src.core.web.download import DEFAULT_TIMEOUT
 
 TIMEOUT_RETURNCODE = 124
@@ -69,7 +73,7 @@ def execute_command(
     cwd: str | os.PathLike[str] | None = None,
     extra_env: dict[str, str] | None = None,
     check_self_invocation: bool = True,
-    owner: running.RunningCommands | None = None,
+    owner: RunningCommands | None = None,
     generation: int | None = None,
 ) -> RunToolOutput:
     """Runs a non-interactive Bash command and returns its output.
@@ -94,7 +98,7 @@ def execute_command(
     if cwd_error is not None:
         return cwd_error
 
-    registry = owner if owner is not None else running._default
+    registry = owner if owner is not None else running_default
     admitted_generation = generation if generation is not None else registry.generation()
     try:
         process = registry.spawn(admitted_generation, lambda: spawn(cmd, cwd=cwd_path, extra_env=extra_env))
@@ -122,7 +126,7 @@ async def execute_commands(
     timeout_seconds: int = DEFAULT_TIMEOUT,
     *,
     cwd: str | os.PathLike[str] | None = None,
-    owner: running.RunningCommands | None = None,
+    owner: RunningCommands | None = None,
 ) -> list[RunToolOutput]:
     """Runs several Bash commands in parallel and returns their results.
 

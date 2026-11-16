@@ -32,7 +32,7 @@ from src.core.agents.profile.models.agent_profile import AgentProfile
 from src.core.agents.rollback_outcome import RollbackOutcome
 from src.core.agents.tree.models.agent_node import AgentNode
 from src.core.agents.tree.reports import WAKE_PROMPT
-from src.core.bootstrap import Composition
+from src.core.composition import Composition
 from src.core.sessions.session import Session
 from src.core.storage.accepted_inputs import AcceptedInputs
 from src.server.diagnostics import record

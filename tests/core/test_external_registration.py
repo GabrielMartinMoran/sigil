@@ -5,7 +5,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
-from src.core.extensions.manager import ExtensionManager
+from src.core.extensions.extension_manager import ExtensionManager
 from src.core.extensions.registration import register_extensions
 from src.core.tooling.tool_catalog import ToolCatalog
 

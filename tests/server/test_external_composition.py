@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from src.core.bootstrap import Composition
+from src.core.composition import Composition
+from src.core.load_settings import load_settings
 from src.core.providers.provider_paths import ProviderPaths
-from src.core.settings import load_settings
 
 
 def test_server_lifespan_unloads_extensions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

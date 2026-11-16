@@ -8,9 +8,9 @@ from typing import Any
 from pydantic_ai.models.test import TestModel
 from pytest import MonkeyPatch
 
-from src.core.bootstrap import Composition
+from src.core.composition import Composition
 from src.core.providers.provider_paths import ProviderPaths
-from src.core.settings import SigilSettings
+from src.core.sigil_settings import SigilSettings
 
 
 def _profile(root: Path, name: str, body: str, *, subagent: bool = False) -> None:
@@ -325,7 +325,7 @@ def test_shell_cancellation_is_selective_during_spawn(tmp_path: Path, monkeypatc
         release_first.set()
         for process in processes.values():
             if process.poll() is None:
-                from src.core.shell.process import kill_process_group
+                from src.core.shell.kill_process_group import kill_process_group
 
                 kill_process_group(process)
         a.close()
@@ -341,7 +341,7 @@ def test_shell_cancel_stops_child_group_without_stopping_other_composition(
     import sys
 
     from src.core.shell import runner
-    from src.core.shell.process import kill_process_group
+    from src.core.shell.kill_process_group import kill_process_group
 
     first, second = tmp_path / 'first', tmp_path / 'second'
     first.mkdir()

@@ -41,10 +41,10 @@ from src.core.agents.tree.models.agent_node import AgentNode
 from src.core.agents.tree.models.node_status import NodeStatus
 from src.core.agents.tree.models.summon_error import SummonError
 from src.core.agents.tree.reports import WAKE_PROMPT
-from src.core.bootstrap import Composition
+from src.core.composition import Composition
 from src.core.interaction.models.question_item import QuestionItem
 from src.core.interaction.models.question_option import QuestionOption
-from src.core.settings import load_settings
+from src.core.load_settings import load_settings
 from src.server import views
 from src.server.app import create_app
 from src.server.body_limit_middleware import BodyLimitMiddleware
@@ -625,7 +625,7 @@ def test_switching_workspace_leaves_an_empty_draft(runtime: ServerRuntime, tmp_p
 
 
 def test_abort_cancels_only_the_runtime_composition(runtime: ServerRuntime) -> None:
-    from src.core.shell.running import RunningCommands
+    from src.core.shell.running_commands import RunningCommands
 
     other = RunningCommands()
     owner = runtime.composition.shell_commands

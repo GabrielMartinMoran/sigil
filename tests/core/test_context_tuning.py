@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from src.core.bootstrap import build_strategy
+from src.core.build_strategy import build_strategy
 from src.core.context.compaction.compaction_policy import DEFAULT_POLICY, CompactionPolicy
 from src.core.context.context_budget import ContextBudget
 from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
-from src.core.settings import load_settings
+from src.core.load_settings import load_settings
 from src.core.tooling.compaction_constants import SEMANTIC_COMPACT_CHARS
 from src.core.tooling.compaction_policies import ALL_COMPACTORS
 from tests.support.context_compaction_records import history

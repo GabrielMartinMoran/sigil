@@ -7,8 +7,12 @@ from pathlib import Path
 
 import pytest
 
+from src.core.load_file import load_file
 from src.core.paths import themes_dir
-from src.core.themes import BUILTIN_NAMES, ROLES, ThemeError, ThemeRegistry, load_file, theme_variable_defaults
+from src.core.theme_definition import ROLES
+from src.core.theme_error import ThemeError
+from src.core.theme_registry import BUILTIN_NAMES, ThemeRegistry
+from src.core.themes import theme_variable_defaults
 
 
 def _write(directory, name: str, payload: object) -> None:

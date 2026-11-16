@@ -46,16 +46,18 @@ from src.core.interaction.models.question_answer import QuestionAnswer
 from src.core.interaction.models.question_item import QuestionItem
 from src.core.interaction.models.question_option import QuestionOption
 from src.core.interaction.question_hub import QuestionHub
+from src.core.load_settings import load_settings
 from src.core.mcp.manager.mcp_manager import MCPManager
-from src.core.preferences import Preferences, PreferencesStore
+from src.core.preferences import Preferences
+from src.core.preferences_store import PreferencesStore
 from src.core.providers.model_service import ModelService
 from src.core.roadmap.roadmap_stores import RoadmapStores
 from src.core.sessions.session import Session
 from src.core.sessions.session_store import SessionStore
-from src.core.settings import SigilSettings, load_settings
-from src.core.shell import running as running_commands
+from src.core.shell import kill_all as kill_all_commands
+from src.core.sigil_settings import SigilSettings
 from src.core.storage.database_path import database_path
-from src.core.themes import ThemeRegistry
+from src.core.theme_registry import ThemeRegistry
 from src.core.tooling.tool_logger_hub import ToolLoggerHub
 from src.core.tooling.tool_summary import ToolSummary
 from src.core.workspace.workspace_manager import WorkspaceManager
@@ -292,7 +294,7 @@ class SigilApp(
         self._queue_read_again = False
         self._service_reconnect_delay = SERVICE_RECONNECT_DELAY
         self._service_request = None
-        self._cancel_shell = cancel_shell if cancel_shell is not None else running_commands.kill_all
+        self._cancel_shell = cancel_shell if cancel_shell is not None else kill_all_commands.kill_all
         self._extensions = extensions
         self._settings = settings or load_settings({})
         self._agent = agent

@@ -7,10 +7,10 @@ import pytest
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
-from src.core.bootstrap import Composition
+from src.core.composition import Composition
 from src.core.interaction.models.question_answer import QuestionAnswer
+from src.core.load_settings import load_settings
 from src.core.providers.provider_paths import ProviderPaths
-from src.core.settings import load_settings
 
 
 def test_composition_loads_project_tools_and_injects_root_context(

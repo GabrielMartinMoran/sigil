@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.core.preferences import DEFAULT_TRANSCRIPT_WINDOW, MAX_TRANSCRIPT_WINDOW, Preferences, PreferencesStore
+from src.core.preferences import DEFAULT_TRANSCRIPT_WINDOW, MAX_TRANSCRIPT_WINDOW, Preferences
+from src.core.preferences_store import PreferencesStore
 
 
 def test_the_transcript_window_preference_falls_back_and_clamps(tmp_path: Path) -> None:

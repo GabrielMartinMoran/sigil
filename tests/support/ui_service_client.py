@@ -18,7 +18,7 @@ from fastapi import FastAPI
 from PIL import Image
 
 from src.core.agents.profile.models.agent_role import AgentRole
-from src.core.bootstrap import Composition
+from src.core.composition import Composition
 from src.core.mcp.deferred import build_manager
 from src.server.app import create_app
 from src.server.endpoint import Endpoint

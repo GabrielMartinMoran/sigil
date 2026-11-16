@@ -31,7 +31,7 @@ import pytest
 from src.core.agents.fork_outcome import ForkOutcome
 from src.core.agents.rollback_outcome import RollbackOutcome
 from src.core.agents.tree.models.node_status import NodeStatus
-from src.core.bootstrap import Composition
+from src.core.composition import Composition
 from src.core.context.context_budget import ContextBudget
 from src.core.context.meter.context_snapshot import ContextSnapshot
 from src.core.context.meter.cost import session_cost

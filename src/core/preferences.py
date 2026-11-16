@@ -1,65 +1,42 @@
-"""User interface preferences that outlive a session.
-
-`SigilSettings` describes how a *session* runs (step limits, context strategy) and
-is read from the environment once. These are different: the theme and whether the
-reasoning is expanded are things the user changes while using the app, and they
-should still be there the next morning. They live in ``~/.sigil/ui.json``.
-
-The file is written atomically and every read is best-effort: a hand-edited file
-that no longer parses falls back to the defaults instead of blocking startup, and
-a preference the app does not know is ignored.
-"""
+"""The preferences of one user."""
 
 from __future__ import annotations
 
-import json
-import os
 from dataclasses import dataclass, replace
-from pathlib import Path
 
-from src.core.paths import sigil_home
-from src.core.themes import DEFAULT_THEME_NAME
-
-FILE_NAME = 'ui.json'
+from src.core.theme_registry import DEFAULT_THEME_NAME
 
 THEME_KEY = 'theme'
+
+
 REASONING_KEY = 'reasoning_visible'
+
+
 TOOLS_KEY = 'tools_expanded'
+
+
 DESKTOP_NOTIFICATIONS_KEY = 'desktop_notifications'
+
+
 MODEL_FAVORITES_KEY = 'model_favorites'
+
+
 TRANSCRIPT_WINDOW_KEY = 'transcript_window'
 
+
 DEFAULT_THEME = DEFAULT_THEME_NAME
-"""Theme applied on a cold start. It is a builtin, so it always exists."""
+
 
 DEFAULT_REASONING_VISIBLE = False
-"""Reasoning is collapsed until the user asks to read it."""
+
 
 DEFAULT_TOOLS_EXPANDED = False
-"""Tool output is collapsed too: the row already summarizes what came back.
 
-Three parallel calls used to print a dozen lines of `returncode=0 stdout=...`
-between a question and its answer. What a reader needs is on the row; the output is
-one command away (`/tools expanded`), and a failure shows its detail regardless.
-"""
 
 DEFAULT_TRANSCRIPT_WINDOW = 100
-"""Items one page of the conversation holds.
 
-The unit that trades memory against the number of service reads: enough that a
-screenful of a long conversation arrives in one request, small enough that a session
-of thousands of messages is never held at once. The terminal asks for a page and an
-older one only when the reader scrolls up, so this is the size of the window it
-keeps — not the size of the conversation.
-"""
 
 MAX_TRANSCRIPT_WINDOW = 1000
-"""The largest page the service answers.
-
-Mirrored from the service's own ceiling so a hand-edited file cannot ask for a page
-that would be refused: a preference is read at attach, and a refusal there would
-leave the screen empty for a typo.
-"""
 
 
 def _transcript_window(value: object) -> int:
@@ -155,46 +132,3 @@ class Preferences:
             model_favorites=favorites,
             transcript_window=_transcript_window(window),
         )
-
-
-def default_path() -> Path:
-    return sigil_home() / FILE_NAME
-
-
-class PreferencesStore:
-    """Reads and writes ``ui.json``."""
-
-    def __init__(self, path: Path | None = None) -> None:
-        self._path = path if path is not None else default_path()
-
-    @property
-    def path(self) -> Path:
-        return self._path
-
-    def load(self) -> Preferences:
-        """The stored preferences, or the defaults."""
-        try:
-            raw = self._path.read_text(encoding='utf-8')
-        except OSError:
-            return Preferences()
-        try:
-            data = json.loads(raw)
-        except ValueError:
-            return Preferences()
-        if not isinstance(data, dict):
-            return Preferences()
-        return Preferences.from_dict(data)
-
-    def save(self, preferences: Preferences) -> None:
-        """Persists the preferences. A failure is silent: it is not worth a turn.
-
-        The file is written to a sibling ``.tmp`` and moved into place, so a crash
-        mid-write leaves the previous preferences intact.
-        """
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = self._path.with_suffix('.tmp')
-            temporary.write_text(json.dumps(preferences.to_dict(), indent=2) + '\n', encoding='utf-8')
-            os.replace(temporary, self._path)
-        except OSError:
-            return

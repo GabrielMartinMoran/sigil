@@ -22,7 +22,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
 from src.core.sessions.session_store import SessionStore
-from src.core.shell import running as running_commands
+from src.core.shell import kill_all as kill_all_commands
 from src.core.shell.runner import execute_command
 from src.ui.sigil_app import SigilApp
 from src.ui.widgets.assistant_block import AssistantBlock
@@ -777,7 +777,7 @@ def test_quitting_mid_turn_stops_the_run_and_kills_its_commands() -> None:
                 # `exit()` was asked for: the app is on its way out.
                 assert app._exit is True
                 # Nothing is left in the registry: the kill happened on the way out.
-                assert running_commands.kill_all() == 0
+                assert kill_all_commands.kill_all() == 0
 
     asyncio.run(inner())
 
@@ -837,7 +837,7 @@ def test_the_model_shortcut_is_refused_mid_turn_as_well() -> None:
 
 
 def test_abort_uses_injected_shell_owner(tmp_path: Path) -> None:
-    from src.core.shell.running import RunningCommands
+    from src.core.shell.running_commands import RunningCommands
 
     first, second = RunningCommands(), RunningCommands()
     store = SessionStore(cwd=str(tmp_path), base_dir=tmp_path / 'sessions')

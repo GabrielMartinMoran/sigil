@@ -10,7 +10,7 @@ from typing import Any, get_type_hints
 from pydantic_ai import RunContext
 
 from sigil_tools import ToolContext
-from src.core.extensions.manager import ExtensionManager
+from src.core.extensions.extension_manager import ExtensionManager
 from src.core.tooling.compaction import GENERIC_COMPACTOR
 from src.core.tooling.logging import ToolLogger
 from src.core.tooling.outputs import register_output

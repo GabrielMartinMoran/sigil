@@ -5,7 +5,7 @@ from __future__ import annotations
 from rich.text import Text
 from textual.widgets import Static
 
-from src.core.themes import ThemeDefinition
+from src.core.theme_definition import ThemeDefinition
 
 SWATCHES = ('primary', 'accent', 'secondary', 'success', 'warning', 'error')
 

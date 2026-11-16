@@ -39,7 +39,7 @@ from types import FrameType
 
 from dotenv import load_dotenv
 
-from src.core.bootstrap import Composition
+from src.core.composition import Composition
 from src.server import webbuild
 from src.server.app import create_app
 from src.server.config import banner, resolve_config
@@ -222,7 +222,7 @@ def _run(args: argparse.Namespace, *, web: bool = True) -> int:
             record('server_signal_received', signal=sig)
             super().handle_exit(sig, frame)
 
-    from src.core.settings import load_settings
+    from src.core.load_settings import load_settings
     from src.core.storage.database_path import database_path
 
     # The lock is taken before the engine is built, and it is held until the process

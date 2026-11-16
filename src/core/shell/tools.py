@@ -9,7 +9,7 @@ from typing import Any
 
 from src.core.shell.models.run_tool_output import RunToolOutput
 from src.core.shell.runner import execute_commands
-from src.core.shell.running import RunningCommands
+from src.core.shell.running_commands import RunningCommands
 from src.core.tooling.compaction_policies import RUN_COMPACTOR
 from src.core.tooling.logging import ToolLogger
 from src.core.tooling.resource_kind import ResourceKind

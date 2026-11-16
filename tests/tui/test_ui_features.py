@@ -17,11 +17,12 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from textual.containers import VerticalScroll
 
-from src.core.preferences import Preferences, PreferencesStore
+from src.core.preferences import Preferences
+from src.core.preferences_store import PreferencesStore
 from src.core.roadmap.models.todo_item import TodoItem
 from src.core.roadmap.roadmap_stores import RoadmapStores
 from src.core.sessions.session_store import SessionStore
-from src.core.themes import ThemeRegistry
+from src.core.theme_registry import ThemeRegistry
 from src.core.tooling.presentation import display_name
 from src.ui.sigil_app import SigilApp
 from src.ui.widgets.chat_log import ChatLog

@@ -12,7 +12,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
 
 from sigil_tools import ToolContext
-from src.core.extensions.manager import ExtensionManager
+from src.core.extensions.extension_manager import ExtensionManager
 from src.core.extensions.registration import register_extensions
 from src.core.tooling.logging import ToolLogger
 from src.core.tooling.outputs import unregister_output

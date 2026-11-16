@@ -76,7 +76,9 @@ from src.core.roadmap.models.roadmap_item_input import RoadmapItemInput
 from src.core.roadmap.roadmap_store import RoadmapStore
 from src.core.roadmap.tools import register_roadmap_tools
 from src.core.sessions.session_store import SessionStore
-from src.core.shell.process import DrainResult, _Buffers, _read_available, kill_process_group
+from src.core.shell.drain import _Buffers, _read_available
+from src.core.shell.drain_result import DrainResult
+from src.core.shell.kill_process_group import kill_process_group
 from src.core.shell.runner import execute_command
 from src.core.shell.tools import register_shell_tools
 from src.core.skills.rendering import render_loaded_skills

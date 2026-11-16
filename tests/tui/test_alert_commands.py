@@ -12,7 +12,8 @@ from pydantic_ai.models.test import TestModel
 
 from src.core.commands.catalog import match_commands
 from src.core.commands.command_owner import CommandOwner
-from src.core.preferences import Preferences, PreferencesStore
+from src.core.preferences import Preferences
+from src.core.preferences_store import PreferencesStore
 from src.core.sessions.session_store import SessionStore
 from src.ui.help_text import HELP_TEXT
 from src.ui.sigil_app import SigilApp

@@ -242,7 +242,7 @@ def test_execute_commands_timeout_is_per_command(monkeypatch: pytest.MonkeyPatch
 
 
 def test_cancelled_admission_does_not_start_a_late_process() -> None:
-    from src.core.shell.running import RunningCommands
+    from src.core.shell.running_commands import RunningCommands
 
     owner = RunningCommands()
     generation = owner.generation()
@@ -275,20 +275,21 @@ def test_the_run_tool_uses_the_execution_root_without_moving_the_process(
 
 
 def test_should_wait_for_exit_without_selecting_closed_streams(monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.core.shell import process as processes
+    from src.core.shell import drain as draining
+    from src.core.shell import spawn
 
-    process = processes.spawn('printf done', cwd=None, extra_env=None)
-    read_available = processes._read_available
+    process = spawn.spawn('printf done', cwd=None, extra_env=None)
+    read_available = draining._read_available
 
-    def read_open_streams(selector: selectors.BaseSelector, buffers: processes._Buffers) -> None:
+    def read_open_streams(selector: selectors.BaseSelector, buffers: draining._Buffers) -> None:
         assert selector.get_map(), 'Must wait for exit, not select on closed streams'
         read_available(selector, buffers)
 
     # Force the pipe-close/process-exit race deterministically, without timing guesses.
     monkeypatch.setattr(process, 'poll', lambda: None)
-    monkeypatch.setattr(processes, '_read_available', read_open_streams)
+    monkeypatch.setattr(draining, '_read_available', read_open_streams)
     try:
-        result = processes.drain(process, time.monotonic() + 3)
+        result = draining.drain(process, time.monotonic() + 3)
         assert result.stdout == b'done'
         assert result.returncode == 0
         assert not result.timed_out

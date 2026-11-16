@@ -213,9 +213,9 @@ def test_should_treat_a_single_file_as_the_only_destination(tmp_path: Path, monk
 
 def test_should_apply_a_saved_default_without_a_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The write is only half the feature: the router has to read it next time."""
-    from src.core.bootstrap import Composition
+    from src.core.composition import Composition
+    from src.core.load_settings import load_settings
     from src.core.providers.provider_paths import ProviderPaths
-    from src.core.settings import load_settings
     from tests.support.provider_service import _add, _service
 
     monkeypatch.delenv('SIGIL_CONFIG', raising=False)
@@ -223,7 +223,7 @@ def test_should_apply_a_saved_default_without_a_restart(tmp_path: Path, monkeypa
     monkeypatch.chdir(tmp_path)
     service = _service(tmp_path)
     _add(service)
-    monkeypatch.setattr('src.core.bootstrap.build_service', lambda *args, **kwargs: service)
+    monkeypatch.setattr('src.core.composition.build_service', lambda *args, **kwargs: service)
     composition = Composition(tmp_path, settings=load_settings({}), provider_paths=ProviderPaths(tmp_path / 'p'))
     config = AgentModelConfig('work', 'second/model', 'medium')
 
