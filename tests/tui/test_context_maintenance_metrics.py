@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.context.meter.debug import build_debug_report
-from src.engine.context.meter.debug_render import render_debug_report
-from src.engine.context.meter.request import RequestSnapshot
-from src.engine.context.strategy.append_only import AppendOnlyStrategy
+from src.core.context.meter.context_meter import ContextMeter
+from src.core.context.meter.debug import build_debug_report
+from src.core.context.meter.debug_render import render_debug_report
+from src.core.context.meter.request_snapshot import RequestSnapshot
+from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 from tests.support.context_compaction_records import history
 
 
@@ -18,8 +18,8 @@ def report(messages: list, *, window: int = 100000):
     return build_debug_report(messages, snapshot=meter.snapshot(messages), request=RequestSnapshot(), view_result=view)
 
 
-def test_skill_metrics_render_in_text_and_debug_view():
-    from src.ui.widgets.debug_view import build_debug_body
+def test_skill_metrics_render_in_text_and_debug_view() -> None:
+    from src.ui.widgets.panels.debug_body import build_debug_body
 
     metrics = {
         'instructions_tokens': 100,

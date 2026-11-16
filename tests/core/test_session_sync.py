@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 
-from src.engine.sessions.session_store import SessionStore
+from src.core.sessions.session_store import SessionStore
 
 
 def test_refresh_reads_external_changes_without_saving_stale_history(tmp_path: Path) -> None:
@@ -64,8 +64,8 @@ def test_save_current_reloads_a_stale_session_instead_of_raising(tmp_path: Path)
 
 
 def test_recovery_preserves_subagents_and_does_not_change_default_session(tmp_path: Path) -> None:
-    from src.engine.agents.profile.models.agent_role import AgentRole
-    from src.engine.agents.tree.store import AgentTreeStore
+    from src.core.agents.profile.models.agent_role import AgentRole
+    from src.core.agents.tree.agent_tree_store import AgentTreeStore
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'state')
     session = store.create_session()
@@ -99,8 +99,10 @@ def test_recovery_preserves_subagents_and_does_not_change_default_session(tmp_pa
 
 
 def test_a_recovery_checkpoint_links_and_delivers_in_one_transaction(tmp_path: Path) -> None:
-    from src.engine.storage.accepted_inputs import AcceptedInputs, DeliveryConfirmation
-    from src.engine.storage.database import Database, database_path
+    from src.core.storage.accepted_inputs import AcceptedInputs
+    from src.core.storage.database import Database
+    from src.core.storage.database_path import database_path
+    from src.core.storage.delivery_confirmation import DeliveryConfirmation
 
     base = tmp_path / 'state'
     store = SessionStore(cwd=tmp_path, base_dir=base)
@@ -144,7 +146,8 @@ def test_a_recovery_checkpoint_links_and_delivers_in_one_transaction(tmp_path: P
 
 
 def test_a_failed_recovery_delivery_rolls_back_the_recovery_copy(tmp_path: Path) -> None:
-    from src.engine.storage.accepted_inputs import AcceptedInputs, DeliveryConfirmation
+    from src.core.storage.accepted_inputs import AcceptedInputs
+    from src.core.storage.delivery_confirmation import DeliveryConfirmation
 
     base = tmp_path / 'state'
     store = SessionStore(cwd=tmp_path, base_dir=base)
@@ -178,11 +181,12 @@ def test_a_failed_recovery_delivery_rolls_back_the_recovery_copy(tmp_path: Path)
 
 def test_characterize_current_recovery_missing_root_and_child_plans(tmp_path: Path) -> None:
     """Missing recovery plans are a defect, not the contract; update assertions when fixed."""
-    from src.engine.agents.profile.models.agent_role import AgentRole
-    from src.engine.agents.tree.store import AgentTreeStore
-    from src.engine.roadmap.models.todo_item import TodoItem
-    from src.engine.roadmap.store import RoadmapStore
-    from src.engine.storage.database import Database, database_path
+    from src.core.agents.profile.models.agent_role import AgentRole
+    from src.core.agents.tree.agent_tree_store import AgentTreeStore
+    from src.core.roadmap.models.todo_item import TodoItem
+    from src.core.roadmap.roadmap_store import RoadmapStore
+    from src.core.storage.database import Database
+    from src.core.storage.database_path import database_path
 
     base = tmp_path / 'state'
     store = SessionStore(cwd=tmp_path, base_dir=base)
@@ -229,9 +233,10 @@ def test_characterize_current_recovery_missing_root_and_child_plans(tmp_path: Pa
 
 def test_characterize_current_roadmap_only_conflict_leaks_to_winner(tmp_path: Path) -> None:
     """Writing the local plan to the winner is a defect, not the contract; update assertions when fixed."""
-    from src.engine.roadmap.models.todo_item import TodoItem
-    from src.engine.roadmap.store import RoadmapStore
-    from src.engine.storage.database import Database, database_path
+    from src.core.roadmap.models.todo_item import TodoItem
+    from src.core.roadmap.roadmap_store import RoadmapStore
+    from src.core.storage.database import Database
+    from src.core.storage.database_path import database_path
 
     base = tmp_path / 'state'
     store = SessionStore(cwd=tmp_path, base_dir=base)
@@ -265,14 +270,14 @@ def test_refresh_observes_changes_from_a_separate_process(tmp_path: Path) -> Non
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'state')
     session = store.create_session()
-    script = """
-import sys
-from src.engine.sessions.session_store import SessionStore
-store = SessionStore(cwd=sys.argv[1], base_dir=sys.argv[2])
-session = store.load(sys.argv[3])
-session.title = 'written by another process'
-store.save(session)
-"""
+    script = (
+        'import sys\n'
+        'from src.core.sessions.session_store import SessionStore\n'
+        'store = SessionStore(cwd=sys.argv[1], base_dir=sys.argv[2])\n'
+        'session = store.load(sys.argv[3])\n'
+        "session.title = 'written by another process'\n"
+        'store.save(session)\n'
+    )
     subprocess.run(
         [sys.executable, '-c', script, str(tmp_path), str(tmp_path / 'state'), session.id],
         check=True,

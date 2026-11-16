@@ -11,12 +11,14 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from textual.widgets._toast import Toast
 
-from src.engine.interaction.models.question_item import QuestionItem, QuestionOption
-from src.engine.preferences import Preferences
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
-from src.ui.desktop_notifications import Attention, NotificationContext
-from src.ui.widgets.prompt_input import PromptInput
+from src.core.config.preferences import Preferences
+from src.core.interaction.models.question_item import QuestionItem
+from src.core.interaction.models.question_option import QuestionOption
+from src.core.sessions.session_store import SessionStore
+from src.ui.messages.attention import Attention
+from src.ui.messages.notification_context import NotificationContext
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.panels.prompt_input import PromptInput
 
 
 def make_app(tmp_path: Path) -> SigilApp:
@@ -131,7 +133,7 @@ def test_should_not_deliver_desktop_notifications_in_headless_mode(
     async def scenario() -> None:
         app = make_app(tmp_path)
         send = Mock()
-        monkeypatch.setattr('src.ui.app.send_notification', send)
+        monkeypatch.setattr('src.ui.sigil_app.send_notification', send)
         async with app.run_test():
             app.notify_attention(Attention.FINISHED)
             await app.workers.wait_for_complete()
@@ -174,7 +176,7 @@ def test_should_deliver_from_worker_and_respect_opt_out(tmp_path: Path, monkeypa
         monkeypatch.setattr(app, 'repository_label', lambda: 'sigil:feature')
         monkeypatch.setattr(SigilApp, 'is_headless', property(lambda _: False))
         monkeypatch.setattr(
-            'src.ui.app.send_notification',
+            'src.ui.sigil_app.send_notification',
             lambda event, context: delivered.append((event, threading.get_ident(), context)) or True,
         )
         async with app.run_test():

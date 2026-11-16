@@ -5,8 +5,8 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
-from src.engine.extensions.toolset import ExtensionToolset
-from src.engine.tooling.catalog import ToolCatalog
+from src.core.extensions.extension_toolset import ExtensionToolset
+from src.core.tooling.tool_catalog import ToolCatalog
 
 
 def test_lazy_load_and_execute_project_tool_after_authorization(tmp_path: Path) -> None:
@@ -138,7 +138,7 @@ async def wait_for_release() -> str:
 
 def test_advanced_declarations_reach_logging_compaction_and_presentation(tmp_path: Path) -> None:
     from sigil_tools import ToolSummary
-    from src.engine.tooling.outputs import present_output
+    from src.core.tooling.outputs import present_output
 
     directory = tmp_path / 'global' / 'advanced'
     directory.mkdir(parents=True)

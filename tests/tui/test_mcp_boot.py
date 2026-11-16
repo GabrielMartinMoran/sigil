@@ -19,11 +19,12 @@ from pathlib import Path
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-from src.engine.mcp.config.loader import load_config
-from src.engine.mcp.deferred import MCPGateway, build_manager
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
-from src.ui.widgets.sidebar_panel import SidebarPanel
+from src.core.mcp.config.loader import load_config
+from src.core.mcp.deferred import build_manager
+from src.core.mcp.mcp_gateway import MCPGateway
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.panels.sidebar_panel import SidebarPanel
 from tests.support.ui import wait_until
 
 SERVER_SCRIPT = '''\
@@ -65,7 +66,7 @@ def _config(tmp_path: Path, *, keep_alive: bool = False) -> Path:
     return config
 
 
-def test_the_app_boots_mcp_and_the_panel_ends_up_with_the_real_state(tmp_path: Path):
+def test_the_app_boots_mcp_and_the_panel_ends_up_with_the_real_state(tmp_path: Path) -> None:
     """The worker runs, installs the layer, and the panel shows the server."""
     config = _config(tmp_path)
     specs = load_config([config], environ={}).servers
@@ -93,7 +94,7 @@ def test_the_app_boots_mcp_and_the_panel_ends_up_with_the_real_state(tmp_path: P
     asyncio.run(inner())
 
 
-def test_an_app_with_nothing_configured_never_starts_the_worker(tmp_path: Path):
+def test_an_app_with_nothing_configured_never_starts_the_worker(tmp_path: Path) -> None:
     """No servers means no load, no probe and no MCP section, as before."""
     gateway = MCPGateway(configured=0)
     store = SessionStore(cwd=str(tmp_path), base_dir=tmp_path / 'sessions')
@@ -115,7 +116,7 @@ def test_an_app_with_nothing_configured_never_starts_the_worker(tmp_path: Path):
     asyncio.run(inner())
 
 
-def test_a_failing_load_is_reported_in_the_chat_and_does_not_break_the_app(tmp_path: Path):
+def test_a_failing_load_is_reported_in_the_chat_and_does_not_break_the_app(tmp_path: Path) -> None:
     """A broken MCP layer must not take the window down with it."""
     gateway = MCPGateway(configured=1)
     store = SessionStore(cwd=str(tmp_path), base_dir=tmp_path / 'sessions')

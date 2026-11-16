@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.engine.providers.domain.selection import Selection
+from src.core.providers.domain.selection import Selection
 
 FIXTURES = Path(__file__).parents[1] / 'fixtures'
 
@@ -23,8 +23,8 @@ FIXTURES = Path(__file__).parents[1] / 'fixtures'
 # --- the catalogues ---------------------------------------------------------
 
 
-def test_the_openrouter_catalogue_reads_the_declared_modalities():
-    from src.engine.providers.catalog.openrouter_source import parse_models
+def test_the_openrouter_catalogue_reads_the_declared_modalities() -> None:
+    from src.core.providers.catalog.openrouter_source import parse_models
 
     payload = {
         'data': [
@@ -42,8 +42,8 @@ def test_the_openrouter_catalogue_reads_the_declared_modalities():
     assert models['silent'].supports_images
 
 
-def test_the_opencode_catalogue_reads_the_same_declaration_in_its_own_shape():
-    from src.engine.providers.catalog.opencode_source import parse_models
+def test_the_opencode_catalogue_reads_the_same_declaration_in_its_own_shape() -> None:
+    from src.core.providers.catalog.opencode_source import parse_models
 
     payload = {
         'data': [
@@ -60,14 +60,14 @@ def test_the_opencode_catalogue_reads_the_same_declaration_in_its_own_shape():
     assert models['silent'].supports_images
 
 
-def test_the_opencode_catalogue_reads_the_mime_qualified_modalities_it_really_publishes():
+def test_the_opencode_catalogue_reads_the_mime_qualified_modalities_it_really_publishes() -> None:
     """The live payload says ``image/png``, not ``image``, and that broke every model.
 
     Only the two alpha models that happen to list the bare word were considered
     multimodal; Claude, GPT-5 and DeepSeek were all reported as text-only, so the
     composer refused pastes the provider would have accepted.
     """
-    from src.engine.providers.catalog.opencode_source import parse_models
+    from src.core.providers.catalog.opencode_source import parse_models
 
     payload = {
         'data': [
@@ -86,9 +86,9 @@ def test_the_opencode_catalogue_reads_the_mime_qualified_modalities_it_really_pu
     assert models['silent'].supports_images
 
 
-def test_the_recorded_opencode_catalogue_keeps_its_vision_models_multimodal():
+def test_the_recorded_opencode_catalogue_keeps_its_vision_models_multimodal() -> None:
     """The recorded payload spells every image as a MIME type, and all of them were read as blind."""
-    from src.engine.providers.catalog.opencode_source import parse_models
+    from src.core.providers.catalog.opencode_source import parse_models
 
     payload = json.loads((FIXTURES / 'opencode_models.json').read_text(encoding='utf-8'))
     models = {model.name: model for model in parse_models(payload)}
@@ -99,9 +99,9 @@ def test_the_recorded_opencode_catalogue_keeps_its_vision_models_multimodal():
     assert not models['big-pickle'].supports_images
 
 
-def test_the_openrouter_catalogue_also_accepts_a_mime_qualified_declaration():
+def test_the_openrouter_catalogue_also_accepts_a_mime_qualified_declaration() -> None:
     """OpenRouter publishes the bare word today; the MIME form must not flip it to blind."""
-    from src.engine.providers.catalog.openrouter_source import parse_models
+    from src.core.providers.catalog.openrouter_source import parse_models
 
     payload = {'data': [{'id': 'sees', 'architecture': {'input_modalities': ['text', 'image/png']}}]}
 
@@ -110,8 +110,8 @@ def test_the_openrouter_catalogue_also_accepts_a_mime_qualified_declaration():
     assert models['sees'].supports_images
 
 
-def test_the_openai_catalogue_uses_the_bundled_profile():
-    from src.engine.providers.catalog.openai_source import parse_models
+def test_the_openai_catalogue_uses_the_bundled_profile() -> None:
+    from src.core.providers.catalog.openai_source import parse_models
 
     profiles = {'blind': {'supports_image_input': False}, 'sees': {}}
     payload = {'data': [{'id': 'blind'}, {'id': 'sees'}]}
@@ -122,7 +122,7 @@ def test_the_openai_catalogue_uses_the_bundled_profile():
     assert models['sees'].supports_images
 
 
-def test_the_flag_survives_a_saved_selection():
+def test_the_flag_survives_a_saved_selection() -> None:
     """A cold start has to refuse a paste without reaching the network."""
     selection = Selection(account_id='a', model='vision', images=True)
 
@@ -131,7 +131,7 @@ def test_the_flag_survives_a_saved_selection():
     assert restored is not None and restored.images
 
 
-def test_an_old_selection_without_the_flag_is_treated_as_capable():
+def test_an_old_selection_without_the_flag_is_treated_as_capable() -> None:
     """Selections written before images existed must not start refusing pastes."""
     restored = Selection.from_dict({'account_id': 'a', 'model': 'm'})
 

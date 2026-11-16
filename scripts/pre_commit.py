@@ -166,7 +166,7 @@ def _format_web(root: Path, npm: str, files: list[str]) -> None:
 def _rebuild_bundle(root: Path) -> str:
     """Rebuilds `web/dist` and returns the new hash."""
     sys.path.insert(0, str(root))
-    from src.server import webbuild
+    from src.server.web import webbuild
 
     try:
         return webbuild.build()

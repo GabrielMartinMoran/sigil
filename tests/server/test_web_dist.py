@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from src.server import webbuild
+from src.server.web import webbuild
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -163,7 +163,8 @@ def test_the_module_entry_point_reports_exit_codes(capsys: pytest.CaptureFixture
 def test_the_api_backend_needs_neither_a_password_nor_a_bundle() -> None:
     """`serve` is the only surface that can invent a password or ask for the bundle."""
     from src.server.cli import build_parser, describe
-    from src.server.config import PASSWORD_ENV, resolve_config
+    from src.server.launch.config import resolve_config
+    from src.server.launch.server_defaults import PASSWORD_ENV
 
     parser = build_parser(web=False)
     for flag in (['--password', 'x'], ['--rebuild-ui']):

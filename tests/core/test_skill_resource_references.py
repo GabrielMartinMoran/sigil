@@ -1,13 +1,15 @@
+from pathlib import Path
+
 from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 
-from src.engine.skills.loaded import loaded_resources
-from src.engine.skills.registry import SkillRegistry
-from src.engine.skills.rendering import render_loaded_skills
-from src.engine.skills.tools import register_skill_tools
+from src.core.skills.loaded import loaded_resources
+from src.core.skills.rendering import render_loaded_skills
+from src.core.skills.skill_registry import SkillRegistry
+from src.core.skills.tools import register_skill_tools
 from tests.support.skills import DummyAgent, write_skill
 
 
-def test_resource_tool_returns_reference_without_text_or_binary(tmp_path):
+def test_resource_tool_returns_reference_without_text_or_binary(tmp_path: Path) -> None:
     write_skill(tmp_path, 'demo', files={'references/doc.md': 'private text', 'assets/data.bin': b'\x00\xff'})
     agent = DummyAgent()
     register_skill_tools(agent, SkillRegistry([('project', tmp_path)]))
@@ -20,7 +22,7 @@ def test_resource_tool_returns_reference_without_text_or_binary(tmp_path):
     assert 'not available' in binary.model_dump_json()
 
 
-def test_successful_repeated_reads_keep_largest_limit_and_failed_reads_do_not_count():
+def test_successful_repeated_reads_keep_largest_limit_and_failed_reads_do_not_count() -> None:
     def call(call_id, limit):
         return ModelResponse(
             parts=[
@@ -41,25 +43,25 @@ def test_successful_repeated_reads_keep_largest_limit_and_failed_reads_do_not_co
     assert loaded_resources(messages) == (('demo', 'a', 100),)
 
 
-def test_missing_loaded_skill_is_reported(tmp_path):
+def test_missing_loaded_skill_is_reported(tmp_path: Path) -> None:
     registry = SkillRegistry([('project', tmp_path)])
     block = render_loaded_skills(registry, ['gone'], [('gone', 'ref.md', 20)])
     assert 'gone' in block
     assert 'unavailable' in block.lower()
 
 
-def test_partial_resource_rebuilds_after_compaction_and_multiple_sqlite_resumes(tmp_path):
+def test_partial_resource_rebuilds_after_compaction_and_multiple_sqlite_resumes(tmp_path: Path) -> None:
     import asyncio
 
     from pydantic_ai.messages import TextPart
     from pydantic_ai.models.test import TestModel
 
-    from src.engine.agents.agent import create_agent
-    from src.engine.context.capability import ContextViewCapability
-    from src.engine.context.meter.context_meter import ContextMeter
-    from src.engine.context.strategy.append_only import AppendOnlyStrategy
-    from src.engine.sessions.session_store import SessionStore
-    from src.engine.tooling.compaction_policies import ALL_COMPACTORS
+    from src.core.agents.agent import create_agent
+    from src.core.context.context_view_capability import ContextViewCapability
+    from src.core.context.meter.context_meter import ContextMeter
+    from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
+    from src.core.sessions.session_store import SessionStore
+    from src.core.tooling.compaction_policies import ALL_COMPACTORS
 
     write_skill(tmp_path, 'demo', files={'references/doc.md': 'ABCDEFGHIJ'})
     registry = SkillRegistry([('project', tmp_path)])
@@ -102,8 +104,8 @@ def test_partial_resource_rebuilds_after_compaction_and_multiple_sqlite_resumes(
     assert 'status="unavailable"' in render_loaded_skills(registry, [], loaded_resources(session.messages))
 
 
-def test_effective_resource_limit_is_clamped_and_rollback_does_not_resurrect_reads():
-    from src.engine.skills.discovery import MAX_READ_BYTES
+def test_effective_resource_limit_is_clamped_and_rollback_does_not_resurrect_reads() -> None:
+    from src.core.files.limits import MAX_READ_BYTES
 
     call = ModelResponse(
         parts=[

@@ -21,14 +21,17 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from src.engine.agents.rollback import Checkpoints, Rollback, RollbackError, prompt_of_turn
-from src.engine.agents.snapshots import WorkspaceSnapshots
-from src.engine.agents.tree.tree import AgentTree
-from src.engine.roadmap.models.todo_item import TodoItem
-from src.engine.roadmap.stores import RoadmapStores
-from src.engine.sessions.recovery import recover_history
-from src.engine.sessions.session_store import SessionStore
-from src.engine.storage.database import Database, database_path
+from src.core.agents.prompt_of_turn import prompt_of_turn
+from src.core.agents.rollback import Checkpoints, Rollback
+from src.core.agents.rollback_error import RollbackError
+from src.core.agents.tree.agent_tree import AgentTree
+from src.core.agents.workspace_snapshots import WorkspaceSnapshots
+from src.core.roadmap.models.todo_item import TodoItem
+from src.core.roadmap.roadmap_stores import RoadmapStores
+from src.core.sessions.recover_history import recover_history
+from src.core.sessions.session_store import SessionStore
+from src.core.storage.database import Database
+from src.core.storage.database_path import database_path
 
 
 def _turn(index: int, text: str = '', *, run: str | None = None) -> list:
@@ -79,7 +82,7 @@ def _repo(tmp_path: Path) -> Path:
 # --- the points ---------------------------------------------------------------
 
 
-def test_every_user_turn_becomes_a_checkpoint(tmp_path):
+def test_every_user_turn_becomes_a_checkpoint(tmp_path: Path) -> None:
     store, session = _session(tmp_path)
     session.messages = _turn(0) + _turn(1) + _turn(2)
     store.save(session)
@@ -90,7 +93,7 @@ def test_every_user_turn_becomes_a_checkpoint(tmp_path):
     assert all(item.turn_id is not None for item in checkpoints)
 
 
-def test_a_steer_does_not_add_a_point(tmp_path):
+def test_a_steer_does_not_add_a_point(tmp_path: Path) -> None:
     """A prompt typed while the agent works is inside the turn, so it is not a point."""
     store, session = _session(tmp_path)
     session.messages = _turn(0)
@@ -104,7 +107,7 @@ def test_a_steer_does_not_add_a_point(tmp_path):
     assert Checkpoints(store.database, store.blobs).of_session(session.id) == first
 
 
-def test_the_points_are_listed_newest_first(tmp_path):
+def test_the_points_are_listed_newest_first(tmp_path: Path) -> None:
     store, session = _session(tmp_path)
     session.messages = _turn(0) + _turn(1)
     store.save(session)
@@ -113,7 +116,7 @@ def test_the_points_are_listed_newest_first(tmp_path):
     assert [prompt_of_turn(store.database, point.turn_id)[0] for point in points] == ['question 1', 'question 0']
 
 
-def test_a_batch_that_opens_with_a_tool_result_is_not_a_point(tmp_path):
+def test_a_batch_that_opens_with_a_tool_result_is_not_a_point(tmp_path: Path) -> None:
     """A fragment the writer carved out of a damaged batch is not a turn to go back to.
 
     `write_history` gives a message that carries no `run_id` a turn of its own, and the
@@ -135,7 +138,7 @@ def test_a_batch_that_opens_with_a_tool_result_is_not_a_point(tmp_path):
     assert [prompt_of_turn(store.database, point.turn_id)[0] for point in points] == ['question 1', 'question 0']
 
 
-def test_a_turn_that_does_not_open_with_a_prompt_is_not_a_point(tmp_path):
+def test_a_turn_that_does_not_open_with_a_prompt_is_not_a_point(tmp_path: Path) -> None:
     """An answer the library stamped with its own run is not a place to go back to.
 
     The prompt is what a rollback point means: "put me back where I was before I
@@ -156,7 +159,7 @@ def test_a_turn_that_does_not_open_with_a_prompt_is_not_a_point(tmp_path):
     assert prompt_of_turn(store.database, points[0].turn_id)[0] == 'question 0'
 
 
-def test_the_points_are_ordered_by_position_not_by_clock(tmp_path):
+def test_the_points_are_ordered_by_position_not_by_clock(tmp_path: Path) -> None:
     """`seq` orders the transcript; a message's timestamp does not.
 
     A steered batch, a retried request or a clock that stepped back writes a later
@@ -174,7 +177,7 @@ def test_the_points_are_ordered_by_position_not_by_clock(tmp_path):
     assert [prompt_of_turn(store.database, point.turn_id)[0] for point in points] == ['question 1', 'question 0']
 
 
-def test_a_rollback_drops_by_position_not_by_clock(tmp_path):
+def test_a_rollback_drops_by_position_not_by_clock(tmp_path: Path) -> None:
     """The regression that ate nine turns: `started_at >= ?` matched earlier turns.
 
     A turn whose messages carry an earlier timestamp than the one being rolled back
@@ -195,7 +198,7 @@ def test_a_rollback_drops_by_position_not_by_clock(tmp_path):
     assert len(store.load(session.id).messages) == 2
 
 
-def test_a_rollback_leaves_a_history_the_agent_accepts(tmp_path):
+def test_a_rollback_leaves_a_history_the_agent_accepts(tmp_path: Path) -> None:
     """No result without its call, and no call without its result.
 
     Truncating by clock cut a turn in half and left its tool results behind: a
@@ -222,7 +225,7 @@ def test_a_rollback_leaves_a_history_the_agent_accepts(tmp_path):
     assert recover_history(loaded.messages).changed is False
 
 
-def test_the_prompt_of_a_turn_is_what_the_user_typed(tmp_path):
+def test_the_prompt_of_a_turn_is_what_the_user_typed(tmp_path: Path) -> None:
     """The preview and the composer both need the prompt, not the first thing said."""
     store, session = _session(tmp_path)
     session.messages = [
@@ -243,7 +246,7 @@ def test_the_prompt_of_a_turn_is_what_the_user_typed(tmp_path):
 # --- the conversation half ----------------------------------------------------
 
 
-def test_rolling_back_drops_the_turn_and_everything_after_it(tmp_path):
+def test_rolling_back_drops_the_turn_and_everything_after_it(tmp_path: Path) -> None:
     store, session = _session(tmp_path)
     session.messages = _turn(0) + _turn(1) + _turn(2)
     store.save(session)
@@ -262,7 +265,7 @@ def test_rolling_back_drops_the_turn_and_everything_after_it(tmp_path):
     assert 'question 0' in str(loaded.messages[0].parts[0].content)
 
 
-def test_a_subagent_summoned_by_the_dropped_turn_goes_with_it(tmp_path):
+def test_a_subagent_summoned_by_the_dropped_turn_goes_with_it(tmp_path: Path) -> None:
     store, session = _session(tmp_path)
     session.messages = _turn(0) + _turn(1)
     session.tree = AgentTree()
@@ -292,7 +295,7 @@ def test_a_subagent_summoned_by_the_dropped_turn_goes_with_it(tmp_path):
     assert store.database.value("SELECT count(*) FROM messages WHERE execution_id = 'child1'") == 0
 
 
-def test_the_plan_comes_back_from_its_snapshot(tmp_path):
+def test_the_plan_comes_back_from_its_snapshot(tmp_path: Path) -> None:
     """A cascade cannot restore a plan: an item belongs to an execution, not a turn."""
     store, session = _session(tmp_path)
     plans = RoadmapStores(session_id=session.id, base_dir=tmp_path / 'home')
@@ -318,7 +321,7 @@ def test_the_plan_comes_back_from_its_snapshot(tmp_path):
     assert [item.title for item in plans.root.snapshot()] == ['step one']
 
 
-def test_a_rollback_restored_plan_is_visible_after_reopening(tmp_path):
+def test_a_rollback_restored_plan_is_visible_after_reopening(tmp_path: Path) -> None:
     """The restored rows are durable, not just a reload of the store that saw it."""
     store, session = _session(tmp_path)
     plans = RoadmapStores(session_id=session.id, base_dir=tmp_path / 'home')
@@ -339,7 +342,7 @@ def test_a_rollback_restored_plan_is_visible_after_reopening(tmp_path):
     assert reopened.persistence_error is None
 
 
-def test_rolling_back_while_a_turn_runs_is_refused(tmp_path):
+def test_rolling_back_while_a_turn_runs_is_refused(tmp_path: Path) -> None:
     store, session = _session(tmp_path)
     session.messages = _turn(0)
     store.save(session)
@@ -350,7 +353,7 @@ def test_rolling_back_while_a_turn_runs_is_refused(tmp_path):
         Rollback(store, workspace=tmp_path / 'workspace').to_turn(session.id, str(turn_id), files=False)
 
 
-def test_an_unknown_turn_is_refused(tmp_path):
+def test_an_unknown_turn_is_refused(tmp_path: Path) -> None:
     store, session = _session(tmp_path)
     session.messages = _turn(0)
     store.save(session)
@@ -362,7 +365,7 @@ def test_an_unknown_turn_is_refused(tmp_path):
 # --- the files half -----------------------------------------------------------
 
 
-def test_the_files_go_back_to_that_instant(tmp_path):
+def test_the_files_go_back_to_that_instant(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     base = tmp_path / 'home'
     Database.forget(database_path(base))
@@ -391,7 +394,7 @@ def test_the_files_go_back_to_that_instant(tmp_path):
     assert not (repo / 'new.py').exists()
 
 
-def test_a_workspace_outside_a_repository_still_rolls_the_conversation(tmp_path):
+def test_a_workspace_outside_a_repository_still_rolls_the_conversation(tmp_path: Path) -> None:
     store, session = _session(tmp_path)  # cwd is a plain directory, no git
     session.messages = _turn(0) + _turn(1)
     store.save(session)
@@ -403,7 +406,7 @@ def test_a_workspace_outside_a_repository_still_rolls_the_conversation(tmp_path)
     assert outcome.turns_dropped == 1
 
 
-def test_nothing_is_destroyed_without_a_copy(tmp_path):
+def test_nothing_is_destroyed_without_a_copy(tmp_path: Path) -> None:
     """The undo checkpoint exists before anything is touched, and survives the cut."""
     store, session = _session(tmp_path)
     session.messages = _turn(0) + _turn(1)
@@ -422,7 +425,7 @@ def test_nothing_is_destroyed_without_a_copy(tmp_path):
     assert undo.turn_id is None  # which is what lets it survive the truncation
 
 
-def test_a_rollback_can_be_undone(tmp_path):
+def test_a_rollback_can_be_undone(tmp_path: Path) -> None:
     store, session = _session(tmp_path)
     session.messages = _turn(0) + _turn(1)
     store.save(session)
@@ -441,7 +444,7 @@ def test_a_rollback_can_be_undone(tmp_path):
 # --- the snapshot -------------------------------------------------------------
 
 
-def test_a_snapshot_does_not_touch_the_branch_or_the_index(tmp_path):
+def test_a_snapshot_does_not_touch_the_branch_or_the_index(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     (repo / 'untracked.py').write_text('work in progress\n')
     status_before = _git(repo, 'status', '--porcelain')
@@ -456,7 +459,7 @@ def test_a_snapshot_does_not_touch_the_branch_or_the_index(tmp_path):
     assert _git(repo, 'rev-parse', 'refs/sigil/checkpoints/cp1') == commit
 
 
-def test_a_snapshot_survives_a_gc(tmp_path):
+def test_a_snapshot_survives_a_gc(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     snapshots = WorkspaceSnapshots(repo)
     commit = snapshots.take('cp1')
@@ -466,7 +469,7 @@ def test_a_snapshot_survives_a_gc(tmp_path):
     assert snapshots.head_of('cp1') == commit
 
 
-def test_ignored_files_are_not_snapshotted_nor_deleted(tmp_path):
+def test_ignored_files_are_not_snapshotted_nor_deleted(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     (repo / 'node_modules').mkdir()
     (repo / 'node_modules' / 'big.js').write_text('ignored\n')
@@ -479,7 +482,7 @@ def test_ignored_files_are_not_snapshotted_nor_deleted(tmp_path):
     assert (repo / 'node_modules' / 'big.js').exists()
 
 
-def test_a_binary_comes_back_byte_for_byte(tmp_path):
+def test_a_binary_comes_back_byte_for_byte(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     payload = bytes(range(256)) * 40
     (repo / 'image.bin').write_bytes(payload)
@@ -496,7 +499,7 @@ def test_a_binary_comes_back_byte_for_byte(tmp_path):
 
 
 @pytest.mark.parametrize('files', [True, False])
-def test_the_outcome_reports_what_happened(tmp_path, files):
+def test_the_outcome_reports_what_happened(tmp_path: Path, files) -> None:
     store, session = _session(tmp_path)
     session.messages = _turn(0) + _turn(1)
     store.save(session)

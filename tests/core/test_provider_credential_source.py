@@ -14,11 +14,12 @@ instance where it matters.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
-from src.engine.providers.domain.provider_account import ProviderAccount
-from src.engine.providers.domain.provider_kind import ProviderKind
-from src.engine.providers.domain.secret import OAuthSecret
-from src.engine.providers.login.credential_source import StoredCredentialSource, chatgpt_provider_factory
+from src.core.providers.domain.o_auth_secret import OAuthSecret
+from src.core.providers.domain.provider_account import ProviderAccount
+from src.core.providers.domain.provider_kind import ProviderKind
+from src.core.providers.login.credential_source import StoredCredentialSource, chatgpt_provider_factory
 
 
 class FakeStore:
@@ -49,7 +50,7 @@ def _secret() -> OAuthSecret:
     )
 
 
-def test_the_sdk_is_not_imported_by_importing_the_module():
+def test_the_sdk_is_not_imported_by_importing_the_module() -> None:
     """The whole point: importing this module must not pull the OpenAI SDK."""
     # The module is already imported by the test session; what matters is that
     # building the adapter and the factory does not reach for the SDK.
@@ -59,7 +60,7 @@ def test_the_sdk_is_not_imported_by_importing_the_module():
     assert callable(factory)
 
 
-def test_saving_writes_through_the_store_in_the_shared_shape():
+def test_saving_writes_through_the_store_in_the_shared_shape() -> None:
     """The tokens keep the same shape as the rest of the credentials file."""
     store = FakeStore()
     source = StoredCredentialSource(store=store, account=_account(), fallback=_secret())
@@ -80,7 +81,7 @@ def test_saving_writes_through_the_store_in_the_shared_shape():
     assert stored.alias == 'me'
 
 
-def test_loading_falls_back_to_the_secret_when_the_store_is_empty():
+def test_loading_falls_back_to_the_secret_when_the_store_is_empty() -> None:
     """First run after sign-in: nothing is stored yet, the flow's secret is used."""
     source = StoredCredentialSource(store=FakeStore(), account=_account(), fallback=_secret())
     loaded = asyncio.run(source.load())
@@ -90,7 +91,7 @@ def test_loading_falls_back_to_the_secret_when_the_store_is_empty():
     assert loaded.client_id == 'client'
 
 
-def test_loading_prefers_what_the_store_holds():
+def test_loading_prefers_what_the_store_holds() -> None:
     """A refresh rotated by another process wins over the stale fallback."""
     rotated = OAuthSecret(
         access_token='rotated',
@@ -109,7 +110,7 @@ def test_loading_prefers_what_the_store_holds():
     assert loaded.client_id == 'client'
 
 
-def test_the_factory_builds_a_provider_that_accepts_the_source(tmp_path):
+def test_the_factory_builds_a_provider_that_accepts_the_source(tmp_path: Path) -> None:
     """pydantic-ai accepts the source structurally: no subclass needed at runtime."""
     factory = chatgpt_provider_factory(FakeStore())
     provider = factory(_secret(), _account())
@@ -120,7 +121,7 @@ def test_the_factory_builds_a_provider_that_accepts_the_source(tmp_path):
     assert asyncio.run(source.load()).access_token == 'access'
 
 
-def test_the_source_satisfies_the_sdk_protocol():
+def test_the_source_satisfies_the_sdk_protocol() -> None:
     """What a type checker checks: the two methods the protocol asks for."""
     from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTCredentialSource
 

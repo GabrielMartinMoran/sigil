@@ -45,48 +45,50 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.engine.agents.profile.registry import AgentRegistry
-from src.engine.agents.tree.models.node_status import NodeStatus
-from src.engine.agents.tree.store import AgentTreeStore
-from src.engine.agents.tree.summoner import SubagentSummoner
-from src.engine.agents.tree.tools import register_tree_tools, render_tree_table
-from src.engine.agents.tree.tree import AgentTree
-from src.engine.attachments.images import prepare_image
-from src.engine.attachments.tools import image_id_for, register_image_tools
-from src.engine.context.budget import ContextBudget
-from src.engine.context.capability import ContextViewCapability
-from src.engine.context.compaction.events import RECORD_KEY
-from src.engine.context.input_estimate import history_fingerprint
-from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.context.strategy.append_only import AppendOnlyStrategy
-from src.engine.files.models.file_content import FileContent
-from src.engine.files.models.file_tool_error import FileToolError
-from src.engine.files.text import apply_string_patch, decode
-from src.engine.files.tools import register_file_tools
-from src.engine.interaction.hub import QuestionHub
-from src.engine.interaction.models.question_answer import QuestionAnswer
-from src.engine.interaction.models.question_item import QuestionItem
-from src.engine.interaction.tools import register_interaction_tools
-from src.engine.mcp.config_models.server_config import MCPServerConfig
-from src.engine.mcp.config_models.server_spec import MCPServerSpec
-from src.engine.mcp.manager.manager import MCPManager
-from src.engine.mcp.tools import register_mcp_tools
-from src.engine.roadmap.store import RoadmapStore
-from src.engine.roadmap.tools import RoadmapItemInput, register_roadmap_tools
-from src.engine.sessions.session_store import SessionStore
-from src.engine.shell.process import DrainResult, _Buffers, _read_available, kill_process_group
-from src.engine.shell.runner import execute_command
-from src.engine.shell.tools import register_shell_tools
-from src.engine.skills.registry import SkillRegistry
-from src.engine.skills.rendering import render_loaded_skills
-from src.engine.skills.tools import register_skill_tools
-from src.engine.storage.database import Database
-from src.engine.tooling.events import preview
-from src.engine.tooling.logging import ToolLoggerHub
-from src.engine.tooling.outputs import present_output
-from src.engine.tooling.wrapper import wrap_tool
-from src.engine.web.tools import register_web_tools
+from src.core.agents.profile.agent_registry import AgentRegistry
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.agents.tree.agent_tree import AgentTree
+from src.core.agents.tree.agent_tree_store import AgentTreeStore
+from src.core.agents.tree.models.node_status import NodeStatus
+from src.core.agents.tree.subagent_summoner import SubagentSummoner
+from src.core.agents.tree.tools import register_tree_tools, render_tree_table
+from src.core.attachments.images import prepare_image
+from src.core.attachments.tools import image_id_for, register_image_tools
+from src.core.context.compaction.events import RECORD_KEY
+from src.core.context.context_budget import ContextBudget
+from src.core.context.context_view_capability import ContextViewCapability
+from src.core.context.history_fingerprint import history_fingerprint
+from src.core.context.meter.context_meter import ContextMeter
+from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
+from src.core.files.models.file_content import FileContent
+from src.core.files.models.file_tool_error import FileToolError
+from src.core.files.text import apply_string_patch, decode, preview
+from src.core.files.tools import register_file_tools
+from src.core.interaction.models.question_answer import QuestionAnswer
+from src.core.interaction.models.question_item import QuestionItem
+from src.core.interaction.question_hub import QuestionHub
+from src.core.interaction.tools import register_interaction_tools
+from src.core.mcp.config_models.mcp_server_config import MCPServerConfig
+from src.core.mcp.config_models.mcp_server_spec import MCPServerSpec
+from src.core.mcp.manager.mcp_manager import MCPManager
+from src.core.mcp.tools import register_mcp_tools
+from src.core.roadmap.models.roadmap_item_input import RoadmapItemInput
+from src.core.roadmap.roadmap_store import RoadmapStore
+from src.core.roadmap.tools import register_roadmap_tools
+from src.core.sessions.session_store import SessionStore
+from src.core.shell.drain import _Buffers, _read_available
+from src.core.shell.drain_result import DrainResult
+from src.core.shell.kill_process_group import kill_process_group
+from src.core.shell.runner import execute_command
+from src.core.shell.tools import register_shell_tools
+from src.core.skills.rendering import render_loaded_skills
+from src.core.skills.skill_registry import SkillRegistry
+from src.core.skills.tools import register_skill_tools
+from src.core.storage.database import Database
+from src.core.tooling.outputs import present_output
+from src.core.tooling.tool_logger_hub import ToolLoggerHub
+from src.core.tooling.wrapper import wrap_tool
+from src.core.web.tools import register_web_tools
 
 
 class Collector:
@@ -239,7 +241,7 @@ def communicate(command: str) -> subprocess.CompletedProcess[bytes]:
 
 def memoized_view(strategy: Any, messages: list[Any], budget: ContextBudget) -> Any:
     """Prototype: reuse estimates only within one synchronous projection invocation."""
-    from src.engine.context.compaction import measurements as projection
+    from src.core.context.compaction import projection_measurements as projection
 
     estimate = projection.estimate_input
     tokens = projection.estimate_messages_tokens
@@ -383,7 +385,7 @@ async def main(root: Path, rounds: int) -> dict[str, Any]:
         ('run_skill_script/bash', 'run_skill_script', {'name': 'skill-0', 'script': 'script.sh'}, None),
     ]
     # Do not invoke login-shell startup files or collect user exports in this offline harness.
-    with patch('src.engine.shell.environment._cache', {}):
+    with patch('src.core.shell.environment._cache', {}):
         for label, name, kwargs, ctx in cases:
             func = tools.tools[name]
             args = () if ctx is None else (ctx,)
@@ -395,7 +397,7 @@ async def main(root: Path, rounds: int) -> dict[str, Any]:
                 else measure(label, call, repeats, rounds)
             )
             results.append(result)
-    with patch('src.engine.shell.environment._cache', {}):
+    with patch('src.core.shell.environment._cache', {}):
         for label, call in [
             ('shell/raw_printf', lambda: execute_command('printf benchmark', cwd=root)),
             ('shell/raw_output1MiB', lambda: execute_command('head -c 1048576 /dev/zero', cwd=root)),
@@ -404,7 +406,7 @@ async def main(root: Path, rounds: int) -> dict[str, Any]:
         ]:
             results.append(measure(label, call, 15, rounds))
         profiles['shell_printf'] = profile(lambda: execute_command('printf benchmark', cwd=root))
-        with patch('src.engine.shell.runner.drain', drain_candidate):
+        with patch('src.core.shell.runner.drain', drain_candidate):
             for command, label in [('printf benchmark', 'printf'), ('head -c 1048576 /dev/zero', 'output1MiB')]:
                 results.append(
                     measure(
@@ -428,7 +430,7 @@ async def main(root: Path, rounds: int) -> dict[str, Any]:
         )
     results.append(measure('candidate/read_cap4KiB_IOonly', lambda: bounded_read(large, 4096), 100, rounds))
     baseline = tools.tools['read_file'](str(large), max_bytes=4096)
-    with patch('src.engine.files.tools._read_whole', whole_candidate):
+    with patch('src.core.files.tools._read_whole', whole_candidate):
         assert tools.tools['read_file'](str(large), max_bytes=4096) == baseline
         results.append(
             measure(
@@ -610,10 +612,10 @@ async def main(root: Path, rounds: int) -> dict[str, Any]:
     # Offline web adapters: separately label transport stubs, not internet latency.
     with (
         patch(
-            'src.engine.web.tools._search',
+            'src.core.web.tools._search',
             return_value=[{'title': 'Example', 'href': 'https://example.com', 'body': 'Description'}] * 8,
         ),
-        patch('src.engine.web.tools._extract', return_value={'content': 'Page text\n' * 4000}),
+        patch('src.core.web.tools._extract', return_value={'content': 'Page text\n' * 4000}),
     ):
         results.append(
             await measure_async(
@@ -649,13 +651,13 @@ async def main(root: Path, rounds: int) -> dict[str, Any]:
             'runtime_source_hashes': {
                 relative: hashlib.sha256(source.read_bytes()).hexdigest()
                 for relative in (
-                    'src/engine/shell/process.py',
-                    'src/engine/files/tools.py',
-                    'src/engine/files/text.py',
-                    'src/engine/context/compaction/projection.py',
-                    'src/engine/context/compaction/measurements.py',
-                    'src/engine/context/strategy/append_only.py',
-                    'src/engine/attachments/tools.py',
+                    'src/core/shell/process.py',
+                    'src/core/files/tools.py',
+                    'src/core/files/text.py',
+                    'src/core/context/compaction/projection.py',
+                    'src/core/context/compaction/projection_measurements.py',
+                    'src/core/context/strategy/append_only_strategy.py',
+                    'src/core/attachments/tools.py',
                 )
                 if (source := Path(__file__).resolve().parents[1] / relative).exists()
             },

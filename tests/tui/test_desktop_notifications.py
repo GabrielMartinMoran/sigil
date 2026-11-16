@@ -8,7 +8,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from src.ui.desktop_notifications import Attention, notification_command, send_notification
+from src.ui.messages.attention import Attention
+from src.ui.messages.desktop_notifications import notification_command, send_notification
 
 
 @pytest.mark.parametrize('event', list(Attention))
@@ -35,10 +36,10 @@ def test_should_skip_when_backend_is_unavailable(platform: str) -> None:
 
 def test_should_bound_delivery_and_discard_command_output(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        'src.ui.desktop_notifications.notification_command', lambda *args: ['notify-send', 'Sigil', 'Ready']
+        'src.ui.messages.desktop_notifications.notification_command', lambda *args: ['notify-send', 'Sigil', 'Ready']
     )
     run = Mock(return_value=subprocess.CompletedProcess([], 0))
-    monkeypatch.setattr('src.ui.desktop_notifications.subprocess.run', run)
+    monkeypatch.setattr('src.ui.messages.desktop_notifications.subprocess.run', run)
     assert send_notification(Attention.FINISHED)
     assert run.call_args.kwargs['timeout'] == 3
     assert run.call_args.kwargs['stdout'] == subprocess.DEVNULL
@@ -47,17 +48,17 @@ def test_should_bound_delivery_and_discard_command_output(monkeypatch: pytest.Mo
 
 @pytest.mark.parametrize('failure', [OSError('missing'), subprocess.TimeoutExpired('notify-send', 3)])
 def test_should_not_raise_when_desktop_delivery_fails(monkeypatch: pytest.MonkeyPatch, failure: Exception) -> None:
-    monkeypatch.setattr('src.ui.desktop_notifications.notification_command', lambda *args: ['notify-send'])
-    monkeypatch.setattr('src.ui.desktop_notifications.subprocess.run', Mock(side_effect=failure))
+    monkeypatch.setattr('src.ui.messages.desktop_notifications.notification_command', lambda *args: ['notify-send'])
+    monkeypatch.setattr('src.ui.messages.desktop_notifications.subprocess.run', Mock(side_effect=failure))
     assert not send_notification(Attention.FINISHED)
 
 
 def test_should_report_rejected_delivery_and_missing_backend(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr('src.ui.desktop_notifications.notification_command', lambda *args: None)
+    monkeypatch.setattr('src.ui.messages.desktop_notifications.notification_command', lambda *args: None)
     assert not send_notification(Attention.FINISHED)
-    monkeypatch.setattr('src.ui.desktop_notifications.notification_command', lambda *args: ['notify-send'])
+    monkeypatch.setattr('src.ui.messages.desktop_notifications.notification_command', lambda *args: ['notify-send'])
     monkeypatch.setattr(
-        'src.ui.desktop_notifications.subprocess.run', Mock(return_value=subprocess.CompletedProcess([], 1))
+        'src.ui.messages.desktop_notifications.subprocess.run', Mock(return_value=subprocess.CompletedProcess([], 1))
     )
     assert not send_notification(Attention.FINISHED)
 
@@ -71,7 +72,7 @@ def test_should_deliver_literal_arguments_through_real_subprocess(
     output = tmp_path / 'delivered.txt'
     script = 'import pathlib,sys; pathlib.Path(sys.argv[1]).write_text(sys.argv[2]); sys.exit(int(sys.argv[3]))'
     monkeypatch.setattr(
-        'src.ui.desktop_notifications.notification_command',
+        'src.ui.messages.desktop_notifications.notification_command',
         lambda event, context: [sys.executable, '-c', script, str(output), event.value, str(returncode)],
     )
     assert send_notification(Attention.FINISHED) is (returncode == 0)
@@ -79,7 +80,7 @@ def test_should_deliver_literal_arguments_through_real_subprocess(
 
 
 def test_should_include_project_and_title_without_unsafe_applescript_interpolation() -> None:
-    from src.ui.desktop_notifications import NotificationContext
+    from src.ui.messages.notification_context import NotificationContext
 
     context = NotificationContext('repo:worktree', 'Title "quoted"\nnext \\ end')
     linux = notification_command(Attention.QUESTION, context, platform='linux', which=lambda name: name)
@@ -92,7 +93,7 @@ def test_should_include_project_and_title_without_unsafe_applescript_interpolati
 
 
 def test_should_fall_back_without_exposing_message_content() -> None:
-    from src.ui.desktop_notifications import NotificationContext
+    from src.ui.messages.notification_context import NotificationContext
 
     command = notification_command(
         Attention.FINISHED, NotificationContext('', ''), platform='linux', which=lambda name: name

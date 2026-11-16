@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.engine.providers.bootstrap import ProviderPaths, build_service
-from src.engine.providers.catalog.probe import ProbeResult
-from src.engine.providers.domain.model_capability import ModelCapability, ModelCatalog
-from src.engine.providers.factory.unconfigured import UnconfiguredModel
+from src.core.providers.bootstrap import build_service
+from src.core.providers.catalog.probe import ProbeResult
+from src.core.providers.domain.model_capability import ModelCapability
+from src.core.providers.domain.model_catalog import ModelCatalog
+from src.core.providers.factory.unconfigured_model import UnconfiguredModel
+from src.core.providers.provider_paths import ProviderPaths
 
 CATALOG = ModelCatalog(
     models=(
@@ -32,7 +34,7 @@ class FakeCatalog:
         self._cache[account.id] = self._catalog
         return self._catalog
 
-    def invalidate(self, account_id=None):
+    def invalidate(self, account_id=None) -> None:
         if account_id is None:
             self._cache.clear()
         else:
@@ -68,6 +70,6 @@ def _fake_provider():
 
 
 def _kind():
-    from src.engine.providers.domain.provider_kind import ProviderKind
+    from src.core.providers.domain.provider_kind import ProviderKind
 
     return ProviderKind.OPENROUTER

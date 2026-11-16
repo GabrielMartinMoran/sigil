@@ -11,15 +11,16 @@ import asyncio
 import tempfile
 from pathlib import Path
 
+import pytest
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-from src.engine.interaction.hub import QuestionHub
-from src.engine.interaction.tools import register_interaction_tools
-from src.engine.sessions.session_store import SessionStore
-from src.engine.workspace.manager import WorkspaceManager
-from src.ui.app import SigilApp
-from src.ui.widgets.question_panel import QuestionPanel
+from src.core.interaction.question_hub import QuestionHub
+from src.core.interaction.tools import register_interaction_tools
+from src.core.sessions.session_store import SessionStore
+from src.core.workspace.workspace_manager import WorkspaceManager
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.panels.question_panel import QuestionPanel
 
 
 def _make_app(tmp: str, agent: Agent, hub: QuestionHub, *, workspace: Path | None = None) -> SigilApp:
@@ -57,9 +58,9 @@ def _returned_tools(app: SigilApp) -> set[str]:
     }
 
 
-def test_a_dangling_tool_call_is_closed_out_so_the_session_survives():
+def test_a_dangling_tool_call_is_closed_out_so_the_session_survives() -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hub = QuestionHub()
             agent = Agent(TestModel(call_tools=['ask_user', 'other']), instructions='x')
@@ -98,7 +99,7 @@ def test_a_dangling_tool_call_is_closed_out_so_the_session_survives():
 
 
 def test_a_cancelled_turn_binds_the_selected_workspace_and_restores_the_process_root(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The standalone turn is an execution: its tools resolve the selected tree.
 
@@ -111,7 +112,7 @@ def test_a_cancelled_turn_binds_the_selected_workspace_and_restores_the_process_
     """
     from contextlib import contextmanager
 
-    from src.engine.files.paths import workspace_root
+    from src.core.files.paths import workspace_root
     from tests.support.ui import wait_until
 
     ambient = tmp_path / 'ambient'

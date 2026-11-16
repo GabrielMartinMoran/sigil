@@ -14,14 +14,15 @@ from __future__ import annotations
 
 import asyncio
 import io
+from pathlib import Path
 
 from PIL import Image
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-from src.engine.attachments.image_attachment import ImageAttachment
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
+from src.core.attachments.image_attachment import ImageAttachment
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
 
 
 def _png() -> bytes:
@@ -42,7 +43,7 @@ async def _wait(pilot, predicate, attempts: int = 80) -> bool:
     return False
 
 
-def test_an_image_pasted_mid_turn_lands_in_the_running_history(tmp_path):
+def test_an_image_pasted_mid_turn_lands_in_the_running_history(tmp_path: Path) -> None:
     async def inner() -> None:
         release = asyncio.Event()
         started = asyncio.Event()

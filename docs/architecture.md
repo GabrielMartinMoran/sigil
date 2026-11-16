@@ -24,10 +24,10 @@ Three measurements, each one pointing at the same seam.
 
 | Observation | Number | Where |
 | --- | --- | --- |
-| `src/engine` imports of Textual | **2**, both in one file | `themes.py` uses `textual.color.Color` and `textual.theme.Theme` |
+| `src/core` imports of Textual | **2**, both in one file | `themes.py` uses `textual.color.Color` and `textual.theme.Theme` |
 | Dependencies `SigilApp` is constructed with | **25** | `ui/app.py`, `SigilApp.__init__` |
 | Direct calls from `src/ui` into `_store`, `_model_service`, `_summoner` | **29** | across `ui/*.py` |
-| `src/engine` / `src/ui` size | 19,819 / 8,195 lines | — |
+| `src/core` / `src/ui` size | 19,819 / 8,195 lines | — |
 
 So the engine is not the problem. The problem is where the *application* lives:
 
@@ -306,13 +306,21 @@ publishes no page and invents no credential. The operational consequence is wort
 stating: `serve` while a backend is running fails with the ownership message from
 [part A](#durable-server-consumer-part-a) instead of attaching. This cut has no
 proxy between the two processes; a page that needs the API while a TUI owns the
-store is not supported yet. The lock is released when the owning process ends, and
-idle shutdown is what ends it when there is no work.
+store is not supported yet. The lock is released when the owning process ends.
+
+The terminal launcher marks its server as client-managed. Each attached terminal
+renews an in-memory presence lease and removes it on normal exit. A lease expires
+60 seconds after its last heartbeat, so an interrupted client can be removed and
+register again when it reconnects. The server stops only after the presence pool
+is empty, no work remains, and a short grace period passes. It refuses new
+requests once shutdown begins. An explicitly started `server` or `serve` does not
+use this automatic shutdown policy; its existing `--idle-grace` option remains
+available.
 
 ## Durable server consumer (part A)
 
 The web server owns its database through an exclusive OS lock in
-`src/server/ownership.py`. A second cooperating server fails at startup with
+`src/server/launch/server_ownership.py`. A second cooperating server fails at startup with
 `OwnershipError` instead of serving. Ownership is taken before reconciliation
 and held until the process closes; legacy processes that never take the lock are
 outside this boundary.
@@ -358,18 +366,18 @@ still reconciles open rows database-wide.
 **Scope:** server runtime ownership. **Owner:** server. **Last update:** 2026-11-15.
 
 The service has two lifetimes, and the code names them. `ServerRuntime` in
-`src/server/runtime.py` is the process: it owns the database lock
-(`src/server/ownership.py`), the shared accepted-inputs handle, the `EventHub` it
+`src/server/runtime/server_runtime.py` is the process: it owns the database lock
+(`src/server/launch/server_ownership.py`), the shared accepted-inputs handle, the `EventHub` it
 publishes on, the reconciliation `start` performs and the service-wide idle
-decision. `SessionRuntime` in `src/server/session_runtime.py` is one session: the
+decision. `SessionRuntime` in `src/server/runtime/session_runtime.py` is one session: the
 turn loop, the consumer that claims its rows, the questions it waits on, and the
 callbacks the engine calls — tool log, model retry, question hub and tree.
 
 The facade passes what a session needs — the composition, the hub, the shared
 accepted inputs, the resolved question deadline and a typed worker-ownership guard
-— and takes no way back: `session_runtime.py` never imports `src/server/runtime.py`.
+— and takes no way back: `session_runtime.py` never imports `src/server/runtime/server_runtime.py`.
 The constants, `PendingQuestion`, `IncomingImage`, `decode_images` and
-`resolve_question_timeout` live in `src/server/runtime_support.py`, which both
+`resolve_question_timeout` live in `src/server/runtime/runtime_support.py`, which both
 sides import; `runtime.py` re-exports them, so the routes, the CLI and the tests
 that already name them there need no change.
 
@@ -416,7 +424,7 @@ idle timer below remains independent.
 ### Idle shutdown
 
 A service nobody needs should not outlive the work, so the server stops itself
-instead of waiting to be killed. `IdleShutdown` in `src/server/runtime.py` asks two
+instead of waiting to be killed. `IdleShutdown` in `src/server/runtime/server_runtime.py` asks two
 questions, in this order:
 
 - **Is work running in any session?** The registry checks every resident turn
@@ -484,7 +492,7 @@ conversation's queue painted over an empty one, and says nothing about it.
 A turn can be slow without being broken, and the service used to be unable to tell
 you the difference. The engine already retried transient model failures — five
 attempts with a backoff of 0.5 to 8 seconds, see
-`src/engine/agents/retry.py` — but only the in-process client listened for the
+`src/core/agents/retry.py` — but only the in-process client listened for the
 notice: `SigilApp.notify_model_retry` paints every attempt in its chat. In the
 service that callback had no subscriber, so a provider that kept failing published
 nothing at all and the screen read "Thinking" for minutes.
@@ -515,7 +523,7 @@ A turn that ends in error closes its rows, exactly as a cancelled one does.
 accepted input cannot stay `claimed` until the next start interrupts it — which is
 what used to happen, and what made a failed turn look like a lost one. The terminal
 state is `stopped`, not a new one: `_TRANSITIONS` in
-`src/engine/storage/accepted_inputs.py` allows `claimed → stopped` and has no
+`src/core/storage/accepted_inputs.py` allows `claimed → stopped` and has no
 failure state, while `interrupted` stays reserved for reconciling a process that
 died, as [idle shutdown](#idle-shutdown) states.
 
@@ -747,9 +755,9 @@ the same original payload is idempotent, but it is not a fixed point for JPEG:
 sending back bytes the server already normalized can produce different bytes
 and is refused as a conflict, not recognized as a duplicate. The ids and
 timestamps the server assigns are excluded from the fingerprint. See
-`src/engine/storage/accepted_inputs.py`.
+`src/core/storage/accepted_inputs.py`.
 
-Validation happens in `decode_images` (`src/server/runtime_support.py`) before the
+Validation happens in `decode_images` (`src/server/runtime/runtime_support.py`) before the
 queue is touched,
 so a refusal writes nothing:
 
@@ -761,7 +769,7 @@ so a refusal writes nothing:
 | Payload | must be valid base64 and must decode as an image |
 | Request body | 64 MiB of JSON |
 
-Images are re-encoded by `src/engine/attachments/images.py` before they are
+Images are re-encoded by `src/core/attachments/images.py` before they are
 stored, which bounds their dimensions and makes the stored media type the one
 the bytes actually are.
 
@@ -788,8 +796,8 @@ already uses.
 | Written | From the application's lifespan, after the port is listening |
 | Removed | When the same lifespan ends |
 
-`src/engine/paths.py` owns both locations, like every other directory Sigil
-writes to. `src/server/endpoint.py` owns the contract.
+`src/core/config/paths.py` owns both locations, like every other directory Sigil
+writes to. `src/server/launch/endpoint.py` owns the contract.
 
 ### Why TCP on loopback and not a UNIX socket
 
@@ -822,7 +830,7 @@ late fails to connect instead of attaching to a service that is stopping. A run
 that finds a file with a different token leaves it alone: it belongs to the
 service that replaced this one.
 
-The ownership lock in `src/server/ownership.py` is untouched by any of this and
+The ownership lock in `src/server/launch/server_ownership.py` is untouched by any of this and
 is still never unlinked, for the reason it already documents.
 
 ### What a reader trusts
@@ -847,7 +855,7 @@ next to the cookie the browser keeps. The protected set does not change: `/api/*
 needs a credential unless the path is free, and `/events` needs one too. A
 missing, malformed or wrong token is the same `401` with the same
 `unauthenticated` body as a missing cookie; the token is never repeated in a
-response or a log line. See `src/server/auth.py`.
+response or a log line. See `src/server/api/auth.py`.
 
 The token does not log into the web client: `Auth.check_password` compares it
 against the password and refuses it. It also dies with the process, which is what
@@ -861,7 +869,7 @@ parity endpoints the terminal needs before it can become a client. Launching is
 
 ## The launcher (part C)
 
-A client that needs a service calls `ensure_service` in `src/server/launch.py` and
+A client that needs a service calls `ensure_service` in `src/server/launch/launch.py` and
 gets one of two things: a live endpoint to talk to, or a named failure that says
 what to do next. "Start one if it is not running" is not a sentence in the code
 either — it is the algorithm below, because the interesting part is who is
@@ -1042,7 +1050,7 @@ holds its own agent, which is a fact about the client.
 | `POST /api/rollback` | Returns to before a turn, rows and optionally files | outcome plus the session view |
 | `POST /api/fork` | Branches a new session at an instant, destroying nothing | `views.fork_view` |
 
-Every reply is a projection from `src/server/views.py`, and the parity contract in
+Every reply is a projection from `src/server/api/views.py`, and the parity contract in
 `tests/server/test_server_parity.py` compares the reply to that projection rather than to
 a literal, so a route cannot invent a shape the views module does not define.
 
@@ -1211,7 +1219,7 @@ building its own previews.
 ## The terminal's transport (part F)
 
 The terminal still executes in process. This part adds only the client it will use
-once it stops: `src/ui/service_client.py`, one `ServiceClient` per attached
+once it stops: `src/ui/client/service_client.py`, one `ServiceClient` per attached
 service. The widgets, the five mixins and the removal of the in-process fallback
 are `tui-attach-v1`; nothing here imports Textual or touches a screen.
 
@@ -1350,7 +1358,7 @@ own cut instead of half-moving all of them at once.
 | Images | ordered `OutgoingImage`s with the `[Image #n]` marker | the picture that was attached is the one stored |
 | Reconnection | `events(after=last_event_id)`, then a state read | a gap is announced, never silently painted over |
 | Restart recovery | `ServiceClient.refresh_endpoint()` before the retry, then a fresh `/api/state` | the client re-discovers through the injected launcher, rebuilds its pool over the transport it was given, and restarts the cursor with the new run (see [When the service restarts](#when-the-service-restarts)) |
-| Commands | `handle_command`, through `src/ui/command_transport.py` | client commands run here; core commands name the route that serves them and what is still missing (see [Which commands run here](#which-commands-run-here)) |
+| Commands | `handle_command`, through `src/ui/client/command_transport.py` | client commands run here; core commands name the route that serves them and what is still missing (see [Which commands run here](#which-commands-run-here)) |
 | Provider, agent, rollback | unchanged, still local | those panels read files and rows this process can see |
 | The agent tree | `state.tree`, `POST /api/tree/stop`, `POST /api/tree/background`, `GET /api/tree/node/{id}` | read and driven by the service; see [part H](#the-agent-tree-through-the-service-part-h) |
 
@@ -1403,7 +1411,7 @@ The catalogue decides **who may serve a command**. The transport table decides
 **whether this terminal can reach that server**, and the two are different questions:
 the first is shared vocabulary, the second changes with each cut.
 
-`src/ui/command_transport.py` holds one row per command. A row carries the name, the
+`src/ui/client/command_transport.py` holds one row per command. A row carries the name, the
 owner the catalogue already declared, the route the service serves it at, and exactly
 one state:
 
@@ -1497,9 +1505,9 @@ configuration from having two authors.
 
 ### The help is derived, never repeated
 
-Every listing of commands reads the same two tables: `src/engine/commands.py` for a
-command's name and sentence, and `src/ui/command_transport.py` for whether this terminal
-can act on it. `src/ui/help_text.py` renders a row as the catalogue's words plus
+Every listing of commands reads the same two tables: `src/core/commands/catalog.py` for a
+command's name and sentence, and `src/ui/client/command_transport.py` for whether this terminal
+can act on it. `src/ui/render/help_text.py` renders a row as the catalogue's words plus
 `listing_mark`, and `/help` and the `/` menu both call it — the help with
 `attached=self._client is not None`, the menu with the flag its mixin passes down.
 
@@ -1802,9 +1810,9 @@ Two rules decide what a gap looks like:
 
 The plan is read from the projection instead of the terminal's own
 `RoadmapStores` for one reason. `RoadmapStore` loads its rows once, in its
-constructor (`src/engine/roadmap/store.py`), and only `reload()` or `bind()`
+constructor (`src/core/roadmap/roadmap_store.py`), and only `reload()` or `bind()`
 refreshes them; `RoadmapStores.for_node` caches the store per node. The service
-writes the plan through its own store (`src/engine/bootstrap.py`) and projects it in
+writes the plan through its own store (`src/core/composition/bootstrap.py`) and projects it in
 `/api/state`, and nothing in the attached terminal subscribes to those writes. The
 local copy is therefore a photograph taken at mount: showing it would be showing
 frozen rows without saying so. The service's copy is the only one that moves.
@@ -1863,7 +1871,7 @@ boundaries also refresh requests that produced no visible output.
 A failed or invalid read clears stale measurements and shows an explicit
 `Debug unavailable` message, never a fabricated zero. Closing the view stops
 its coalescing timer and cancels its client worker. Turn timing is measured in
-`src/engine/agents/turn_timing.py` and is included in `/debug --text`, as it was
+`src/core/agents/turn_timing.py` and is included in `/debug --text`, as it was
 for local runs; the service does not import the TUI.
 
 **`seq` of a typed message.** In process the position is `len(_history)`: the prompt
@@ -1907,7 +1915,7 @@ That is a seam, not a fallback, and it is fenced three ways:
 `TurnMixin.run_turn` — the in-process turn loop, with its checkpoints, steering and
 abort — still exists behind that seam, because the ~40 widget tests that mount
 `SigilApp` assert on it directly. It is a real duplication of the turn loop that
-`src/server/session_runtime.py` already owns, and it is scheduled for deletion: when those
+`src/server/runtime/session_runtime.py` already owns, and it is scheduled for deletion: when those
 tests mount a client (a fixture that starts a runtime, like
 `tests/tui/test_ui_client.py`), `run_turn` goes with them. Until then, nothing may grow
 in it that both paths need — the moment a decision is written twice is the moment
@@ -2075,7 +2083,7 @@ classification is separate from that text: the service persists the input's
 capability restores per-part types in message metadata after the model library
 merges request envelopes.
 
-Both transcript adapters use `src.engine.agents.message_types.input_views`.
+Both transcript adapters use `src.core.agents.message_types.input_views`.
 It emits one `subagent_report` item per saved snapshot, keeps explicitly marked
 user text as a user item, distinguishes agent messages, and hides internal
 notices. Untyped historical parts remain user input, even when their text looks

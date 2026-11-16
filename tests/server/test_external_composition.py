@@ -3,18 +3,20 @@
 import asyncio
 from pathlib import Path
 
-from src.engine.bootstrap import Composition
-from src.engine.providers.bootstrap import ProviderPaths
-from src.engine.settings import load_settings
+import pytest
+
+from src.core.composition.composition import Composition
+from src.core.config.load_settings import load_settings
+from src.core.providers.provider_paths import ProviderPaths
 
 
-def test_server_lifespan_unloads_extensions(tmp_path: Path, monkeypatch) -> None:
+def test_server_lifespan_unloads_extensions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from pydantic_ai.models.test import TestModel
 
-    from src.server.app import create_app
-    from src.server.config import ServerConfig
-    from src.server.events import EventHub
-    from src.server.runtime import ServerRuntime
+    from src.server.api.app import create_app
+    from src.server.launch.server_config import ServerConfig
+    from src.server.runtime.event_hub import EventHub
+    from src.server.runtime.server_runtime import ServerRuntime
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
     directory = tmp_path / 'home' / 'tools' / 'lifecycle'

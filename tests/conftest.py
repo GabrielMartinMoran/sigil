@@ -51,7 +51,7 @@ for _name in [name for name in os.environ if name.startswith('SIGIL_') and name 
 @pytest.fixture
 def memory_databases(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Isolate databases by path without disk I/O for explicitly opted-in tests."""
-    from src.engine.storage.database import Database
+    from src.core.storage.database import Database
 
     databases: dict[Path, Database] = {}
 
@@ -80,7 +80,7 @@ def prohibit_live_model_requests(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(autouse=True)
 def isolated_sigil_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Keep config discovery and the default database independent for every test."""
-    from src.engine.storage.database import Database
+    from src.core.storage.database import Database
 
     home = tmp_path / 'home'
     for name in ('SIGIL_HOME', 'HOME', 'USERPROFILE'):

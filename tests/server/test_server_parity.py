@@ -28,15 +28,17 @@ from typing import Any
 
 import pytest
 
-from src.engine.agents.rollback import ForkOutcome, RollbackOutcome
-from src.engine.agents.tree.models.node_status import NodeStatus
-from src.engine.bootstrap import Composition
-from src.engine.context.budget import ContextBudget
-from src.engine.context.meter.cost import SessionCost, session_cost
-from src.engine.context.meter.snapshot import ContextSnapshot
-from src.engine.storage.accepted_inputs import AcceptedInputs
-from src.server import views
-from src.server.runtime import ServerRuntime
+from src.core.agents.fork_outcome import ForkOutcome
+from src.core.agents.rollback_outcome import RollbackOutcome
+from src.core.agents.tree.models.node_status import NodeStatus
+from src.core.composition.composition import Composition
+from src.core.context.context_budget import ContextBudget
+from src.core.context.meter.context_snapshot import ContextSnapshot
+from src.core.context.meter.cost import session_cost
+from src.core.context.meter.session_cost import SessionCost
+from src.core.storage.accepted_inputs import AcceptedInputs
+from src.server.api import views
+from src.server.runtime.server_runtime import ServerRuntime
 from tests.support.agents import write_profile
 from tests.support.server_parity import (
     _busy,
@@ -64,6 +66,26 @@ def composition(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Composition:
 @pytest.fixture
 def runtime(composition: Composition) -> ServerRuntime:
     return _runtime(composition)
+
+
+def test_a_terminal_can_start_in_a_workspace(runtime: ServerRuntime, tmp_path: Path) -> None:
+    """The startup sequence creates and reads a session through the real API."""
+
+    async def go() -> None:
+        try:
+            async with _signed_in(runtime, tmp_path) as client:
+                state = await client.get('/api/state')
+                assert state.status_code == 200, state.text
+                response = await client.post('/api/workspace', json={'root': str(tmp_path)})
+                assert response.status_code == 200, response.text
+                session_id = response.json()['session']['id']
+                state = await client.get('/api/state', params={'session_id': session_id})
+                assert state.status_code == 200, state.text
+                assert state.json()['session']['id'] == session_id
+        finally:
+            await runtime.close_sessions()
+
+    asyncio.run(go())
 
 
 # --- a session that has not been written yet ---------------------------------

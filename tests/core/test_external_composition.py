@@ -3,16 +3,19 @@
 import asyncio
 from pathlib import Path
 
+import pytest
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
-from src.engine.bootstrap import Composition
-from src.engine.interaction.models.question_answer import QuestionAnswer
-from src.engine.providers.bootstrap import ProviderPaths
-from src.engine.settings import load_settings
+from src.core.composition.composition import Composition
+from src.core.config.load_settings import load_settings
+from src.core.interaction.models.question_answer import QuestionAnswer
+from src.core.providers.provider_paths import ProviderPaths
 
 
-def test_composition_loads_project_tools_and_injects_root_context(tmp_path: Path, monkeypatch) -> None:
+def test_composition_loads_project_tools_and_injects_root_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
     workspace = tmp_path / 'workspace'
     directory = workspace / '.sigil' / 'tools' / 'identity'
@@ -59,10 +62,12 @@ async def identity(ctx: ToolContext) -> str:
     asyncio.run(run())
 
 
-def test_subagent_permissions_filter_external_tools_and_context_identifies_child(tmp_path: Path, monkeypatch) -> None:
-    from src.engine.agents.profile.models.agent_profile import AgentProfile
-    from src.engine.agents.profile.permissions import parse_permissions
-    from src.engine.agents.tree.summoner import SigilDeps
+def test_subagent_permissions_filter_external_tools_and_context_identifies_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.core.agents.profile.models.agent_profile import AgentProfile
+    from src.core.agents.profile.permissions import parse_permissions
+    from src.core.agents.tree.sigil_deps import SigilDeps
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
     directory = tmp_path / 'home' / 'tools' / 'identity'

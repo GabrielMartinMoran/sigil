@@ -6,12 +6,13 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserProm
 from pydantic_ai.usage import RequestUsage
 from rich.console import Console
 
-from src.engine.context.budget import ContextBudget
-from src.engine.context.compaction.events import CompactionEvent, CompactionReason
-from src.engine.context.meter.debug import build_debug_report
-from src.engine.context.meter.request import RequestSnapshot
-from src.engine.context.meter.snapshot import ContextSnapshot
-from src.ui.widgets.debug_view import build_debug_body
+from src.core.context.compaction.compaction_event import CompactionEvent
+from src.core.context.compaction.compaction_reason import CompactionReason
+from src.core.context.context_budget import ContextBudget
+from src.core.context.meter.context_snapshot import ContextSnapshot
+from src.core.context.meter.debug import build_debug_report
+from src.core.context.meter.request_snapshot import RequestSnapshot
+from src.ui.widgets.panels.debug_body import build_debug_body
 
 _EMPTY = ContextSnapshot(measured=None, projected=None, window=None, budget=ContextBudget(window=None))
 
@@ -41,7 +42,7 @@ def _turns():
     ]
 
 
-def test_the_tui_table_names_the_events_and_never_the_conversation():
+def test_the_tui_table_names_the_events_and_never_the_conversation() -> None:
     report = _report(_turns(), (CompactionEvent(step=2, reason=CompactionReason.EMERGENCY),))
     console = Console(width=200, record=True, force_terminal=False)
     console.print(build_debug_body(report))
@@ -51,10 +52,10 @@ def test_the_tui_table_names_the_events_and_never_the_conversation():
     assert 'secret' not in rendered
 
 
-def test_timeline_distinguishes_estimated_from_provider_reported_step_costs():
+def test_timeline_distinguishes_estimated_from_provider_reported_step_costs() -> None:
     from decimal import Decimal
 
-    from src.ui.widgets.debug_view import _turn_timeline
+    from src.ui.widgets.panels.debug_body import _turn_timeline
 
     messages = [
         ModelRequest(parts=[UserPromptPart(content='go')], run_id='a'),

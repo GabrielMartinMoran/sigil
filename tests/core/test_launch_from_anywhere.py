@@ -145,15 +145,15 @@ def test_the_shipped_agents_come_from_the_package_not_from_the_workspace(
 ) -> None:
     """A project with no `.sigil/agents` still gets the built-ins."""
     monkeypatch.chdir(foreign_project)
-    from src.engine.agents.profile.discovery import BUILTIN_DIRNAME, default_roots
-    from src.engine.agents.profile.registry import AgentRegistry
+    from src.core.agents.profile.agent_registry import AgentRegistry
+    from src.core.agents.profile.discovery import BUILTIN_DIRNAME, default_roots
 
     roots = default_roots()
     assert roots[0] == ('project', foreign_project / '.sigil' / 'agents')
     assert roots[-1] == ('builtin', BUILTIN_DIRNAME)
     assert BUILTIN_DIRNAME.is_dir()
     # The built-in directory is anchored to the package, not to the process.
-    assert BUILTIN_DIRNAME == (PROJECT / 'src' / 'engine' / 'agents' / 'profile' / 'builtin')
+    assert BUILTIN_DIRNAME == (PROJECT / 'src' / 'core' / 'agents' / 'profile' / 'builtin')
 
     registry = AgentRegistry(
         [
@@ -168,8 +168,8 @@ def test_the_shipped_agents_come_from_the_package_not_from_the_workspace(
 
 
 def test_a_project_agent_shadows_a_shipped_one(foreign_project: Path) -> None:
-    from src.engine.agents.profile.discovery import BUILTIN_DIRNAME
-    from src.engine.agents.profile.registry import AgentRegistry
+    from src.core.agents.profile.agent_registry import AgentRegistry
+    from src.core.agents.profile.discovery import BUILTIN_DIRNAME
 
     agents = foreign_project / '.sigil' / 'agents'
     agents.mkdir(parents=True)
@@ -187,17 +187,17 @@ def test_a_project_agent_shadows_a_shipped_one(foreign_project: Path) -> None:
 def test_the_base_prompt_is_read_from_the_package(foreign_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The one file every turn depends on is anchored to the module."""
     monkeypatch.chdir(foreign_project)
-    from src.engine.agents import agent as agent_module
+    from src.core.agents import agent as agent_module
 
     assert Path(agent_module._SIGIL_PROMPT).is_file()
-    assert Path(agent_module._SIGIL_PROMPT).parent == PROJECT / 'src' / 'engine' / 'agents' / 'prompts'
+    assert Path(agent_module._SIGIL_PROMPT).parent == PROJECT / 'src' / 'core' / 'agents' / 'prompts'
 
 
 def test_the_project_skills_and_the_global_ones_both_resolve(
     foreign_project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(foreign_project)
-    from src.engine.skills.discovery import default_roots as skill_roots
+    from src.core.skills.discovery import default_roots as skill_roots
 
     roots = dict(skill_roots())
     assert roots['project'] == foreign_project / '.agents' / 'skills'
@@ -210,7 +210,7 @@ def test_the_state_home_does_not_follow_the_workspace(
     """Sessions belong to the user, not to the project being edited."""
     monkeypatch.chdir(foreign_project)
     monkeypatch.delenv('SIGIL_HOME', raising=False)
-    from src.engine.paths import sessions_dir, sigil_home
+    from src.core.config.paths import sessions_dir, sigil_home
 
     assert sigil_home() == Path.home() / '.sigil'
     assert sessions_dir().name == 'sessions'

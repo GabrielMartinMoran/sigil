@@ -20,11 +20,11 @@ import json
 
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.engine.agents.tree.store import AgentTreeStore
-from src.ui.widgets.agent_tree_screen import node_row
-from src.ui.widgets.agent_view import build_agent_header
-from src.ui.widgets.chat_log import SummonBlock
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.agents.tree.agent_tree_store import AgentTreeStore
+from src.ui.widgets.chat.summon_block import SummonBlock
+from src.ui.widgets.models.agent_tree_rows import node_row
+from src.ui.widgets.panels.agent_view_text import build_agent_header
 from tests.support.ui import render_text
 
 
@@ -49,7 +49,7 @@ def _node():
 # --- the block, live and replayed ---------------------------------------------
 
 
-def test_the_block_names_the_agent_once():
+def test_the_block_names_the_agent_once() -> None:
     block = SummonBlock('summon', {'agent': 'pulsar-researcher', 'task': 'read it', 'mode': 'async'})
     text = _text_of(block)
 
@@ -59,7 +59,7 @@ def test_the_block_names_the_agent_once():
     assert 'pulsar-researcher' not in text
 
 
-def test_the_block_reads_the_name_out_of_a_json_string():
+def test_the_block_reads_the_name_out_of_a_json_string() -> None:
     """A history replayed from disk carries the arguments as a JSON string."""
     raw = [
         {
@@ -86,7 +86,7 @@ def test_the_block_reads_the_name_out_of_a_json_string():
     assert 'Subagent' not in text
 
 
-def test_a_resume_takes_the_name_from_the_result():
+def test_a_resume_takes_the_name_from_the_result() -> None:
     """`summon(agent_id=…)` carries no name, and the answer knows it."""
     block = SummonBlock('summon', {'task': 'keep going', 'agent_id': '1a2b3c4d'})
     block.set_result('[subagent Pulsar Researcher (pulsar-researcher #1a2b3c4d, sync) finished]')
@@ -98,7 +98,7 @@ def test_a_resume_takes_the_name_from_the_result():
     assert 'Pulsar Researcher (#1a2b3c4d)' in text
 
 
-def test_an_async_resume_takes_the_name_from_its_answer():
+def test_an_async_resume_takes_the_name_from_its_answer() -> None:
     """An async resume answers `#id (Pas Developer) is working…`.
 
     That is the whole block a replayed transcript has to name itself from, and
@@ -110,7 +110,7 @@ def test_an_async_resume_takes_the_name_from_its_answer():
     assert 'Pas Developer (#f7c01c8a)' in block._spawn_header().plain
 
 
-def test_an_async_resume_asks_its_node_for_the_name_when_the_answer_does_not():
+def test_an_async_resume_asks_its_node_for_the_name_when_the_answer_does_not() -> None:
     """The tree knows the node the id names, so the block asks it instead of guessing."""
     node = _node()
     node.start()
@@ -121,7 +121,7 @@ def test_an_async_resume_asks_its_node_for_the_name_when_the_answer_does_not():
     assert f'Pulsar Researcher (#{node.short_id})' in block._spawn_header().plain
 
 
-def test_a_block_with_nothing_to_go_on_does_not_invent_a_name():
+def test_a_block_with_nothing_to_go_on_does_not_invent_a_name() -> None:
     """No arguments and no result: say a subagent, not the word `subagent` twice."""
     block = SummonBlock('summon', {})
     text = _text_of(block)
@@ -133,7 +133,7 @@ def test_a_block_with_nothing_to_go_on_does_not_invent_a_name():
 # --- the tree row and the header ----------------------------------------------
 
 
-def test_the_tree_row_names_the_agent_once():
+def test_the_tree_row_names_the_agent_once() -> None:
     row = render_text(node_row(_node()).prompt)
 
     assert 'Pulsar Researcher' in row
@@ -141,7 +141,7 @@ def test_the_tree_row_names_the_agent_once():
     assert '#676031c4'[:1] in row or '#' in row
 
 
-def test_an_underscore_name_is_humanized_like_a_dashed_one():
+def test_an_underscore_name_is_humanized_like_a_dashed_one() -> None:
     """Profiles are named both ways; both read as a name in the list, not a symbol."""
     tree = AgentTreeStore().active
     root = tree.ensure_root('pulsar-lead')
@@ -151,14 +151,14 @@ def test_an_underscore_name_is_humanized_like_a_dashed_one():
     assert 'Pas Developer' in render_text(node_row(node).prompt)
 
 
-def test_the_node_header_names_the_agent_once():
+def test_the_node_header_names_the_agent_once() -> None:
     text = render_text(build_agent_header(_node(), parent_label='Pulsar Lead', has_parent=True))
 
     assert text.count('Pulsar Researcher') == 1
     assert 'pulsar-researcher' not in text
 
 
-def test_a_refused_resume_keeps_the_id_and_mode():
+def test_a_refused_resume_keeps_the_id_and_mode() -> None:
     block = SummonBlock('summon', {'agent_id': '#ea0c3711', 'mode': 'async', 'task': 'continue'})
     block.set_result('PermissionDenied: no', ok=False)
     text = _text_of(block)

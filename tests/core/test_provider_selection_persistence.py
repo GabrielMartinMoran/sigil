@@ -6,12 +6,12 @@ import asyncio
 import tempfile
 from pathlib import Path
 
-from src.engine.sessions.session_store import SessionStore
+from src.core.sessions.session_store import SessionStore
 from tests.support.provider_setup import _prepared
 
 
-def test_the_selection_survives_being_written_and_read_by_the_store():
-    async def inner():
+def test_the_selection_survives_being_written_and_read_by_the_store() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             service = await _prepared(root)

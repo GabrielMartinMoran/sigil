@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.engine.preferences import PreferencesStore
+from src.core.config.preferences_store import PreferencesStore
 
 
 def test_should_persist_favourites_by_account_and_model(tmp_path: Path) -> None:

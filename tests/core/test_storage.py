@@ -21,12 +21,13 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.engine.agents.tree.tree import AgentTree
-from src.engine.providers.domain.selection import Selection
-from src.engine.sessions.session_store import SessionStore
-from src.engine.storage.database import Database, database_path
-from src.engine.storage.history import history_size
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.agents.tree.agent_tree import AgentTree
+from src.core.providers.domain.selection import Selection
+from src.core.sessions.session_store import SessionStore
+from src.core.storage.database import Database
+from src.core.storage.database_path import database_path
+from src.core.storage.history import history_size
 
 
 @pytest.fixture()
@@ -65,7 +66,7 @@ def _rich_history() -> list:
 # --- the round trip -----------------------------------------------------------
 
 
-def test_history_round_trips_exactly(store: SessionStore):
+def test_history_round_trips_exactly(store: SessionStore) -> None:
     session = store.create_session()
     session.messages = _rich_history()
     store.save(session)
@@ -75,7 +76,7 @@ def test_history_round_trips_exactly(store: SessionStore):
     assert loaded.messages == session.messages
 
 
-def test_the_root_is_an_execution_like_any_other(store: SessionStore):
+def test_the_root_is_an_execution_like_any_other(store: SessionStore) -> None:
     session = store.create_session()
     session.messages = _rich_history()
     store.save(session)
@@ -87,7 +88,7 @@ def test_the_root_is_an_execution_like_any_other(store: SessionStore):
     assert store.database.value('SELECT count(*) FROM messages WHERE execution_id != ?', (session.root_id,)) == 0
 
 
-def test_a_session_always_has_exactly_one_root(store: SessionStore):
+def test_a_session_always_has_exactly_one_root(store: SessionStore) -> None:
     session = store.create_session()
     store.save(session)
     store.save(session)
@@ -100,7 +101,7 @@ def test_a_session_always_has_exactly_one_root(store: SessionStore):
     )
 
 
-def test_a_root_id_is_derived_from_the_session(store: SessionStore):
+def test_a_root_id_is_derived_from_the_session(store: SessionStore) -> None:
     session = store.create_session()
     store.save(session)
     assert (
@@ -111,7 +112,7 @@ def test_a_root_id_is_derived_from_the_session(store: SessionStore):
 # --- the delta write ----------------------------------------------------------
 
 
-def test_appending_does_not_rewrite_the_history(store: SessionStore):
+def test_appending_does_not_rewrite_the_history(store: SessionStore) -> None:
     session = store.create_session()
     session.messages = _rich_history()
     store.save(session)
@@ -125,7 +126,7 @@ def test_appending_does_not_rewrite_the_history(store: SessionStore):
     assert store.load(session.id).messages == session.messages
 
 
-def test_saving_twice_is_idempotent(store: SessionStore):
+def test_saving_twice_is_idempotent(store: SessionStore) -> None:
     """Writing a history twice must produce the same rows as writing it once."""
     session = store.create_session()
     session.messages = _rich_history()
@@ -138,7 +139,7 @@ def test_saving_twice_is_idempotent(store: SessionStore):
     assert history_size(store.database, session.root_id) == first
 
 
-def test_a_shorter_history_truncates_the_rows(store: SessionStore):
+def test_a_shorter_history_truncates_the_rows(store: SessionStore) -> None:
     session = store.create_session()
     session.messages = _rich_history()
     store.save(session)
@@ -150,7 +151,7 @@ def test_a_shorter_history_truncates_the_rows(store: SessionStore):
     assert store.load(session.id).messages == session.messages
 
 
-def test_a_repaired_tail_is_rewritten(store: SessionStore):
+def test_a_repaired_tail_is_rewritten(store: SessionStore) -> None:
     """`recover_history` rewrites the last rows: a blind append would keep both."""
     session = store.create_session()
     session.messages = _rich_history()
@@ -168,7 +169,7 @@ def test_a_repaired_tail_is_rewritten(store: SessionStore):
 # --- the turns ----------------------------------------------------------------
 
 
-def test_a_turn_is_a_row(store: SessionStore):
+def test_a_turn_is_a_row(store: SessionStore) -> None:
     session = store.create_session()
     session.messages = _rich_history()
     store.save(session)
@@ -179,7 +180,7 @@ def test_a_turn_is_a_row(store: SessionStore):
     assert store.database.value('SELECT count(*) FROM messages WHERE turn_id IS NULL') == 0
 
 
-def test_at_most_one_turn_is_open_per_execution(store: SessionStore):
+def test_at_most_one_turn_is_open_per_execution(store: SessionStore) -> None:
     import sqlite3
 
     session = store.create_session()
@@ -195,7 +196,7 @@ def test_at_most_one_turn_is_open_per_execution(store: SessionStore):
         )
 
 
-def test_a_turn_cannot_half_close(store: SessionStore):
+def test_a_turn_cannot_half_close(store: SessionStore) -> None:
     """`finished_at` and `outcome` are one fact, and the CHECK keeps them together."""
     import sqlite3
 
@@ -211,7 +212,7 @@ def test_a_turn_cannot_half_close(store: SessionStore):
 # --- the blobs ----------------------------------------------------------------
 
 
-def test_repeated_instructions_are_one_blob(store: SessionStore):
+def test_repeated_instructions_are_one_blob(store: SessionStore) -> None:
     session = store.create_session()
     session.messages = [
         ModelRequest(parts=[UserPromptPart(content=f'q{index}')], instructions='SAME', run_id=f'r{index}')
@@ -223,7 +224,7 @@ def test_repeated_instructions_are_one_blob(store: SessionStore):
     assert store.load(session.id).messages[0].instructions == 'SAME'
 
 
-def test_the_instructions_come_back_without_being_re_encoded(store: SessionStore):
+def test_the_instructions_come_back_without_being_re_encoded(store: SessionStore) -> None:
     """Assigning the shared string is what makes a load 36 ms and not 233 ms."""
     session = store.create_session()
     session.messages = _rich_history()
@@ -238,7 +239,7 @@ def test_the_instructions_come_back_without_being_re_encoded(store: SessionStore
 # --- the listing --------------------------------------------------------------
 
 
-def test_the_listing_does_not_read_the_transcripts(store: SessionStore):
+def test_the_listing_does_not_read_the_transcripts(store: SessionStore) -> None:
     session = store.create_session()
     session.messages = _rich_history()
     session.title = 'A name'
@@ -251,7 +252,7 @@ def test_the_listing_does_not_read_the_transcripts(store: SessionStore):
     assert summaries[0].profile == ''
 
 
-def test_the_listing_carries_the_profile_of_the_root(store: SessionStore):
+def test_the_listing_carries_the_profile_of_the_root(store: SessionStore) -> None:
     session = store.create_session()
     session.agent = 'wizard'
     session.messages = _rich_history()
@@ -263,7 +264,7 @@ def test_the_listing_carries_the_profile_of_the_root(store: SessionStore):
 # --- the model choice ---------------------------------------------------------
 
 
-def test_the_model_choice_travels_with_the_session(store: SessionStore):
+def test_the_model_choice_travels_with_the_session(store: SessionStore) -> None:
     session = store.create_session()
     session.selection = Selection(account_id='acc-1', model='m-1', thinking='high', window=200_000, images=False)
     store.save(session)
@@ -278,7 +279,7 @@ def test_the_model_choice_travels_with_the_session(store: SessionStore):
 # --- the tree -----------------------------------------------------------------
 
 
-def test_the_tree_and_its_transcripts_round_trip(store: SessionStore):
+def test_the_tree_and_its_transcripts_round_trip(store: SessionStore) -> None:
     session = store.create_session()
     session.messages = _rich_history()
     session.tree = AgentTree()
@@ -298,7 +299,7 @@ def test_the_tree_and_its_transcripts_round_trip(store: SessionStore):
 # --- deletion -----------------------------------------------------------------
 
 
-def test_deleting_a_session_takes_everything_that_hangs_from_it(store: SessionStore):
+def test_deleting_a_session_takes_everything_that_hangs_from_it(store: SessionStore) -> None:
     session = store.create_session()
     session.messages = _rich_history()
     session.tree = AgentTree()
@@ -317,7 +318,7 @@ def test_deleting_a_session_takes_everything_that_hangs_from_it(store: SessionSt
 # --- one database, every workspace --------------------------------------------
 
 
-def test_two_workspaces_share_the_database_and_not_the_listing(store: SessionStore, tmp_path: Path):
+def test_two_workspaces_share_the_database_and_not_the_listing(store: SessionStore, tmp_path: Path) -> None:
     mine = store.create_session()
     other = SessionStore(cwd=tmp_path / 'elsewhere', base_dir=tmp_path / 'home')
     theirs = other.create_session()
@@ -327,7 +328,7 @@ def test_two_workspaces_share_the_database_and_not_the_listing(store: SessionSto
     assert [summary.id for summary in other.list_sessions()] == [theirs.id]
 
 
-def test_the_last_session_is_remembered_per_workspace(store: SessionStore):
+def test_the_last_session_is_remembered_per_workspace(store: SessionStore) -> None:
     first = store.create_session()
     second = store.create_session()
 

@@ -19,9 +19,9 @@ from pydantic_ai.models.test import TestModel
 from textual import events
 from textual._xterm_parser import XTermParser
 
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
-from src.ui.widgets.status_bar import StatusBar
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.panels.status_bar import StatusBar
 
 
 def _parse_escape_bytes() -> list[object]:
@@ -34,7 +34,7 @@ def _parse_escape_bytes() -> list[object]:
     return list(parser.feed(''))
 
 
-def test_a_lone_esc_byte_becomes_the_escape_key():
+def test_a_lone_esc_byte_becomes_the_escape_key() -> None:
     keys = [event for event in _parse_escape_bytes() if isinstance(event, events.Key)]
     assert len(keys) == 1
     assert keys[0].key == 'escape'
@@ -43,10 +43,10 @@ def test_a_lone_esc_byte_becomes_the_escape_key():
     assert keys[0].character == '\x1b'
 
 
-def test_a_real_esc_byte_reaches_the_abort_handler():
+def test_a_real_esc_byte_reaches_the_abort_handler() -> None:
     """The parser's output goes straight into the app and asks to stop."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release = asyncio.Event()
             agent = Agent(TestModel(call_tools=['hold'], custom_output_text='done'), instructions='x')

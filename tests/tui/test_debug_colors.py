@@ -15,10 +15,10 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage
 
-from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.context.meter.debug import build_debug_report
-from src.engine.context.meter.request import snapshot_request
-from src.ui.widgets import debug_view as ui
+from src.core.context.meter.context_meter import ContextMeter
+from src.core.context.meter.debug import build_debug_report
+from src.core.context.meter.request import snapshot_request
+from src.ui.widgets.panels import debug_body as ui
 from tests.support.ui import render_text
 
 
@@ -36,19 +36,19 @@ def report():
     ('ratio', 'cache', 'context'),
     [(0.2, 'red', 'green'), (0.7, 'yellow', 'yellow'), (0.95, 'green', 'red'), (None, 'dim', 'dim')],
 )
-def test_semantic_colors_have_opposite_directions(ratio, cache, context):
+def test_semantic_colors_have_opposite_directions(ratio, cache, context) -> None:
     assert ui.cache_style(ratio) == cache
     assert ui.context_style(ratio) == context
 
 
-def test_prompt_cache_is_newest_first_without_changing_request_numbers():
+def test_prompt_cache_is_newest_first_without_changing_request_numbers() -> None:
     table = ui._cache_table(report()).renderables[0]
     assert table.columns[1]._cells == ['2', '1', 'all']
     assert table.columns[6]._cells[0].style == 'red'
     assert table.columns[6]._cells[1].style == 'green'
 
 
-def test_step_timeline_and_cache_table_show_timestamp_and_call_cost():
+def test_step_timeline_and_cache_table_show_timestamp_and_call_cost() -> None:
     from datetime import UTC, datetime
     from decimal import Decimal
 
@@ -89,7 +89,7 @@ def test_step_timeline_and_cache_table_show_timestamp_and_call_cost():
     assert table.columns[-1]._cells[:2] == ['~$0.2', '$0.0123']
 
 
-def test_turn_context_contains_fraction_and_color():
+def test_turn_context_contains_fraction_and_color() -> None:
     r = report()
     turn = replace(r.turns[0], last_input=950)
     table = ui._turns_table(replace(r, turns=(turn,)))
@@ -98,7 +98,7 @@ def test_turn_context_contains_fraction_and_color():
     assert cell.style == 'red'
 
 
-def test_last_prompt_records_sent_parts_not_the_projected_next_request():
+def test_last_prompt_records_sent_parts_not_the_projected_next_request() -> None:
     messages = [
         ModelRequest(parts=[UserPromptPart('PRIVATE')]),
         ModelResponse(
@@ -118,11 +118,11 @@ def test_last_prompt_records_sent_parts_not_the_projected_next_request():
     assert 'Last request' in render_text(ui.build_debug_body(r), width=80)
 
 
-def test_missing_request_is_not_replaced_with_projected_history():
+def test_missing_request_is_not_replaced_with_projected_history() -> None:
     assert 'No request captured' in render_text(ui._last_request_table(report()))
 
 
-def test_dynamic_rows_are_orange_and_unknown_reasoning_is_not_zero():
+def test_dynamic_rows_are_orange_and_unknown_reasoning_is_not_zero() -> None:
     from types import SimpleNamespace
 
     params = SimpleNamespace(
@@ -146,13 +146,13 @@ def test_dynamic_rows_are_orange_and_unknown_reasoning_is_not_zero():
     ('ratio', 'cache', 'context'),
     [(0.49, 'red', 'green'), (0.5, 'yellow', 'green'), (0.8, 'green', 'yellow'), (0.9, 'green', 'red')],
 )
-def test_threshold_boundaries_are_inclusive(ratio, cache, context):
+def test_threshold_boundaries_are_inclusive(ratio, cache, context) -> None:
     assert ui.cache_style(ratio) == cache
     assert ui.context_style(ratio) == context
 
 
-def test_display_thresholds_are_configurable(monkeypatch):
-    from src.ui.widgets import debug_styles
+def test_display_thresholds_are_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.ui.widgets.panels import debug_styles
 
     monkeypatch.setattr(debug_styles, 'CACHE_HIT_GOOD_RATIO', 0.6)
     monkeypatch.setattr(debug_styles, 'CONTEXT_DANGER_RATIO', 0.6)
@@ -160,7 +160,7 @@ def test_display_thresholds_are_configurable(monkeypatch):
     assert ui.context_style(0.65) == 'red'
 
 
-def test_timeline_shows_newest_step_first_with_colors():
+def test_timeline_shows_newest_step_first_with_colors() -> None:
     messages = [
         ModelRequest(parts=[UserPromptPart('earlier')]),
         ModelResponse(parts=[TextPart('old')], usage=RequestUsage(input_tokens=999)),
@@ -179,7 +179,7 @@ def test_timeline_shows_newest_step_first_with_colors():
     assert {'green', 'red'} <= {span.style for span in timeline.spans}
 
 
-def test_timeline_preserves_unmeasured_steps_and_previous_turn_while_waiting():
+def test_timeline_preserves_unmeasured_steps_and_previous_turn_while_waiting() -> None:
     messages = [
         ModelRequest(parts=[UserPromptPart('first')]),
         ModelResponse(parts=[TextPart('one')], usage=RequestUsage(input_tokens=100, cache_read_tokens=50)),
@@ -194,8 +194,9 @@ def test_timeline_preserves_unmeasured_steps_and_previous_turn_while_waiting():
     assert 'Turn 1' in text
 
 
-def test_timeline_marks_compaction_at_its_step():
-    from src.engine.context.compaction.events import CompactionEvent, CompactionReason
+def test_timeline_marks_compaction_at_its_step() -> None:
+    from src.core.context.compaction.compaction_event import CompactionEvent
+    from src.core.context.compaction.compaction_reason import CompactionReason
 
     messages = [
         ModelRequest(parts=[UserPromptPart('first')]),
@@ -216,7 +217,7 @@ def test_timeline_marks_compaction_at_its_step():
     assert text.index('Step 2') < text.index('emergency')
 
 
-def test_timeline_handles_missing_window_and_invalid_cache_counts():
+def test_timeline_handles_missing_window_and_invalid_cache_counts() -> None:
     messages = [
         ModelRequest(parts=[UserPromptPart('test')]),
         ModelResponse(parts=[TextPart('result')], usage=RequestUsage(input_tokens=100, cache_read_tokens=150)),
@@ -229,13 +230,13 @@ def test_timeline_handles_missing_window_and_invalid_cache_counts():
     assert {span.style for span in timeline.spans} >= {'dim'}
 
 
-def test_timeline_with_no_steps_has_empty_state():
+def test_timeline_with_no_steps_has_empty_state() -> None:
     meter = ContextMeter(window=1000)
     r = build_debug_report([], snapshot=meter.snapshot([]), request=snapshot_request(None))
     assert 'No completed steps yet' in ui._turn_timeline(r).plain
 
 
-def test_timeline_aligns_columns_with_different_step_and_metric_widths():
+def test_timeline_aligns_columns_with_different_step_and_metric_widths() -> None:
     messages = [ModelRequest(parts=[UserPromptPart('test')])]
     messages.extend(
         ModelResponse(parts=[TextPart('result')], usage=RequestUsage(input_tokens=value, cache_read_tokens=0))

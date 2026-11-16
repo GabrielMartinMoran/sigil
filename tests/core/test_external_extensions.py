@@ -1,7 +1,7 @@
 import asyncio
 from pathlib import Path
 
-from src.engine.extensions.manager import ExtensionManager
+from src.core.extensions.extension_manager import ExtensionManager
 
 
 def extension(root: Path, name: str, source: str) -> Path:

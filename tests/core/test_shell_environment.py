@@ -1,12 +1,13 @@
 """Shell startup environment discovery and integration."""
 
 import shutil
+from pathlib import Path
 
 import pytest
 
-from src.engine.shell import environment
-from src.engine.shell.guard import SELF_GUARD_ENV
-from src.engine.shell.runner import execute_command
+from src.core.shell import environment
+from src.core.shell.guard import SELF_GUARD_ENV
+from src.core.shell.runner import execute_command
 
 
 @pytest.fixture(autouse=True)
@@ -16,7 +17,7 @@ def clear_shell_cache():
     environment.reset_cache()
 
 
-def test_zsh_exports_are_available_to_bash(tmp_path, monkeypatch):
+def test_zsh_exports_are_available_to_bash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     shell = shutil.which('zsh')
     if not shell:
         pytest.skip('zsh not installed')
@@ -33,13 +34,15 @@ def test_zsh_exports_are_available_to_bash(tmp_path, monkeypatch):
     assert 'startup-noise' not in result.stdout
 
 
-def test_missing_rc_and_missing_shell_fall_back(tmp_path, monkeypatch):
+def test_missing_rc_and_missing_shell_fall_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('SHELL', str(tmp_path / 'missing-shell'))
     monkeypatch.setenv('SIGIL_TEST_INHERITED', 'present')
     assert execute_command('printf %s "$SIGIL_TEST_INHERITED"').stdout == 'present'
 
 
-def test_missing_shell_does_not_write_logging_fallback_to_terminal(tmp_path, monkeypatch, capsys):
+def test_missing_shell_does_not_write_logging_fallback_to_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
     import logging
     import sys
 
@@ -50,14 +53,14 @@ def test_missing_shell_does_not_write_logging_fallback_to_terminal(tmp_path, mon
     assert 'Could not load the user shell environment' not in capsys.readouterr().err
 
 
-def test_uses_account_shell_when_shell_variable_is_missing(monkeypatch):
+def test_uses_account_shell_when_shell_variable_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv('SHELL', raising=False)
     monkeypatch.setattr(environment, 'account_shell', lambda: '/account/shell')
     monkeypatch.setattr(environment, '_capture', lambda shell: {'SIGIL_ACCOUNT_SHELL': shell})
     assert execute_command('printf %s "$SIGIL_ACCOUNT_SHELL"').stdout == '/account/shell'
 
 
-def test_absent_zshrc_is_not_an_error(tmp_path, monkeypatch):
+def test_absent_zshrc_is_not_an_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     shell = shutil.which('zsh')
     if not shell:
         pytest.skip('zsh not installed')
@@ -66,7 +69,7 @@ def test_absent_zshrc_is_not_an_error(tmp_path, monkeypatch):
     assert execute_command('printf ok').stdout == 'ok'
 
 
-def test_inherited_values_and_guard_take_precedence(monkeypatch):
+def test_inherited_values_and_guard_take_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         environment,
         'shell_environment',
@@ -77,7 +80,7 @@ def test_inherited_values_and_guard_take_precedence(monkeypatch):
     assert result.stdout == 'inherited 1 1'
 
 
-def test_capture_is_shared_between_commands(monkeypatch):
+def test_capture_is_shared_between_commands(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = []
     monkeypatch.setenv('SHELL', '/test/shell')
     monkeypatch.setattr(environment, '_capture', lambda shell: calls.append(shell) or {'SIGIL_CACHED': 'yes'})
@@ -86,11 +89,11 @@ def test_capture_is_shared_between_commands(monkeypatch):
     assert calls == ['/test/shell']
 
 
-def test_merge_path_deduplicates_and_keeps_inherited_first():
+def test_merge_path_deduplicates_and_keeps_inherited_first() -> None:
     assert environment.merge_path('/a:/b', '/b:/c') == '/a:/b:/c'
 
 
-def test_timeout_falls_back_and_cleans_up(tmp_path, monkeypatch):
+def test_timeout_falls_back_and_cleans_up(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     shell = tmp_path / 'shell'
     shell.write_text('#!/bin/sh\nsleep 30 &\nwait\n')
     shell.chmod(0o755)
@@ -99,7 +102,7 @@ def test_timeout_falls_back_and_cleans_up(tmp_path, monkeypatch):
     assert execute_command('printf ok').stdout == 'ok'
 
 
-def test_fish_config_exports_if_available(tmp_path, monkeypatch):
+def test_fish_config_exports_if_available(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     shell = shutil.which('fish')
     if not shell:
         pytest.skip('fish not installed')

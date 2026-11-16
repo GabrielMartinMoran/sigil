@@ -12,9 +12,9 @@ import pytest
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.usage import RequestUsage
 
-from src.engine.context.meter.debug_render import render_debug_report
-from src.engine.context.strategy.view_result import ViewResult
-from src.server.runtime import ServerRuntime
+from src.core.context.meter.debug_render import render_debug_report
+from src.core.context.strategy.view_result import ViewResult
+from src.server.runtime.server_runtime import ServerRuntime
 from tests.support.server_parity import _composition, _runtime, _signed_in
 
 
@@ -29,7 +29,7 @@ def runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[ServerR
 
 def test_should_restore_full_debug_over_http_without_message_content(runtime: ServerRuntime, tmp_path: Path) -> None:
     async def scenario() -> None:
-        from src.engine.context.meter.debug_wire import DEBUG_REPORT_ADAPTER
+        from src.core.context.meter.debug_snapshot import DEBUG_REPORT_ADAPTER
 
         await runtime.session_runtime._turn('private-debug-sentinel')
         async with _signed_in(runtime, tmp_path) as client:
@@ -110,7 +110,7 @@ def test_should_share_off_loop_calculation_and_survive_reader_cancellation(
 ) -> None:
     import threading
 
-    from src.server.debug import DebugDiagnostics
+    from src.server.launch.debug_diagnostics import DebugDiagnostics
 
     entered, release = threading.Event(), threading.Event()
     owner = threading.get_ident()
@@ -153,7 +153,7 @@ def test_should_share_off_loop_calculation_and_survive_reader_cancellation(
 
 
 def test_debug_node_scope_never_returns_parent_or_sibling_report(runtime: ServerRuntime, tmp_path: Path) -> None:
-    from src.engine.agents.profile.models.agent_role import AgentRole
+    from src.core.agents.profile.models.agent_role import AgentRole
 
     async def scenario() -> None:
         tree = runtime.composition.summoner.tree()
@@ -194,7 +194,7 @@ def test_debug_node_scope_never_returns_parent_or_sibling_report(runtime: Server
 
 
 def test_node_debug_resolves_only_within_selected_session(runtime: ServerRuntime, tmp_path: Path) -> None:
-    from src.engine.agents.profile.models.agent_role import AgentRole
+    from src.core.agents.profile.models.agent_role import AgentRole
 
     async def scenario() -> None:
         owner = runtime.create_resident(runtime.session_runtime)

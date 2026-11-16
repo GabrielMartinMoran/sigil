@@ -16,7 +16,7 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[2] / 'src'
 
-TURN_MAP = Path('engine/agents/turn_map.py')
+TURN_MAP = Path('core/agents/turn_map.py')
 
 """The one module allowed to name pydantic-ai's identifier."""
 
@@ -25,7 +25,7 @@ def _python_files() -> list[Path]:
     return sorted(path for path in SRC.rglob('*.py') if '__pycache__' not in path.parts)
 
 
-def test_only_the_turn_map_names_run_id():
+def test_only_the_turn_map_names_run_id() -> None:
     offenders: list[str] = []
     for path in _python_files():
         relative = path.relative_to(SRC)
@@ -41,7 +41,7 @@ def test_only_the_turn_map_names_run_id():
     assert offenders == [], 'the library vocabulary leaked out of turn_map.py:\n' + '\n'.join(offenders)
 
 
-def test_the_retired_names_are_gone():
+def test_the_retired_names_are_gone() -> None:
     retired = ('SkillLoads', 'LoadedSkills', 'the round', 'image_rounds', 'keep_recent_turns')
     offenders: list[str] = []
     for path in _python_files():
@@ -52,11 +52,11 @@ def test_the_retired_names_are_gone():
     assert offenders == [], 'retired vocabulary came back:\n' + '\n'.join(offenders)
 
 
-def test_a_turn_id_is_deterministic_and_scoped_by_the_execution():
+def test_a_turn_id_is_deterministic_and_scoped_by_the_execution() -> None:
     """The scope is what lets a fork exist: two transcripts of one prefix, no clash."""
     from pydantic_ai.messages import ModelRequest, ModelResponse
 
-    from src.engine.agents.turn_map import turn_id_of
+    from src.core.agents.turn_map import turn_id_of
 
     history = [
         ModelRequest(parts=[], run_id='run-1'),
@@ -71,11 +71,11 @@ def test_a_turn_id_is_deterministic_and_scoped_by_the_execution():
     assert turn_id_of(history, 0, scope='exec-a') == first  # stable across calls
 
 
-def test_a_message_without_an_identifier_gets_its_own_turn():
+def test_a_message_without_an_identifier_gets_its_own_turn() -> None:
     """Two messages of one run are one turn; two runs are two."""
     from pydantic_ai.messages import ModelRequest, ModelResponse
 
-    from src.engine.agents.turn_map import turn_id_of
+    from src.core.agents.turn_map import turn_id_of
 
     history = [ModelRequest(parts=[]), ModelResponse(parts=[]), ModelRequest(parts=[])]
     ids = {turn_id_of(history, index, scope='exec') for index in range(3)}

@@ -18,12 +18,10 @@ from pathlib import Path
 import pytest
 from pydantic_ai.models.test import TestModel
 
-from src.engine.bootstrap import Composition
-from src.engine.settings import load_settings
-from src.server.runtime import (
-    WAKE_PROMPT,
-)
-from src.ui.subagent_reports import WAKE_PROMPT as TERMINAL_WAKE_PROMPT
+from src.core.agents.tree.reports import WAKE_PROMPT
+from src.core.composition.composition import Composition
+from src.core.config.load_settings import load_settings
+from src.ui.state.subagent_reports import WAKE_PROMPT as TERMINAL_WAKE_PROMPT
 
 
 @pytest.fixture
@@ -45,7 +43,7 @@ def composition(tmp_path: Path) -> Composition:
 
 
 def _paths(tmp_path: Path):
-    from src.engine.providers.bootstrap import ProviderPaths
+    from src.core.providers.provider_paths import ProviderPaths
 
     home = tmp_path / '.sigil'
     home.mkdir(exist_ok=True)
@@ -53,7 +51,7 @@ def _paths(tmp_path: Path):
 
 
 def test_terminal_session_switch_updates_the_composition_owner(composition: Composition) -> None:
-    from src.ui.app import SigilApp
+    from src.ui.sigil_app import SigilApp
 
     async def go() -> None:
         app = SigilApp(

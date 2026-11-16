@@ -12,11 +12,15 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.test import TestModel
 from rich.console import Console
 
-from src.engine.attachments.image_attachment import ImageAttachment
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
-from src.ui.widgets.chat_log import AssistantBlock, ChatLog, ToolCallBlock, ToolGroupHeader, UserMessage
-from src.ui.widgets.prompt_input import PromptInput
+from src.core.attachments.image_attachment import ImageAttachment
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.chat.assistant_block import AssistantBlock
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.chat.tool_call_block import ToolCallBlock
+from src.ui.widgets.chat.tool_group_header import ToolGroupHeader
+from src.ui.widgets.chat.user_message import UserMessage
+from src.ui.widgets.panels.prompt_input import PromptInput
 
 
 @pytest.fixture

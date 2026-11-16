@@ -8,15 +8,17 @@ subprocess, no image: the runners are fakes.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from src.engine.attachments.clipboard import (
+from src.core.attachments.clipboard import (
     MACOS_TOOL,
     PNG_TYPE,
-    ClipboardUnavailable,
-    CommandResult,
     read_clipboard_image,
 )
+from src.core.attachments.clipboard_unavailable import ClipboardUnavailable
+from src.core.attachments.command_result import CommandResult
 
 PNG_BYTES = b'\x89PNG\r\n\x1a\nfake'
 
@@ -55,7 +57,7 @@ X11_PNG = CommandResult(returncode=0, stdout=PNG_BYTES)
 # --- X11 --------------------------------------------------------------------
 
 
-def test_x11_asks_for_the_targets_and_then_for_png():
+def test_x11_asks_for_the_targets_and_then_for_png() -> None:
     """The targets decide; asking for a type nobody offered is how you get garbage."""
     desktop = FakeDesktop(
         {
@@ -75,7 +77,7 @@ def test_x11_asks_for_the_targets_and_then_for_png():
     assert desktop.called[-1] == ('xclip', '-selection', 'clipboard', '-t', 'image/png', '-o')
 
 
-def test_x11_prefers_png_over_a_type_that_needs_transcoding():
+def test_x11_prefers_png_over_a_type_that_needs_transcoding() -> None:
     desktop = FakeDesktop(
         {
             ('xclip', '-selection', 'clipboard', '-t', 'TARGETS', '-o'): CommandResult(
@@ -92,7 +94,7 @@ def test_x11_prefers_png_over_a_type_that_needs_transcoding():
     assert not any('image/bmp' in call for call in desktop.called)
 
 
-def test_a_text_only_clipboard_yields_no_image_instead_of_noise():
+def test_a_text_only_clipboard_yields_no_image_instead_of_noise() -> None:
     """Copying a paragraph must not produce a broken attachment."""
     desktop = FakeDesktop(
         {
@@ -110,7 +112,7 @@ def test_a_text_only_clipboard_yields_no_image_instead_of_noise():
     assert len(desktop.calls) == 1
 
 
-def test_x11_without_xclip_explains_what_to_install():
+def test_x11_without_xclip_explains_what_to_install() -> None:
     with pytest.raises(ClipboardUnavailable) as caught:
         read_clipboard_image(environ={'XDG_SESSION_TYPE': 'x11'}, platform='linux', run=FakeDesktop({}), which=_which())
 
@@ -120,7 +122,7 @@ def test_x11_without_xclip_explains_what_to_install():
 # --- Wayland ----------------------------------------------------------------
 
 
-def test_wayland_uses_wl_paste_and_never_xclip():
+def test_wayland_uses_wl_paste_and_never_xclip() -> None:
     """A Wayland session with XWayland answers `xclip` from a stale X selection."""
     desktop = FakeDesktop(
         {
@@ -140,7 +142,7 @@ def test_wayland_uses_wl_paste_and_never_xclip():
     assert all(call[0] == 'wl-paste' for call in desktop.called)
 
 
-def test_wayland_is_detected_from_the_socket_when_the_session_is_not_declared():
+def test_wayland_is_detected_from_the_socket_when_the_session_is_not_declared() -> None:
     desktop = FakeDesktop(
         {
             ('wl-paste', '--list-types'): CommandResult(returncode=0, stdout=b'image/png\n'),
@@ -159,7 +161,7 @@ def test_wayland_is_detected_from_the_socket_when_the_session_is_not_declared():
     )
 
 
-def test_wayland_without_wl_clipboard_explains_what_to_install():
+def test_wayland_without_wl_clipboard_explains_what_to_install() -> None:
     with pytest.raises(ClipboardUnavailable) as caught:
         read_clipboard_image(
             environ={'XDG_SESSION_TYPE': 'wayland'},
@@ -174,7 +176,7 @@ def test_wayland_without_wl_clipboard_explains_what_to_install():
 # --- the other desktops -----------------------------------------------------
 
 
-def test_macos_reads_pngpaste_and_names_it_when_missing():
+def test_macos_reads_pngpaste_and_names_it_when_missing() -> None:
     desktop = FakeDesktop({(MACOS_TOOL, '-'): CommandResult(returncode=0, stdout=PNG_BYTES)})
 
     assert read_clipboard_image(platform='darwin', run=desktop, which=_which(MACOS_TOOL)) == PNG_BYTES
@@ -184,7 +186,7 @@ def test_macos_reads_pngpaste_and_names_it_when_missing():
     assert 'brew install pngpaste' in str(caught.value)
 
 
-def test_windows_saves_to_a_temp_file_and_reads_it_back(tmp_path):
+def test_windows_saves_to_a_temp_file_and_reads_it_back(tmp_path: Path) -> None:
     """PowerShell has no way to write raw bytes to stdout, so it writes a file."""
     target = tmp_path / 'shot.png'
     target.write_bytes(PNG_BYTES)
@@ -194,7 +196,7 @@ def test_windows_saves_to_a_temp_file_and_reads_it_back(tmp_path):
                 'powershell',
                 '-NoProfile',
                 '-Command',
-                __import__('src.engine.attachments.clipboard', fromlist=['WINDOWS_SCRIPT']).WINDOWS_SCRIPT,
+                __import__('src.core.attachments.clipboard', fromlist=['WINDOWS_SCRIPT']).WINDOWS_SCRIPT,
             ): CommandResult(returncode=0, stdout=str(target).encode()),
         }
     )
@@ -204,7 +206,7 @@ def test_windows_saves_to_a_temp_file_and_reads_it_back(tmp_path):
     assert not target.exists()
 
 
-def test_a_failing_tool_is_no_image_rather_than_an_error():
+def test_a_failing_tool_is_no_image_rather_than_an_error() -> None:
     desktop = FakeDesktop(
         {('xclip', '-selection', 'clipboard', '-t', 'TARGETS', '-o'): CommandResult(returncode=1, stdout=b'')}
     )

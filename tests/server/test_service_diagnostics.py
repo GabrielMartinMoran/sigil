@@ -9,7 +9,7 @@ import pytest
 
 
 def test_records_frames_without_sensitive_exception_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.server.diagnostics import record
+    from src.server.launch.diagnostics import record
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path))
     try:
@@ -29,7 +29,7 @@ def test_records_frames_without_sensitive_exception_text(tmp_path: Path, monkeyp
 
 
 def test_diagnostics_failure_does_not_interrupt_recovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.server.diagnostics import record
+    from src.server.launch.diagnostics import record
 
     blocked = tmp_path / 'not-a-directory'
     blocked.write_text('block')
@@ -38,7 +38,7 @@ def test_diagnostics_failure_does_not_interrupt_recovery(tmp_path: Path, monkeyp
 
 
 def test_rotates_only_its_own_bounded_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.server import diagnostics
+    from src.server.launch import diagnostics
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path))
     monkeypatch.setattr(diagnostics, 'MAX_LOG_BYTES', 1)
@@ -53,7 +53,7 @@ def test_rotates_only_its_own_bounded_log(tmp_path: Path, monkeypatch: pytest.Mo
 def test_diagnostics_refuse_symlink_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import os
 
-    from src.server.diagnostics import record
+    from src.server.launch.diagnostics import record
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path))
     directory = tmp_path / 'service' / 'diagnostics'
@@ -71,7 +71,7 @@ def test_uncaught_server_failure_survives_as_private_diagnostics(tmp_path: Path)
     import sys
 
     code = """
-from src.server.diagnostics import diagnose_server
+from src.server.launch.diagnostics import diagnose_server
 with diagnose_server():
     raise RuntimeError('sensitive contents')
 """
@@ -104,7 +104,7 @@ import faulthandler
 import os
 import resource
 import signal
-from src.server.diagnostics import diagnose_server
+from src.server.launch.diagnostics import diagnose_server
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 faulthandler.disable()
 with diagnose_server():
@@ -126,8 +126,8 @@ with diagnose_server():
 def test_framework_caught_startup_error_is_still_recorded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from fastapi.testclient import TestClient
 
-    from src.server.app import create_app
-    from src.server.config import ServerConfig
+    from src.server.api.app import create_app
+    from src.server.launch.server_config import ServerConfig
     from tests.support.server_endpoint import _RuntimeStub
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path))
@@ -153,7 +153,7 @@ def test_signal_record_can_reenter_logging_without_deadlocking(tmp_path: Path) -
     import sys
 
     code = """
-from src.server import diagnostics
+from src.server.launch import diagnostics
 with diagnostics._lock:
     diagnostics.record('server_signal_received', signal=15)
 """

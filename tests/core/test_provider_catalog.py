@@ -10,17 +10,18 @@ import asyncio
 import json
 from pathlib import Path
 
-from src.engine.providers.catalog.catalog_cache import CatalogCache
-from src.engine.providers.catalog.catalog_service import ModelCatalogService, best_effort_window
-from src.engine.providers.catalog.openai_source import OpenAISource
-from src.engine.providers.catalog.openai_source import parse_models as parse_openai
-from src.engine.providers.catalog.opencode_source import parse_entry as parse_opencode_entry
-from src.engine.providers.catalog.opencode_source import parse_models as parse_opencode
-from src.engine.providers.catalog.openrouter_source import parse_models as parse_openrouter
-from src.engine.providers.catalog.static_source import fallback_models
-from src.engine.providers.domain.provider_account import ProviderAccount
-from src.engine.providers.domain.provider_kind import ProviderKind
-from src.engine.providers.domain.provider_variant import ProviderVariant
+from src.core.providers.catalog.catalog_cache import CatalogCache
+from src.core.providers.catalog.catalog_service import best_effort_window
+from src.core.providers.catalog.model_catalog_service import ModelCatalogService
+from src.core.providers.catalog.openai_source import OpenAISource
+from src.core.providers.catalog.openai_source import parse_models as parse_openai
+from src.core.providers.catalog.opencode_parse_models import parse_entry as parse_opencode_entry
+from src.core.providers.catalog.opencode_parse_models import parse_models as parse_opencode
+from src.core.providers.catalog.openrouter_source import parse_models as parse_openrouter
+from src.core.providers.catalog.static_source import fallback_models
+from src.core.providers.domain.provider_account import ProviderAccount
+from src.core.providers.domain.provider_kind import ProviderKind
+from src.core.providers.domain.provider_variant import ProviderVariant
 
 FIXTURES = Path(__file__).parents[1] / 'fixtures'
 
@@ -36,7 +37,7 @@ def _account(kind: ProviderKind, variant=ProviderVariant.DEFAULT) -> ProviderAcc
 # --- OpenRouter -------------------------------------------------------------
 
 
-def test_openrouter_parses_window_efforts_and_cleans_the_name():
+def test_openrouter_parses_window_efforts_and_cleans_the_name() -> None:
     models = parse_openrouter(_fixture('openrouter_models.json'))
     by_name = {model.name: model for model in models}
 
@@ -48,28 +49,28 @@ def test_openrouter_parses_window_efforts_and_cleans_the_name():
     assert sonnet.supports_tools
 
 
-def test_openrouter_reports_no_efforts_when_the_model_does_not_reason():
+def test_openrouter_reports_no_efforts_when_the_model_does_not_reason() -> None:
     by_name = {model.name: model for model in parse_openrouter(_fixture('openrouter_models.json'))}
     assert by_name['openai/gpt-4o-mini'].efforts == ()
 
 
-def test_openrouter_marks_a_model_without_tool_support():
+def test_openrouter_marks_a_model_without_tool_support() -> None:
     by_name = {model.name: model for model in parse_openrouter(_fixture('openrouter_models.json'))}
     assert not by_name['meta/llama-free'].supports_tools
 
 
-def test_openrouter_keeps_a_model_with_no_window_rather_than_dropping_it():
+def test_openrouter_keeps_a_model_with_no_window_rather_than_dropping_it() -> None:
     by_name = {model.name: model for model in parse_openrouter(_fixture('openrouter_models.json'))}
     assert by_name['meta/llama-free'].context_window is None
 
 
-def test_openrouter_skips_entries_with_a_non_string_id():
+def test_openrouter_skips_entries_with_a_non_string_id() -> None:
     names = [model.name for model in parse_openrouter(_fixture('openrouter_models.json'))]
     assert len(names) == 4
     assert all(isinstance(name, str) for name in names)
 
 
-def test_openrouter_reads_a_malformed_window_as_unknown():
+def test_openrouter_reads_a_malformed_window_as_unknown() -> None:
     by_name = {model.name: model for model in parse_openrouter(_fixture('openrouter_models.json'))}
     assert by_name['meta/llama-free'].context_window is None
 
@@ -77,7 +78,7 @@ def test_openrouter_reads_a_malformed_window_as_unknown():
 # --- OpenCode ---------------------------------------------------------------
 
 
-def test_opencode_reads_the_dialect_and_endpoint_from_the_api_map():
+def test_opencode_reads_the_dialect_and_endpoint_from_the_api_map() -> None:
     models = parse_opencode(_fixture('opencode_models.json'))
     by_name = {model.name: model for model in models}
 
@@ -91,7 +92,7 @@ def test_opencode_reads_the_dialect_and_endpoint_from_the_api_map():
     assert gpt.base_url == 'https://opencode.ai/inference/openai/v1'
 
 
-def test_opencode_prefers_chat_completions_when_a_model_offers_several():
+def test_opencode_prefers_chat_completions_when_a_model_offers_several() -> None:
     entry = {
         'id': 'multi',
         'api': {
@@ -103,21 +104,21 @@ def test_opencode_prefers_chat_completions_when_a_model_offers_several():
     assert parse_opencode_entry(entry).dialect == 'chat-completions'
 
 
-def test_opencode_parses_effort_levels_from_capabilities():
+def test_opencode_parses_effort_levels_from_capabilities() -> None:
     models = parse_opencode(_fixture('opencode_models.json'))
     by_name = {model.name: model for model in models}
     assert by_name['claude-sonnet-4-6'].efforts == ('low', 'medium', 'high', 'max')
     assert by_name['gpt-5-nano'].efforts == ('minimal', 'low', 'medium', 'high')
 
 
-def test_opencode_without_capabilities_offers_no_efforts():
+def test_opencode_without_capabilities_offers_no_efforts() -> None:
     entry = {'id': 'plain', 'api': {'chat-completions': {'base_url': 'https://x/v1'}}}
     model = parse_opencode_entry(entry)
     assert model.efforts == ()
     assert model.supports_tools
 
 
-def test_opencode_reads_tool_support():
+def test_opencode_reads_tool_support() -> None:
     entry = {
         'id': 'notools',
         'api': {'chat-completions': {'base_url': 'https://x/v1'}},
@@ -126,7 +127,7 @@ def test_opencode_reads_tool_support():
     assert not parse_opencode_entry(entry).supports_tools
 
 
-def test_opencode_falls_back_to_chat_completions_without_an_api_map():
+def test_opencode_falls_back_to_chat_completions_without_an_api_map() -> None:
     model = parse_opencode_entry({'id': 'bare'})
     assert model.dialect == 'chat-completions'
     assert model.base_url is None
@@ -149,12 +150,12 @@ def _fake_profile(name: str):
     return table.get(name)
 
 
-def test_openai_hides_the_families_that_cannot_hold_a_chat():
+def test_openai_hides_the_families_that_cannot_hold_a_chat() -> None:
     names = [model.name for model in parse_openai(_fixture('openai_models.json'), _fake_profile)]
     assert names == ['gpt-4.1', 'gpt-5.1', 'o3']
 
 
-def test_openai_takes_the_window_and_efforts_from_the_profile():
+def test_openai_takes_the_window_and_efforts_from_the_profile() -> None:
     by_name = {model.name: model for model in parse_openai(_fixture('openai_models.json'), _fake_profile)}
     assert by_name['gpt-5.1'].context_window == 400_000
     assert by_name['gpt-5.1'].efforts == ('low', 'medium', 'high')
@@ -162,7 +163,7 @@ def test_openai_takes_the_window_and_efforts_from_the_profile():
     assert by_name['gpt-4.1'].dialect == 'responses'
 
 
-def test_openai_tolerates_a_model_with_no_profile():
+def test_openai_tolerates_a_model_with_no_profile() -> None:
     by_name = {model.name: model for model in parse_openai(_fixture('openai_models.json'), lambda _name: None)}
     assert by_name['o3'].context_window is None
 
@@ -176,31 +177,31 @@ def test_openai_tolerates_a_model_with_no_profile():
 # models with "the provider returned an empty model list" next to them.
 
 
-def test_the_plan_payload_is_read_even_though_it_has_no_data_key():
+def test_the_plan_payload_is_read_even_though_it_has_no_data_key() -> None:
     names = [model.name for model in parse_openai(_fixture('openai_plan_models.json'), lambda _name: None)]
     assert names == ['codex-auto-review', 'gpt-6.1-sol', 'gpt-reserve']
 
 
-def test_the_plan_payload_hides_the_families_that_cannot_hold_a_chat():
+def test_the_plan_payload_hides_the_families_that_cannot_hold_a_chat() -> None:
     names = [model.name for model in parse_openai(_fixture('openai_plan_models.json'), lambda _name: None)]
     assert 'gpt-image-1' not in names
     assert 'text-embedding-3-large' not in names
 
 
-def test_the_plan_payload_supplies_the_display_name():
+def test_the_plan_payload_supplies_the_display_name() -> None:
     by_name = {model.name: model for model in parse_openai(_fixture('openai_plan_models.json'), lambda _name: None)}
     assert by_name['gpt-6.1-sol'].label == 'GPT-6.1-Sol'
     assert by_name['gpt-6.1-sol'].name == 'gpt-6.1-sol'
 
 
-def test_the_plan_window_is_the_usable_one_not_the_ceiling():
+def test_the_plan_window_is_the_usable_one_not_the_ceiling() -> None:
     """`max_context_window` is reachable only with experimental context; budgeting it
     would make the meter promise a turn the provider is going to truncate."""
     by_name = {model.name: model for model in parse_openai(_fixture('openai_plan_models.json'), lambda _name: None)}
     assert by_name['gpt-6.1-sol'].context_window == 500_000
 
 
-def test_the_plan_reasoning_levels_are_objects_and_still_produce_efforts():
+def test_the_plan_reasoning_levels_are_objects_and_still_produce_efforts() -> None:
     """`[{"effort": "low"}]` stringified is not `low`, so reading them as strings left
     every plan model looking like it cannot reason."""
     by_name = {model.name: model for model in parse_openai(_fixture('openai_plan_models.json'), lambda _name: None)}
@@ -208,13 +209,13 @@ def test_the_plan_reasoning_levels_are_objects_and_still_produce_efforts():
     assert by_name['gpt-reserve'].efforts == ()
 
 
-def test_the_plan_modalities_decide_image_input():
+def test_the_plan_modalities_decide_image_input() -> None:
     by_name = {model.name: model for model in parse_openai(_fixture('openai_plan_models.json'), lambda _name: None)}
     assert by_name['gpt-6.1-sol'].supports_images is True
     assert by_name['gpt-reserve'].supports_images is False
 
 
-def test_the_plan_payload_wins_over_the_bundled_profile():
+def test_the_plan_payload_wins_over_the_bundled_profile() -> None:
     """Both know the model; the endpoint is the fresher one."""
     profiles = {'gpt-6.1-sol': {'context_window': 128_000, 'supports_thinking': False}}
     by_name = {model.name: model for model in parse_openai(_fixture('openai_plan_models.json'), profiles.get)}
@@ -222,7 +223,7 @@ def test_the_plan_payload_wins_over_the_bundled_profile():
     assert by_name['gpt-6.1-sol'].efforts == ('low', 'medium', 'high', 'xhigh')
 
 
-def test_the_plan_payload_picks_up_an_entry_that_names_itself_with_id():
+def test_the_plan_payload_picks_up_an_entry_that_names_itself_with_id() -> None:
     """`slug` today, `id` tomorrow: accepting both costs nothing and survives the day
     the endpoint changes its mind."""
     payload = {'models': [{'id': 'legacy-model', 'context_window': 128_000}]}
@@ -233,7 +234,7 @@ def test_the_plan_payload_picks_up_an_entry_that_names_itself_with_id():
 # --- cache ------------------------------------------------------------------
 
 
-def test_cache_returns_nothing_past_the_ttl():
+def test_cache_returns_nothing_past_the_ttl() -> None:
     now = [0.0]
     cache = CatalogCache(ttl=10.0)
     cache._clock = lambda: now[0]
@@ -245,7 +246,7 @@ def test_cache_returns_nothing_past_the_ttl():
     assert cache.get('a') is None
 
 
-def test_cache_invalidation():
+def test_cache_invalidation() -> None:
     cache = CatalogCache()
     cache.put('a', _catalog('one'))
     cache.put('b', _catalog('two'))
@@ -257,7 +258,8 @@ def test_cache_invalidation():
 
 
 def _catalog(tag: str):
-    from src.engine.providers.domain.model_capability import ModelCapability, ModelCatalog
+    from src.core.providers.domain.model_capability import ModelCapability
+    from src.core.providers.domain.model_catalog import ModelCatalog
 
     return ModelCatalog(models=(ModelCapability(name=tag),), source='remote')
 
@@ -265,11 +267,11 @@ def _catalog(tag: str):
 # --- service ----------------------------------------------------------------
 
 
-def test_service_uses_the_remote_list_and_caches_it():
+def test_service_uses_the_remote_list_and_caches_it() -> None:
     asyncio.run(_test_service_uses_the_remote_list_and_caches_it())
 
 
-async def _test_service_uses_the_remote_list_and_caches_it():
+async def _test_service_uses_the_remote_list_and_caches_it() -> None:
     calls: list[str] = []
 
     async def fetch(url, headers, timeout):
@@ -288,12 +290,12 @@ async def _test_service_uses_the_remote_list_and_caches_it():
     assert len(calls) == 1
 
 
-def test_service_falls_back_to_static_on_a_transport_error():
+def test_service_falls_back_to_static_on_a_transport_error() -> None:
     asyncio.run(_test_service_falls_back_to_static_on_a_transport_error())
 
 
-async def _test_service_falls_back_to_static_on_a_transport_error():
-    async def fetch(url, headers, timeout):
+async def _test_service_falls_back_to_static_on_a_transport_error() -> None:
+    async def fetch(url, headers, timeout) -> None:
         raise OSError('network is down')
 
     service = ModelCatalogService(fetch_json=fetch)
@@ -305,11 +307,11 @@ async def _test_service_falls_back_to_static_on_a_transport_error():
     assert catalog.models == fallback_models(account)
 
 
-def test_service_falls_back_when_the_payload_is_unusable():
+def test_service_falls_back_when_the_payload_is_unusable() -> None:
     asyncio.run(_test_service_falls_back_when_the_payload_is_unusable())
 
 
-async def _test_service_falls_back_when_the_payload_is_unusable():
+async def _test_service_falls_back_when_the_payload_is_unusable() -> None:
     async def fetch(url, headers, timeout):
         return {'nonsense': True}
 
@@ -320,11 +322,11 @@ async def _test_service_falls_back_when_the_payload_is_unusable():
     assert 'data' in (catalog.error or '')
 
 
-def test_service_reports_an_empty_remote_list_as_a_failure():
+def test_service_reports_an_empty_remote_list_as_a_failure() -> None:
     asyncio.run(_test_service_reports_an_empty_remote_list_as_a_failure())
 
 
-async def _test_service_reports_an_empty_remote_list_as_a_failure():
+async def _test_service_reports_an_empty_remote_list_as_a_failure() -> None:
     async def fetch(url, headers, timeout):
         return {'data': []}
 
@@ -335,12 +337,12 @@ async def _test_service_reports_an_empty_remote_list_as_a_failure():
     assert catalog.error == 'The provider returned an empty model list.'
 
 
-def test_service_never_raises_on_an_unexpected_error():
+def test_service_never_raises_on_an_unexpected_error() -> None:
     asyncio.run(_test_service_never_raises_on_an_unexpected_error())
 
 
-async def _test_service_never_raises_on_an_unexpected_error():
-    async def fetch(url, headers, timeout):
+async def _test_service_never_raises_on_an_unexpected_error() -> None:
+    async def fetch(url, headers, timeout) -> None:
         raise RuntimeError('boom')
 
     service = ModelCatalogService(fetch_json=fetch)
@@ -350,11 +352,11 @@ async def _test_service_never_raises_on_an_unexpected_error():
     assert catalog.error == 'boom'
 
 
-def test_service_does_not_send_a_key_to_the_openai_list_without_one():
+def test_service_does_not_send_a_key_to_the_openai_list_without_one() -> None:
     asyncio.run(_test_service_does_not_send_a_key_to_the_openai_list_without_one())
 
 
-async def _test_service_does_not_send_a_key_to_the_openai_list_without_one():
+async def _test_service_does_not_send_a_key_to_the_openai_list_without_one() -> None:
     calls: list[str] = []
 
     async def fetch(url, headers, timeout):
@@ -372,12 +374,12 @@ async def _test_service_does_not_send_a_key_to_the_openai_list_without_one():
     assert catalog.source == 'static'
 
 
-def test_best_effort_window_reads_the_matching_model():
+def test_best_effort_window_reads_the_matching_model() -> None:
     models = parse_openrouter(_fixture('openrouter_models.json'))
     assert best_effort_window(models, 'anthropic/claude-haiku-4.5') == 200_000
     assert best_effort_window(models, 'missing') is None
 
 
-def test_static_fallback_covers_every_kind():
+def test_static_fallback_covers_every_kind() -> None:
     for kind in ProviderKind:
         assert fallback_models(_account(kind))

@@ -16,12 +16,12 @@ from typing import Any
 
 import pytest
 
-from src.engine.providers.catalog.catalog_service import ModelCatalogService, _describe
-from src.engine.providers.catalog.openai_source import OpenAISource
-from src.engine.providers.domain.auth_method import AuthMethod
-from src.engine.providers.domain.provider_account import ProviderAccount
-from src.engine.providers.domain.provider_kind import ProviderKind
-from src.engine.providers.domain.provider_variant import ProviderVariant
+from src.core.providers.catalog.model_catalog_service import ModelCatalogService, _describe
+from src.core.providers.catalog.openai_source import OpenAISource
+from src.core.providers.domain.auth_method import AuthMethod
+from src.core.providers.domain.provider_account import ProviderAccount
+from src.core.providers.domain.provider_kind import ProviderKind
+from src.core.providers.domain.provider_variant import ProviderVariant
 
 
 def _account(auth: AuthMethod) -> ProviderAccount:

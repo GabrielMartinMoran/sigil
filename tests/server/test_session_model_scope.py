@@ -12,10 +12,13 @@ Two rules, and they are the reason this file exists:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
-from src.engine.bootstrap import Composition
-from src.engine.providers.bootstrap import ProviderPaths
-from src.engine.settings import load_settings
+import pytest
+
+from src.core.composition.composition import Composition
+from src.core.config.load_settings import load_settings
+from src.core.providers.provider_paths import ProviderPaths
 from tests.support.provider_service import _add, _service
 
 # --- the config block --------------------------------------------------------
@@ -39,7 +42,7 @@ def _composition(tmp_path, monkeypatch, config: dict | None = None) -> tuple[Com
         _write(tmp_path, config)
     service = _service(tmp_path)
     _add(service)
-    monkeypatch.setattr('src.engine.bootstrap.build_service', lambda *args, **kwargs: service)
+    monkeypatch.setattr('src.core.composition.composition.build_service', lambda *args, **kwargs: service)
     composition = Composition(tmp_path, settings=load_settings({}), provider_paths=ProviderPaths(tmp_path / 'p'))
     return composition, service
 
@@ -47,7 +50,9 @@ def _composition(tmp_path, monkeypatch, config: dict | None = None) -> tuple[Com
 # --- and an explicit open brings that conversation's model with it -----------
 
 
-def test_switching_workspace_starts_empty_and_an_explicit_open_restores_the_model(tmp_path, monkeypatch):
+def test_switching_workspace_starts_empty_and_an_explicit_open_restores_the_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A workspace switch opens a draft; the model comes back only with an explicit open.
 
     Switching workspace is not opening a conversation: the user names one with `/load`
@@ -55,8 +60,8 @@ def test_switching_workspace_starts_empty_and_an_explicit_open_restores_the_mode
     where a conversation's model is restored, in one place, for every client, so the
     conversation opened on purpose runs on its own model again.
     """
-    from src.server.events import EventHub
-    from src.server.runtime import ServerRuntime
+    from src.server.runtime.event_hub import EventHub
+    from src.server.runtime.server_runtime import ServerRuntime
 
     other = tmp_path / 'other'
     other.mkdir()
@@ -74,7 +79,8 @@ def test_switching_workspace_starts_empty_and_an_explicit_open_restores_the_mode
     from dataclasses import replace
 
     monkeypatch.setattr(
-        'src.engine.bootstrap.build_service', lambda *args, **kwargs: replace(service, router=copy(service.router))
+        'src.core.composition.composition.build_service',
+        lambda *args, **kwargs: replace(service, router=copy(service.router)),
     )
     # Leaving and coming back opens an empty draft instead of that conversation.
     runtime.switch_workspace(str(other))
@@ -94,17 +100,20 @@ def test_switching_workspace_starts_empty_and_an_explicit_open_restores_the_mode
     assert runtime.session.selection.model == 'first/model'
 
 
-def test_resident_compositions_keep_independent_model_snapshots(tmp_path, monkeypatch):
+def test_resident_compositions_keep_independent_model_snapshots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from copy import copy
     from dataclasses import replace
 
     composition, service = _composition(tmp_path, monkeypatch)
     # The real factory makes one service/router per composition over shared stores.
     monkeypatch.setattr(
-        'src.engine.bootstrap.build_service', lambda *args, **kwargs: replace(service, router=copy(service.router))
+        'src.core.composition.composition.build_service',
+        lambda *args, **kwargs: replace(service, router=copy(service.router)),
     )
-    from src.server.events import EventHub
-    from src.server.runtime import ServerRuntime
+    from src.server.runtime.event_hub import EventHub
+    from src.server.runtime.server_runtime import ServerRuntime
 
     runtime = ServerRuntime(composition, EventHub(), require_ownership=False)
     first = runtime.session_runtime

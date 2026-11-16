@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.context.strategy.append_only import AppendOnlyStrategy
+from src.core.context.meter.context_meter import ContextMeter
+from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 from tests.support.context_compaction_records import (
     history,
     pressured_window,
@@ -11,10 +11,10 @@ from tests.support.context_compaction_records import (
 )
 
 
-def test_debug_timeline_shows_real_compaction_on_request_that_recorded_it():
-    from src.engine.context.meter.debug import build_debug_report
-    from src.engine.context.meter.request import RequestSnapshot
-    from src.ui.widgets.debug_view import _turn_timeline
+def test_debug_timeline_shows_real_compaction_on_request_that_recorded_it() -> None:
+    from src.core.context.meter.debug import build_debug_report
+    from src.core.context.meter.request_snapshot import RequestSnapshot
+    from src.ui.widgets.panels.debug_body import _turn_timeline
 
     messages = history(30)
     window = pressured_window(messages)

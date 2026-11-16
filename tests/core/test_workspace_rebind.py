@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
-from src.engine.context.scope import ScopeTracker
-from src.engine.roadmap.stores import RoadmapStores
-from src.engine.sessions.session_store import SessionStore
-from src.engine.skills.registry import SkillRegistry
+from src.core.context.instructions.workspace_instructions import WorkspaceInstructions
+from src.core.context.scope_tracker import ScopeTracker
+from src.core.roadmap.roadmap_stores import RoadmapStores
+from src.core.sessions.session_store import SessionStore
+from src.core.skills.skill_registry import SkillRegistry
 
 # --- ScopeTracker -------------------------------------------------------------
 
 
-def test_scope_rebind_moves_the_root_and_forgets_the_directories(tmp_path):
+def test_scope_rebind_moves_the_root_and_forgets_the_directories(tmp_path: Path) -> None:
     first = tmp_path / 'first'
     second = tmp_path / 'second'
     (second / 'nested').mkdir(parents=True)
@@ -29,7 +31,7 @@ def test_scope_rebind_moves_the_root_and_forgets_the_directories(tmp_path):
     assert scope.relative_scopes() == ('.',)
 
 
-def test_scope_rebind_to_the_same_root_is_a_no_op(tmp_path):
+def test_scope_rebind_to_the_same_root_is_a_no_op(tmp_path: Path) -> None:
     scope = ScopeTracker(tmp_path)
     (tmp_path / 'a').mkdir()
     scope.observe('read_file', {'path': 'a/file.txt'})
@@ -41,7 +43,7 @@ def test_scope_rebind_to_the_same_root_is_a_no_op(tmp_path):
 # --- WorkspaceInstructions ----------------------------------------------------
 
 
-def test_instructions_rebind_reads_the_new_tree(tmp_path):
+def test_instructions_rebind_reads_the_new_tree(tmp_path: Path) -> None:
     first = tmp_path / 'first'
     second = tmp_path / 'second'
     first.mkdir()
@@ -58,7 +60,7 @@ def test_instructions_rebind_reads_the_new_tree(tmp_path):
     assert 'rules of the first' not in instructions.render([second])
 
 
-def test_instructions_rebind_clears_the_file_cache(tmp_path):
+def test_instructions_rebind_clears_the_file_cache(tmp_path: Path) -> None:
     first = tmp_path / 'first'
     second = tmp_path / 'second'
     first.mkdir()
@@ -76,7 +78,7 @@ def test_instructions_rebind_clears_the_file_cache(tmp_path):
 # --- SessionStore -------------------------------------------------------------
 
 
-def test_session_store_rebind_moves_the_workspace_row(tmp_path):
+def test_session_store_rebind_moves_the_workspace_row(tmp_path: Path) -> None:
     """One database, one workspace row per directory: switching re-points the row."""
     store = SessionStore(cwd=tmp_path / 'a', base_dir=tmp_path / 'store')
     old_workspace = store.workspace_id
@@ -90,7 +92,7 @@ def test_session_store_rebind_moves_the_workspace_row(tmp_path):
     )
 
 
-def test_session_store_rebind_isolates_the_sessions(tmp_path):
+def test_session_store_rebind_isolates_the_sessions(tmp_path: Path) -> None:
     store = SessionStore(cwd=tmp_path / 'a', base_dir=tmp_path / 'store')
     store.create_session()
 
@@ -104,7 +106,7 @@ def test_session_store_rebind_isolates_the_sessions(tmp_path):
 # --- RoadmapStore -------------------------------------------------------------
 
 
-def test_a_plan_belongs_to_an_execution_and_survives_a_workspace_switch(tmp_path):
+def test_a_plan_belongs_to_an_execution_and_survives_a_workspace_switch(tmp_path: Path) -> None:
     """There is no directory to move: the plan is keyed by the execution.
 
     Switching workspace changes the session's workspace row, not the identity of the
@@ -113,7 +115,7 @@ def test_a_plan_belongs_to_an_execution_and_survives_a_workspace_switch(tmp_path
     store = SessionStore(cwd=tmp_path / 'first', base_dir=tmp_path / 'home')
     session = store.create_session()
     plans = RoadmapStores(session_id=session.id, base_dir=tmp_path / 'home')
-    from src.engine.roadmap.models.todo_item import TodoItem
+    from src.core.roadmap.models.todo_item import TodoItem
 
     plans.root.set_items([TodoItem(title='kept across the switch')])
 
@@ -124,9 +126,9 @@ def test_a_plan_belongs_to_an_execution_and_survives_a_workspace_switch(tmp_path
     assert [item.title for item in plans.root.snapshot()] == ['kept across the switch']
 
 
-def test_a_plan_does_not_leak_between_workspaces(tmp_path):
+def test_a_plan_does_not_leak_between_workspaces(tmp_path: Path) -> None:
     """Two workspaces are two sessions, and each one has its own plan."""
-    from src.engine.roadmap.models.todo_item import TodoItem
+    from src.core.roadmap.models.todo_item import TodoItem
 
     home = tmp_path / 'home'
     first = SessionStore(cwd=tmp_path / 'first', base_dir=home)
@@ -150,7 +152,7 @@ def _write_skill(root, name: str) -> None:
     (directory / 'SKILL.md').write_text(f'---\nname: {name}\ndescription: from {root.name}\n---\nbody\n')
 
 
-def test_skill_registry_rebind_rescans_the_project_root(tmp_path):
+def test_skill_registry_rebind_rescans_the_project_root(tmp_path: Path) -> None:
     first = tmp_path / 'first'
     second = tmp_path / 'second'
     _write_skill(first, 'alpha')
@@ -165,7 +167,9 @@ def test_skill_registry_rebind_rescans_the_project_root(tmp_path):
     assert [skill.name for skill in registry.list()] == ['alpha']
 
 
-def test_skill_registry_with_default_roots_follows_the_workspace(tmp_path, monkeypatch):
+def test_skill_registry_with_default_roots_follows_the_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     first = tmp_path / 'first'
     second = tmp_path / 'second'
     _write_skill(first, 'alpha')
@@ -183,7 +187,7 @@ def test_skill_registry_with_default_roots_follows_the_workspace(tmp_path, monke
     assert 'alpha' not in names
 
 
-def test_skill_registry_keeps_an_explicit_skills_dir(tmp_path, monkeypatch):
+def test_skill_registry_keeps_an_explicit_skills_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path / 'skills'
     _write_skill(tmp_path, 'alpha')
     monkeypatch.setenv('SIGIL_SKILLS_DIRS', str(root))
@@ -195,7 +199,7 @@ def test_skill_registry_keeps_an_explicit_skills_dir(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize('size', [1])
-def test_registry_length_is_the_discovered_count(tmp_path, size: int):
+def test_registry_length_is_the_discovered_count(tmp_path: Path, size: int) -> None:
     _write_skill(tmp_path, 'only')
     registry = SkillRegistry(roots=[('project', tmp_path / '.agents' / 'skills')])
     assert len(registry) == size

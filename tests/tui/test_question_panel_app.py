@@ -14,14 +14,15 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from textual.widgets import OptionList, Static
 
-from src.engine.interaction.hub import QuestionHub
-from src.engine.interaction.models.question_item import QuestionItem, QuestionOption
-from src.engine.interaction.tools import register_interaction_tools
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.prompt_input import PromptInput
-from src.ui.widgets.question_panel import QuestionPanel
+from src.core.interaction.models.question_item import QuestionItem
+from src.core.interaction.models.question_option import QuestionOption
+from src.core.interaction.question_hub import QuestionHub
+from src.core.interaction.tools import register_interaction_tools
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.panels.question_panel import QuestionPanel
 from tests.support.ui import fill_chat, wait_for_turn
 
 pytestmark = pytest.mark.usefixtures('memory_databases')
@@ -53,9 +54,9 @@ async def _answer(pilot, prompts: dict[str, str]) -> None:
         await pilot.press('enter')
 
 
-def test_panel_does_not_cover_the_chat():
+def test_panel_does_not_cover_the_chat() -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hub = QuestionHub()
             app = _make_app(tmp, hub)
@@ -105,9 +106,9 @@ def test_panel_does_not_cover_the_chat():
     asyncio.run(inner())
 
 
-def test_hub_reaches_the_panel_and_the_answer_comes_back():
+def test_hub_reaches_the_panel_and_the_answer_comes_back() -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hub = QuestionHub()
             app = _make_app(tmp, hub)
@@ -128,9 +129,9 @@ def test_hub_reaches_the_panel_and_the_answer_comes_back():
     asyncio.run(inner())
 
 
-def test_escape_cancels_without_touching_the_conversation():
+def test_escape_cancels_without_touching_the_conversation() -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hub = QuestionHub()
             app = _make_app(tmp, hub)
@@ -152,9 +153,9 @@ def test_escape_cancels_without_touching_the_conversation():
     asyncio.run(inner())
 
 
-def test_a_tool_can_ask_mid_turn_and_the_turn_continues():
+def test_a_tool_can_ask_mid_turn_and_the_turn_continues() -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hub = QuestionHub()
             seen: list[str] = []
@@ -191,9 +192,9 @@ def test_a_tool_can_ask_mid_turn_and_the_turn_continues():
     asyncio.run(inner())
 
 
-def test_escaping_the_panel_stops_the_turn_and_gives_control_back():
+def test_escaping_the_panel_stops_the_turn_and_gives_control_back() -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hub = QuestionHub()
             agent = Agent(TestModel(custom_output_text='done'), instructions='x')
@@ -237,8 +238,8 @@ def test_escaping_the_panel_stops_the_turn_and_gives_control_back():
     asyncio.run(inner())
 
 
-def test_ctrl_arrows_read_the_chat_without_leaving_the_panel():
-    async def inner():
+def test_ctrl_arrows_read_the_chat_without_leaving_the_panel() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hub = QuestionHub()
             app = _make_app(tmp, hub)
@@ -269,8 +270,8 @@ def test_ctrl_arrows_read_the_chat_without_leaving_the_panel():
     asyncio.run(inner())
 
 
-def test_ctrl_arrows_read_the_debug_view_when_it_is_the_one_on_screen():
-    async def inner():
+def test_ctrl_arrows_read_the_debug_view_when_it_is_the_one_on_screen() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hub = QuestionHub()
             app = _make_app(tmp, hub)
@@ -297,9 +298,9 @@ def test_ctrl_arrows_read_the_debug_view_when_it_is_the_one_on_screen():
     asyncio.run(inner())
 
 
-def test_answered_questions_are_summarised_in_the_panel():
+def test_answered_questions_are_summarised_in_the_panel() -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             hub = QuestionHub()
             app = _make_app(tmp, hub)

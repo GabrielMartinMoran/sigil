@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from pydantic_ai import Agent
@@ -13,13 +14,15 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 
-from src.engine.context.budget import ContextBudget
-from src.engine.context.capability import ContextBudgetExceeded, ContextViewCapability
-from src.engine.context.compaction.events import RECORD_KEY
-from src.engine.context.compaction.records import ContextPolicyVersionError, recorded_state
-from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.context.strategy.append_only import AppendOnlyStrategy
-from src.engine.sessions.session_store import SessionStore
+from src.core.context.compaction.context_policy_version_error import ContextPolicyVersionError
+from src.core.context.compaction.events import RECORD_KEY
+from src.core.context.compaction.records import recorded_state
+from src.core.context.context_budget import ContextBudget
+from src.core.context.context_budget_exceeded import ContextBudgetExceeded
+from src.core.context.context_view_capability import ContextViewCapability
+from src.core.context.meter.context_meter import ContextMeter
+from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
+from src.core.sessions.session_store import SessionStore
 from tests.support.context_compaction_records import (
     history,
     pressured_window,
@@ -27,7 +30,7 @@ from tests.support.context_compaction_records import (
 )
 
 
-def test_agent_hook_persists_its_decision_without_altering_original_payloads():
+def test_agent_hook_persists_its_decision_without_altering_original_payloads() -> None:
     messages = history(30)
     original = ModelMessagesTypeAdapter.dump_json(messages)
     result = run_recorded(messages)
@@ -40,7 +43,7 @@ def test_agent_hook_persists_its_decision_without_altering_original_payloads():
     assert sum(isinstance(p, ThinkingPart) for m in result for p in m.parts) == 30
 
 
-def test_recorded_boundaries_survive_multiple_sqlite_resumes_and_config_changes(tmp_path):
+def test_recorded_boundaries_survive_multiple_sqlite_resumes_and_config_changes(tmp_path: Path) -> None:
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'home')
     session = store.create_session()
     session.messages = run_recorded(history(30))
@@ -58,7 +61,7 @@ def test_recorded_boundaries_survive_multiple_sqlite_resumes_and_config_changes(
         before = state, events
 
 
-def test_rollback_and_alternative_branch_cannot_inherit_future_events():
+def test_rollback_and_alternative_branch_cannot_inherit_future_events() -> None:
     original = history(30)
     completed = run_recorded(original)
     assert recorded_state(completed)[1]
@@ -69,7 +72,7 @@ def test_rollback_and_alternative_branch_cannot_inherit_future_events():
     assert not recorded_state(alternative)[1]
 
 
-def test_interleaved_agents_do_not_share_state():
+def test_interleaved_agents_do_not_share_state() -> None:
     window = pressured_window(history(30))
     capability = ContextViewCapability(
         strategy=AppendOnlyStrategy(), meter=ContextMeter(window=window, output_reserve=0)
@@ -86,7 +89,7 @@ def test_interleaved_agents_do_not_share_state():
     assert recorded_state(second.all_messages())[0].compacted_calls == ()
 
 
-def test_debug_projection_is_pure_and_retains_recorded_events():
+def test_debug_projection_is_pure_and_retains_recorded_events() -> None:
     messages = run_recorded(history(30))
     original = ModelMessagesTypeAdapter.dump_json(messages)
     capability = ContextViewCapability(
@@ -99,7 +102,7 @@ def test_debug_projection_is_pure_and_retains_recorded_events():
     assert ModelMessagesTypeAdapter.dump_json(messages) == original
 
 
-def test_unknown_policy_version_fails_explicitly():
+def test_unknown_policy_version_fails_explicitly() -> None:
     messages = run_recorded(history(30))
     last_index = next(i for i, m in reversed(list(enumerate(messages))) if RECORD_KEY in (m.metadata or {}))
     last = messages[last_index]
@@ -109,7 +112,7 @@ def test_unknown_policy_version_fails_explicitly():
         AppendOnlyStrategy().view(messages, ContextBudget(window=None))
 
 
-def test_overfull_protected_request_never_reaches_the_model():
+def test_overfull_protected_request_never_reaches_the_model() -> None:
     capability = ContextViewCapability(strategy=AppendOnlyStrategy(), meter=ContextMeter(window=100, output_reserve=0))
     agent = Agent(TestModel(), capabilities=[capability])
     with pytest.raises(ContextBudgetExceeded, match='larger context window'):
@@ -117,7 +120,7 @@ def test_overfull_protected_request_never_reaches_the_model():
     assert capability.last_view.budget_exceeded
 
 
-def test_streamed_response_records_the_same_request_decision():
+def test_streamed_response_records_the_same_request_decision() -> None:
     messages = history(30)
     window = pressured_window(messages)
     capability = ContextViewCapability(
@@ -135,8 +138,10 @@ def test_streamed_response_records_the_same_request_decision():
     assert [event.step for event in recorded_state(recorded)[1]] == [30]
 
 
-def test_failed_transcript_transaction_does_not_persist_half_an_event(tmp_path, monkeypatch):
-    from src.engine.storage import executions
+def test_failed_transcript_transaction_does_not_persist_half_an_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.core.storage import executions
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'home')
     session = store.create_session()
@@ -146,7 +151,7 @@ def test_failed_transcript_transaction_does_not_persist_half_an_event(tmp_path, 
     session.messages = run_recorded(history(30))
     original_write = executions.write_history
 
-    def fail_after_write(*args, **kwargs):
+    def fail_after_write(*args, **kwargs) -> None:
         original_write(*args, **kwargs)
         raise RuntimeError('simulated disk failure')
 
@@ -158,10 +163,10 @@ def test_failed_transcript_transaction_does_not_persist_half_an_event(tmp_path, 
     assert not recorded_state(restored.messages)[1]
 
 
-def test_a_failed_checkpoint_never_becomes_a_stored_decision():
+def test_a_failed_checkpoint_never_becomes_a_stored_decision() -> None:
     from pydantic_ai.models.function import FunctionModel
 
-    def broken(messages, info):
+    def broken(messages, info) -> None:
         raise RuntimeError('summarization unavailable')
 
     from tests.support.append_only_pipeline import conversation
@@ -177,7 +182,7 @@ def test_a_failed_checkpoint_never_becomes_a_stored_decision():
     assert capability.summary_error == 'RuntimeError'
 
 
-def test_child_request_does_not_replace_root_debug_snapshot_or_budget():
+def test_child_request_does_not_replace_root_debug_snapshot_or_budget() -> None:
     from types import SimpleNamespace
 
     from pydantic_ai import RunContext
@@ -205,10 +210,10 @@ def test_child_request_does_not_replace_root_debug_snapshot_or_budget():
     assert capability.budget_for_node('child') is None
 
 
-def test_failed_prepared_request_retains_its_events_when_the_tail_is_reprepared():
+def test_failed_prepared_request_retains_its_events_when_the_tail_is_reprepared() -> None:
     from pydantic_ai.models.function import FunctionModel
 
-    def offline(messages, info):
+    def offline(messages, info) -> None:
         raise RuntimeError('simulated offline provider')
 
     messages = history(30)
@@ -235,7 +240,7 @@ def test_failed_prepared_request_retains_its_events_when_the_tail_is_reprepared(
     assert recorded_state(resumed)[1] == events
 
 
-def test_streamed_history_survives_two_resumes_without_reinterpreting_events():
+def test_streamed_history_survives_two_resumes_without_reinterpreting_events() -> None:
     messages = history(30)
     window = pressured_window(messages)
     capability = ContextViewCapability(

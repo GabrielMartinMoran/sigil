@@ -1,31 +1,32 @@
 import asyncio
 import json
 import sys
+from pathlib import Path
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from textual.widgets import OptionList
 
-from src.engine.mcp.config.loader import load_config
-from src.engine.mcp.deferred import MCPGateway
-from src.engine.mcp.manager.manager import MCPManager
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
-from src.ui.widgets.mcp_screen import MCPScreen
-from src.ui.widgets.prompt_input import PromptInput
+from src.core.mcp.config.loader import load_config
+from src.core.mcp.manager.mcp_manager import MCPManager
+from src.core.mcp.mcp_gateway import MCPGateway
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.screens.mcp_screen import MCPScreen
 from tests.support.ui import wait_until
 
 
-def test_only_enabled_servers_show_their_tools():
-    from src.engine.mcp.tool_models.server_status import ServerStatus
-    from src.ui.widgets.mcp_screen import _row
+def test_only_enabled_servers_show_their_tools() -> None:
+    from src.core.mcp.tool_models.server_status import ServerStatus
+    from src.ui.widgets.screens.mcp_screen import _row
 
     status = ServerStatus(name='server', transport='stdio', enabled=True, prefix='', source='config', tools=['read'])
     assert 'read' in _row(status).plain
     assert 'read' not in _row(status.model_copy(update={'enabled': False})).plain
 
 
-def test_mcp_changes_are_refused_while_a_subagent_runs(tmp_path):
+def test_mcp_changes_are_refused_while_a_subagent_runs(tmp_path: Path) -> None:
     from types import SimpleNamespace
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
@@ -36,10 +37,10 @@ def test_mcp_changes_are_refused_while_a_subagent_runs(tmp_path):
     assert app.is_refused_while_busy('/mcp')
 
 
-def test_mcp_modal_scrolls_a_long_server_list(tmp_path):
+def test_mcp_modal_scrolls_a_long_server_list(tmp_path: Path) -> None:
     from textual.app import App
 
-    from src.engine.mcp.tool_models.server_status import ServerStatus
+    from src.core.mcp.tool_models.server_status import ServerStatus
 
     statuses = [
         ServerStatus(name=f'server-{i:02}', transport='stdio', enabled=False, prefix='', source='config')
@@ -49,7 +50,7 @@ def test_mcp_modal_scrolls_a_long_server_list(tmp_path):
     async def toggle(name, enabled):
         return next(status.model_copy(update={'enabled': enabled}) for status in statuses if status.name == name)
 
-    async def run():
+    async def run() -> None:
         app = App()
         async with app.run_test(size=(100, 30)) as pilot:
             app.push_screen(MCPScreen(statuses, toggle))
@@ -65,7 +66,7 @@ def test_mcp_modal_scrolls_a_long_server_list(tmp_path):
     asyncio.run(run())
 
 
-def test_mcp_modal_loads_tools_for_enabled_servers_without_blocking_open(tmp_path):
+def test_mcp_modal_loads_tools_for_enabled_servers_without_blocking_open(tmp_path: Path) -> None:
     from tests.support.mcp_deferred import SERVER_SCRIPT
 
     script = tmp_path / 'server.py'
@@ -78,7 +79,7 @@ def test_mcp_modal_loads_tools_for_enabled_servers_without_blocking_open(tmp_pat
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     app = SigilApp(agent=Agent(TestModel()), store=store, session=store.create_session(), mcp_manager=gateway)
 
-    async def run():
+    async def run() -> None:
         async with app.run_test(size=(120, 40)) as pilot:
             app.query_one(PromptInput).value = '/mcp'
             await pilot.press('enter')
@@ -90,7 +91,7 @@ def test_mcp_modal_loads_tools_for_enabled_servers_without_blocking_open(tmp_pat
     asyncio.run(run())
 
 
-def test_mcp_modal_toggles_and_persists_per_session(tmp_path):
+def test_mcp_modal_toggles_and_persists_per_session(tmp_path: Path) -> None:
     config = tmp_path / 'config.json'
     config.write_text(
         json.dumps(
@@ -109,7 +110,7 @@ def test_mcp_modal_toggles_and_persists_per_session(tmp_path):
     session = store.create_session()
     app = SigilApp(agent=Agent(TestModel()), store=store, session=session, mcp_manager=gateway)
 
-    async def run():
+    async def run() -> None:
         async with app.run_test(size=(120, 40)) as pilot:
             app.query_one(PromptInput).value = '/mcp'
             await pilot.press('enter')

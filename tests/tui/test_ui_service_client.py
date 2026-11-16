@@ -36,25 +36,25 @@ import pytest
 from PIL import Image
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 
-from src.engine.agents.tree.models.node_status import NodeStatus
-from src.engine.bootstrap import Composition
-from src.server.events import EventHub
-from src.server.launch import Launch, ServiceStarting
-from src.server.runtime import PendingQuestion, ServerRuntime
-from src.ui.service_client import (
-    OutgoingImage,
-    PayloadTooLarge,
-    RequestRejected,
-    ServiceBusy,
-    ServiceClient,
-    ServiceClientError,
-    ServiceUnavailable,
-    SseDecoder,
-    StreamInterrupted,
-    TurnRequest,
-    Unauthorized,
-    UnexpectedResponse,
-)
+from src.core.agents.tree.models.node_status import NodeStatus
+from src.core.composition.composition import Composition
+from src.server.launch.launch import Launch
+from src.server.launch.service_starting import ServiceStarting
+from src.server.runtime.event_hub import EventHub
+from src.server.runtime.pending_question import PendingQuestion
+from src.server.runtime.server_runtime import ServerRuntime
+from src.ui.client.outgoing_image import OutgoingImage
+from src.ui.client.payload_too_large import PayloadTooLarge
+from src.ui.client.request_rejected import RequestRejected
+from src.ui.client.service_busy import ServiceBusy
+from src.ui.client.service_client import ServiceClient
+from src.ui.client.service_client_error import ServiceClientError
+from src.ui.client.service_unavailable import ServiceUnavailable
+from src.ui.client.sse_decoder import SseDecoder
+from src.ui.client.stream_interrupted import StreamInterrupted
+from src.ui.client.turn_request import TurnRequest
+from src.ui.client.unauthorized import Unauthorized
+from src.ui.client.unexpected_response import UnexpectedResponse
 from tests.support.server_parity import _busy, _composition
 from tests.support.ui_service_client import (
     TOKEN,
@@ -725,7 +725,7 @@ def test_terminal_launch_starts_a_blank_session_in_its_directory(
     runtime: ServerRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, other_directory: bool
 ) -> None:
     from src import sigil
-    from src.engine.settings import load_settings
+    from src.core.config.load_settings import load_settings
 
     root = tmp_path / 'other' if other_directory else tmp_path
     root.mkdir(exist_ok=True)
@@ -834,7 +834,7 @@ def test_new_session_keeps_the_previous_turn_running(runtime: ServerRuntime, tmp
 
 
 def test_the_catalog_route_returns_one_accounts_models(runtime: ServerRuntime, tmp_path: Path) -> None:
-    from src.engine.providers.domain.model_capability import ModelCapability
+    from src.core.providers.domain.model_capability import ModelCapability
 
     _with_catalog(
         runtime,
@@ -860,7 +860,7 @@ def test_a_catalog_that_never_answers_is_a_bounded_refusal(
     The bound is shortened here; the assertion is that the route stops waiting and
     says so, which is the behaviour a client depends on.
     """
-    monkeypatch.setattr('src.server.app.CATALOG_TIMEOUT_SECONDS', 0.05)
+    monkeypatch.setattr('src.server.api.app.CATALOG_TIMEOUT_SECONDS', 0.05)
     _with_catalog(runtime, _Catalog(hangs=True))
 
     async def go() -> None:
@@ -882,7 +882,7 @@ def test_an_unknown_account_is_a_rejection(runtime: ServerRuntime, tmp_path: Pat
 
 
 def test_set_model_changes_the_services_model(runtime: ServerRuntime, tmp_path: Path) -> None:
-    from src.engine.providers.domain.model_capability import ModelCapability
+    from src.core.providers.domain.model_capability import ModelCapability
 
     _with_catalog(
         runtime, _Catalog((ModelCapability(name='second/model', context_window=200_000, efforts=('low', 'high')),))
@@ -1354,5 +1354,38 @@ def test_late_open_reply_cannot_replace_a_newer_client_selection() -> None:
             finally:
                 release_first.set()
                 await asyncio.gather(late, return_exceptions=True)
+
+    asyncio.run(go())
+
+
+def test_heartbeat_recovers_and_registers_again_after_disconnect() -> None:
+    from typing import cast
+
+    from src.sigil import _keep_present
+
+    async def go() -> None:
+        restored = asyncio.Event()
+
+        class Client:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            async def heartbeat(self, client_id: str) -> None:
+                self.calls.append(client_id)
+                if len(self.calls) == 1:
+                    raise ServiceUnavailable('disconnected')
+                restored.set()
+
+            async def refresh_endpoint(self) -> bool:
+                return True
+
+        client = Client()
+        task = asyncio.create_task(_keep_present(cast(ServiceClient, client), 'client-one', interval=0.001))
+        try:
+            await asyncio.wait_for(restored.wait(), timeout=2)
+            assert client.calls == ['client-one', 'client-one']
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(go())

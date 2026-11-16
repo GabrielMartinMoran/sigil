@@ -15,10 +15,10 @@ from rich.console import Console
 from textual.app import App, ComposeResult
 from textual.pilot import Pilot
 
-from src.ui.widgets.chat_log import ChatLog
+from src.ui.widgets.chat.chat_log import ChatLog
 
 if TYPE_CHECKING:
-    from src.ui.app import SigilApp
+    from src.ui.sigil_app import SigilApp
 
 
 class ChatApp(App[None]):

@@ -5,12 +5,13 @@ from __future__ import annotations
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.usage import RequestUsage
 
-from src.engine.context.budget import ContextBudget
-from src.engine.context.compaction.events import CompactionEvent, CompactionReason
-from src.engine.context.meter.debug import build_debug_report
-from src.engine.context.meter.debug_render import render_debug_report
-from src.engine.context.meter.request import RequestSnapshot
-from src.engine.context.meter.snapshot import ContextSnapshot
+from src.core.context.compaction.compaction_event import CompactionEvent
+from src.core.context.compaction.compaction_reason import CompactionReason
+from src.core.context.context_budget import ContextBudget
+from src.core.context.meter.context_snapshot import ContextSnapshot
+from src.core.context.meter.debug import build_debug_report
+from src.core.context.meter.debug_render import render_debug_report
+from src.core.context.meter.request_snapshot import RequestSnapshot
 
 _EMPTY = ContextSnapshot(measured=None, projected=None, window=None, budget=ContextBudget(window=None))
 
@@ -40,14 +41,14 @@ def _turns():
     ]
 
 
-def test_the_turns_table_shows_context_and_cache_per_turn():
+def test_the_turns_table_shows_context_and_cache_per_turn() -> None:
     report = _report(_turns())
     assert [turn.context_used for turn in report.turns] == [300, 400]
     assert [turn.cache_read for turn in report.turns] == [240, 100]
     assert report.turns[0].cache_ratio == 240 / 400
 
 
-def test_each_event_is_attributed_to_the_turn_that_contains_its_step():
+def test_each_event_is_attributed_to_the_turn_that_contains_its_step() -> None:
     events = (
         CompactionEvent(step=1, reason=CompactionReason.DETERMINISTIC),
         CompactionEvent(step=3, reason=CompactionReason.EMERGENCY),
@@ -57,7 +58,7 @@ def test_each_event_is_attributed_to_the_turn_that_contains_its_step():
     assert [event.step for event in report.turns[1].events] == [3]
 
 
-def test_the_plain_text_debug_names_the_events_and_never_the_conversation():
+def test_the_plain_text_debug_names_the_events_and_never_the_conversation() -> None:
     report = _report(_turns(), (CompactionEvent(step=2, reason=CompactionReason.DETERMINISTIC),))
     text = render_debug_report(report)
     assert 'Turns' in text

@@ -15,7 +15,8 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import UsageLimits
 
-from src.engine.agents.step_budget import PREFIX, StepBudget, notice
+from src.core.agents.notice import PREFIX, notice
+from src.core.agents.step_budget import StepBudget
 
 
 def _agent(seen: list[list[str]]) -> Agent:
@@ -47,7 +48,7 @@ def _run(agent: Agent, budget: StepBudget):
     return asyncio.run(inner())
 
 
-def test_the_run_gets_one_extra_call_without_tools():
+def test_the_run_gets_one_extra_call_without_tools() -> None:
     seen: list[list[str]] = []
     budget = StepBudget(max_steps=2)
     run = _run(_agent(seen), budget)
@@ -58,7 +59,7 @@ def test_the_run_gets_one_extra_call_without_tools():
     assert run.result is not None and run.result.output == 'what I found, and what is left'
 
 
-def test_the_notice_travels_with_the_last_request_and_stays_in_the_history():
+def test_the_notice_travels_with_the_last_request_and_stays_in_the_history() -> None:
     seen: list[list[str]] = []
     budget = StepBudget(max_steps=1)
     run = _run(_agent(seen), budget)
@@ -74,7 +75,7 @@ def test_the_notice_travels_with_the_last_request_and_stays_in_the_history():
     assert len(seen) == 2 and seen[-1] == []
 
 
-def test_the_notice_says_what_to_answer_with():
+def test_the_notice_says_what_to_answer_with() -> None:
     text = notice(7)
     assert PREFIX in text
     assert '7 steps' in text
@@ -84,12 +85,12 @@ def test_the_notice_says_what_to_answer_with():
     assert 'what you did not get to' in text
 
 
-def test_the_notice_names_the_role_it_is_talking_to():
+def test_the_notice_names_the_role_it_is_talking_to() -> None:
     assert 'this subagent' in notice(3, role='subagent')
     assert 'this turn' in notice(3, role='turn')
 
 
-def test_a_run_that_fits_its_budget_is_untouched():
+def test_a_run_that_fits_its_budget_is_untouched() -> None:
     seen: list[list[str]] = []
     calls = {'n': 0}
 
@@ -114,7 +115,7 @@ def test_a_run_that_fits_its_budget_is_untouched():
     assert run.result is not None and run.result.output == 'done'
 
 
-def test_a_budget_of_zero_is_refused_at_construction():
+def test_a_budget_of_zero_is_refused_at_construction() -> None:
     import pytest
 
     with pytest.raises(ValueError, match='at least 1'):

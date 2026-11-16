@@ -16,11 +16,11 @@ import io
 from PIL import Image
 from pydantic_ai.messages import BinaryImage, ModelRequest, TextPart, ToolReturnPart, UserPromptPart
 
-from src.engine.attachments.image_attachment import image_tokens
-from src.engine.context.images import image_part_tokens
-from src.engine.context.strategy.append_only import AppendOnlyStrategy
-from src.engine.context.strategy.rewriting import IMAGE_OMITTED, drop_stale_images
-from src.engine.context.tokens import estimate_message_tokens, part_tokens
+from src.core.attachments.image_metadata import image_tokens
+from src.core.context.images import image_part_tokens
+from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
+from src.core.context.strategy.rewriting import IMAGE_OMITTED, drop_stale_images
+from src.core.context.tokens import estimate_message_tokens, part_tokens
 
 _minted = 0
 
@@ -64,7 +64,7 @@ def _images_in(messages: list) -> list[BinaryImage]:
 # --- the estimate -----------------------------------------------------------
 
 
-def test_a_prompt_with_an_image_costs_the_image_and_not_its_repr():
+def test_a_prompt_with_an_image_costs_the_image_and_not_its_repr() -> None:
     """`str(BinaryContent)` is a forty-character repr; the pixels are four figures."""
     prompt = _prompt('mira [Image #1]', _image(1000, 1000))
 
@@ -72,7 +72,7 @@ def test_a_prompt_with_an_image_costs_the_image_and_not_its_repr():
     assert estimate_message_tokens(prompt) > 1000
 
 
-def test_the_image_is_not_counted_twice_as_text():
+def test_the_image_is_not_counted_twice_as_text() -> None:
     """The caption is priced as text; the picture only as pixels."""
     with_image = _prompt('una frase', _image(200, 200))
     without = _prompt('una frase')
@@ -82,7 +82,7 @@ def test_the_image_is_not_counted_twice_as_text():
     assert difference == image_tokens(200, 200)
 
 
-def test_part_tokens_of_a_binary_image_does_not_go_through_the_text_estimate():
+def test_part_tokens_of_a_binary_image_does_not_go_through_the_text_estimate() -> None:
     image = _image(300, 300)
 
     assert part_tokens(image) == image_tokens(300, 300)
@@ -95,7 +95,7 @@ def _turn(text: str, *images: BinaryImage) -> list[ModelRequest]:
     return [_prompt(text, *images)]
 
 
-def test_an_image_from_an_old_turn_leaves_the_request_and_is_noted():
+def test_an_image_from_an_old_turn_leaves_the_request_and_is_noted() -> None:
     old = _image()
     turns = [_turn('vieja', old), _turn('reciente', _image())]
 
@@ -107,7 +107,7 @@ def test_an_image_from_an_old_turn_leaves_the_request_and_is_noted():
     assert IMAGE_OMITTED.format(image_id=old.identifier) in kept
 
 
-def test_an_image_from_the_recent_turn_stays():
+def test_an_image_from_the_recent_turn_stays() -> None:
     """What the conversation is about right now cannot be dropped."""
     turns = [_turn('reciente', _image())]
 
@@ -117,7 +117,7 @@ def test_an_image_from_the_recent_turn_stays():
     assert any(isinstance(item, BinaryImage) for item in messages[0].parts[0].content)
 
 
-def test_dropping_the_images_keeps_the_text_of_the_message():
+def test_dropping_the_images_keeps_the_text_of_the_message() -> None:
     turns = [_turn('mirá [Image #1] esto', _image()), _turn('otra')]
 
     messages, _ = drop_stale_images(_flat(turns), turn_window=1)
@@ -125,7 +125,7 @@ def test_dropping_the_images_keeps_the_text_of_the_message():
     assert messages[0].parts[0].content[0] == 'mirá [Image #1] esto'
 
 
-def test_a_text_only_history_is_untouched():
+def test_a_text_only_history_is_untouched() -> None:
     turns = [[_prompt('sin imágenes')]]
 
     messages, dropped = drop_stale_images(_flat(turns), turn_window=5)
@@ -137,9 +137,9 @@ def test_a_text_only_history_is_untouched():
 # --- the strategy as a whole ------------------------------------------------
 
 
-def test_the_window_drops_images_only_from_the_old_turns():
+def test_the_window_drops_images_only_from_the_old_turns() -> None:
     """One turn per prompt: `split_prompts` cuts on every `UserPromptPart`."""
-    from src.engine.context.budget import ContextBudget
+    from src.core.context.context_budget import ContextBudget
 
     turns = []
     for index in range(4):
@@ -163,13 +163,13 @@ def test_the_window_drops_images_only_from_the_old_turns():
     assert len(kept) == 1
 
 
-def test_images_have_their_own_window_of_turns():
+def test_images_have_their_own_window_of_turns() -> None:
     """A picture outlives the turn it came in: three turns by default, not one.
 
     Image retention counts turns independently of the reasoning-block and tool-call
     tail. `image_turns` is evaluated only at a compaction boundary.
     """
-    from src.engine.context.budget import ContextBudget
+    from src.core.context.context_budget import ContextBudget
 
     turns = []
     for index in range(5):
@@ -189,9 +189,9 @@ def test_images_have_their_own_window_of_turns():
     assert len(kept) == 3
 
 
-def test_the_note_names_the_id_that_brings_the_image_back():
+def test_the_note_names_the_id_that_brings_the_image_back() -> None:
     """Dropping the pixels must cost a tool call, not the information."""
-    from src.engine.context.budget import ContextBudget
+    from src.core.context.context_budget import ContextBudget
 
     image = _image()
     turns = [_prompt('vieja', image), _prompt('reciente')]
@@ -211,9 +211,9 @@ def test_the_note_names_the_id_that_brings_the_image_back():
     assert 'view_image' in text
 
 
-def test_the_pixel_cap_bounds_what_stays():
+def test_the_pixel_cap_bounds_what_stays() -> None:
     """Three turns of 4K screenshots cost more than the conversation they belong to."""
-    from src.engine.context.budget import ContextBudget
+    from src.core.context.context_budget import ContextBudget
 
     turns = [_prompt(f'turno {index}', _image(2000, 2000)) for index in range(3)]
 
@@ -234,8 +234,8 @@ def test_the_pixel_cap_bounds_what_stays():
     assert len(kept) == 1
 
 
-def test_a_message_without_images_reports_nothing_dropped():
-    from src.engine.context.budget import ContextBudget
+def test_a_message_without_images_reports_nothing_dropped() -> None:
+    from src.core.context.context_budget import ContextBudget
 
     strategy = AppendOnlyStrategy()
 
@@ -259,20 +259,20 @@ def _tool_result(image: BinaryImage) -> ModelRequest:
     return ModelRequest(parts=[ToolReturnPart(tool_name='view_image', content=[image], tool_call_id='c1')])
 
 
-def test_an_image_inside_a_tool_result_is_priced():
+def test_an_image_inside_a_tool_result_is_priced() -> None:
     """`view_image` hands a picture back as part of its answer, and it costs pixels."""
     from pydantic_ai.messages import ToolReturnPart
 
-    from src.engine.context.tokens import part_tokens
+    from src.core.context.tokens import part_tokens
 
     part = ToolReturnPart(tool_name='view_image', content=[_image(1000, 1000)], tool_call_id='c1')
 
     assert part_tokens(part) >= image_tokens(1000, 1000)
 
 
-def test_an_image_inside_a_tool_result_is_dropped_like_any_other():
+def test_an_image_inside_a_tool_result_is_dropped_like_any_other() -> None:
     """Otherwise the picture a tool returned is paid on every request, forever."""
-    from src.engine.context.budget import ContextBudget
+    from src.core.context.context_budget import ContextBudget
 
     image = _image(400, 400)
     turns = [_tool_result(image), _prompt('reciente')]
@@ -318,9 +318,9 @@ def _image_of(identifier: str) -> BinaryImage:
     return BinaryImage(data=_png(100, 100), media_type='image/png', identifier=identifier)
 
 
-def test_the_same_picture_is_not_paid_twice():
+def test_the_same_picture_is_not_paid_twice() -> None:
     """`view_image` re-attaches what the prompt already carried: send it once."""
-    from src.engine.context.budget import ContextBudget
+    from src.core.context.context_budget import ContextBudget
 
     image = _image_of('img_aaaaaaaa')
     turns = [
@@ -338,9 +338,9 @@ def test_the_same_picture_is_not_paid_twice():
     assert result.dropped_images == 1
 
 
-def test_the_copy_that_survives_is_the_newest_one():
+def test_the_copy_that_survives_is_the_newest_one() -> None:
     """The one the model just looked at is the relevant one, not the old paste."""
-    from src.engine.context.budget import ContextBudget
+    from src.core.context.context_budget import ContextBudget
 
     image = _image_of('img_aaaaaaaa')
     turns = [
@@ -364,9 +364,9 @@ def test_the_copy_that_survives_is_the_newest_one():
     assert positions == [len(result.messages) - 1]
 
 
-def test_viewing_an_image_resets_its_clock():
+def test_viewing_an_image_resets_its_clock() -> None:
     """A picture the model asked for is relevant again: it gets a fresh window."""
-    from src.engine.context.budget import ContextBudget
+    from src.core.context.context_budget import ContextBudget
 
     image = _image_of('img_aaaaaaaa')
     # Pasted long ago, viewed now.
@@ -383,9 +383,9 @@ def test_viewing_an_image_resets_its_clock():
     assert carried[0].identifier == 'img_aaaaaaaa'
 
 
-def test_a_superseded_copy_says_where_the_live_one_is():
+def test_a_superseded_copy_says_where_the_live_one_is() -> None:
     """The note must not tell the model to fetch what is already attached."""
-    from src.engine.context.budget import ContextBudget
+    from src.core.context.context_budget import ContextBudget
 
     image = _image_of('img_aaaaaaaa')
     turns = [[_prompt('aca esta', image)], _viewed_image('img_aaaaaaaa')]

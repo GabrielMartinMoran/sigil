@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.usage import RequestUsage
 
-from src.engine.context.meter.cost import format_usd, session_cost
+from src.core.context.meter.cost import format_usd, session_cost
 
 # --- helpers ---------------------------------------------------------------
 
@@ -42,7 +43,7 @@ def _request() -> ModelRequest:
 # --- provenance ------------------------------------------------------------
 
 
-def test_a_session_that_sent_nothing_costs_zero():
+def test_a_session_that_sent_nothing_costs_zero() -> None:
     """Not `?`: nothing went out, so there is nothing unknown about the bill."""
     cost = session_cost([])
     assert cost.total == Decimal(0)
@@ -51,7 +52,7 @@ def test_a_session_that_sent_nothing_costs_zero():
     assert not cost.approximate
 
 
-def test_the_provider_reported_cost_wins_over_the_list_price():
+def test_the_provider_reported_cost_wins_over_the_list_price() -> None:
     """OpenRouter charges the number it sends, and pydantic-ai keeps it aside.
 
     `usage.cost` is the list-price estimate pydantic-ai computes for every
@@ -75,7 +76,7 @@ def test_the_provider_reported_cost_wins_over_the_list_price():
     assert not cost.approximate
 
 
-def test_the_list_price_is_summed_and_marked_as_an_estimate():
+def test_the_list_price_is_summed_and_marked_as_an_estimate() -> None:
     messages = [
         _response(input_tokens=100, output_tokens=10, cost=Decimal('0.0010')),
         _response(input_tokens=100, output_tokens=10, cost=Decimal('0.0020')),
@@ -90,7 +91,7 @@ def test_the_list_price_is_summed_and_marked_as_an_estimate():
     assert not cost.partial
 
 
-def test_a_model_no_table_knows_is_unpriced_instead_of_free():
+def test_a_model_no_table_knows_is_unpriced_instead_of_free() -> None:
     response = _response(
         model='a-model-from-next-year',
         provider_name='nowhere',
@@ -105,7 +106,7 @@ def test_a_model_no_table_knows_is_unpriced_instead_of_free():
     assert cost.partial
 
 
-def test_a_provider_the_table_cannot_name_is_priced_at_the_vendor_rate():
+def test_a_provider_the_table_cannot_name_is_priced_at_the_vendor_rate() -> None:
     """OpenCode serves the vendored models under its own name.
 
     `genai-prices` has no `opencode` provider, so pydantic-ai leaves `usage.cost`
@@ -128,7 +129,7 @@ def test_a_provider_the_table_cannot_name_is_priced_at_the_vendor_rate():
     assert cost.approximate
 
 
-def test_a_response_without_usage_is_counted_apart_from_an_unpriced_one():
+def test_a_response_without_usage_is_counted_apart_from_an_unpriced_one() -> None:
     """Omitted usage and an unknown price are two different holes in the total."""
     response = _response(model='claude-sonnet-4-5', unmeasured_requests=1)
 
@@ -140,7 +141,7 @@ def test_a_response_without_usage_is_counted_apart_from_an_unpriced_one():
     assert cost.partial
 
 
-def test_a_partly_priced_session_reports_the_known_amount_as_a_floor():
+def test_a_partly_priced_session_reports_the_known_amount_as_a_floor() -> None:
     messages = [
         _response(input_tokens=100, output_tokens=10, cost=Decimal('0.0010')),
         _response(model='a-model-from-next-year', provider_name='nowhere', input_tokens=100, output_tokens=10),
@@ -154,7 +155,7 @@ def test_a_partly_priced_session_reports_the_known_amount_as_a_floor():
     assert cost.partial
 
 
-def test_only_responses_are_priced():
+def test_only_responses_are_priced() -> None:
     """A request carries no usage: the prompt is billed as part of the answer."""
     messages = [_request(), _response(input_tokens=100, output_tokens=10, cost=Decimal('0.0010'))]
 
@@ -164,7 +165,7 @@ def test_only_responses_are_priced():
     assert cost.total == Decimal('0.0010')
 
 
-def test_a_reloaded_session_keeps_its_bill():
+def test_a_reloaded_session_keeps_its_bill() -> None:
     """`/load` rebuilds the history from JSON, so the amounts must survive the trip.
 
     Both halves matter: the `Decimal` a reported cost arrives as, and the
@@ -185,7 +186,7 @@ def test_a_reloaded_session_keeps_its_bill():
     assert cost.reported == 1
 
 
-def test_the_counts_add_up_to_the_requests_that_were_sent():
+def test_the_counts_add_up_to_the_requests_that_were_sent() -> None:
     messages = [
         _response(input_tokens=100, output_tokens=10, cost=Decimal('0.0010')),
         _response(provider_name='openrouter', input_tokens=100, output_tokens=10, provider_details={'cost': 0.5}),
@@ -206,13 +207,13 @@ def test_the_counts_add_up_to_the_requests_that_were_sent():
 # --- the price lookup table ------------------------------------------------
 
 
-def test_the_vendor_price_is_computed_once_per_distinct_usage(monkeypatch):
+def test_the_vendor_price_is_computed_once_per_distinct_usage(monkeypatch: pytest.MonkeyPatch) -> None:
     """The panel recomputes the bill at every checkpoint, so a price is asked once.
 
     Editing the module attribute is the point: it is the seam a refactor would
     remove without any other test noticing.
     """
-    import src.engine.context.meter.cost as cost_module
+    import src.core.context.meter.cost as cost_module
 
     real = cost_module.calc_price
     calls: list[str] = []
@@ -231,7 +232,7 @@ def test_the_vendor_price_is_computed_once_per_distinct_usage(monkeypatch):
     assert calls == ['claude-sonnet-4-5']
 
 
-def test_different_usage_of_the_same_model_is_not_collapsed():
+def test_different_usage_of_the_same_model_is_not_collapsed() -> None:
     messages = [
         _response(model='claude-sonnet-4-5', provider_name='opencode', input_tokens=1_000_000, output_tokens=0),
         _response(model='claude-sonnet-4-5', provider_name='opencode', input_tokens=2_000_000, output_tokens=0),
@@ -248,19 +249,19 @@ def test_different_usage_of_the_same_model_is_not_collapsed():
 # --- formatting ------------------------------------------------------------
 
 
-def test_usd_keeps_four_decimals():
+def test_usd_keeps_four_decimals() -> None:
     """A single request can cost a fraction of a cent, and `/context` shows it."""
     assert format_usd(Decimal('0.0432')) == '$0.0432'
     assert format_usd(Decimal('12.5')) == '$12.5000'
 
 
-def test_usd_shows_a_floor_instead_of_a_fake_zero():
+def test_usd_shows_a_floor_instead_of_a_fake_zero() -> None:
     assert format_usd(Decimal('0.00004')) == '<$0.0001'
 
 
-def test_usd_of_zero_is_zero():
+def test_usd_of_zero_is_zero() -> None:
     assert format_usd(Decimal(0)) == '$0'
 
 
-def test_usd_unknown_is_a_question_mark():
+def test_usd_unknown_is_a_question_mark() -> None:
     assert format_usd(None) == '?'

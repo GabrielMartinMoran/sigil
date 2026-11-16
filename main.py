@@ -3,7 +3,7 @@ import sys
 
 import rich
 
-from src.engine.shell.guard import SELF_GUARD_ENV
+from src.core.shell.guard import SELF_GUARD_ENV
 from src.sigil import run
 
 SURFACES = {'server': False, 'serve': True}

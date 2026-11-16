@@ -42,19 +42,15 @@ from typing import Any
 import pytest
 
 from src.server.cli import listening_socket
-from src.server.endpoint import Endpoint, read_endpoint
-from src.server.launch import (
-    LaunchCommand,
-    ServiceDied,
-    ServiceStarting,
-    ServiceUnpublished,
-    default_command,
-    ensure_service,
-    live_endpoint,
-    probe,
-    spawn_server,
-)
-from src.server.ownership import OwnershipError, ServerOwnership
+from src.server.launch.endpoint import Endpoint
+from src.server.launch.endpoint_file import read_endpoint
+from src.server.launch.launch_command import LaunchCommand
+from src.server.launch.ownership_error import OwnershipError
+from src.server.launch.server_ownership import ServerOwnership
+from src.server.launch.service_died import ServiceDied
+from src.server.launch.service_launch import default_command, ensure_service, live_endpoint, probe, spawn_server
+from src.server.launch.service_starting import ServiceStarting
+from src.server.launch.service_unpublished import ServiceUnpublished
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -69,8 +65,9 @@ sys.path.insert(0, {root})
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from src.server.endpoint import EndpointPublisher
-from src.server.ownership import OwnershipError, ServerOwnership
+from src.server.launch.endpoint_publisher import EndpointPublisher
+from src.server.launch.ownership_error import OwnershipError
+from src.server.launch.server_ownership import ServerOwnership
 
 
 class Health(BaseHTTPRequestHandler):
@@ -125,7 +122,8 @@ sys.path.insert(0, {root})
 
 from pathlib import Path
 
-from src.server.launch import LaunchCommand, ensure_service
+from src.server.launch.launch_command import LaunchCommand
+from src.server.launch.service_launch import ensure_service
 
 gate = Path({gate})
 while not gate.exists():
@@ -551,7 +549,7 @@ def test_the_default_command_re_executes_this_interpreter_and_main_py() -> None:
     command = default_command(workspace=Path('/tmp/workspace'))
 
     assert command.argv[:3] == (sys.executable, str(ROOT / 'main.py'), 'server')
-    assert command.argv[3:] == ('--workspace', '/tmp/workspace')
+    assert command.argv[3:] == ('--client-managed', '--workspace', '/tmp/workspace')
     # Nothing is stripped from the environment: the self-guard stays in force.
     assert command.env is None
 
@@ -821,7 +819,8 @@ def test_sigil_server_refuses_a_taken_store_before_building_the_engine(
 ) -> None:
     """`sigil server` asks the lock first, so a losing candidate pays nothing else."""
 
-    from src.server import cli, webbuild
+    from src.server import cli
+    from src.server.web import webbuild
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path))
     # The bundle check runs before the lock and is about the checkout, not this
@@ -856,7 +855,7 @@ def test_the_backend_surface_resolves_its_config_without_a_password(
     """
 
     from src.server import cli
-    from src.server.config import ServerConfigError
+    from src.server.launch.server_config_error import ServerConfigError
 
     seen: dict[str, object] = {}
 

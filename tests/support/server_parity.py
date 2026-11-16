@@ -13,15 +13,15 @@ import httpx
 import pytest
 from pydantic_ai.models.test import TestModel
 
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.engine.agents.tree.models.agent_node import AgentNode
-from src.engine.bootstrap import Composition
-from src.engine.providers.bootstrap import ProviderPaths
-from src.engine.settings import load_settings
-from src.server.app import create_app
-from src.server.config import ServerConfig
-from src.server.events import EventHub
-from src.server.runtime import ServerRuntime
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.agents.tree.models.agent_node import AgentNode
+from src.core.composition.composition import Composition
+from src.core.config.load_settings import load_settings
+from src.core.providers.provider_paths import ProviderPaths
+from src.server.api.app import create_app
+from src.server.launch.server_config import ServerConfig
+from src.server.runtime.event_hub import EventHub
+from src.server.runtime.server_runtime import ServerRuntime
 from tests.support.agents import write_profile
 from tests.support.provider_service import _add, _service
 
@@ -45,7 +45,7 @@ def _composition(
     """
     service = _service(tmp_path)
     _add(service)
-    monkeypatch.setattr('src.engine.bootstrap.build_service', lambda *args, **kwargs: service)
+    monkeypatch.setattr('src.core.composition.composition.build_service', lambda *args, **kwargs: service)
     write_profile(tmp_path / '.sigil' / 'agents', 'reviewer', description='Reviews code.')
     if mcp_servers is not None:
         config = tmp_path / '.sigil' / 'config.json'

@@ -4,19 +4,22 @@ import asyncio
 import tempfile
 from pathlib import Path
 
+import pytest
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-import src.ui.app as appmod
-import src.ui.turn_mixin as turnmod
-from src.engine.commands import COMMANDS
-from src.engine.sessions.session_store import SessionStore
-from src.engine.tooling.logging import ToolLoggerHub
-from src.engine.tooling.registrar import ToolRegistrar
-from src.ui.app import SigilApp
-from src.ui.widgets.chat_log import AssistantBlock, ChatLog, ToolCallBlock
-from src.ui.widgets.command_menu import CommandMenu
-from src.ui.widgets.prompt_input import PromptInput
+import src.ui.mixins.turn_mixin as turnmod
+import src.ui.sigil_app as appmod
+from src.core.commands.catalog import COMMANDS
+from src.core.sessions.session_store import SessionStore
+from src.core.tooling.tool_logger_hub import ToolLoggerHub
+from src.core.tooling.tool_registrar import ToolRegistrar
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.chat.assistant_block import AssistantBlock
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.chat.tool_call_block import ToolCallBlock
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.screens.command_menu import CommandMenu
 from tests.support.ui import render_text, wait_for_turn
 
 
@@ -26,9 +29,9 @@ def _make_app(agent: Agent, tmp: str, tool_logger: ToolLoggerHub | None = None) 
     return SigilApp(agent=agent, store=store, session=session, tool_logger=tool_logger)
 
 
-def test_app_runs_turn_and_renders_chat(monkeypatch):
+def test_app_runs_turn_and_renders_chat(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             agent = Agent(TestModel(custom_output_text='answer'), instructions='x')
             app = _make_app(agent, tmp)
@@ -44,9 +47,9 @@ def test_app_runs_turn_and_renders_chat(monkeypatch):
     asyncio.run(inner())
 
 
-def test_command_menu_filters_and_selects(monkeypatch):
+def test_command_menu_filters_and_selects(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             agent = Agent(TestModel(custom_output_text='ok'), instructions='x')
             app = _make_app(agent, tmp)
@@ -84,9 +87,9 @@ def _chat_texts(app) -> list[str]:
     return texts
 
 
-def test_mcp_command_without_servers_explains_how_to_configure(monkeypatch):
+def test_mcp_command_without_servers_explains_how_to_configure(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             agent = Agent(TestModel(custom_output_text='ok'), instructions='x')
             app = _make_app(agent, tmp)
@@ -99,9 +102,9 @@ def test_mcp_command_without_servers_explains_how_to_configure(monkeypatch):
     asyncio.run(inner())
 
 
-def test_startup_notices_are_rendered(monkeypatch):
+def test_startup_notices_are_rendered(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             agent = Agent(TestModel(custom_output_text='ok'), instructions='x')
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
@@ -118,9 +121,9 @@ def test_startup_notices_are_rendered(monkeypatch):
 
 
 def test_subagent_unknown_window_notice_is_rendered_and_detached(tmp_path: Path) -> None:
-    from src.engine.context.capability import ContextViewCapability
-    from src.engine.context.meter.context_meter import ContextMeter
-    from src.engine.context.strategy.append_only import AppendOnlyStrategy
+    from src.core.context.context_view_capability import ContextViewCapability
+    from src.core.context.meter.context_meter import ContextMeter
+    from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 
     async def inner() -> None:
         store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'sessions')
@@ -139,9 +142,9 @@ def test_subagent_unknown_window_notice_is_rendered_and_detached(tmp_path: Path)
     asyncio.run(inner())
 
 
-def test_tool_call_and_result_are_rendered(monkeypatch):
+def test_tool_call_and_result_are_rendered(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tool_logger = ToolLoggerHub()
             agent = Agent(TestModel(call_tools=['ping']), instructions='x')
@@ -179,9 +182,9 @@ def _block_text(block) -> str:
     return render_text(block._build())
 
 
-def test_tool_error_is_rendered_as_notice(monkeypatch):
+def test_tool_error_is_rendered_as_notice(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tool_logger = ToolLoggerHub()
             agent = Agent(TestModel(call_tools=['explode']), instructions='x')
@@ -207,9 +210,9 @@ def test_tool_error_is_rendered_as_notice(monkeypatch):
     asyncio.run(inner())
 
 
-def test_autoscroll_only_when_at_bottom(monkeypatch):
+def test_autoscroll_only_when_at_bottom(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(Agent(TestModel(), instructions='x'), tmp)
             async with app.run_test(size=(80, 24)) as pilot:
@@ -232,7 +235,7 @@ def test_autoscroll_only_when_at_bottom(monkeypatch):
     asyncio.run(inner())
 
 
-def test_autoscroll_follows_streaming_growth(monkeypatch):
+def test_autoscroll_follows_streaming_growth(monkeypatch: pytest.MonkeyPatch) -> None:
     """Auto-scroll must follow the content that grows while streaming.
 
     Regression: the manual scroll after each delta ran before the deferred
@@ -240,7 +243,7 @@ def test_autoscroll_follows_streaming_growth(monkeypatch):
     Textual's anchoring readjusts the scroll on every layout.
     """
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(Agent(TestModel(), instructions='x'), tmp)
             async with app.run_test(size=(80, 24)) as pilot:
@@ -267,9 +270,9 @@ def test_autoscroll_follows_streaming_growth(monkeypatch):
     asyncio.run(inner())
 
 
-def test_markdown_output_is_rendered_in_app(monkeypatch):
+def test_markdown_output_is_rendered_in_app(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             agent = Agent(TestModel(custom_output_text='# Heading\n\nThis is **bold**.'), instructions='x')
             app = _make_app(agent, tmp)
@@ -288,7 +291,7 @@ def test_markdown_output_is_rendered_in_app(monkeypatch):
     asyncio.run(inner())
 
 
-def test_step_limit_gives_the_turn_one_last_answer(monkeypatch):
+def test_step_limit_gives_the_turn_one_last_answer(monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression: exhausting the steps of a turn does not lose the session.
 
     The turn used to be aborted when the limit was reached, which threw away what
@@ -296,13 +299,13 @@ def test_step_limit_gives_the_turn_one_last_answer(monkeypatch):
     and a message saying why, so the user reads a report instead of a cut-off turn —
     and the context is still there for the next message.
     """
-    from src.engine.settings import SigilSettings
+    from src.core.config.sigil_settings import SigilSettings
 
     # One step: the tool call of the first request uses it up, so the second
     # request is the extra one, with no tools.
     monkeypatch.setattr(appmod, 'load_settings', lambda *a, **k: SigilSettings(max_steps=1))
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tool_logger = ToolLoggerHub()
             agent = Agent(TestModel(call_tools=['ping']), instructions='x')
@@ -348,7 +351,7 @@ def test_step_limit_gives_the_turn_one_last_answer(monkeypatch):
     asyncio.run(inner())
 
 
-def test_turn_is_not_cut_by_pydantic_ai_default_request_limit(monkeypatch):
+def test_turn_is_not_cut_by_pydantic_ai_default_request_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression: the 50-request cap of pydantic-ai does not cut a long turn.
 
     Sigil bounds the turn with `SIGIL_MAX_STEPS`; the pydantic-ai default
@@ -357,7 +360,7 @@ def test_turn_is_not_cut_by_pydantic_ai_default_request_limit(monkeypatch):
     from pydantic_ai.messages import ModelMessage, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 
-    from src.engine.settings import SigilSettings
+    from src.core.config.sigil_settings import SigilSettings
 
     monkeypatch.setattr(appmod, 'load_settings', lambda *a, **k: SigilSettings(max_steps=200))
 
@@ -373,7 +376,7 @@ def test_turn_is_not_cut_by_pydantic_ai_default_request_limit(monkeypatch):
         else:
             yield 'done'
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             agent = Agent(FunctionModel(stream_function=stream_function), instructions='x')
 
@@ -397,7 +400,7 @@ def test_turn_is_not_cut_by_pydantic_ai_default_request_limit(monkeypatch):
     asyncio.run(inner())
 
 
-def test_checkpoint_persists_progress_during_turn(monkeypatch):
+def test_checkpoint_persists_progress_during_turn(monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression: progress is saved during the turn, not only at the end.
 
     If the process dies halfway through a long turn, the session on disk must
@@ -406,7 +409,7 @@ def test_checkpoint_persists_progress_during_turn(monkeypatch):
     # No throttle, so the mid-turn checkpoint is deterministic.
     monkeypatch.setattr(turnmod, 'CHECKPOINT_INTERVAL', 0.0)
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tool_logger = ToolLoggerHub()
             agent = Agent(TestModel(call_tools=['ping']), instructions='x')
@@ -434,7 +437,7 @@ def test_checkpoint_persists_progress_during_turn(monkeypatch):
     asyncio.run(inner())
 
 
-def test_checkpoint_throttles_writes_but_force_saves(monkeypatch):
+def test_checkpoint_throttles_writes_but_force_saves(monkeypatch: pytest.MonkeyPatch) -> None:
     """The checkpoint throttles to ~1/s; `force` (end of turn) always saves."""
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
@@ -463,15 +466,15 @@ def test_checkpoint_throttles_writes_but_force_saves(monkeypatch):
         app.checkpoint(force=True)  # end of turn: mandatory
 
 
-def test_context_command_shows_breakdown_and_scope(monkeypatch):
+def test_context_command_shows_breakdown_and_scope(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    from src.engine.context.capability import ContextViewCapability
-    from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
-    from src.engine.context.meter.context_meter import ContextMeter
-    from src.engine.context.scope import ScopeTracker
-    from src.engine.context.strategy.append_only import AppendOnlyStrategy
+    from src.core.context.context_view_capability import ContextViewCapability
+    from src.core.context.instructions.workspace_instructions import WorkspaceInstructions
+    from src.core.context.meter.context_meter import ContextMeter
+    from src.core.context.scope_tracker import ScopeTracker
+    from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / 'AGENTS.md').write_text('# Project rules')
@@ -509,12 +512,13 @@ def test_context_command_shows_breakdown_and_scope(monkeypatch):
     asyncio.run(inner())
 
 
-def test_child_tool_events_do_not_enter_parent_chat():
-    from src.engine.tooling.events import ToolCallEvent
-    from src.ui.tool_logging import ToolLogMessage
-    from src.ui.widgets.chat_log import ChatLog, ToolCallBlock
+def test_child_tool_events_do_not_enter_parent_chat() -> None:
+    from src.core.tooling.tool_call_event import ToolCallEvent
+    from src.ui.messages.tool_log_message import ToolLogMessage
+    from src.ui.widgets.chat.chat_log import ChatLog
+    from src.ui.widgets.chat.tool_call_block import ToolCallBlock
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _make_app(Agent(TestModel()), tmp)
             async with app.run_test():

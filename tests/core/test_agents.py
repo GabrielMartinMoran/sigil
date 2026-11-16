@@ -20,12 +20,12 @@ from pathlib import Path
 
 import pytest
 
-from src.engine.agents.agent import create_agent
-from src.engine.agents.profile.models.agent_parse_error import AgentParseError
-from src.engine.agents.profile.parser import build_profile, parse_profile
-from src.engine.agents.profile.registry import AgentRegistry
-from src.engine.agents.profile.rendering import render_agent_profile
-from src.engine.agents.profile.source import ProfileSource
+from src.core.agents.agent import create_agent
+from src.core.agents.profile.agent_registry import AgentRegistry
+from src.core.agents.profile.models.agent_parse_error import AgentParseError
+from src.core.agents.profile.parser import build_profile, parse_profile
+from src.core.agents.profile.profile_source import ProfileSource
+from src.core.agents.profile.rendering import render_agent_profile
 from tests.support.agents import (
     _builtin_root,
     _TestModel,
@@ -35,7 +35,7 @@ from tests.support.agents import (
 # --- parsing -----------------------------------------------------------------
 
 
-def test_parse_reads_the_metadata_and_the_body(tmp_path):
+def test_parse_reads_the_metadata_and_the_body(tmp_path: Path) -> None:
     profile_file = write_profile(tmp_path, 'reviewer', description='Reviews code.', body='# Rules\nBe strict.')
 
     profile, body = parse_profile(profile_file, source='project')
@@ -47,7 +47,7 @@ def test_parse_reads_the_metadata_and_the_body(tmp_path):
     assert body == '# Rules\nBe strict.'
 
 
-def test_parse_requires_name_and_description(tmp_path):
+def test_parse_requires_name_and_description(tmp_path: Path) -> None:
     missing_name = tmp_path / 'a.md'
     missing_name.write_text('---\ndescription: hi\n---\nbody', encoding='utf-8')
     with pytest.raises(AgentParseError, match='`name`'):
@@ -60,7 +60,7 @@ def test_parse_requires_name_and_description(tmp_path):
 
 
 @pytest.mark.parametrize('name', ['pas_developer', 'pas-qa', 'pas_researcher-2'])
-def test_registry_discovers_valid_agent_names(tmp_path, name):
+def test_registry_discovers_valid_agent_names(tmp_path: Path, name) -> None:
     write_profile(tmp_path, name, extra='role: subagent\n')
     registry = AgentRegistry([('project', tmp_path)])
 
@@ -69,26 +69,26 @@ def test_registry_discovers_valid_agent_names(tmp_path, name):
 
 
 @pytest.mark.parametrize('name', ['Bad_Name', '_agent', 'agent_', 'agent__name', 'agent_-name'])
-def test_parse_rejects_invalid_agent_names(tmp_path, name):
+def test_parse_rejects_invalid_agent_names(tmp_path: Path, name) -> None:
     profile_file = write_profile(tmp_path, name)
     with pytest.raises(AgentParseError, match='Invalid agent name'):
         parse_profile(profile_file, source='project')
 
 
-def test_parse_rejects_unknown_frontmatter_keys(tmp_path):
+def test_parse_rejects_unknown_frontmatter_keys(tmp_path: Path) -> None:
     profile_file = write_profile(tmp_path, 'demo', extra='tools: [run]\n')
     with pytest.raises(AgentParseError, match='tools'):
         parse_profile(profile_file, source='project')
 
 
-def test_parse_requires_a_frontmatter_block(tmp_path):
+def test_parse_requires_a_frontmatter_block(tmp_path: Path) -> None:
     path = tmp_path / 'raw.md'
     path.write_text('just text', encoding='utf-8')
     with pytest.raises(AgentParseError, match='frontmatter'):
         parse_profile(path, source='project')
 
 
-def test_parse_accepts_crlf(tmp_path):
+def test_parse_accepts_crlf(tmp_path: Path) -> None:
     path = tmp_path / 'demo.md'
     path.write_text('---\r\nname: demo\r\ndescription: hi\r\n---\r\nbody', encoding='utf-8')
     profile, body = parse_profile(path, source='project')
@@ -96,7 +96,7 @@ def test_parse_accepts_crlf(tmp_path):
     assert body == 'body'
 
 
-def test_build_profile_reports_a_too_long_description():
+def test_build_profile_reports_a_too_long_description() -> None:
     with pytest.raises(AgentParseError, match='too long'):
         build_profile(
             {'name': 'demo', 'description': 'x' * 2000},
@@ -108,14 +108,14 @@ def test_build_profile_reports_a_too_long_description():
 # --- discovery ---------------------------------------------------------------
 
 
-def test_registry_lists_the_builtins():
+def test_registry_lists_the_builtins() -> None:
     registry = AgentRegistry(active=None)
     names = [profile.name for profile in registry.list()]
     assert 'wizard' in names
     assert registry.get('wizard').source == 'builtin'
 
 
-def test_project_shadows_global_and_builtin(tmp_path):
+def test_project_shadows_global_and_builtin(tmp_path: Path) -> None:
     project = tmp_path / 'project'
     glob = tmp_path / 'global'
     write_profile(project, 'wizard', description='project version')
@@ -129,7 +129,7 @@ def test_project_shadows_global_and_builtin(tmp_path):
     assert registry.get('helper').source == 'global'
 
 
-def test_registry_records_a_broken_profile_without_losing_the_others(tmp_path):
+def test_registry_records_a_broken_profile_without_losing_the_others(tmp_path: Path) -> None:
     write_profile(tmp_path, 'good')
     (tmp_path / 'bad.md').write_text('no frontmatter', encoding='utf-8')
 
@@ -140,7 +140,7 @@ def test_registry_records_a_broken_profile_without_losing_the_others(tmp_path):
     assert 'bad.md' in registry.errors[0]
 
 
-def test_registry_skips_notes_and_hidden_files(tmp_path):
+def test_registry_skips_notes_and_hidden_files(tmp_path: Path) -> None:
     write_profile(tmp_path, 'real')
     (tmp_path / '_notes.md').write_text('scratch', encoding='utf-8')
     (tmp_path / '.hidden.md').write_text('scratch', encoding='utf-8')
@@ -150,21 +150,21 @@ def test_registry_skips_notes_and_hidden_files(tmp_path):
     assert [profile.name for profile in registry.list()] == ['real']
 
 
-def test_active_falls_back_when_the_remembered_name_is_gone(tmp_path):
+def test_active_falls_back_when_the_remembered_name_is_gone(tmp_path: Path) -> None:
     write_profile(tmp_path, 'present')
     registry = AgentRegistry([('project', tmp_path), ('builtin', tmp_path / 'none')], active='deleted')
     assert registry.active_name == 'present'
 
 
-def test_activate_rejects_an_unknown_name(tmp_path):
-    from src.engine.agents.profile.models.agent_not_found import AgentNotFound
+def test_activate_rejects_an_unknown_name(tmp_path: Path) -> None:
+    from src.core.agents.profile.models.agent_not_found import AgentNotFound
 
     registry = AgentRegistry([('project', tmp_path), ('builtin', tmp_path / 'none')], active='present')
     with pytest.raises(AgentNotFound):
         registry.activate('nope')
 
 
-def test_refresh_keeps_the_active_profile(tmp_path):
+def test_refresh_keeps_the_active_profile(tmp_path: Path) -> None:
     write_profile(tmp_path, 'one')
     write_profile(tmp_path, 'two')
     registry = AgentRegistry([('project', tmp_path), ('builtin', tmp_path / 'none')])
@@ -176,7 +176,7 @@ def test_refresh_keeps_the_active_profile(tmp_path):
 # --- the prompt block --------------------------------------------------------
 
 
-def test_the_body_reaches_the_instructions(tmp_path):
+def test_the_body_reaches_the_instructions(tmp_path: Path) -> None:
     write_profile(tmp_path, 'wizard', body='You are a plain wizard.')
     registry = AgentRegistry([('project', tmp_path), ('builtin', tmp_path / 'none')], active='wizard')
     agent = create_agent(None, agent_registry=registry)
@@ -189,7 +189,7 @@ def test_the_body_reaches_the_instructions(tmp_path):
     assert 'Active agent: Wizard' in instructions
 
 
-def test_the_profile_goes_after_the_base_prompt(tmp_path):
+def test_the_profile_goes_after_the_base_prompt(tmp_path: Path) -> None:
     write_profile(tmp_path, 'wizard', body='PROFILE BODY')
     registry = AgentRegistry([('project', tmp_path), ('builtin', tmp_path / 'none')], active='wizard')
     agent = create_agent(None, agent_registry=registry)
@@ -201,7 +201,7 @@ def test_the_profile_goes_after_the_base_prompt(tmp_path):
     assert instructions.index('You are **Sigil**') < instructions.index('PROFILE BODY')
 
 
-def test_switching_agent_replaces_the_previous_block(tmp_path):
+def test_switching_agent_replaces_the_previous_block(tmp_path: Path) -> None:
     write_profile(tmp_path, 'first', body='FIRST BODY')
     write_profile(tmp_path, 'second', body='SECOND BODY')
     registry = AgentRegistry([('project', tmp_path), ('builtin', tmp_path / 'none')], active='first')
@@ -218,13 +218,13 @@ def test_switching_agent_replaces_the_previous_block(tmp_path):
     assert 'FIRST BODY' not in after
 
 
-def test_a_profile_with_no_installed_set_contributes_nothing(tmp_path):
+def test_a_profile_with_no_installed_set_contributes_nothing(tmp_path: Path) -> None:
     registry = AgentRegistry([('project', tmp_path)], active=None)
     assert registry.active is None
     assert render_agent_profile(ProfileSource.from_registry(registry)) == ''
 
 
-def test_an_empty_body_is_not_a_block(tmp_path):
+def test_an_empty_body_is_not_a_block(tmp_path: Path) -> None:
     write_profile(tmp_path, 'empty', body='')
     registry = AgentRegistry([('project', tmp_path), ('builtin', tmp_path / 'none')], active='empty')
     assert render_agent_profile(ProfileSource.from_registry(registry)) == ''
@@ -233,14 +233,14 @@ def test_an_empty_body_is_not_a_block(tmp_path):
 # --- the built-in set --------------------------------------------------------
 
 
-def test_the_shipped_wizard_parses():
+def test_the_shipped_wizard_parses() -> None:
     registry = AgentRegistry([('builtin', _builtin_root())], active='wizard')
     profile = registry.require('wizard')
     assert profile.source == 'builtin'
     assert 'Wizard' in registry.active_body()
 
 
-def test_the_shipped_set_has_an_agent_and_a_subagent():
+def test_the_shipped_set_has_an_agent_and_a_subagent() -> None:
     """One example of each role: the agent you pick, and one only `summon` starts."""
     registry = AgentRegistry([('builtin', _builtin_root())], active='wizard')
     assert [profile.name for profile in registry.agents()] == ['wizard']
@@ -248,10 +248,12 @@ def test_the_shipped_set_has_an_agent_and_a_subagent():
     assert 'research' in registry.require('scout').description.lower()
 
 
-def test_the_shipped_scout_exposes_research_without_direct_mutation_tools():
+def test_the_shipped_scout_exposes_research_without_direct_mutation_tools() -> None:
     """Shell access is unrestricted; read-only behavior is a prompt contract."""
-    from src.engine.agents.profile.permissions import Effect
-    from src.engine.tooling.permission import BUILTIN_TOOLS, ResourceKind, ToolGroup
+    from src.core.agents.profile.effect import Effect
+    from src.core.tooling.permission import BUILTIN_TOOLS
+    from src.core.tooling.resource_kind import ResourceKind
+    from src.core.tooling.tool_group import ToolGroup
 
     permissions = AgentRegistry([('builtin', _builtin_root())], active='scout').require('scout').permissions
     allowed = {
@@ -299,7 +301,7 @@ def test_the_shipped_scout_exposes_research_without_direct_mutation_tools():
         ('unknown_tool', False),
     ],
 )
-def test_the_shipped_scout_only_exposes_selected_external_research_tools(tool: str, allowed: bool):
+def test_the_shipped_scout_only_exposes_selected_external_research_tools(tool: str, allowed: bool) -> None:
     permissions = AgentRegistry([('builtin', _builtin_root())], active='scout').require('scout').permissions
 
     assert permissions.advertises(tool) is allowed

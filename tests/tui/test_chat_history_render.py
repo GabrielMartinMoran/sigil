@@ -20,9 +20,12 @@ from unittest.mock import patch
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from textual.app import App, ComposeResult
 
-from src.engine.agents.message_types import origin, request
-from src.engine.agents.tree.reports import report_view
-from src.ui.widgets.chat_log import ChatLog, ToolCallBlock, ToolGroupHeader
+from src.core.agents.origin import origin
+from src.core.agents.request import request
+from src.core.agents.tree.reports import report_view
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.chat.tool_call_block import ToolCallBlock
+from src.ui.widgets.chat.tool_group_header import ToolGroupHeader
 
 
 def history(turns: int) -> list:
@@ -74,7 +77,7 @@ def test_rendering_a_long_history_is_not_quadratic() -> None:
     asyncio.run(inner())
 
 
-def test_the_history_renders_every_message():
+def test_the_history_renders_every_message() -> None:
     """Batching must not drop or reorder anything."""
 
     async def inner() -> None:
@@ -93,7 +96,7 @@ def test_the_history_renders_every_message():
     asyncio.run(inner())
 
 
-def test_a_run_of_tool_calls_is_spaced_the_same_live_and_restored():
+def test_a_run_of_tool_calls_is_spaced_the_same_live_and_restored() -> None:
     """Separate model responses keep their spacing in live and restored transcripts.
 
     Each response contains a single tool, so its header is hidden and the row must
@@ -137,7 +140,7 @@ def test_a_run_of_tool_calls_is_spaced_the_same_live_and_restored():
     asyncio.run(inner())
 
 
-def test_an_empty_history_is_a_no_op():
+def test_an_empty_history_is_a_no_op() -> None:
     async def inner() -> None:
         app = Harness()
         async with app.run_test(size=(120, 40)) as pilot:
@@ -149,7 +152,7 @@ def test_an_empty_history_is_a_no_op():
     asyncio.run(inner())
 
 
-def test_restored_parallel_tool_results_match_call_ids():
+def test_restored_parallel_tool_results_match_call_ids() -> None:
     async def inner() -> None:
         app = Harness()
         async with app.run_test() as pilot:
@@ -176,10 +179,10 @@ def test_restored_parallel_tool_results_match_call_ids():
     asyncio.run(inner())
 
 
-def test_history_shows_opaque_reasoning_without_exposing_signature():
+def test_history_shows_opaque_reasoning_without_exposing_signature() -> None:
     from pydantic_ai.messages import ThinkingPart
 
-    from src.ui.widgets.chat_log import AssistantBlock
+    from src.ui.widgets.chat.assistant_block import AssistantBlock
     from tests.support.ui import render_text
 
     async def inner() -> None:
@@ -197,7 +200,7 @@ def test_history_shows_opaque_reasoning_without_exposing_signature():
     asyncio.run(inner())
 
 
-def test_unmatched_result_does_not_claim_another_call_with_the_same_name():
+def test_unmatched_result_does_not_claim_another_call_with_the_same_name() -> None:
     async def inner() -> None:
         app = Harness()
         async with app.run_test():
@@ -216,7 +219,7 @@ def test_unmatched_result_does_not_claim_another_call_with_the_same_name():
     asyncio.run(inner())
 
 
-def test_retry_prompt_is_attached_to_its_tool_call():
+def test_retry_prompt_is_attached_to_its_tool_call() -> None:
     from pydantic_ai.messages import RetryPromptPart
 
     async def inner() -> None:
@@ -237,11 +240,12 @@ def test_retry_prompt_is_attached_to_its_tool_call():
     asyncio.run(inner())
 
 
-def test_restored_subagent_report_is_an_event_not_a_user_message():
-    from src.engine.agents.profile.models.agent_role import AgentRole
-    from src.engine.agents.tree.models.agent_node import AgentNode
-    from src.engine.agents.tree.summoner import _envelope
-    from src.ui.widgets.chat_log import SubagentReport, UserMessage
+def test_restored_subagent_report_is_an_event_not_a_user_message() -> None:
+    from src.core.agents.profile.models.agent_role import AgentRole
+    from src.core.agents.tree.models.agent_node import AgentNode
+    from src.core.agents.tree.subagent_summoner import _envelope
+    from src.ui.widgets.chat.subagent_report import SubagentReport
+    from src.ui.widgets.chat.user_message import UserMessage
 
     async def inner() -> None:
         node = AgentNode(id='12345678abcd', name='researcher', role=AgentRole.SUBAGENT, parent_id='root', depth=1)
@@ -264,11 +268,12 @@ def test_restored_subagent_report_is_an_event_not_a_user_message():
     asyncio.run(inner())
 
 
-def test_restored_report_preserves_user_text_and_does_not_hide_unmatched_prompts():
-    from src.engine.agents.profile.models.agent_role import AgentRole
-    from src.engine.agents.tree.models.agent_node import AgentNode
-    from src.engine.agents.tree.summoner import _envelope
-    from src.ui.widgets.chat_log import SubagentReport, UserMessage
+def test_restored_report_preserves_user_text_and_does_not_hide_unmatched_prompts() -> None:
+    from src.core.agents.profile.models.agent_role import AgentRole
+    from src.core.agents.tree.models.agent_node import AgentNode
+    from src.core.agents.tree.subagent_summoner import _envelope
+    from src.ui.widgets.chat.subagent_report import SubagentReport
+    from src.ui.widgets.chat.user_message import UserMessage
 
     async def inner() -> None:
         node = AgentNode(id='12345678abcd', name='researcher', role=AgentRole.SUBAGENT, parent_id='root', depth=1)
@@ -295,11 +300,12 @@ def test_restored_report_preserves_user_text_and_does_not_hide_unmatched_prompts
     asyncio.run(inner())
 
 
-def test_multiple_reports_and_standalone_delivery_render_as_events():
-    from src.engine.agents.profile.models.agent_role import AgentRole
-    from src.engine.agents.tree.models.agent_node import AgentNode
-    from src.engine.agents.tree.summoner import _envelope
-    from src.ui.widgets.chat_log import SubagentReport, UserMessage
+def test_multiple_reports_and_standalone_delivery_render_as_events() -> None:
+    from src.core.agents.profile.models.agent_role import AgentRole
+    from src.core.agents.tree.models.agent_node import AgentNode
+    from src.core.agents.tree.subagent_summoner import _envelope
+    from src.ui.widgets.chat.subagent_report import SubagentReport
+    from src.ui.widgets.chat.user_message import UserMessage
 
     async def inner() -> None:
         first = AgentNode(id='aaaaaaaa1234', name='one', role=AgentRole.SUBAGENT, parent_id='root', depth=1)
@@ -331,10 +337,10 @@ def test_multiple_reports_and_standalone_delivery_render_as_events():
     asyncio.run(inner())
 
 
-def test_rejected_tool_without_start_uses_original_call_arguments():
-    from src.ui.widgets.chat_log import SummonBlock
+def test_rejected_tool_without_start_uses_original_call_arguments() -> None:
+    from src.ui.widgets.chat.summon_block import SummonBlock
 
-    async def inner():
+    async def inner() -> None:
         app = Harness()
         async with app.run_test():
             chat = app.query_one(ChatLog)
@@ -353,15 +359,15 @@ def test_rejected_tool_without_start_uses_original_call_arguments():
     asyncio.run(inner())
 
 
-def test_streamed_refusal_recovers_call_arguments_by_id():
+def test_streamed_refusal_recovers_call_arguments_by_id() -> None:
     from types import SimpleNamespace
 
     from pydantic_ai.messages import FunctionToolResultEvent
 
-    from src.ui.turn_mixin import TurnMixin
-    from src.ui.widgets.chat_log import SummonBlock
+    from src.ui.mixins.turn_mixin import TurnMixin
+    from src.ui.widgets.chat.summon_block import SummonBlock
 
-    async def inner():
+    async def inner() -> None:
         app = Harness()
         async with app.run_test():
             chat = app.query_one(ChatLog)
@@ -379,7 +385,7 @@ def test_streamed_refusal_recovers_call_arguments_by_id():
     asyncio.run(inner())
 
 
-def test_a_waiting_line_that_leaves_stops_counting_as_live():
+def test_a_waiting_line_that_leaves_stops_counting_as_live() -> None:
     """The overlay holds the lines it painted only while they are on the screen.
 
     `_is_live` is what keeps the window from letting go of a page that holds a waiting
@@ -434,7 +440,7 @@ def window_page(start: int) -> list[dict[str, Any]]:
     return items
 
 
-def test_the_cursor_of_a_page_dropped_from_the_top_moves_in_items():
+def test_the_cursor_of_a_page_dropped_from_the_top_moves_in_items() -> None:
     """A hundred items painted as sixty widgets still move the cursor a hundred.
 
     The reader sits at the bottom, so the page furthest from them is the one at the

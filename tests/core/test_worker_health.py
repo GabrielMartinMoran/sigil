@@ -41,7 +41,7 @@ def _runnable(work: Any) -> bool:
     return callable(work) and not isinstance(work, bool)
 
 
-def test_the_recorder_recognises_the_bug():
+def test_the_recorder_recognises_the_bug() -> None:
     """The check itself: a `bool` is what the traceback was about."""
     pending = asyncio.sleep(0)
     try:

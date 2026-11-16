@@ -4,21 +4,22 @@ import asyncio
 import tempfile
 from pathlib import Path
 
+import pytest
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-from src.engine.roadmap.models.todo_item import TodoItem
-from src.engine.roadmap.stores import RoadmapStores
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.prompt_input import PromptInput
-from src.ui.widgets.sidebar_panel import SidebarPanel
+from src.core.roadmap.models.todo_item import TodoItem
+from src.core.roadmap.roadmap_stores import RoadmapStores
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.panels.sidebar_panel import SidebarPanel
 
 
-def test_roadmap_panel_shows_and_updates(monkeypatch):
+def test_roadmap_panel_shows_and_updates(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             session = store.create_session()
@@ -43,9 +44,9 @@ def test_roadmap_panel_shows_and_updates(monkeypatch):
     asyncio.run(inner())
 
 
-def test_new_session_gets_its_own_empty_roadmap(monkeypatch):
+def test_new_session_gets_its_own_empty_roadmap(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             session = store.create_session()
@@ -72,9 +73,9 @@ def test_new_session_gets_its_own_empty_roadmap(monkeypatch):
     asyncio.run(inner())
 
 
-def test_loading_a_session_restores_its_roadmap(monkeypatch):
+def test_loading_a_session_restores_its_roadmap(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             first = store.create_session()
@@ -129,9 +130,9 @@ def _sidebar_app(tmp: str, roadmap: RoadmapStores, session) -> SigilApp:
     )
 
 
-def test_sidebar_command_hides_and_shows_the_panel(monkeypatch):
+def test_sidebar_command_hides_and_shows_the_panel(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             session = store.create_session()
@@ -156,9 +157,9 @@ def test_sidebar_command_hides_and_shows_the_panel(monkeypatch):
     asyncio.run(inner())
 
 
-def test_sidebar_command_without_argument_toggles(monkeypatch):
+def test_sidebar_command_without_argument_toggles(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             session = store.create_session()
@@ -179,9 +180,9 @@ def test_sidebar_command_without_argument_toggles(monkeypatch):
     asyncio.run(inner())
 
 
-def test_hidden_sidebar_stays_hidden_when_the_roadmap_changes(monkeypatch):
+def test_hidden_sidebar_stays_hidden_when_the_roadmap_changes(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             session = store.create_session()
@@ -202,9 +203,9 @@ def test_hidden_sidebar_stays_hidden_when_the_roadmap_changes(monkeypatch):
     asyncio.run(inner())
 
 
-def test_sidebar_command_rejects_unknown_arguments(monkeypatch):
+def test_sidebar_command_rejects_unknown_arguments(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             session = store.create_session()
@@ -223,10 +224,10 @@ def test_sidebar_command_rejects_unknown_arguments(monkeypatch):
     asyncio.run(inner())
 
 
-def test_sidebar_command_typed_in_the_prompt(monkeypatch):
+def test_sidebar_command_typed_in_the_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
     """The argument arrives from the prompt, not only from a direct call."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             session = store.create_session()

@@ -4,7 +4,7 @@ import json
 
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 
-from src.engine.context.compaction.summary_generator import checkpoint_messages
+from src.core.context.compaction.summary_generator import checkpoint_messages
 
 
 def test_checkpoint_transcript_identifies_speakers_and_tool_outcomes() -> None:

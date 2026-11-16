@@ -11,23 +11,21 @@ import asyncio
 import tempfile
 from pathlib import Path
 
+import pytest
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 
-from src.engine.agents.rollback import Rollback
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
-from src.ui.widgets.chat_log import ChatLog, UserMessage
-from src.ui.widgets.prompt_input import PromptInput
-from src.ui.widgets.rollback_screen import (
-    ROLLBACK_ONLY,
-    Point,
-    RollbackChoice,
-    RollbackScreen,
-    action_option,
-    point_option,
-)
+from src.core.agents.rollback import Rollback
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.chat.user_message import UserMessage
+from src.ui.widgets.models.point import Point
+from src.ui.widgets.models.rollback_choice import RollbackChoice
+from src.ui.widgets.models.rollback_options import action_option, point_option
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.screens.rollback_screen import ROLLBACK_ONLY, RollbackScreen
 from tests.support.ui import render_text
 
 
@@ -55,8 +53,8 @@ def _app(tmp: str, *, turns: int = 2) -> SigilApp:
 # --- the screen ---------------------------------------------------------------
 
 
-def test_a_point_shows_the_moment_the_prompt_and_the_file_cost():
-    from src.engine.agents.rollback import Checkpoint
+def test_a_point_shows_the_moment_the_prompt_and_the_file_cost() -> None:
+    from src.core.agents.checkpoint import Checkpoint
 
     point = Point(
         checkpoint=Checkpoint(
@@ -80,8 +78,8 @@ def test_a_point_shows_the_moment_the_prompt_and_the_file_cost():
     assert '2 files' in text
 
 
-def test_a_point_with_no_files_says_so_instead_of_nothing():
-    from src.engine.agents.rollback import Checkpoint
+def test_a_point_with_no_files_says_so_instead_of_nothing() -> None:
+    from src.core.agents.checkpoint import Checkpoint
 
     point = Point(
         checkpoint=Checkpoint(
@@ -101,7 +99,7 @@ def test_a_point_with_no_files_says_so_instead_of_nothing():
     assert 'no files' in text
 
 
-def test_the_destructive_action_is_the_one_marked_dangerous():
+def test_the_destructive_action_is_the_one_marked_dangerous() -> None:
     """The eye has to catch which of the three can destroy a turn."""
     dangerous = action_option('rollback_files', 'Roll back, files included', 'x')
     safe = action_option('fork', 'Fork here', 'x')
@@ -113,8 +111,8 @@ def test_the_destructive_action_is_the_one_marked_dangerous():
 # --- the command ---------------------------------------------------------------
 
 
-def test_the_command_forks_and_leaves_the_session_on_screen(monkeypatch):
-    async def inner():
+def test_the_command_forks_and_leaves_the_session_on_screen(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             original = app._session.id
@@ -141,8 +139,8 @@ def test_the_command_forks_and_leaves_the_session_on_screen(monkeypatch):
     asyncio.run(inner())
 
 
-def test_the_command_rolls_back_and_rebuilds_the_conversation(monkeypatch):
-    async def inner():
+def test_the_command_rolls_back_and_rebuilds_the_conversation(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, turns=2)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -172,10 +170,10 @@ def test_the_command_rolls_back_and_rebuilds_the_conversation(monkeypatch):
 # --- the prompt comes back -----------------------------------------------------
 
 
-def test_a_rollback_puts_the_prompt_back_in_the_composer():
+def test_a_rollback_puts_the_prompt_back_in_the_composer() -> None:
     """Going back to a message is "let me say it differently", so it is ready to send."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, turns=2)
             async with app.run_test(size=(120, 40)):
@@ -192,10 +190,10 @@ def test_a_rollback_puts_the_prompt_back_in_the_composer():
     asyncio.run(inner())
 
 
-def test_a_rollback_keeps_the_draft_that_was_in_the_composer():
+def test_a_rollback_keeps_the_draft_that_was_in_the_composer() -> None:
     """The prompt comes back; what the user was already typing does not disappear."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, turns=2)
             async with app.run_test(size=(120, 40)):
@@ -214,10 +212,10 @@ def test_a_rollback_keeps_the_draft_that_was_in_the_composer():
     asyncio.run(inner())
 
 
-def test_a_prompt_that_is_only_a_screenshot_gets_its_marker_back():
+def test_a_prompt_that_is_only_a_screenshot_gets_its_marker_back() -> None:
     """An image sent without words has no `[Image #n]`, and the composer needs one."""
 
-    async def inner():
+    async def inner() -> None:
         import io
 
         from PIL import Image
@@ -262,10 +260,10 @@ def test_a_prompt_that_is_only_a_screenshot_gets_its_marker_back():
     asyncio.run(inner())
 
 
-def test_a_rollback_brings_the_images_back_with_their_prompt():
+def test_a_rollback_brings_the_images_back_with_their_prompt() -> None:
     """A message whose text came back without its picture points at nothing."""
 
-    async def inner():
+    async def inner() -> None:
         import io
 
         from PIL import Image
@@ -318,8 +316,8 @@ def test_a_rollback_brings_the_images_back_with_their_prompt():
     asyncio.run(inner())
 
 
-def test_the_command_is_refused_while_a_turn_runs(monkeypatch):
-    async def inner():
+def test_the_command_is_refused_while_a_turn_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)):
@@ -332,8 +330,8 @@ def test_the_command_is_refused_while_a_turn_runs(monkeypatch):
     asyncio.run(inner())
 
 
-def test_a_numbered_argument_skips_the_list(monkeypatch):
-    async def inner():
+def test_a_numbered_argument_skips_the_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, turns=3)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -355,10 +353,10 @@ def test_a_numbered_argument_skips_the_list(monkeypatch):
 # --- the click -----------------------------------------------------------------
 
 
-def test_a_rendered_user_message_carries_its_position():
+def test_a_rendered_user_message_carries_its_position() -> None:
     """The position in the transcript is the seq, which is what maps it to a turn."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, turns=2)
             async with app.run_test(size=(120, 40)):
@@ -372,8 +370,8 @@ def test_a_rendered_user_message_carries_its_position():
     asyncio.run(inner())
 
 
-def test_clicking_a_message_opens_the_choice_on_that_point():
-    async def inner():
+def test_clicking_a_message_opens_the_choice_on_that_point() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp, turns=2)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -394,8 +392,8 @@ def test_clicking_a_message_opens_the_choice_on_that_point():
     asyncio.run(inner())
 
 
-def test_clicking_a_message_that_never_reached_a_checkpoint_does_nothing():
-    async def inner():
+def test_clicking_a_message_that_never_reached_a_checkpoint_does_nothing() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -412,8 +410,8 @@ def test_clicking_a_message_that_never_reached_a_checkpoint_does_nothing():
     asyncio.run(inner())
 
 
-def test_rollback_modal_is_centered():
-    async def inner():
+def test_rollback_modal_is_centered() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -426,8 +424,8 @@ def test_rollback_modal_is_centered():
     asyncio.run(inner())
 
 
-def test_rollback_restores_visible_assistant_answers():
-    async def inner():
+def test_rollback_restores_visible_assistant_answers() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -435,7 +433,7 @@ def test_rollback_restores_visible_assistant_answers():
                 chat = app.query_one(ChatLog)
                 await app.apply_rollback(chat, RollbackChoice(turn_id=point.turn_id, action=ROLLBACK_ONLY))
                 await pilot.pause()
-                from src.ui.widgets.chat_log import AssistantBlock
+                from src.ui.widgets.chat.assistant_block import AssistantBlock
 
                 blocks = list(chat.query(AssistantBlock))
                 assert len(blocks) == 1

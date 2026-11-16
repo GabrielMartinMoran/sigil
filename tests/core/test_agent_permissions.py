@@ -26,13 +26,16 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from src.engine.agents.agent import create_agent
-from src.engine.agents.profile.capability import DENIED_PREFIX
-from src.engine.agents.profile.models.agent_parse_error import AgentParseError
-from src.engine.agents.profile.permissions import Effect, ToolPermissions, parse_permissions
-from src.engine.agents.profile.registry import AgentRegistry
-from src.engine.mcp.tools import register_mcp_tools
-from src.engine.tooling.permission import ToolGroup, ToolPermission
+from src.core.agents.agent import create_agent
+from src.core.agents.profile.agent_registry import AgentRegistry
+from src.core.agents.profile.effect import Effect
+from src.core.agents.profile.models.agent_parse_error import AgentParseError
+from src.core.agents.profile.permissions import parse_permissions
+from src.core.agents.profile.tool_permissions import ToolPermissions
+from src.core.agents.profile.tool_permissions_capability import DENIED_PREFIX
+from src.core.mcp.tools import register_mcp_tools
+from src.core.tooling.tool_group import ToolGroup
+from src.core.tooling.tool_permission import ToolPermission
 
 FRONTMATTER = '---\nname: {name}\ndescription: hi\n{extra}---\nbody\n'
 
@@ -40,7 +43,7 @@ FRONTMATTER = '---\nname: {name}\ndescription: hi\n{extra}---\nbody\n'
 # --- parsing -----------------------------------------------------------------
 
 
-def test_no_permissions_key_means_every_tool():
+def test_no_permissions_key_means_every_tool() -> None:
     permissions = parse_permissions(None)
     assert not permissions.restricted
     assert permissions.advertises('anything')
@@ -50,51 +53,51 @@ def test_no_permissions_key_means_every_tool():
     assert not parse_permissions({}).restricted
 
 
-def test_an_empty_allowlist_grants_nothing():
+def test_an_empty_allowlist_grants_nothing() -> None:
     permissions = parse_permissions([])
     assert permissions.restricted
     assert not permissions.advertises('read_file')
     assert permissions.describe() == 'only nothing'
 
 
-def test_a_bare_list_is_an_allowlist_against_a_closed_baseline():
+def test_a_bare_list_is_an_allowlist_against_a_closed_baseline() -> None:
     permissions = parse_permissions(['read', 'ask'])
     assert permissions.advertises('read_file', (ToolGroup.READ,))
     assert permissions.advertises('ask_user', (ToolGroup.ASK,))
     assert not permissions.advertises('run')
 
 
-def test_a_group_rule_covers_every_tool_of_the_group():
+def test_a_group_rule_covers_every_tool_of_the_group() -> None:
     permissions = parse_permissions({'read': 'deny'})
     assert not permissions.advertises('read_file', (ToolGroup.READ,))
     assert permissions.advertises('write_file', (ToolGroup.WRITE,))
     assert permissions.advertises('run', (ToolGroup.RUN,))
 
 
-def test_the_last_matching_rule_wins():
+def test_the_last_matching_rule_wins() -> None:
     permissions = parse_permissions({'*': 'deny', 'read': 'allow'})
     assert not permissions.advertises('run')
     assert permissions.advertises('read_file', (ToolGroup.READ,))
 
 
-def test_a_tool_rule_beats_the_group_it_sits_in():
+def test_a_tool_rule_beats_the_group_it_sits_in() -> None:
     permissions = parse_permissions({'write': 'allow', 'patch_file': 'deny'})
     assert permissions.advertises('write_file', (ToolGroup.WRITE,))
     assert not permissions.advertises('patch_file', (ToolGroup.WRITE,))
 
 
-def test_a_wildcard_over_names_targets_one_mcp_server():
+def test_a_wildcard_over_names_targets_one_mcp_server() -> None:
     permissions = parse_permissions({'*': 'deny', 'mcp_github_*': 'allow'})
     assert permissions.advertises('mcp_github_search')
     assert not permissions.advertises('mcp_jira_search')
 
 
-def test_a_narrowed_rule_keeps_the_tool_visible():
+def test_a_narrowed_rule_keeps_the_tool_visible() -> None:
     permissions = parse_permissions({'run': {'allow': ['git status *']}})
     assert permissions.advertises('run', (ToolGroup.RUN,))
 
 
-def test_summon_is_a_scope_and_the_subagent_name_is_its_resource():
+def test_summon_is_a_scope_and_the_subagent_name_is_its_resource() -> None:
     """`summon` is ruled on like the rest, with the profile name as the resource."""
     permissions = parse_permissions(
         {'all': 'deny', 'summon': {'allow': ['scout', 'review-*'], 'deny': ['review-secret']}}
@@ -106,53 +109,53 @@ def test_summon_is_a_scope_and_the_subagent_name_is_its_resource():
     assert not permissions.permits('summon', (ToolGroup.SUMMON,), ('wizard',))
 
 
-def test_summoning_everything_is_a_wildcard():
+def test_summoning_everything_is_a_wildcard() -> None:
     permissions = parse_permissions({'summon': {'allow': ['*']}})
     assert permissions.permits('summon', (ToolGroup.SUMMON,), ('anything',))
 
 
-def test_denying_summon_hides_the_tool_entirely():
+def test_denying_summon_hides_the_tool_entirely() -> None:
     permissions = parse_permissions({'summon': 'deny'})
     assert not permissions.advertises('summon', (ToolGroup.SUMMON,))
 
 
-def test_no_summon_rule_leaves_every_subagent_available():
+def test_no_summon_rule_leaves_every_subagent_available() -> None:
     permissions = parse_permissions(None)
     assert permissions.advertises('summon', (ToolGroup.SUMMON,))
     assert permissions.permits('summon', (ToolGroup.SUMMON,), ('scout',))
 
 
-def test_an_unknown_scope_is_an_error_not_an_open_agent():
+def test_an_unknown_scope_is_an_error_not_an_open_agent() -> None:
     with pytest.raises(AgentParseError, match='Unknown permission scope'):
         parse_permissions({'reed': 'deny'})
 
 
-def test_the_old_allow_deny_shape_is_rejected_with_the_new_one():
+def test_the_old_allow_deny_shape_is_rejected_with_the_new_one() -> None:
     with pytest.raises(AgentParseError, match='no longer accepted'):
         parse_permissions({'allow': ['read_file'], 'deny': ['run']})
 
 
-def test_an_unknown_effect_is_rejected():
+def test_an_unknown_effect_is_rejected() -> None:
     with pytest.raises(AgentParseError, match='allow` or `deny'):
         parse_permissions({'read': 'maybe'})
 
 
-def test_a_list_where_an_effect_belongs_is_rejected():
+def test_a_list_where_an_effect_belongs_is_rejected() -> None:
     with pytest.raises(AgentParseError, match='needs an effect'):
         parse_permissions({'read': ['read_file']})
 
 
-def test_unknown_keys_inside_a_narrowed_rule_are_rejected():
+def test_unknown_keys_inside_a_narrowed_rule_are_rejected() -> None:
     with pytest.raises(AgentParseError, match='Unknown keys'):
         parse_permissions({'run': {'allow': ['ls'], 'except': ['rm']}})
 
 
-def test_a_permission_entry_that_is_not_a_string_is_rejected():
+def test_a_permission_entry_that_is_not_a_string_is_rejected() -> None:
     with pytest.raises(AgentParseError, match='strings'):
         parse_permissions({'run': {'allow': [1, 2]}})
 
 
-def test_unrestricted_is_not_the_same_as_an_empty_allowlist():
+def test_unrestricted_is_not_the_same_as_an_empty_allowlist() -> None:
     assert not ToolPermissions().restricted
     assert ToolPermissions(rules=()).restricted is False
     assert parse_permissions([]).restricted
@@ -161,25 +164,25 @@ def test_unrestricted_is_not_the_same_as_an_empty_allowlist():
 # --- matching ----------------------------------------------------------------
 
 
-def test_a_command_pattern_ending_in_a_star_also_matches_the_bare_command():
+def test_a_command_pattern_ending_in_a_star_also_matches_the_bare_command() -> None:
     permissions = parse_permissions({'run': {'allow': ['git status *']}})
     assert permissions.permits('run', ('run',), ('git status',), kind='command')
     assert permissions.permits('run', ('run',), ('git status --short',), kind='command')
     assert not permissions.permits('run', ('run',), ('git stash',), kind='command')
 
 
-def test_whitespace_is_collapsed_before_matching_a_command():
+def test_whitespace_is_collapsed_before_matching_a_command() -> None:
     permissions = parse_permissions({'run': {'allow': ['git   status *']}})
     assert permissions.permits('run', ('run',), ('  git status   --short ',), kind='command')
 
 
-def test_one_denied_command_refuses_the_whole_call():
+def test_one_denied_command_refuses_the_whole_call() -> None:
     permissions = parse_permissions({'run': {'allow': ['*'], 'deny': ['rm *']}})
     assert permissions.permits('run', ('run',), ('ls', 'cat file'), kind='command')
     assert not permissions.permits('run', ('run',), ('ls', 'rm -rf /'), kind='command')
 
 
-def test_a_relative_path_pattern_matches_an_absolute_one(tmp_path, monkeypatch):
+def test_a_relative_path_pattern_matches_an_absolute_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     permissions = parse_permissions({'read': {'deny': ['*.env']}})
     assert not permissions.permits('read_file', ('read',), ('/abs/path/.env',), kind='path')
@@ -188,7 +191,7 @@ def test_a_relative_path_pattern_matches_an_absolute_one(tmp_path, monkeypatch):
     assert not permissions.permits('read_file', ('read',), ('.env',), kind='path')
 
 
-def test_a_workspace_relative_pattern_matches_the_subtree(tmp_path, monkeypatch):
+def test_a_workspace_relative_pattern_matches_the_subtree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     permissions = parse_permissions({'write': {'deny': ['secrets/*']}})
     assert not permissions.permits('write_file', ('write',), ('secrets/token.txt',), kind='path')
@@ -196,7 +199,7 @@ def test_a_workspace_relative_pattern_matches_the_subtree(tmp_path, monkeypatch)
     assert permissions.permits('write_file', ('write',), ('src/app.py',), kind='path')
 
 
-def test_a_home_pattern_is_expanded(tmp_path, monkeypatch):
+def test_a_home_pattern_is_expanded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))
     permissions = parse_permissions({'read': {'allow': ['$HOME/reference/*']}})
@@ -204,30 +207,30 @@ def test_a_home_pattern_is_expanded(tmp_path, monkeypatch):
     assert not permissions.permits('read_file', ('read',), (str(tmp_path / 'home' / 'other' / 'a.md'),), kind='path')
 
 
-def test_a_string_pattern_is_one_pattern_and_not_a_comma_list():
+def test_a_string_pattern_is_one_pattern_and_not_a_comma_list() -> None:
     """A command can contain a comma, so a bare string is a single rule."""
     permissions = parse_permissions({'run': {'allow': 'git log --pretty=%s,%d'}})
     assert permissions.permits('run', ('run',), ('git log --pretty=%s,%d',), kind='command')
     assert not permissions.permits('run', ('run',), ('git log --pretty=%s',), kind='command')
 
 
-def test_a_query_is_matched_as_given():
+def test_a_query_is_matched_as_given() -> None:
     permissions = parse_permissions({'web': {'deny': ['*porn*']}})
     assert not permissions.permits('web_search', ('web',), ('free porn',), kind='text')
     assert permissions.permits('web_search', ('web',), ('python asyncio',), kind='text')
 
 
-def test_a_rule_without_patterns_speaks_about_every_resource():
+def test_a_rule_without_patterns_speaks_about_every_resource() -> None:
     permissions = parse_permissions({'read': 'deny'})
     assert not permissions.permits('read_file', ('read',), ('anything.txt',), kind='path')
 
 
-def test_a_scope_the_call_does_not_belong_to_does_not_decide_it():
+def test_a_scope_the_call_does_not_belong_to_does_not_decide_it() -> None:
     permissions = parse_permissions({'write': 'deny'})
     assert permissions.permits('read_file', ('read',), ('a.txt',), kind='path')
 
 
-def test_an_unmatched_tool_is_allowed():
+def test_an_unmatched_tool_is_allowed() -> None:
     """A profile that lists what it closes cannot accidentally close the rest."""
     permissions = parse_permissions({'run': 'deny'})
     assert permissions.advertises('read_file', ('read',))
@@ -237,15 +240,15 @@ def test_an_unmatched_tool_is_allowed():
 # --- the picker --------------------------------------------------------------
 
 
-def test_describe_says_what_is_closed():
+def test_describe_says_what_is_closed() -> None:
     assert parse_permissions({'write': 'deny'}).describe() == 'all tools except write'
 
 
-def test_describe_lists_the_only_scope_from_a_closed_baseline():
+def test_describe_lists_the_only_scope_from_a_closed_baseline() -> None:
     assert parse_permissions({'*': 'deny', 'read': 'allow'}).describe() == 'only read'
 
 
-def test_describe_mentions_the_narrowed_scopes():
+def test_describe_mentions_the_narrowed_scopes() -> None:
     described = parse_permissions({'run': {'allow': ['git status *']}}).describe()
     assert 'run by pattern' in described
 
@@ -297,17 +300,17 @@ def _agent_with_tools(registry: AgentRegistry | None) -> Agent:
     return agent
 
 
-def test_a_closed_group_is_never_advertised(tmp_path):
+def test_a_closed_group_is_never_advertised(tmp_path: Path) -> None:
     registry = _registry(tmp_path, extra='permissions:\n  write: deny\n')
     assert set(_seen_tools(_agent_with_tools(registry))) == {'read_file', 'run', 'mcp_github_search'}
 
 
-def test_an_allowlist_leaves_only_the_granted_group(tmp_path):
+def test_an_allowlist_leaves_only_the_granted_group(tmp_path: Path) -> None:
     registry = _registry(tmp_path, extra='permissions: [read]\n')
     assert _seen_tools(_agent_with_tools(registry)) == ['read_file']
 
 
-def test_a_denied_tool_cannot_be_called(tmp_path):
+def test_a_denied_tool_cannot_be_called(tmp_path: Path) -> None:
     """The model cannot call what it was never offered, even if it insists."""
     registry = _registry(tmp_path, extra='permissions:\n  run: deny\n')
     agent = _agent_with_tools(registry)
@@ -327,7 +330,7 @@ def test_a_denied_tool_cannot_be_called(tmp_path):
     assert 'Unknown tool' in text
 
 
-def test_a_narrowed_tool_refuses_the_calls_outside_its_patterns(tmp_path):
+def test_a_narrowed_tool_refuses_the_calls_outside_its_patterns(tmp_path: Path) -> None:
     registry = _registry(tmp_path, extra='permissions:\n  run:\n    allow: ["git status *"]\n')
     agent = _agent_with_tools(registry)
 
@@ -346,7 +349,7 @@ def test_a_narrowed_tool_refuses_the_calls_outside_its_patterns(tmp_path):
     assert DENIED_PREFIX in str(outcomes[0].content)
 
 
-def test_a_narrowed_tool_still_runs_the_calls_inside_its_patterns(tmp_path):
+def test_a_narrowed_tool_still_runs_the_calls_inside_its_patterns(tmp_path: Path) -> None:
     registry = _registry(tmp_path, extra='permissions:\n  run:\n    allow: ["git status *"]\n')
     agent = _agent_with_tools(registry)
 
@@ -364,11 +367,11 @@ def test_a_narrowed_tool_still_runs_the_calls_inside_its_patterns(tmp_path):
     assert [part.outcome for part in outcomes] == ['success']
 
 
-def test_without_a_registry_nothing_is_filtered():
+def test_without_a_registry_nothing_is_filtered() -> None:
     assert set(_seen_tools(_agent_with_tools(None))) == {'read_file', 'run', 'mcp_github_search'}
 
 
-def test_switching_agent_changes_the_tool_set_mid_session(tmp_path):
+def test_switching_agent_changes_the_tool_set_mid_session(tmp_path: Path) -> None:
     _write(tmp_path, 'all')
     _write(tmp_path, 'readonly', extra='permissions: [read]\n')
     registry = AgentRegistry([('project', tmp_path)], active='all')
@@ -383,7 +386,7 @@ def test_switching_agent_changes_the_tool_set_mid_session(tmp_path):
     assert narrow == ['read_file']
 
 
-def test_a_rule_narrowed_by_a_group_the_tool_declares_still_applies(tmp_path):
+def test_a_rule_narrowed_by_a_group_the_tool_declares_still_applies(tmp_path: Path) -> None:
     """A tool in two groups — a skill's script runs — is closed by either."""
     registry = _registry(tmp_path, extra='permissions:\n  run: deny\n')
     agent = create_agent(None, agent_registry=registry)
@@ -396,7 +399,7 @@ def test_a_rule_narrowed_by_a_group_the_tool_declares_still_applies(tmp_path):
     assert _seen_tools(agent) == []
 
 
-def test_a_permission_filter_never_touches_an_unrestricted_profile(tmp_path):
+def test_a_permission_filter_never_touches_an_unrestricted_profile(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
     permissions = registry.active.permissions
     assert not permissions.restricted
@@ -404,26 +407,26 @@ def test_a_permission_filter_never_touches_an_unrestricted_profile(tmp_path):
     assert permissions.permits('run', (ToolGroup.RUN,), ('rm -rf /',))
 
 
-def test_the_rules_are_kept_in_the_order_they_were_written():
+def test_the_rules_are_kept_in_the_order_they_were_written() -> None:
     permissions = parse_permissions({'*': 'deny', 'read': 'allow', 'read_file': 'deny'})
     assert [rule.scope for rule in permissions.rules] == ['*', 'read', 'read_file']
     assert [rule.effect for rule in permissions.rules] == [Effect.DENY, Effect.ALLOW, Effect.DENY]
 
 
-def test_the_picker_line_names_the_scope_and_not_the_rule_list(tmp_path):
+def test_the_picker_line_names_the_scope_and_not_the_rule_list(tmp_path: Path) -> None:
     extra = 'permissions:\n  all: deny\n  read: allow\n  run:\n    allow: ["git status *"]\n'
     profile = _registry(tmp_path, extra=extra).active
     assert profile is not None
     assert profile.permissions.describe() == 'only read (run by pattern)'
 
 
-def test_a_call_with_an_unknown_declaration_is_matched_by_name_only():
+def test_a_call_with_an_unknown_declaration_is_matched_by_name_only() -> None:
     permissions = parse_permissions({'run': 'deny'})
     assert not permissions.advertises('run')
     assert permissions.advertises('read_file')
 
 
-def test_permissions_survive_a_round_trip_through_the_profile_file(tmp_path):
+def test_permissions_survive_a_round_trip_through_the_profile_file(tmp_path: Path) -> None:
     profile = _registry(tmp_path, extra='permissions:\n  write: deny\n').active
     assert profile is not None
     assert profile.permissions.describe() == 'all tools except write'
@@ -431,39 +434,13 @@ def test_permissions_survive_a_round_trip_through_the_profile_file(tmp_path):
     assert profile.permissions.rules[0].scope == 'write'
 
 
-def test_a_tool_declaration_reads_back_as_written():
-    from src.engine.tooling.permission import permission_of
+def test_a_tool_declaration_reads_back_as_written() -> None:
+    from src.core.tooling.permission import permission_of
 
     declaration = ToolPermission(groups=(ToolGroup.READ,), resource='path', kind='path')
     tool_def: Any = type('ToolDef', (), {'metadata': declaration.metadata()})()
     parsed = permission_of(tool_def)
     assert parsed == declaration
-
-
-def test_a_narrowed_server_name_refuses_only_that_server(tmp_path):
-    """The MCP meta-tools name their server, so a rule can keep the others."""
-    registry = _registry(tmp_path, extra='permissions:\n  mcp:\n    deny: [github]\n')
-    agent = create_agent(None, agent_registry=registry)
-    register_mcp_tools(agent, _FakeManager())
-
-    def model_function(messages, _info: AgentInfo):
-        if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart('read_mcp_resource', {'server': 'github', 'uri': 'x'})])
-        return ModelResponse(parts=[TextPart('done')])
-
-    with agent.override(model=FunctionModel(model_function)):
-        refused = asyncio.run(agent.run('go'))
-
-    def model_function_allowed(messages, _info: AgentInfo):
-        if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart('read_mcp_resource', {'server': 'jira', 'uri': 'x'})])
-        return ModelResponse(parts=[TextPart('done')])
-
-    with agent.override(model=FunctionModel(model_function_allowed)):
-        allowed = asyncio.run(agent.run('go'))
-
-    assert _outcomes(refused) == ['failed']
-    assert _outcomes(allowed) == ['success']
 
 
 class _FakeManager:
@@ -493,6 +470,32 @@ class _FakeManager:
         return 'prompt'
 
 
+def test_a_narrowed_server_name_refuses_only_that_server(tmp_path: Path) -> None:
+    """The MCP meta-tools name their server, so a rule can keep the others."""
+    registry = _registry(tmp_path, extra='permissions:\n  mcp:\n    deny: [github]\n')
+    agent = create_agent(None, agent_registry=registry)
+    register_mcp_tools(agent, _FakeManager())
+
+    def model_function(messages, _info: AgentInfo):
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('read_mcp_resource', {'server': 'github', 'uri': 'x'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    with agent.override(model=FunctionModel(model_function)):
+        refused = asyncio.run(agent.run('go'))
+
+    def model_function_allowed(messages, _info: AgentInfo):
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('read_mcp_resource', {'server': 'jira', 'uri': 'x'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    with agent.override(model=FunctionModel(model_function_allowed)):
+        allowed = asyncio.run(agent.run('go'))
+
+    assert _outcomes(refused) == ['failed']
+    assert _outcomes(allowed) == ['success']
+
+
 def _outcomes(result: Any) -> list[str]:
     return [
         part.outcome
@@ -502,18 +505,18 @@ def _outcomes(result: Any) -> list[str]:
     ]
 
 
-def test_summon_resume_permissions_use_resolved_node_identity(tmp_path):
+def test_summon_resume_permissions_use_resolved_node_identity(tmp_path: Path) -> None:
     from types import SimpleNamespace
 
     from pydantic_ai.exceptions import ToolFailed
     from pydantic_ai.tools import ToolDefinition
 
-    from src.engine.agents.profile.capability import ToolPermissionsCapability
-    from src.engine.agents.profile.models.agent_role import AgentRole
-    from src.engine.agents.profile.source import ProfileSource
-    from src.engine.agents.tree.store import AgentTreeStore
-    from src.engine.agents.tree.summoner import SubagentSummoner
-    from src.engine.agents.tree.tools import summon_permission
+    from src.core.agents.profile.models.agent_role import AgentRole
+    from src.core.agents.profile.profile_source import ProfileSource
+    from src.core.agents.profile.tool_permissions_capability import ToolPermissionsCapability
+    from src.core.agents.tree.agent_tree_store import AgentTreeStore
+    from src.core.agents.tree.subagent_summoner import SubagentSummoner
+    from src.core.agents.tree.tools import summon_permission
 
     _write(tmp_path, 'wizard', extra="permissions:\n  summon:\n    allow: ['worker']\n")
     registry = AgentRegistry([('project', tmp_path)], active='wizard')
@@ -532,7 +535,7 @@ def test_summon_resume_permissions_use_resolved_node_identity(tmp_path):
             SimpleNamespace(), call=ToolCallPart('summon', args), tool_def=definition, args=args
         )
 
-    async def inner():
+    async def inner() -> None:
         await check({'agent_id': '#' + allowed.short_id})
         with pytest.raises(ToolFailed, match='PermissionDenied'):
             await check({'agent': 'worker', 'agent_id': denied.id})
@@ -542,9 +545,11 @@ def test_summon_resume_permissions_use_resolved_node_identity(tmp_path):
     asyncio.run(inner())
 
 
-def test_permission_path_matching_follows_the_bound_execution_root(tmp_path, monkeypatch):
-    from src.engine.agents.profile.permissions import parse_permissions
-    from src.engine.files.paths import execution_workspace
+def test_permission_path_matching_follows_the_bound_execution_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.core.agents.profile.permissions import parse_permissions
+    from src.core.files.paths import execution_workspace
 
     bound = tmp_path / 'bound'
     bound.mkdir()

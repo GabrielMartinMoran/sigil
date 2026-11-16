@@ -8,8 +8,9 @@ from dataclasses import replace
 
 import pytest
 
-from src.engine.agents.tree.notifications import AgentNotification, Notifications
-from src.engine.storage.notifications import save_notifications
+from src.core.agents.tree.agent_notification import AgentNotification
+from src.core.agents.tree.notifications import Notifications
+from src.core.storage.notifications import save_notifications
 
 
 @pytest.fixture()

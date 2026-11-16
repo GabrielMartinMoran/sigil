@@ -11,14 +11,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.engine.agents.model_config import AgentModelConfig
-from src.engine.agents.model_defaults import (
-    ConfigScope,
-    defaults_paths,
-    read_defaults,
-    save_default,
-)
-from src.engine.mcp.config.loader import load_config
+import pytest
+
+from src.core.agents.agent_model_config import AgentModelConfig
+from src.core.agents.config_scope import ConfigScope
+from src.core.agents.model_defaults import defaults_paths, read_defaults, save_default
+from src.core.mcp.config.loader import load_config
 
 PROJECT_MODEL = AgentModelConfig(account='work', model='openai/gpt-5', effort='high')
 
@@ -40,7 +38,7 @@ def _read(path: Path) -> dict:
 # --- writing one entry -------------------------------------------------------
 
 
-def test_should_write_the_default_model_to_the_destination(tmp_path: Path):
+def test_should_write_the_default_model_to_the_destination(tmp_path: Path) -> None:
     project, user = _paths(tmp_path)
 
     errors = save_default(None, PROJECT_MODEL, ConfigScope.PROJECT, paths=(project, user))
@@ -53,7 +51,7 @@ def test_should_write_the_default_model_to_the_destination(tmp_path: Path):
     assert load_config([project], environ={}).default_model == PROJECT_MODEL
 
 
-def test_should_write_an_agent_entry_without_touching_the_others(tmp_path: Path):
+def test_should_write_an_agent_entry_without_touching_the_others(tmp_path: Path) -> None:
     project, user = _paths(tmp_path)
     _write(project, {'agents': {'scout': {'account': 'a', 'model': 'fast', 'effort': 'low'}}})
 
@@ -67,7 +65,7 @@ def test_should_write_an_agent_entry_without_touching_the_others(tmp_path: Path)
     assert load_config([project], environ={}).agents['wizard'] == PROJECT_MODEL
 
 
-def test_should_keep_what_the_writer_does_not_understand(tmp_path: Path):
+def test_should_keep_what_the_writer_does_not_understand(tmp_path: Path) -> None:
     project, user = _paths(tmp_path)
     _write(
         project,
@@ -85,7 +83,7 @@ def test_should_keep_what_the_writer_does_not_understand(tmp_path: Path):
     assert written['default_model']['model'] == 'openai/gpt-5'
 
 
-def test_should_write_to_the_user_file_when_that_is_the_destination(tmp_path: Path):
+def test_should_write_to_the_user_file_when_that_is_the_destination(tmp_path: Path) -> None:
     project, user = _paths(tmp_path)
 
     errors = save_default('wizard', PROJECT_MODEL, ConfigScope.GLOBAL, paths=(project, user))
@@ -95,7 +93,7 @@ def test_should_write_to_the_user_file_when_that_is_the_destination(tmp_path: Pa
     assert _read(user)['agents']['wizard']['account'] == 'work'
 
 
-def test_should_clear_an_entry_and_drop_an_empty_section(tmp_path: Path):
+def test_should_clear_an_entry_and_drop_an_empty_section(tmp_path: Path) -> None:
     project, user = _paths(tmp_path)
     _write(
         project,
@@ -118,7 +116,7 @@ def test_should_clear_an_entry_and_drop_an_empty_section(tmp_path: Path):
     assert _read(project) == {}
 
 
-def test_should_not_create_a_file_to_clear_an_entry_that_is_not_there(tmp_path: Path):
+def test_should_not_create_a_file_to_clear_an_entry_that_is_not_there(tmp_path: Path) -> None:
     project, user = _paths(tmp_path)
 
     assert save_default('wizard', None, ConfigScope.PROJECT, paths=(project, user)) == ()
@@ -126,7 +124,7 @@ def test_should_not_create_a_file_to_clear_an_entry_that_is_not_there(tmp_path: 
     assert not project.exists()
 
 
-def test_should_refuse_to_rewrite_a_file_that_does_not_parse(tmp_path: Path):
+def test_should_refuse_to_rewrite_a_file_that_does_not_parse(tmp_path: Path) -> None:
     project, user = _paths(tmp_path)
     project.parent.mkdir(parents=True)
     project.write_text('{ not json', encoding='utf-8')
@@ -137,7 +135,7 @@ def test_should_refuse_to_rewrite_a_file_that_does_not_parse(tmp_path: Path):
     assert project.read_text(encoding='utf-8') == '{ not json'
 
 
-def test_should_refuse_to_replace_a_non_object_agents_block(tmp_path: Path):
+def test_should_refuse_to_replace_a_non_object_agents_block(tmp_path: Path) -> None:
     project, user = _paths(tmp_path)
     _write(project, {'agents': ['wizard']})
 
@@ -150,7 +148,7 @@ def test_should_refuse_to_replace_a_non_object_agents_block(tmp_path: Path):
 # --- reading both files ------------------------------------------------------
 
 
-def test_should_read_an_empty_state_when_no_file_exists(tmp_path: Path):
+def test_should_read_an_empty_state_when_no_file_exists(tmp_path: Path) -> None:
     project, user = _paths(tmp_path)
 
     state = read_defaults(paths=(project, user))
@@ -162,7 +160,7 @@ def test_should_read_an_empty_state_when_no_file_exists(tmp_path: Path):
     assert state.agent_names() == ()
 
 
-def test_should_report_where_each_entry_comes_from(tmp_path: Path):
+def test_should_report_where_each_entry_comes_from(tmp_path: Path) -> None:
     project, user = _paths(tmp_path)
     _write(project, {'agents': {'wizard': {'account': 'project', 'model': 'p/m', 'effort': 'high'}}})
     _write(
@@ -187,7 +185,7 @@ def test_should_report_where_each_entry_comes_from(tmp_path: Path):
     assert state.path_for(ConfigScope.GLOBAL) == user
 
 
-def test_should_mark_an_invalid_project_entry_instead_of_falling_back(tmp_path: Path):
+def test_should_mark_an_invalid_project_entry_instead_of_falling_back(tmp_path: Path) -> None:
     project, user = _paths(tmp_path)
     _write(project, {'agents': {'wizard': {'account': 'a', 'model': 'm', 'effort': 'typo'}}})
     _write(user, {'agents': {'wizard': {'account': 'b', 'model': 'other', 'effort': 'high'}}})
@@ -199,7 +197,7 @@ def test_should_mark_an_invalid_project_entry_instead_of_falling_back(tmp_path: 
     assert any('effort' in error for error in state.errors)
 
 
-def test_should_treat_a_single_file_as_the_only_destination(tmp_path: Path, monkeypatch):
+def test_should_treat_a_single_file_as_the_only_destination(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fixed = tmp_path / 'explicit' / 'config.json'
     monkeypatch.setenv('SIGIL_CONFIG', str(fixed))
 
@@ -213,11 +211,11 @@ def test_should_treat_a_single_file_as_the_only_destination(tmp_path: Path, monk
 # --- the composition ---------------------------------------------------------
 
 
-def test_should_apply_a_saved_default_without_a_restart(tmp_path: Path, monkeypatch):
+def test_should_apply_a_saved_default_without_a_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The write is only half the feature: the router has to read it next time."""
-    from src.engine.bootstrap import Composition
-    from src.engine.providers.bootstrap import ProviderPaths
-    from src.engine.settings import load_settings
+    from src.core.composition.composition import Composition
+    from src.core.config.load_settings import load_settings
+    from src.core.providers.provider_paths import ProviderPaths
     from tests.support.provider_service import _add, _service
 
     monkeypatch.delenv('SIGIL_CONFIG', raising=False)
@@ -225,7 +223,7 @@ def test_should_apply_a_saved_default_without_a_restart(tmp_path: Path, monkeypa
     monkeypatch.chdir(tmp_path)
     service = _service(tmp_path)
     _add(service)
-    monkeypatch.setattr('src.engine.bootstrap.build_service', lambda *args, **kwargs: service)
+    monkeypatch.setattr('src.core.composition.composition.build_service', lambda *args, **kwargs: service)
     composition = Composition(tmp_path, settings=load_settings({}), provider_paths=ProviderPaths(tmp_path / 'p'))
     config = AgentModelConfig('work', 'second/model', 'medium')
 

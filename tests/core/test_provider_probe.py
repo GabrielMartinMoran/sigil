@@ -10,14 +10,10 @@ import asyncio
 import httpx
 import pytest
 
-from src.engine.providers.catalog.probe import (
-    ProbeResult,
-    _classify,
-    probe_credential,
-)
-from src.engine.providers.domain.provider_account import ProviderAccount
-from src.engine.providers.domain.provider_kind import ProviderKind
-from src.engine.providers.domain.provider_variant import ProviderVariant
+from src.core.providers.catalog.probe import ProbeResult, _classify, probe_credential
+from src.core.providers.domain.provider_account import ProviderAccount
+from src.core.providers.domain.provider_kind import ProviderKind
+from src.core.providers.domain.provider_variant import ProviderVariant
 
 
 def _account(kind: ProviderKind, variant=ProviderVariant.DEFAULT) -> ProviderAccount:
@@ -25,34 +21,34 @@ def _account(kind: ProviderKind, variant=ProviderVariant.DEFAULT) -> ProviderAcc
 
 
 @pytest.mark.parametrize('status', [401, 403])
-def test_auth_statuses_are_a_rejection(status):
+def test_auth_statuses_are_a_rejection(status) -> None:
     assert _classify(status, '{"error": "nope"}').outcome == 'rejected'
 
 
 @pytest.mark.parametrize('status', [200, 201, 204])
-def test_success_is_valid(status):
+def test_success_is_valid(status) -> None:
     assert _classify(status, '').outcome == 'valid'
 
 
 @pytest.mark.parametrize('status', [400, 404, 429, 500, 502])
-def test_other_statuses_are_undecided(status):
+def test_other_statuses_are_undecided(status) -> None:
     assert _classify(status, 'boom').outcome == 'unknown'
 
 
-def test_the_detail_is_shortened():
+def test_the_detail_is_shortened() -> None:
     result = _classify(401, 'x' * 5000)
     assert len(result.detail) <= 160
 
 
-def test_probe_result_predicates():
+def test_probe_result_predicates() -> None:
     assert ProbeResult('valid').is_valid
     assert ProbeResult('rejected').is_rejected
     assert not ProbeResult('unknown').is_valid
     assert not ProbeResult('unknown').is_rejected
 
 
-def test_a_network_failure_is_undecided_not_a_rejection(monkeypatch):
-    async def boom(*_args, **_kwargs):
+def test_a_network_failure_is_undecided_not_a_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def boom(*_args, **_kwargs) -> None:
         raise httpx.ConnectError('no route to host')
 
     monkeypatch.setattr(httpx.AsyncClient, 'get', boom)
@@ -62,7 +58,7 @@ def test_a_network_failure_is_undecided_not_a_rejection(monkeypatch):
     assert 'no route' in result.detail
 
 
-def test_openrouter_probe_hits_the_key_endpoint(monkeypatch):
+def test_openrouter_probe_hits_the_key_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[str] = []
 
     async def fake_get(self, url, headers=None):
@@ -75,7 +71,7 @@ def test_openrouter_probe_hits_the_key_endpoint(monkeypatch):
     assert seen == ['https://openrouter.ai/api/v1/key']
 
 
-def test_openai_probe_hits_the_models_endpoint(monkeypatch):
+def test_openai_probe_hits_the_models_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[str] = []
 
     async def fake_get(self, url, headers=None):
@@ -88,7 +84,7 @@ def test_openai_probe_hits_the_models_endpoint(monkeypatch):
     assert seen == ['https://api.openai.com/v1/models']
 
 
-def test_zen_probe_hits_the_public_catalogue(monkeypatch):
+def test_zen_probe_hits_the_public_catalogue(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[str] = []
 
     async def fake_get(self, url, headers=None):
@@ -101,7 +97,7 @@ def test_zen_probe_hits_the_public_catalogue(monkeypatch):
     assert seen == ['https://opencode.ai/zen/v1/models']
 
 
-def test_go_probe_posts_a_one_token_completion_because_go_has_no_catalogue(monkeypatch):
+def test_go_probe_posts_a_one_token_completion_because_go_has_no_catalogue(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[dict] = []
 
     async def fake_post(self, url, headers=None, json=None):
@@ -117,7 +113,7 @@ def test_go_probe_posts_a_one_token_completion_because_go_has_no_catalogue(monke
 
 
 @pytest.mark.parametrize('status', [400, 429])
-def test_go_treats_a_routing_or_quota_error_as_a_live_key(monkeypatch, status):
+def test_go_treats_a_routing_or_quota_error_as_a_live_key(monkeypatch: pytest.MonkeyPatch, status) -> None:
     """`400 Model is unavailable` and `429 FreeUsageLimitError` are not a bad key."""
 
     async def fake_post(self, url, headers=None, json=None):
@@ -129,7 +125,7 @@ def test_go_treats_a_routing_or_quota_error_as_a_live_key(monkeypatch, status):
     assert result.outcome == 'valid'
 
 
-def test_go_still_reports_a_rejected_key(monkeypatch):
+def test_go_still_reports_a_rejected_key(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_post(self, url, headers=None, json=None):
         return httpx.Response(401, text='{"error": {"message": "Invalid credential"}}')
 

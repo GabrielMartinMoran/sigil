@@ -5,9 +5,9 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
-from src.engine.extensions.manager import ExtensionManager
-from src.engine.extensions.registration import register_extensions
-from src.engine.tooling.catalog import ToolCatalog
+from src.core.extensions.extension_manager import ExtensionManager
+from src.core.extensions.registration import register_extensions
+from src.core.tooling.tool_catalog import ToolCatalog
 
 
 def test_external_tool_reaches_agent_and_declares_compaction(tmp_path: Path) -> None:
@@ -67,7 +67,7 @@ def test_invalid_schema_does_not_pollute_catalog(tmp_path: Path) -> None:
     catalog = ToolCatalog()
 
     class RejectingTarget:
-        def tool_plain(self, func, **kwargs):
+        def tool_plain(self, func, **kwargs) -> None:
             raise ValueError('invalid schema')
 
     register_extensions(RejectingTarget(), manager, catalog=catalog)

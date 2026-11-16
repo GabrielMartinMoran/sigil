@@ -15,12 +15,12 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset
 
-from src.engine.mcp.config.env_expansion import expand_env_vars
-from src.engine.mcp.config.loader import load_config
-from src.engine.mcp.config_models.mcp_config_error import MCPConfigError
-from src.engine.mcp.manager.manager import MCPManager
-from src.engine.mcp.resilient import ResilientToolset
-from src.engine.mcp.tools import register_mcp_tools
+from src.core.mcp.config.env_expansion import expand_env_vars
+from src.core.mcp.config.loader import load_config
+from src.core.mcp.config_models.mcp_config_error import MCPConfigError
+from src.core.mcp.manager.mcp_manager import MCPManager
+from src.core.mcp.resilient_toolset import ResilientToolset
+from src.core.mcp.tools import register_mcp_tools
 
 SERVER_SCRIPT = '''\
 from mcp.server.mcpserver import MCPServer
@@ -86,20 +86,20 @@ class BrokenToolset(AbstractToolset):
     def id(self):
         return 'broken'
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> None:
         raise RuntimeError('cannot connect')
 
     async def get_tools(self, ctx):
         return {}
 
-    async def call_tool(self, name, args, ctx, tool):
+    async def call_tool(self, name, args, ctx, tool) -> None:
         raise NotImplementedError
 
 
 # --- environment variable expansion ------------------------------------------
 
 
-def test_expand_env_vars_supports_defaults():
+def test_expand_env_vars_supports_defaults() -> None:
     env = {'TOKEN': 'abc'}
     assert expand_env_vars('Bearer ${TOKEN}', env) == 'Bearer abc'
     assert expand_env_vars('${MISSING:-fallback}', env) == 'fallback'
@@ -107,7 +107,7 @@ def test_expand_env_vars_supports_defaults():
     assert expand_env_vars({'a': ['${TOKEN}']}, env) == {'a': ['abc']}
 
 
-def test_expand_env_vars_raises_without_default():
+def test_expand_env_vars_raises_without_default() -> None:
     with pytest.raises(MCPConfigError, match='MISSING'):
         expand_env_vars('${MISSING}', {})
 
@@ -115,7 +115,7 @@ def test_expand_env_vars_raises_without_default():
 # --- config validation -------------------------------------------------------
 
 
-def test_config_rejects_camel_case_key(tmp_path):
+def test_config_rejects_camel_case_key(tmp_path: Path) -> None:
     path = tmp_path / 'config.json'
     path.write_text(json.dumps({'mcpServers': {}}), encoding='utf-8')
     config = load_config([path], environ={})
@@ -123,14 +123,14 @@ def test_config_rejects_camel_case_key(tmp_path):
     assert any('snake_case' in error for error in config.errors)
 
 
-def test_config_requires_command_or_url(tmp_path):
+def test_config_requires_command_or_url(tmp_path: Path) -> None:
     path = write_config(tmp_path / 'config.json', {'x': {'enabled': True}})
     config = load_config([path], environ={})
     assert config.servers == {}
     assert any('command' in error and 'url' in error for error in config.errors)
 
 
-def test_config_rejects_both_transports(tmp_path):
+def test_config_rejects_both_transports(tmp_path: Path) -> None:
     path = write_config(
         tmp_path / 'config.json',
         {'x': {'command': 'npx', 'url': 'https://example.com/mcp'}},
@@ -140,14 +140,14 @@ def test_config_rejects_both_transports(tmp_path):
     assert any('not both' in error for error in config.errors)
 
 
-def test_config_rejects_unknown_key(tmp_path):
+def test_config_rejects_unknown_key(tmp_path: Path) -> None:
     path = write_config(tmp_path / 'config.json', {'x': {'command': 'npx', 'bogus': 1}})
     config = load_config([path], environ={})
     assert config.servers == {}
     assert any('bogus' in error for error in config.errors)
 
 
-def test_config_rejects_stdio_only_fields_on_http(tmp_path):
+def test_config_rejects_stdio_only_fields_on_http(tmp_path: Path) -> None:
     path = write_config(
         tmp_path / 'config.json',
         {'x': {'url': 'https://example.com/mcp', 'cwd': '/tmp'}},
@@ -157,14 +157,14 @@ def test_config_rejects_stdio_only_fields_on_http(tmp_path):
     assert any('cwd' in error for error in config.errors)
 
 
-def test_config_rejects_invalid_prefix(tmp_path):
+def test_config_rejects_invalid_prefix(tmp_path: Path) -> None:
     path = write_config(tmp_path / 'config.json', {'x': {'command': 'npx', 'prefix': 'bad-prefix'}})
     config = load_config([path], environ={})
     assert config.servers == {}
     assert any('prefix' in error for error in config.errors)
 
 
-def test_one_broken_server_does_not_invalidate_the_rest(tmp_path):
+def test_one_broken_server_does_not_invalidate_the_rest(tmp_path: Path) -> None:
     path = write_config(
         tmp_path / 'config.json',
         {'good': {'command': 'npx'}, 'bad': {'command': 'npx', 'url': 'https://x'}},
@@ -177,7 +177,7 @@ def test_one_broken_server_does_not_invalidate_the_rest(tmp_path):
 # --- merge y rutas -----------------------------------------------------------
 
 
-def test_project_config_overrides_global(tmp_path):
+def test_project_config_overrides_global(tmp_path: Path) -> None:
     global_cfg = write_config(tmp_path / 'home' / 'config.json', {'a': {'command': 'global-a'}})
     project_cfg = write_config(tmp_path / 'project' / 'config.json', {'a': {'command': 'project-a'}})
 
@@ -186,7 +186,7 @@ def test_project_config_overrides_global(tmp_path):
     assert config.sources == (project_cfg, global_cfg)
 
 
-def test_servers_are_merged_across_files(tmp_path):
+def test_servers_are_merged_across_files(tmp_path: Path) -> None:
     global_cfg = write_config(tmp_path / 'home' / 'config.json', {'a': {'command': 'a'}})
     project_cfg = write_config(tmp_path / 'project' / 'config.json', {'b': {'command': 'b'}})
 
@@ -194,7 +194,7 @@ def test_servers_are_merged_across_files(tmp_path):
     assert sorted(config.servers) == ['a', 'b']
 
 
-def test_cwd_is_relative_to_the_config_file(tmp_path):
+def test_cwd_is_relative_to_the_config_file(tmp_path: Path) -> None:
     workdir = tmp_path / 'project' / 'work'
     workdir.mkdir(parents=True)
     path = write_config(tmp_path / 'project' / 'config.json', {'x': {'command': 'npx', 'cwd': 'work'}})
@@ -203,14 +203,14 @@ def test_cwd_is_relative_to_the_config_file(tmp_path):
     assert config.servers['x'].cwd_path == workdir.resolve()
 
 
-def test_missing_cwd_is_reported(tmp_path):
+def test_missing_cwd_is_reported(tmp_path: Path) -> None:
     path = write_config(tmp_path / 'config.json', {'x': {'command': 'npx', 'cwd': 'nope'}})
     config = load_config([path], environ={})
     assert config.servers == {}
     assert any('cwd' in error for error in config.errors)
 
 
-def test_env_vars_are_expanded_in_config(tmp_path):
+def test_env_vars_are_expanded_in_config(tmp_path: Path) -> None:
     path = write_config(
         tmp_path / 'config.json',
         {'x': {'command': 'npx', 'env': {'TOKEN': '${TOKEN}'}}},
@@ -222,7 +222,7 @@ def test_env_vars_are_expanded_in_config(tmp_path):
 # --- toolset construction ----------------------------------------------------
 
 
-def test_disabled_server_has_no_toolset(tmp_path):
+def test_disabled_server_has_no_toolset(tmp_path: Path) -> None:
     path = write_config(tmp_path / 'config.json', {'x': {'command': 'npx', 'enabled': False}})
     manager = MCPManager(load_config([path], environ={}).servers)
 
@@ -231,13 +231,13 @@ def test_disabled_server_has_no_toolset(tmp_path):
     assert manager.get('x').enabled is False
 
 
-def test_tool_prefix_defaults_to_server_name(tmp_path):
+def test_tool_prefix_defaults_to_server_name(tmp_path: Path) -> None:
     path = write_config(tmp_path / 'config.json', {'github': {'command': 'npx'}})
     manager = MCPManager(load_config([path], environ={}).servers)
     assert manager.get('github').spec.tool_prefix == 'github'
 
 
-def test_empty_prefix_disables_prefixing(tmp_path):
+def test_empty_prefix_disables_prefixing(tmp_path: Path) -> None:
     path = write_config(tmp_path / 'config.json', {'github': {'command': 'npx', 'prefix': ''}})
     manager = MCPManager(load_config([path], environ={}).servers)
     assert manager.get('github').spec.tool_prefix == ''
@@ -246,7 +246,7 @@ def test_empty_prefix_disables_prefixing(tmp_path):
 # --- degradation -------------------------------------------------------------
 
 
-def test_resilient_toolset_degrades_instead_of_failing_the_run():
+def test_resilient_toolset_degrades_instead_of_failing_the_run() -> None:
     wrapper = ResilientToolset(BrokenToolset())
     agent = Agent(TestModel(custom_output_text='ok'), toolsets=[wrapper])
 
@@ -257,7 +257,7 @@ def test_resilient_toolset_degrades_instead_of_failing_the_run():
     assert 'cannot connect' in wrapper.error
 
 
-def test_resilient_toolset_reports_the_error():
+def test_resilient_toolset_reports_the_error() -> None:
     seen = []
     wrapper = ResilientToolset(BrokenToolset(), on_error=seen.append)
 
@@ -270,7 +270,7 @@ def test_resilient_toolset_reports_the_error():
 # --- integration with a real server ------------------------------------------
 
 
-def test_stdio_server_end_to_end(tmp_path):
+def test_stdio_server_end_to_end(tmp_path: Path) -> None:
     path = write_config(tmp_path / 'config.json', {'probe': stdio_server(tmp_path)})
     manager = MCPManager(load_config([path], environ={}).servers)
     agent = Agent(TestModel(call_tools=['probe_add']), toolsets=manager.toolsets)
@@ -281,7 +281,7 @@ def test_stdio_server_end_to_end(tmp_path):
     assert manager.errors == []
 
 
-def test_stdio_server_diagnostics_do_not_write_over_the_terminal(tmp_path, capfd):
+def test_stdio_server_diagnostics_do_not_write_over_the_terminal(tmp_path: Path, capfd) -> None:
     entry = stdio_server(tmp_path)
     script = Path(entry['args'][0])
     script.write_text("import sys\nprint('MCP startup on stderr', file=sys.stderr, flush=True)\n" + SERVER_SCRIPT)
@@ -300,7 +300,7 @@ def test_stdio_server_diagnostics_do_not_write_over_the_terminal(tmp_path, capfd
     assert 'MCP startup on stderr' not in capfd.readouterr().err
 
 
-def test_describe_connects_and_lists_tools(tmp_path):
+def test_describe_connects_and_lists_tools(tmp_path: Path) -> None:
     path = write_config(tmp_path / 'config.json', {'probe': stdio_server(tmp_path)})
     manager = MCPManager(load_config([path], environ={}).servers)
 
@@ -311,13 +311,13 @@ def test_describe_connects_and_lists_tools(tmp_path):
     assert statuses[0].error is None
 
 
-def test_meta_tools_expose_resources_and_prompts(tmp_path):
+def test_meta_tools_expose_resources_and_prompts(tmp_path: Path) -> None:
     path = write_config(tmp_path / 'config.json', {'probe': stdio_server(tmp_path, keep_alive=True)})
     manager = MCPManager(load_config([path], environ={}).servers)
     agent = DummyAgent()
     register_mcp_tools(agent, manager)
 
-    async def inner():
+    async def inner() -> None:
         try:
             resources = await agent.registered['list_mcp_resources']()
             assert [(item.server, item.uri) for item in resources] == [('probe', 'probe://hello')]
@@ -338,19 +338,19 @@ def test_meta_tools_expose_resources_and_prompts(tmp_path):
     asyncio.run(inner())
 
 
-def test_meta_tools_are_not_registered_without_servers():
+def test_meta_tools_are_not_registered_without_servers() -> None:
     agent = DummyAgent()
     register_mcp_tools(agent, MCPManager({}))
     assert agent.registered == {}
 
 
-def test_unknown_server_raises():
+def test_unknown_server_raises() -> None:
     manager = MCPManager({})
     with pytest.raises(MCPConfigError, match='Unknown MCP server'):
         asyncio.run(manager.list_resources('nope'))
 
 
-def test_tool_calls_are_logged_with_the_prefix(tmp_path):
+def test_tool_calls_are_logged_with_the_prefix(tmp_path: Path) -> None:
     events = []
     path = write_config(tmp_path / 'config.json', {'probe': stdio_server(tmp_path)})
     manager = MCPManager(load_config([path], environ={}).servers, tool_logger=events.append)
@@ -363,7 +363,7 @@ def test_tool_calls_are_logged_with_the_prefix(tmp_path):
     assert ('probe_add', 'success') in phases
 
 
-def test_broken_server_does_not_block_the_others(tmp_path):
+def test_broken_server_does_not_block_the_others(tmp_path: Path) -> None:
     path = write_config(
         tmp_path / 'config.json',
         {
@@ -380,7 +380,7 @@ def test_broken_server_does_not_block_the_others(tmp_path):
     assert statuses['broken'].error is not None
 
 
-def test_agent_runs_with_a_broken_server_configured(tmp_path):
+def test_agent_runs_with_a_broken_server_configured(tmp_path: Path) -> None:
     path = write_config(
         tmp_path / 'config.json',
         {

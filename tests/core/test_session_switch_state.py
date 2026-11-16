@@ -21,8 +21,8 @@ from pathlib import Path
 
 import pytest
 
-from src.engine.roadmap.models.todo_item import TodoItem
-from src.engine.roadmap.stores import RoadmapStores
+from src.core.roadmap.models.todo_item import TodoItem
+from src.core.roadmap.roadmap_stores import RoadmapStores
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -46,7 +46,7 @@ def repo(tmp_path: Path) -> Path:
     return root
 
 
-def test_a_rebound_session_does_not_lose_what_was_written_to_it(tmp_path, repo):
+def test_a_rebound_session_does_not_lose_what_was_written_to_it(tmp_path: Path, repo) -> None:
     """Re-binding the same session is a no-op, not a reset.
 
     It happens on every mount and on every view change. Recreating the stores there

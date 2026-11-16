@@ -2,23 +2,28 @@
 
 from __future__ import annotations
 
+import pytest
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.models.openrouter import OpenRouterModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 
-from src.engine.providers.domain.auth_method import AuthMethod
-from src.engine.providers.domain.model_capability import ModelCapability
-from src.engine.providers.domain.provider_account import ProviderAccount
-from src.engine.providers.domain.provider_error import CredentialError, ProviderError
-from src.engine.providers.domain.provider_kind import ProviderKind
-from src.engine.providers.domain.provider_variant import ProviderVariant
-from src.engine.providers.domain.secret import ApiKeySecret, OAuthSecret
-from src.engine.providers.factory.openai_builder import OpenAIKeyBuilder, OpenAIOAuthBuilder
-from src.engine.providers.factory.opencode_builder import opencode_headers
-from src.engine.providers.factory.openrouter_builder import OpenRouterBuilder
-from src.engine.providers.factory.registry import BuilderRegistry, ModelRouter
-from src.engine.providers.factory.unconfigured import NO_PROVIDER_MESSAGE, UnconfiguredModel
+from src.core.providers.domain.api_key_secret import ApiKeySecret
+from src.core.providers.domain.auth_method import AuthMethod
+from src.core.providers.domain.credential_error import CredentialError
+from src.core.providers.domain.model_capability import ModelCapability
+from src.core.providers.domain.o_auth_secret import OAuthSecret
+from src.core.providers.domain.provider_account import ProviderAccount
+from src.core.providers.domain.provider_error import ProviderError
+from src.core.providers.domain.provider_kind import ProviderKind
+from src.core.providers.domain.provider_variant import ProviderVariant
+from src.core.providers.factory.builder_registry import BuilderRegistry
+from src.core.providers.factory.model_router import ModelRouter
+from src.core.providers.factory.open_a_i_key_builder import OpenAIKeyBuilder
+from src.core.providers.factory.open_a_i_o_auth_builder import OpenAIOAuthBuilder
+from src.core.providers.factory.opencode_builder import opencode_headers
+from src.core.providers.factory.openrouter_builder import OpenRouterBuilder
+from src.core.providers.factory.unconfigured_model import NO_PROVIDER_MESSAGE, UnconfiguredModel
 
 KEY = ApiKeySecret(key='sk-test')
 
@@ -34,14 +39,14 @@ def _capability(name='model', dialect='chat-completions', **extra) -> ModelCapab
 # --- OpenRouter -------------------------------------------------------------
 
 
-def test_openrouter_builder_produces_an_openrouter_model():
+def test_openrouter_builder_produces_an_openrouter_model() -> None:
     account = _account(ProviderKind.OPENROUTER)
     model = OpenRouterBuilder().build(account, 'anthropic/x', _capability('anthropic/x'), KEY)
     assert isinstance(model, OpenRouterModel)
     assert model.model_name == 'anthropic/x'
 
 
-def test_openrouter_builder_injects_the_window_so_the_status_bar_does_not_lie():
+def test_openrouter_builder_injects_the_window_so_the_status_bar_does_not_lie() -> None:
     account = _account(ProviderKind.OPENROUTER)
     capability = _capability('a/b', context_window=999_000, efforts=('low', 'high'))
     model = OpenRouterBuilder().build(account, 'a/b', capability, KEY)
@@ -49,7 +54,7 @@ def test_openrouter_builder_injects_the_window_so_the_status_bar_does_not_lie():
     assert model.profile.get('supports_thinking') is True
 
 
-def test_openrouter_builder_refuses_an_oauth_credential():
+def test_openrouter_builder_refuses_an_oauth_credential() -> None:
     oauth = OAuthSecret(access_token='a', refresh_token='r')
     try:
         OpenRouterBuilder().build(_account(ProviderKind.OPENROUTER), 'a/b', _capability(), oauth)
@@ -62,8 +67,8 @@ def test_openrouter_builder_refuses_an_oauth_credential():
 # --- OpenCode ---------------------------------------------------------------
 
 
-def test_opencode_builder_uses_chat_completions_for_that_dialect():
-    from src.engine.providers.factory.opencode_builder import OpenCodeBuilder
+def test_opencode_builder_uses_chat_completions_for_that_dialect() -> None:
+    from src.core.providers.factory.opencode_builder import OpenCodeBuilder
 
     account = _account(ProviderKind.OPENCODE, ProviderVariant.ZEN)
     model = OpenCodeBuilder('sess-1').build(account, 'glm-5.3', _capability('glm-5.3'), KEY)
@@ -71,8 +76,8 @@ def test_opencode_builder_uses_chat_completions_for_that_dialect():
     assert model.system == 'opencode'
 
 
-def test_opencode_builder_uses_responses_when_the_catalogue_says_so():
-    from src.engine.providers.factory.opencode_builder import OpenCodeBuilder
+def test_opencode_builder_uses_responses_when_the_catalogue_says_so() -> None:
+    from src.core.providers.factory.opencode_builder import OpenCodeBuilder
 
     account = _account(ProviderKind.OPENCODE, ProviderVariant.ZEN)
     capability = _capability('gpt-5', dialect='responses', base_url='https://opencode.ai/inference/openai/v1')
@@ -80,10 +85,10 @@ def test_opencode_builder_uses_responses_when_the_catalogue_says_so():
     assert isinstance(model, OpenAIResponsesModel)
 
 
-def test_opencode_builder_uses_the_anthropic_sdk_for_the_messages_dialect():
+def test_opencode_builder_uses_the_anthropic_sdk_for_the_messages_dialect() -> None:
     from pydantic_ai.models.anthropic import AnthropicModel
 
-    from src.engine.providers.factory.opencode_builder import OpenCodeBuilder
+    from src.core.providers.factory.opencode_builder import OpenCodeBuilder
 
     account = _account(ProviderKind.OPENCODE, ProviderVariant.ZEN)
     capability = _capability(
@@ -93,8 +98,8 @@ def test_opencode_builder_uses_the_anthropic_sdk_for_the_messages_dialect():
     assert isinstance(model, AnthropicModel)
 
 
-def test_opencode_go_uses_its_own_base_url():
-    from src.engine.providers.factory.opencode_builder import GO_BASE_URL, OpenCodeBuilder
+def test_opencode_go_uses_its_own_base_url() -> None:
+    from src.core.providers.factory.opencode_builder import GO_BASE_URL, OpenCodeBuilder
 
     account = _account(ProviderKind.OPENCODE, ProviderVariant.GO)
     # A capability that claims another endpoint must not win over the Go route.
@@ -103,8 +108,8 @@ def test_opencode_go_uses_its_own_base_url():
     assert str(model.provider.base_url).rstrip('/') == GO_BASE_URL.rstrip('/')
 
 
-def test_opencode_zen_prefers_the_per_model_base_url():
-    from src.engine.providers.factory.opencode_builder import OpenCodeBuilder
+def test_opencode_zen_prefers_the_per_model_base_url() -> None:
+    from src.core.providers.factory.opencode_builder import OpenCodeBuilder
 
     account = _account(ProviderKind.OPENCODE, ProviderVariant.ZEN)
     capability = _capability('m', base_url='https://example.test/v1')
@@ -112,8 +117,8 @@ def test_opencode_zen_prefers_the_per_model_base_url():
     assert 'example.test' in str(model.provider.base_url)
 
 
-def test_opencode_go_sends_the_session_header_the_endpoint_requires():
-    from src.engine.providers.factory.opencode_builder import OpenCodeBuilder
+def test_opencode_go_sends_the_session_header_the_endpoint_requires() -> None:
+    from src.core.providers.factory.opencode_builder import OpenCodeBuilder
 
     account = _account(ProviderKind.OPENCODE, ProviderVariant.GO)
     model = OpenCodeBuilder('conversation-42').build(account, 'glm-5.3', _capability('glm-5.3'), KEY)
@@ -122,12 +127,12 @@ def test_opencode_go_sends_the_session_header_the_endpoint_requires():
     assert headers['User-Agent'].startswith('sigil/')
 
 
-def test_opencode_headers_helper_is_the_single_source_of_the_session_header():
+def test_opencode_headers_helper_is_the_single_source_of_the_session_header() -> None:
     assert opencode_headers('abc') == {'User-Agent': 'sigil/0.1.0', 'x-opencode-session': 'abc'}
 
 
-def test_opencode_profile_declares_the_reasoning_field():
-    from src.engine.providers.factory.opencode_builder import OpenCodeBuilder
+def test_opencode_profile_declares_the_reasoning_field() -> None:
+    from src.core.providers.factory.opencode_builder import OpenCodeBuilder
 
     account = _account(ProviderKind.OPENCODE, ProviderVariant.GO)
     capability = _capability('m', context_window=200_000, efforts=('low', 'high'))
@@ -139,14 +144,14 @@ def test_opencode_profile_declares_the_reasoning_field():
 # --- OpenAI -----------------------------------------------------------------
 
 
-def test_openai_key_builder_produces_a_responses_model():
+def test_openai_key_builder_produces_a_responses_model() -> None:
     account = _account(ProviderKind.OPENAI)
     model = OpenAIKeyBuilder().build(account, 'gpt-5', _capability('gpt-5'), KEY)
     assert isinstance(model, OpenAIResponsesModel)
     assert model.system == 'openai'
 
 
-def test_openai_key_builder_refuses_an_oauth_credential():
+def test_openai_key_builder_refuses_an_oauth_credential() -> None:
     oauth = OAuthSecret(access_token='a', refresh_token='r')
     try:
         OpenAIKeyBuilder().build(_account(ProviderKind.OPENAI), 'gpt-5', _capability(), oauth)
@@ -156,7 +161,7 @@ def test_openai_key_builder_refuses_an_oauth_credential():
         raise AssertionError('expected CredentialError')
 
 
-def test_openai_oauth_builder_uses_the_injected_provider():
+def test_openai_oauth_builder_uses_the_injected_provider() -> None:
     seen: list[tuple] = []
 
     def factory(credential, account):
@@ -174,7 +179,7 @@ def test_openai_oauth_builder_uses_the_injected_provider():
     assert seen and seen[0][1] == 'openai-default'
 
 
-def test_chatgpt_plan_sends_current_effort_without_configuration_updates():
+def test_chatgpt_plan_sends_current_effort_without_configuration_updates() -> None:
     import asyncio
 
     from pydantic_ai.messages import ModelRequest, ModelResponse, ModelSettingsDeltaPart, TextPart, UserPromptPart
@@ -215,7 +220,7 @@ def test_chatgpt_plan_sends_current_effort_without_configuration_updates():
 
 
 def _registry() -> BuilderRegistry:
-    from src.engine.providers.factory.opencode_builder import OpenCodeBuilder
+    from src.core.providers.factory.opencode_builder import OpenCodeBuilder
 
     return BuilderRegistry(
         (
@@ -227,7 +232,7 @@ def _registry() -> BuilderRegistry:
     )
 
 
-def test_registry_picks_by_kind_and_credential():
+def test_registry_picks_by_kind_and_credential() -> None:
     registry = _registry()
     assert isinstance(registry.for_account(_account(ProviderKind.OPENROUTER), KEY), OpenRouterBuilder)
     assert isinstance(
@@ -239,7 +244,7 @@ def test_registry_picks_by_kind_and_credential():
     assert isinstance(registry.for_account(_account(ProviderKind.OPENAI), KEY), OpenAIKeyBuilder)
 
 
-def test_registry_reports_an_unserviceable_pair():
+def test_registry_reports_an_unserviceable_pair() -> None:
     registry = BuilderRegistry((OpenRouterBuilder(),))
     try:
         registry.for_account(_account(ProviderKind.OPENAI), KEY)
@@ -252,7 +257,7 @@ def test_registry_reports_an_unserviceable_pair():
 # --- router -----------------------------------------------------------------
 
 
-def test_router_is_a_wrapper_that_swaps_and_delegates():
+def test_router_is_a_wrapper_that_swaps_and_delegates() -> None:
     first = TestModel(custom_output_text='one')
     second = TestModel(custom_output_text='two')
     router = ModelRouter(first)
@@ -264,7 +269,7 @@ def test_router_is_a_wrapper_that_swaps_and_delegates():
     assert router.model_name == second.model_name
 
 
-def test_router_exposes_the_context_window_of_the_wrapped_model():
+def test_router_exposes_the_context_window_of_the_wrapped_model() -> None:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
 
@@ -276,14 +281,14 @@ def test_router_exposes_the_context_window_of_the_wrapped_model():
     assert router.context_window == model.context_window
 
 
-def test_unconfigured_model_refuses_a_request_with_an_actionable_message():
+def test_unconfigured_model_refuses_a_request_with_an_actionable_message() -> None:
     import asyncio
 
     from pydantic_ai import Agent
 
-    from src.engine.providers.factory.unconfigured import NoProviderError
+    from src.core.providers.factory.no_provider_error import NoProviderError
 
-    async def inner():
+    async def inner() -> None:
         agent = Agent(UnconfiguredModel(), instructions='x')
         try:
             await agent.run('hi')
@@ -295,7 +300,7 @@ def test_unconfigured_model_refuses_a_request_with_an_actionable_message():
     asyncio.run(inner())
 
 
-def test_openrouter_claude_enables_cache_without_changing_other_models():
+def test_openrouter_claude_enables_cache_without_changing_other_models() -> None:
     account = _account(ProviderKind.OPENROUTER)
     claude = OpenRouterBuilder().build(account, 'anthropic/claude-sonnet-4.6', _capability(), KEY)
     other = OpenRouterBuilder().build(account, 'openai/gpt-5.1', _capability(), KEY)
@@ -306,7 +311,7 @@ def test_openrouter_claude_enables_cache_without_changing_other_models():
     assert not other.settings
 
 
-def test_claude_openrouter_serializes_cache_breakpoints_and_keeps_tool_order(monkeypatch):
+def test_claude_openrouter_serializes_cache_breakpoints_and_keeps_tool_order(monkeypatch: pytest.MonkeyPatch) -> None:
     """Exercise the real adapter without sending credentials or traffic."""
     import asyncio
     import json

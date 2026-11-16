@@ -23,7 +23,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 
-from src.engine.sessions.recovery import recover_history
+from src.core.sessions.recover_history import recover_history
 
 
 def _cut_mid_tool_call() -> list:
@@ -41,7 +41,7 @@ def _returned_ids(messages: list) -> set[str]:
 # --- the recovery itself ------------------------------------------------------
 
 
-def test_a_finished_history_is_left_alone():
+def test_a_finished_history_is_left_alone() -> None:
     messages = [
         ModelRequest(parts=[UserPromptPart('hello')]),
         ModelResponse(parts=[TextPart('hey')]),
@@ -54,7 +54,7 @@ def test_a_finished_history_is_left_alone():
     assert recovered.notice == ''
 
 
-def test_an_unanswered_call_is_closed_out():
+def test_an_unanswered_call_is_closed_out() -> None:
     recovered = recover_history(_cut_mid_tool_call())
 
     assert recovered.changed is True
@@ -64,10 +64,10 @@ def test_an_unanswered_call_is_closed_out():
     assert '1 tool call' in recovered.notice
 
 
-def test_the_recovered_history_accepts_a_new_prompt():
+def test_the_recovered_history_accepts_a_new_prompt() -> None:
     """The point of the repair: the next turn runs instead of raising."""
 
-    async def inner():
+    async def inner() -> None:
         agent = Agent(TestModel(custom_output_text='ok'), instructions='x')
 
         @agent.tool_plain
@@ -81,7 +81,7 @@ def test_the_recovered_history_accepts_a_new_prompt():
     asyncio.run(inner())
 
 
-def test_a_paused_response_is_closed_out_too():
+def test_a_paused_response_is_closed_out_too() -> None:
     """A provider that paused mid-turn left a tail nothing will ever resume."""
     messages = [
         ModelRequest(parts=[UserPromptPart('hello')]),
@@ -97,7 +97,7 @@ def test_a_paused_response_is_closed_out_too():
     assert _returned_ids(recovered.messages) == {'c1'}
 
 
-def test_recovering_twice_changes_nothing_the_second_time():
+def test_recovering_twice_changes_nothing_the_second_time() -> None:
     once = recover_history(_cut_mid_tool_call())
     twice = recover_history(once.messages)
 
@@ -105,11 +105,11 @@ def test_recovering_twice_changes_nothing_the_second_time():
     assert twice.messages == once.messages
 
 
-def test_an_empty_history_is_not_a_failure():
+def test_an_empty_history_is_not_a_failure() -> None:
     assert recover_history([]).messages == []
 
 
-def test_a_history_recovered_mid_turn_keeps_its_answered_calls():
+def test_a_history_recovered_mid_turn_keeps_its_answered_calls() -> None:
     """Only the dangling call is closed; the results the dead turn did collect stay."""
     messages = [
         ModelRequest(parts=[UserPromptPart('do both')]),
@@ -126,7 +126,7 @@ def test_a_history_recovered_mid_turn_keeps_its_answered_calls():
     assert original.content == 'contents'
 
 
-def test_a_dangling_call_from_an_earlier_step_is_left_alone():
+def test_a_dangling_call_from_an_earlier_step_is_left_alone() -> None:
     """Only the frontier can make the next prompt fail.
 
     A call with no result in the middle of the conversation is not a turn that died:

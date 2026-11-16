@@ -20,13 +20,14 @@ from pydantic_ai.models.test import TestModel
 from textual.app import App
 from textual.widgets import Input, OptionList
 
-from src.engine.providers.domain.model_capability import ModelCapability, ModelCatalog
-from src.engine.providers.domain.thinking import EFFORT_LEVELS
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
-from src.ui.widgets.effort_screen import EffortScreen
-from src.ui.widgets.model_picker_screen import ModelPickerScreen
-from src.ui.widgets.prompt_input import PromptInput
+from src.core.providers.domain.model_capability import ModelCapability
+from src.core.providers.domain.model_catalog import ModelCatalog
+from src.core.providers.domain.thinking import EFFORT_LEVELS
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.panels.prompt_input import PromptInput
+from src.ui.widgets.screens.effort_screen import EffortScreen
+from src.ui.widgets.screens.model_picker_screen import ModelPickerScreen
 
 CATALOG = ModelCatalog(
     models=(
@@ -77,27 +78,27 @@ def _highlighted(screen) -> str | None:
 # --- model picker: arrows ---------------------------------------------------
 
 
-def test_down_moves_the_highlight_in_the_model_picker():
+def test_down_moves_the_highlight_in_the_model_picker() -> None:
     screen = ModelPickerScreen(CATALOG)
     assert _drive(screen, ('down',), _highlighted) == 'b/two'
 
 
-def test_up_returns_to_the_previous_row():
+def test_up_returns_to_the_previous_row() -> None:
     screen = ModelPickerScreen(CATALOG)
     assert _drive(screen, ('down', 'down', 'up'), _highlighted) == 'b/two'
 
 
-def test_up_at_the_top_stays_at_the_top():
+def test_up_at_the_top_stays_at_the_top() -> None:
     screen = ModelPickerScreen(CATALOG)
     assert _drive(screen, ('up',), _highlighted) == 'a/one'
 
 
-def test_down_at_the_bottom_stays_at_the_bottom():
+def test_down_at_the_bottom_stays_at_the_bottom() -> None:
     screen = ModelPickerScreen(CATALOG)
     assert _drive(screen, ('down', 'down', 'down', 'down'), _highlighted) == 'c/three'
 
 
-def test_page_down_jumps_five_rows():
+def test_page_down_jumps_five_rows() -> None:
     long_catalog = ModelCatalog(
         models=tuple(ModelCapability(name=f'model-{index}') for index in range(12)),
         source='remote',
@@ -106,7 +107,7 @@ def test_page_down_jumps_five_rows():
     assert _drive(screen, ('pagedown',), _highlighted) == 'model-5'
 
 
-def test_arrows_still_move_while_a_filter_is_typed():
+def test_arrows_still_move_while_a_filter_is_typed() -> None:
     """The bug: the arrows were dead as soon as the filter had focus."""
     screen = ModelPickerScreen(CATALOG)
     assert _drive(screen, ('t', 'down'), _highlighted) == 'c/three'
@@ -115,7 +116,7 @@ def test_arrows_still_move_while_a_filter_is_typed():
 # --- model picker: Tab completes -------------------------------------------
 
 
-def test_tab_completes_the_highlighted_model_without_choosing_it():
+def test_tab_completes_the_highlighted_model_without_choosing_it() -> None:
     screen = ModelPickerScreen(CATALOG)
 
     def field_value(_screen) -> str:
@@ -124,7 +125,7 @@ def test_tab_completes_the_highlighted_model_without_choosing_it():
     assert _drive(screen, ('down', 'tab'), field_value) == 'b/two'
 
 
-def test_tab_keeps_the_picker_open():
+def test_tab_keeps_the_picker_open() -> None:
     screen = ModelPickerScreen(CATALOG)
 
     def still_open(_screen) -> bool:
@@ -136,7 +137,7 @@ def test_tab_keeps_the_picker_open():
 # --- model picker: Enter commits -------------------------------------------
 
 
-def test_enter_after_arrows_picks_the_highlighted_model():
+def test_enter_after_arrows_picks_the_highlighted_model() -> None:
     screen = ModelPickerScreen(CATALOG)
     result = _screen_result(screen, ('down', 'enter'))
     assert result is not None
@@ -160,31 +161,31 @@ def _screen_result(screen, keys: tuple[str, ...]):
 # --- effort screen ----------------------------------------------------------
 
 
-def test_effort_screen_offers_only_the_accepted_levels():
+def test_effort_screen_offers_only_the_accepted_levels() -> None:
     screen = EffortScreen(current='low', accepted=('low', 'high'), model='m')
     values = _drive(screen, (), lambda s: [str(o.id) for o in s.query_one(OptionList).options])
     assert values == ['default', 'low', 'high', 'off']
 
 
-def test_effort_screen_offers_every_level_when_the_model_reports_all():
+def test_effort_screen_offers_every_level_when_the_model_reports_all() -> None:
     screen = EffortScreen(current='default', accepted=EFFORT_LEVELS, model='m')
     values = _drive(screen, (), lambda s: [str(o.id) for o in s.query_one(OptionList).options])
     assert values == ['default', *EFFORT_LEVELS, 'off']
 
 
-def test_effort_screen_highlights_the_current_level():
+def test_effort_screen_highlights_the_current_level() -> None:
     screen = EffortScreen(current='high', accepted=('low', 'high'), model='m')
     assert _drive(screen, (), _highlighted) == 'high'
 
 
-def test_effort_screen_moves_and_returns_the_level():
+def test_effort_screen_moves_and_returns_the_level() -> None:
     screen = EffortScreen(current='default', accepted=('low', 'high'), model='m')
     result = _screen_result(screen, ('down', 'down', 'enter'))
     assert result is not None
     assert result.effort == 'high'
 
 
-def test_effort_screen_cancels_with_escape():
+def test_effort_screen_cancels_with_escape() -> None:
     screen = EffortScreen(current='default', accepted=('low', 'high'), model='m')
     assert _screen_result(screen, ('escape',)) is None
 
@@ -192,8 +193,8 @@ def test_effort_screen_cancels_with_escape():
 # --- command menu: Tab completes -------------------------------------------
 
 
-def test_tab_completes_the_highlighted_command():
-    async def inner():
+def test_tab_completes_the_highlighted_command() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test() as pilot:
@@ -206,8 +207,8 @@ def test_tab_completes_the_highlighted_command():
     asyncio.run(inner())
 
 
-def test_tab_adds_a_trailing_space_for_commands_that_take_an_argument():
-    async def inner():
+def test_tab_adds_a_trailing_space_for_commands_that_take_an_argument() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test() as pilot:
@@ -220,8 +221,8 @@ def test_tab_adds_a_trailing_space_for_commands_that_take_an_argument():
     asyncio.run(inner())
 
 
-def test_tab_does_not_run_the_command():
-    async def inner():
+def test_tab_does_not_run_the_command() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test() as pilot:
@@ -236,8 +237,8 @@ def test_tab_does_not_run_the_command():
     asyncio.run(inner())
 
 
-def test_tab_without_the_menu_does_not_steal_the_focus():
-    async def inner():
+def test_tab_without_the_menu_does_not_steal_the_focus() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test() as pilot:
@@ -253,7 +254,7 @@ def test_tab_without_the_menu_does_not_steal_the_focus():
 # --- shortcuts --------------------------------------------------------------
 
 
-def test_the_app_binds_what_can_actually_reach_it():
+def test_the_app_binds_what_can_actually_reach_it() -> None:
     """Only the two view toggles are app bindings, and only because they have to be.
 
     The pickers read `ctrl+m` / `ctrl+l` in `PromptInput.on_key`: a global binding
@@ -266,14 +267,14 @@ def test_the_app_binds_what_can_actually_reach_it():
     assert bindings == {'alt+d', 'ctrl+t'}
 
 
-def test_the_pickers_are_reached_through_the_prompt_input():
-    from src.ui.widgets.prompt_input import CTRL_EFFORT, CTRL_MODELS
+def test_the_pickers_are_reached_through_the_prompt_input() -> None:
+    from src.ui.widgets.panels.prompt_input import CTRL_EFFORT, CTRL_MODELS
 
     assert CTRL_MODELS == 'ctrl+m'
     assert CTRL_EFFORT == 'ctrl+l'
 
 
-def test_ctrl_m_is_not_bound_because_it_is_enter():
+def test_ctrl_m_is_not_bound_because_it_is_enter() -> None:
     """Ctrl+M and Enter are the same byte in a terminal (CR, 0x0D).
 
     Binding it would swallow Enter, which is how a prompt is sent. The test
@@ -288,7 +289,7 @@ def test_ctrl_m_is_not_bound_because_it_is_enter():
 # --- command menu: an argument closes it ------------------------------------
 
 
-def test_typing_an_argument_closes_the_menu():
+def test_typing_an_argument_closes_the_menu() -> None:
     """`Enter` on `/agent reviewer` runs the command, not the highlighted row.
 
     The menu completes the *name*. Left open while the argument is typed, it
@@ -297,7 +298,7 @@ def test_typing_an_argument_closes_the_menu():
     submit path never gets the whole line.
     """
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test() as pilot:
@@ -309,8 +310,8 @@ def test_typing_an_argument_closes_the_menu():
     asyncio.run(inner())
 
 
-def test_the_menu_reopens_when_the_argument_is_erased():
-    async def inner():
+def test_the_menu_reopens_when_the_argument_is_erased() -> None:
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
             async with app.run_test() as pilot:

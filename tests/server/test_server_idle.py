@@ -33,21 +33,21 @@ import httpx
 import pytest
 from pydantic_ai.models.test import TestModel
 
-from src.engine.bootstrap import Composition
-from src.engine.settings import load_settings
-from src.engine.storage.accepted_inputs import AcceptedInputs, DeliveryConfirmation, confirm_delivery
-from src.engine.storage.database import database_path
-from src.server.app import GracefulStop
+from src.core.composition.composition import Composition
+from src.core.config.load_settings import load_settings
+from src.core.storage.accepted_inputs import AcceptedInputs
+from src.core.storage.confirm_delivery import confirm_delivery
+from src.core.storage.database_path import database_path
+from src.core.storage.delivery_confirmation import DeliveryConfirmation
+from src.server.api.graceful_stop import GracefulStop
 from src.server.cli import build_parser
-from src.server.endpoint import read_endpoint
-from src.server.events import EventHub
-from src.server.launch import live_endpoint
-from src.server.runtime import (
-    IDLE_POLL_INTERVAL,
-    IdleShutdown,
-    PendingQuestion,
-    ServerRuntime,
-)
+from src.server.launch.endpoint_file import read_endpoint
+from src.server.launch.service_launch import live_endpoint
+from src.server.runtime.event_hub import EventHub
+from src.server.runtime.idle_shutdown import IdleShutdown
+from src.server.runtime.pending_question import PendingQuestion
+from src.server.runtime.runtime_support import IDLE_POLL_INTERVAL
+from src.server.runtime.server_runtime import ServerRuntime
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -67,7 +67,7 @@ EXIT_DEADLINE = 60.0
 
 
 def _paths(tmp_path: Path):
-    from src.engine.providers.bootstrap import ProviderPaths
+    from src.core.providers.provider_paths import ProviderPaths
 
     home = tmp_path / '.sigil'
     home.mkdir(exist_ok=True)
@@ -487,15 +487,16 @@ sys.path.insert(0, {root!r})
 import uvicorn
 from pydantic_ai.models.test import TestModel
 
-from src.engine.bootstrap import Composition
-from src.engine.settings import load_settings
-from src.server.app import GracefulStop, create_app
+from src.core.composition.composition import Composition
+from src.core.config.load_settings import load_settings
+from src.server.api.graceful_stop import GracefulStop
+from src.server.api.app import create_app
 from src.server.cli import listening_socket
-from src.server.config import ServerConfig
-from src.server.endpoint import EndpointPublisher
-from src.server.events import EventHub
-from src.server.ownership import ServerOwnership
-from src.server.runtime import ServerRuntime
+from src.server.launch.server_config import ServerConfig
+from src.server.launch.endpoint_publisher import EndpointPublisher
+from src.server.runtime.event_hub import EventHub
+from src.server.launch.server_ownership import ServerOwnership
+from src.server.runtime.server_runtime import ServerRuntime
 
 composition = Composition(
     {workspace!r},
@@ -534,7 +535,8 @@ import sys
 
 sys.path.insert(0, {root!r})
 
-from src.server.ownership import OwnershipError, ServerOwnership
+from src.server.launch.ownership_error import OwnershipError
+from src.server.launch.server_ownership import ServerOwnership
 
 try:
     ServerOwnership({database!r}).acquire()
@@ -637,7 +639,7 @@ def test_a_service_with_no_work_stops_after_the_window_and_releases_the_store(tm
 def test_should_close_streams_even_when_the_stop_event_is_skipped(connected: bool) -> None:
     from fastapi import FastAPI, Request
 
-    from src.server.app import _stream
+    from src.server.api.app import _stream
 
     async def go() -> None:
         app = FastAPI()
@@ -685,3 +687,110 @@ def test_background_agents_keep_service_alive(runtime: ServerRuntime, monkeypatc
     assert not idle.expired(), 'The grace window starts only after the worker finishes'
     clock.advance(30)
     assert idle.expired()
+
+
+def test_managed_service_waits_for_all_clients_then_refuses_new_requests(runtime: ServerRuntime) -> None:
+    from src.server.api.app import create_app
+    from src.server.launch.server_config import ServerConfig
+
+    async def go() -> None:
+        stopped = asyncio.Event()
+        app = create_app(
+            runtime,
+            ServerConfig(password='test'),
+            request_shutdown=stopped.set,
+            client_managed=True,
+            client_shutdown_grace=0.05,
+            idle_poll=0.01,
+        )
+        first, second = str(uuid.uuid4()), str(uuid.uuid4())
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client,
+        ):
+            assert (await client.post('/api/login', json={'password': 'test'})).status_code == 200
+            for client_id in (first, second):
+                assert (await client.post(f'/api/clients/{client_id}/heartbeat')).status_code == 200
+            await client.delete(f'/api/clients/{first}')
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(stopped.wait(), timeout=0.15)
+            assert (await client.delete(f'/api/clients/{second}')).status_code == 200
+            await asyncio.wait_for(stopped.wait(), timeout=2)
+            assert (await client.post(f'/api/clients/{uuid.uuid4()}/heartbeat')).status_code == 503
+
+    asyncio.run(go())
+
+
+def test_managed_service_exits_after_client_leaves_and_releases_store(tmp_path: Path) -> None:
+    home = tmp_path / 'home'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    endpoint = tmp_path / 'service' / 'endpoint.json'
+    script = tmp_path / 'managed_service.py'
+    source = CHILD.replace(
+        'idle_grace={grace!r},',
+        'idle_grace={grace!r}, client_managed=True, client_shutdown_grace={grace!r},',
+    )
+    script.write_text(
+        source.format(
+            root=str(ROOT),
+            workspace=str(workspace),
+            dist=str(tmp_path / 'missing-dist'),
+            endpoint=str(endpoint),
+            grace=1.0,
+            poll=0.02,
+        ),
+        encoding='utf-8',
+    )
+    environment = {**os.environ, 'SIGIL_HOME': str(home), 'SIGIL_SERVICE_DIR': str(endpoint.parent)}
+    process = subprocess.Popen(
+        [sys.executable, str(script)],
+        cwd=str(ROOT),
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        _wait_for_publication(endpoint, process)
+        published = read_endpoint(endpoint)
+        assert published is not None
+        client_id = str(uuid.uuid4())
+        url = f'http://{published.host}:{published.port}/api/clients/{client_id}'
+        with httpx.Client(headers={'authorization': f'Bearer {published.token}'}, timeout=5) as client:
+            assert client.post(f'{url}/heartbeat').status_code == 200
+            with pytest.raises(subprocess.TimeoutExpired):
+                process.wait(timeout=1.5)
+            assert client.delete(url).status_code == 200
+        output, _ = process.communicate(timeout=EXIT_DEADLINE)
+        assert process.returncode == 0, output
+        assert read_endpoint(endpoint) is None
+        assert _may_serve(database_path(home)) == 'ACQUIRED'
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=EXIT_DEADLINE)
+
+
+def test_managed_service_keeps_accepted_work_after_clients_leave(runtime: ServerRuntime) -> None:
+    from src.server.api.app import create_app
+    from src.server.launch.server_config import ServerConfig
+
+    async def go() -> None:
+        stopped = asyncio.Event()
+        app = create_app(
+            runtime,
+            ServerConfig(password='test'),
+            request_shutdown=stopped.set,
+            client_managed=True,
+            client_shutdown_grace=0.05,
+            idle_poll=0.01,
+        )
+        async with app.router.lifespan_context(app):
+            session_id = _accept(runtime.composition)
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(stopped.wait(), timeout=0.15)
+            AcceptedInputs(runtime.composition.store.database).stop_open(session_id)
+            await asyncio.wait_for(stopped.wait(), timeout=2)
+
+    asyncio.run(go())

@@ -17,15 +17,13 @@ from rich.text import Text
 from textual.app import App
 from textual.widgets import Input, OptionList
 
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.engine.agents.tree.store import AgentTreeStore
-from src.ui.widgets.agent_tree_screen import (
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.agents.tree.agent_tree_store import AgentTreeStore
+from src.ui.widgets.models.agent_tree_rows import (
     BAR,
     BRANCH,
     INDENT,
     LAST,
-    AgentTreeScreen,
-    Gap,
     arrange,
     empty_row,
     guides,
@@ -34,7 +32,9 @@ from src.ui.widgets.agent_tree_screen import (
     node_row,
     status_text,
 )
-from src.ui.widgets.status_bar import SPINNER_FRAMES
+from src.ui.widgets.models.gap import Gap
+from src.ui.widgets.panels.status_bar import SPINNER_FRAMES
+from src.ui.widgets.screens.agent_tree_screen import AgentTreeScreen
 from tests.support.ui import render_text
 
 # --- a small, deterministic squad --------------------------------------------
@@ -73,7 +73,7 @@ def _by_name(tree: Any, name: str) -> list[Any]:
 # --- the order ---------------------------------------------------------------
 
 
-def test_the_branch_that_still_holds_work_comes_before_history():
+def test_the_branch_that_still_holds_work_comes_before_history() -> None:
     tree = _tree()
     painted, separator = arrange(tree.nodes())
 
@@ -87,7 +87,7 @@ def test_the_branch_that_still_holds_work_comes_before_history():
     assert separator == 4, 'history starts right after the live branch'
 
 
-def test_history_is_newest_first():
+def test_history_is_newest_first() -> None:
     tree = _tree()
     root = tree.root
     older = tree.add(parent_id=root.id, name='pas_qa', role=AgentRole.SUBAGENT, task='old')
@@ -104,7 +104,7 @@ def test_history_is_newest_first():
     assert history[-1].id == older.id
 
 
-def test_a_live_branch_is_not_split_by_its_finished_children():
+def test_a_live_branch_is_not_split_by_its_finished_children() -> None:
     """The developer and the QAs under it travel together, above the rule."""
     tree = _tree()
     painted, separator = arrange(tree.nodes())
@@ -115,7 +115,7 @@ def test_a_live_branch_is_not_split_by_its_finished_children():
     assert all(painted.index(child) < separator for child in children)
 
 
-def test_work_comes_before_history_inside_a_branch_too():
+def test_work_comes_before_history_inside_a_branch_too() -> None:
     """The rule repeats down the tree: a running QA is not buried in its branch."""
     tree = AgentTreeStore().active
     root = tree.ensure_root('wizard')
@@ -129,7 +129,7 @@ def test_work_comes_before_history_inside_a_branch_too():
     assert [node.id for node in painted] == [root.id, lead.id, running.id, done.id]
 
 
-def test_a_flat_tree_has_no_rule():
+def test_a_flat_tree_has_no_rule() -> None:
     tree = AgentTreeStore().active
     root = tree.ensure_root('wizard')
     for index in range(3):
@@ -144,7 +144,7 @@ def test_a_flat_tree_has_no_rule():
 # --- the gutter --------------------------------------------------------------
 
 
-def test_a_flat_tree_keeps_plain_indentation():
+def test_a_flat_tree_keeps_plain_indentation() -> None:
     tree = AgentTreeStore().active
     root = tree.ensure_root('wizard')
     child = tree.add(parent_id=root.id, name='scout', role=AgentRole.SUBAGENT, task='go')
@@ -152,7 +152,7 @@ def test_a_flat_tree_keeps_plain_indentation():
     assert guides([root, child]) == ['', '  ']
 
 
-def test_a_nested_tree_draws_its_ancestry():
+def test_a_nested_tree_draws_its_ancestry() -> None:
     tree = _tree()
     painted, _ = arrange(tree.nodes())
 
@@ -165,7 +165,7 @@ def test_a_nested_tree_draws_its_ancestry():
     assert strips[3] == f'{BAR}{LAST}'
 
 
-def test_a_third_level_is_painted_under_its_own_parent():
+def test_a_third_level_is_painted_under_its_own_parent() -> None:
     """Depth is two columns a level, and the bars say whose branch you are on."""
     tree = AgentTreeStore().active
     root = tree.ensure_root('wizard')
@@ -185,7 +185,7 @@ def test_a_third_level_is_painted_under_its_own_parent():
     assert strips[4] == LAST
 
 
-def test_the_task_line_continues_the_bar_instead_of_restarting_the_branch():
+def test_the_task_line_continues_the_bar_instead_of_restarting_the_branch() -> None:
     tree = _tree()
     painted, _ = arrange(tree.nodes())
     strips = guides(painted)
@@ -203,7 +203,7 @@ def test_the_task_line_continues_the_bar_instead_of_restarting_the_branch():
 # --- the rows ----------------------------------------------------------------
 
 
-def test_the_rule_between_work_and_history_cannot_be_chosen():
+def test_the_rule_between_work_and_history_cannot_be_chosen() -> None:
     option = history_row(42)
 
     assert option.id is None
@@ -211,7 +211,7 @@ def test_the_rule_between_work_and_history_cannot_be_chosen():
     assert 'finished · 42' in _plain(option)
 
 
-def test_the_empty_state_is_a_row_that_says_what_will_fill_it():
+def test_the_empty_state_is_a_row_that_says_what_will_fill_it() -> None:
     option = empty_row()
 
     assert option.id is None
@@ -219,7 +219,7 @@ def test_the_empty_state_is_a_row_that_says_what_will_fill_it():
     assert 'Subagents appear here while the agent works.' in _plain(option)
 
 
-def test_a_session_without_subagents_opens_on_the_empty_state():
+def test_a_session_without_subagents_opens_on_the_empty_state() -> None:
     """A truncated tree is not an error: the screen has a body for it."""
     tree = AgentTreeStore().active
     tree.ensure_root('pulsar_agent_squad')
@@ -240,7 +240,7 @@ def test_a_session_without_subagents_opens_on_the_empty_state():
     assert screen._rows[-1] is Gap.EMPTY
 
 
-def test_the_empty_row_is_not_a_stop_for_the_arrows():
+def test_the_empty_row_is_not_a_stop_for_the_arrows() -> None:
     tree = AgentTreeStore().active
     tree.ensure_root('wizard')
     screen = AgentTreeScreen(tree.nodes())
@@ -256,7 +256,7 @@ def test_the_empty_row_is_not_a_stop_for_the_arrows():
     _run(screen, body)
 
 
-def test_a_running_subagent_spins_and_the_root_does_not():
+def test_a_running_subagent_spins_and_the_root_does_not() -> None:
     tree = _tree()
     painted, _ = arrange(tree.nodes())
 
@@ -268,7 +268,7 @@ def test_a_running_subagent_spins_and_the_root_does_not():
     assert '●' in trunk, 'the root is the trunk, not a job'
 
 
-def test_the_status_line_counts_what_is_left_and_what_a_filter_left():
+def test_the_status_line_counts_what_is_left_and_what_a_filter_left() -> None:
     tree = _tree()
 
     plain = render_text(Text.from_markup(status_text(tree.nodes())))
@@ -284,7 +284,7 @@ def test_the_status_line_counts_what_is_left_and_what_a_filter_left():
     assert '1 subagent ·' in render_text(Text.from_markup(status_text(solo.nodes()))), 'one subagent, not one subagents'
 
 
-def test_a_filter_that_matches_nothing_says_so_in_english():
+def test_a_filter_that_matches_nothing_says_so_in_english() -> None:
     tree = _tree()
 
     status = render_text(Text.from_markup(status_text(tree.nodes(), shown=0, query='nonexistent')))
@@ -296,7 +296,7 @@ def test_a_filter_that_matches_nothing_says_so_in_english():
 # --- filtering ---------------------------------------------------------------
 
 
-def test_the_filter_matches_the_name_the_id_the_state_and_the_task():
+def test_the_filter_matches_the_name_the_id_the_state_and_the_task() -> None:
     tree = _tree()
     nodes = tree.nodes()
     qas = _by_name(tree, 'pas_qa')
@@ -312,7 +312,7 @@ def test_the_filter_matches_the_name_the_id_the_state_and_the_task():
     assert by_task[1].task == 'qa the release path'
 
 
-def test_the_root_stays_when_a_filter_hides_everything_else():
+def test_the_root_stays_when_a_filter_hides_everything_else() -> None:
     """The trunk is one row and the list needs a top."""
     tree = _tree()
 
@@ -335,7 +335,7 @@ def _run(screen: AgentTreeScreen, body: Any) -> Any:
     return asyncio.run(inner())
 
 
-def test_the_cursor_opens_on_the_subagent_that_is_working():
+def test_the_cursor_opens_on_the_subagent_that_is_working() -> None:
     """Landing on the root is landing on the one row that is never the answer."""
     tree = _tree()
     screen = AgentTreeScreen(tree.nodes())
@@ -349,7 +349,7 @@ def test_the_cursor_opens_on_the_subagent_that_is_working():
     _run(screen, body)
 
 
-def test_the_cursor_stays_on_the_row_it_was_on():
+def test_the_cursor_stays_on_the_row_it_was_on() -> None:
     tree = _tree()
     viewed = _by_name(tree, 'pas_researcher')[0]
     screen = AgentTreeScreen(tree.nodes(), viewed=viewed.id)
@@ -360,7 +360,7 @@ def test_the_cursor_stays_on_the_row_it_was_on():
     _run(screen, body)
 
 
-def test_the_arrows_step_over_the_rule():
+def test_the_arrows_step_over_the_rule() -> None:
     tree = _tree()
     screen = AgentTreeScreen(tree.nodes())
 
@@ -376,7 +376,7 @@ def test_the_arrows_step_over_the_rule():
     _run(screen, body)
 
 
-def test_typing_after_slash_filters_and_escape_gives_the_keys_back():
+def test_typing_after_slash_filters_and_escape_gives_the_keys_back() -> None:
     tree = _tree()
     screen = AgentTreeScreen(tree.nodes())
 
@@ -403,7 +403,7 @@ def test_typing_after_slash_filters_and_escape_gives_the_keys_back():
     _run(screen, body)
 
 
-def test_escape_clears_a_filter_from_the_list_before_closing():
+def test_escape_clears_a_filter_from_the_list_before_closing() -> None:
     tree = _tree()
     screen = AgentTreeScreen(tree.nodes())
 
@@ -422,7 +422,7 @@ def test_escape_clears_a_filter_from_the_list_before_closing():
     _run(screen, body)
 
 
-def test_a_running_row_animates_and_the_timer_stops_with_the_work():
+def test_a_running_row_animates_and_the_timer_stops_with_the_work() -> None:
     tree = _tree()
     screen = AgentTreeScreen(tree.nodes())
 
@@ -453,7 +453,7 @@ def test_a_running_row_animates_and_the_timer_stops_with_the_work():
     _run(screen, body)
 
 
-def test_the_view_speaks_english_from_the_hint_to_the_filter():
+def test_the_view_speaks_english_from_the_hint_to_the_filter() -> None:
     hint = AgentTreeScreen.HINT_TEXT
 
     async def body(app: Any, pilot: Any) -> tuple[str, str]:
@@ -549,7 +549,7 @@ def _projection() -> dict[str, Any]:
     }
 
 
-def test_a_projection_becomes_the_rows_the_screen_draws():
+def test_a_projection_becomes_the_rows_the_screen_draws() -> None:
     """The service's tree paints the rule, the gutter and the spinner, from its JSON.
 
     `_nodes_from_tree` is the one place the projection becomes the type this screen
@@ -558,7 +558,7 @@ def test_a_projection_becomes_the_rows_the_screen_draws():
     ancestry once the tree has depth, and a running row carries the frame the screen
     is on while the trunk — running for the session's whole life — does not.
     """
-    from src.ui.tree_mixin import _nodes_from_tree
+    from src.ui.mixins.tree_mixin import _nodes_from_tree
 
     nodes = _nodes_from_tree(_projection())
     screen = AgentTreeScreen(nodes)

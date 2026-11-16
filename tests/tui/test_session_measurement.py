@@ -21,9 +21,9 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 
-from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
+from src.core.context.meter.context_meter import ContextMeter
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
 
 
 def _messages() -> list:
@@ -36,10 +36,10 @@ def _messages() -> list:
 # --- the app ------------------------------------------------------------------
 
 
-def test_binding_a_session_restores_its_budget_and_drops_the_last_view():
+def test_binding_a_session_restores_its_budget_and_drops_the_last_view() -> None:
     """The panel and `/context` read the meter, so the meter has to be told."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(cwd=tmp, base_dir=Path(tmp) / 'sessions')
             session = store.create_session()

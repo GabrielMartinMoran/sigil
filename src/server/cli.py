@@ -39,15 +39,20 @@ from types import FrameType
 
 from dotenv import load_dotenv
 
-from src.engine.bootstrap import Composition
-from src.server import webbuild
-from src.server.app import GracefulStop, create_app
-from src.server.config import PASSWORD_ENV, ServerConfig, ServerConfigError, banner, resolve_config
-from src.server.diagnostics import diagnose_server, record
-from src.server.endpoint import EndpointPublisher
-from src.server.events import EventHub
-from src.server.ownership import OwnershipError, ServerOwnership
-from src.server.runtime import DEFAULT_IDLE_GRACE, ServerRuntime
+from src.core.composition.composition import Composition
+from src.server.api.app import create_app
+from src.server.api.graceful_stop import GracefulStop
+from src.server.launch.config import banner, resolve_config
+from src.server.launch.diagnostics import diagnose_server, record
+from src.server.launch.endpoint_publisher import EndpointPublisher
+from src.server.launch.ownership_error import OwnershipError
+from src.server.launch.server_config import ServerConfig
+from src.server.launch.server_config_error import ServerConfigError
+from src.server.launch.server_defaults import PASSWORD_ENV
+from src.server.launch.server_ownership import ServerOwnership
+from src.server.runtime.event_hub import EventHub
+from src.server.runtime.server_runtime import DEFAULT_IDLE_GRACE, ServerRuntime
+from src.server.web import webbuild
 
 MAX_IDLE_GRACE = 24 * 60 * 60.0
 """Largest accepted ``--idle-grace``: one day.
@@ -157,6 +162,8 @@ def build_parser(web: bool = True) -> argparse.ArgumentParser:
         metavar='SECONDS',
         help='seconds before releasing an unattached idle session (default 300)',
     )
+    if not web:
+        parser.add_argument('--client-managed', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--reload', action='store_true', help=argparse.SUPPRESS)
     return parser
 
@@ -217,8 +224,8 @@ def _run(args: argparse.Namespace, *, web: bool = True) -> int:
             record('server_signal_received', signal=sig)
             super().handle_exit(sig, frame)
 
-    from src.engine.settings import load_settings
-    from src.engine.storage.database import database_path
+    from src.core.config.load_settings import load_settings
+    from src.core.storage.database_path import database_path
 
     # The lock is taken before the engine is built, and it is held until the process
     # closes. `Composition` reads settings, the MCP config and the skill registry, so
@@ -261,6 +268,7 @@ def _run(args: argparse.Namespace, *, web: bool = True) -> int:
             request_shutdown=stop.request,
             idle_grace=args.idle_grace,
             session_idle_grace=args.session_idle_grace,
+            client_managed=not web and getattr(args, 'client_managed', False),
         )
 
         try:

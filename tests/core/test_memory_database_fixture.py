@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from src.engine.storage.database import Database
+from src.core.storage.database import Database
 
 
 @pytest.mark.usefixtures('memory_databases')

@@ -8,10 +8,10 @@ from pathlib import Path
 
 from pydantic_ai.models.test import TestModel
 
-from src.engine.agents.agent import create_agent
-from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
-from src.engine.context.scope import ScopeTracker
-from src.engine.skills.registry import SkillRegistry
+from src.core.agents.agent import create_agent
+from src.core.context.instructions.workspace_instructions import WorkspaceInstructions
+from src.core.context.scope_tracker import ScopeTracker
+from src.core.skills.skill_registry import SkillRegistry
 
 
 def _write_skill(root: Path, name: str, body: str) -> None:
@@ -33,7 +33,7 @@ def _instruction_names(agent) -> list[str | None]:
     return [getattr(item, 'name', None) for item in agent._instructions]
 
 
-def test_agent_registers_workspace_and_loaded_skill_blocks():
+def test_agent_registers_workspace_and_loaded_skill_blocks() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / 'AGENTS.md').write_text('# Project rules', encoding='utf-8')
@@ -76,7 +76,7 @@ def _loaded(name: str, *, outcome: str = 'success', call_id: str = 'call-1') -> 
     ]
 
 
-def test_loaded_skill_body_reaches_the_instructions():
+def test_loaded_skill_body_reaches_the_instructions() -> None:
     """The block is derived from the history of the run, not from a registry.
 
     That is what makes a resumed session keep the skills it was following: the
@@ -102,7 +102,7 @@ def test_loaded_skill_body_reaches_the_instructions():
         assert 'Follow these steps.' in instructions
 
 
-def test_a_failed_load_does_not_reach_the_instructions():
+def test_a_failed_load_does_not_reach_the_instructions() -> None:
     """`ToolErrorRecovery` returns failures as `ToolReturnPart`s.
 
     A `load_skill` with an unknown name therefore looks successful to anyone who
@@ -120,7 +120,7 @@ def test_a_failed_load_does_not_reach_the_instructions():
         assert 'Demo body' not in _last_request_instructions(result)
 
 
-def test_workspace_block_uses_rewrite_policy():
+def test_workspace_block_uses_rewrite_policy() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / 'AGENTS.md').write_text('# Rules', encoding='utf-8')
@@ -136,12 +136,12 @@ def test_workspace_block_uses_rewrite_policy():
         assert '# Rules' in parts
 
 
-def test_agent_without_a_skill_registry_has_no_block():
+def test_agent_without_a_skill_registry_has_no_block() -> None:
     agent = create_agent(None)
     assert 'loaded-skills' not in _instruction_names(agent)
 
 
-def test_loaded_skills_block_is_rewritten_not_appended():
+def test_loaded_skills_block_is_rewritten_not_appended() -> None:
     """Loading a skill is rare and the body is large: duplicating it costs more."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -157,7 +157,7 @@ def test_loaded_skills_block_is_rewritten_not_appended():
         assert not any(type(part).__name__ == 'InstructionDeltaPart' for part in request.parts)
 
 
-def test_node_context_is_not_registered_as_an_instruction(tmp_path):
+def test_node_context_is_not_registered_as_an_instruction(tmp_path: Path) -> None:
     registry = SkillRegistry([('project', tmp_path)])
     agent = create_agent(
         registry, workspace=WorkspaceInstructions(tmp_path), scope=ScopeTracker(tmp_path), node_blocks=lambda _: 'state'
@@ -167,7 +167,7 @@ def test_node_context_is_not_registered_as_an_instruction(tmp_path):
     assert names.index('skills') < names.index('workspace')
 
 
-def test_workspace_changes_replace_prior_instructions(tmp_path):
+def test_workspace_changes_replace_prior_instructions(tmp_path: Path) -> None:
     from pydantic_ai.messages import InstructionDeltaPart, ModelRequest
 
     path = tmp_path / 'AGENTS.md'
@@ -183,7 +183,7 @@ def test_workspace_changes_replace_prior_instructions(tmp_path):
     assert not any(isinstance(part, InstructionDeltaPart) for message in requests for part in message.parts)
 
 
-def test_rewriting_workspace_with_legacy_append_history(tmp_path):
+def test_rewriting_workspace_with_legacy_append_history(tmp_path: Path) -> None:
     from pydantic_ai import Agent
 
     path = tmp_path / 'AGENTS.md'
@@ -212,7 +212,7 @@ def test_rewriting_workspace_with_legacy_append_history(tmp_path):
     assert 'old workspace rule' not in str(parts)
 
 
-def test_workspace_permission_is_refreshed_in_each_request():
+def test_workspace_permission_is_refreshed_in_each_request() -> None:
     allowed = False
     agent = create_agent(model=TestModel(), allow_external_files=lambda: allowed)
     first = agent.run_sync('first')

@@ -11,8 +11,8 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from src.engine.context.budget import ContextBudget
-from src.engine.context.tokens import estimate_messages_tokens
+from src.core.context.context_budget import ContextBudget
+from src.core.context.tokens import estimate_messages_tokens
 
 PAYLOAD = 'x' * 4000
 

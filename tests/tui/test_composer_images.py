@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+from pathlib import Path
 from typing import Self
 
 import pytest
@@ -24,14 +25,14 @@ from PIL import Image
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-import src.ui.widgets.prompt_input as prompt_module
-from src.engine.attachments.clipboard import ClipboardUnavailable
-from src.engine.attachments.image_attachment import ImageAttachment
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
-from src.ui.turn_mixin import Steer
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.prompt_input import PromptInput
+import src.ui.widgets.panels.prompt_input as prompt_module
+from src.core.attachments.clipboard_unavailable import ClipboardUnavailable
+from src.core.attachments.image_attachment import ImageAttachment
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
+from src.ui.state.steer import Steer
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.panels.prompt_input import PromptInput
 from tests.support.ui import render_text
 
 pytestmark = pytest.mark.usefixtures('memory_databases')
@@ -71,7 +72,7 @@ class Clipboard:
         self._original = prompt_module.read_clipboard_image
         if self.error is not None:
 
-            def failing(**_):
+            def failing(**_) -> None:
                 raise ClipboardUnavailable(self.error)
 
             prompt_module.read_clipboard_image = failing
@@ -86,7 +87,7 @@ class Clipboard:
 # --- attaching --------------------------------------------------------------
 
 
-def test_ctrl_v_with_an_image_writes_the_marker_where_the_cursor_is(tmp_path):
+def test_ctrl_v_with_an_image_writes_the_marker_where_the_cursor_is(tmp_path: Path) -> None:
     async def inner() -> None:
         app = _app(tmp_path)
         async with app.run_test() as pilot:
@@ -102,7 +103,7 @@ def test_ctrl_v_with_an_image_writes_the_marker_where_the_cursor_is(tmp_path):
     asyncio.run(inner())
 
 
-def test_the_marker_is_painted_differently_from_the_text_around_it(tmp_path):
+def test_the_marker_is_painted_differently_from_the_text_around_it(tmp_path: Path) -> None:
     async def inner() -> None:
         app = _app(tmp_path)
         async with app.run_test() as pilot:
@@ -121,7 +122,7 @@ def test_the_marker_is_painted_differently_from_the_text_around_it(tmp_path):
     asyncio.run(inner())
 
 
-def test_two_pastes_are_numbered_in_order(tmp_path):
+def test_two_pastes_are_numbered_in_order(tmp_path: Path) -> None:
     async def inner() -> None:
         app = _app(tmp_path)
         async with app.run_test() as pilot:
@@ -138,7 +139,7 @@ def test_two_pastes_are_numbered_in_order(tmp_path):
     asyncio.run(inner())
 
 
-def test_a_clipboard_without_an_image_still_pastes_text(tmp_path):
+def test_a_clipboard_without_an_image_still_pastes_text(tmp_path: Path) -> None:
     async def inner() -> None:
         app = _app(tmp_path)
         async with app.run_test() as pilot:
@@ -154,7 +155,7 @@ def test_a_clipboard_without_an_image_still_pastes_text(tmp_path):
     asyncio.run(inner())
 
 
-def test_a_missing_clipboard_tool_is_reported_once_and_text_still_pastes(tmp_path):
+def test_a_missing_clipboard_tool_is_reported_once_and_text_still_pastes(tmp_path: Path) -> None:
     async def inner() -> None:
         app = _app(tmp_path)
         async with app.run_test() as pilot:
@@ -173,7 +174,7 @@ def test_a_missing_clipboard_tool_is_reported_once_and_text_still_pastes(tmp_pat
 # --- deleting it ------------------------------------------------------------
 
 
-def test_one_backspace_removes_the_whole_marker_and_the_image(tmp_path):
+def test_one_backspace_removes_the_whole_marker_and_the_image(tmp_path: Path) -> None:
     async def inner() -> None:
         app = _app(tmp_path)
         async with app.run_test() as pilot:
@@ -189,7 +190,7 @@ def test_one_backspace_removes_the_whole_marker_and_the_image(tmp_path):
     asyncio.run(inner())
 
 
-def test_backspace_inside_prose_still_deletes_one_character(tmp_path):
+def test_backspace_inside_prose_still_deletes_one_character(tmp_path: Path) -> None:
     """Taking the key away from the text area everywhere would be a regression."""
 
     async def inner() -> None:
@@ -205,7 +206,7 @@ def test_backspace_inside_prose_still_deletes_one_character(tmp_path):
     asyncio.run(inner())
 
 
-def test_deleting_the_first_of_two_images_renumbers_the_second(tmp_path):
+def test_deleting_the_first_of_two_images_renumbers_the_second(tmp_path: Path) -> None:
     """`[Image #2]` on its own points at a picture that is no longer attached."""
 
     async def inner() -> None:
@@ -229,7 +230,7 @@ def test_deleting_the_first_of_two_images_renumbers_the_second(tmp_path):
     asyncio.run(inner())
 
 
-def test_clearing_the_composer_drops_the_attachments(tmp_path):
+def test_clearing_the_composer_drops_the_attachments(tmp_path: Path) -> None:
     async def inner() -> None:
         app = _app(tmp_path)
         async with app.run_test() as pilot:
@@ -248,7 +249,7 @@ def test_clearing_the_composer_drops_the_attachments(tmp_path):
     asyncio.run(inner())
 
 
-def test_a_message_that_missed_the_seam_comes_back_with_its_images(tmp_path):
+def test_a_message_that_missed_the_seam_comes_back_with_its_images(tmp_path: Path) -> None:
     """Text without its picture would point at an `[Image #1]` that is gone.
 
     The turn hands the leftovers back with the exact expression checked here; a
@@ -271,7 +272,7 @@ def test_a_message_that_missed_the_seam_comes_back_with_its_images(tmp_path):
     asyncio.run(inner())
 
 
-def test_restoring_two_messages_renumbers_the_second_ones_images(tmp_path):
+def test_restoring_two_messages_renumbers_the_second_ones_images(tmp_path: Path) -> None:
     """Each message numbered from one; joined, the numbers have to keep counting."""
 
     async def inner() -> None:
@@ -290,7 +291,7 @@ def test_restoring_two_messages_renumbers_the_second_ones_images(tmp_path):
 # --- sending ----------------------------------------------------------------
 
 
-def test_enter_sends_the_text_and_the_images_together(tmp_path):
+def test_enter_sends_the_text_and_the_images_together(tmp_path: Path) -> None:
     """The proof is the history: the image is a content part of the user prompt."""
 
     async def inner() -> None:

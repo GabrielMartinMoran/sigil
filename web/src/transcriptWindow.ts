@@ -40,7 +40,7 @@ import type { TranscriptItem } from './types';
 /**
  * Items one page of the conversation holds.
  *
- * Mirrors `DEFAULT_TRANSCRIPT_WINDOW` in `src/engine/preferences.py`, which is what
+ * Mirrors `DEFAULT_TRANSCRIPT_WINDOW` in `src/core/preferences.py`, which is what
  * the terminal reads from `ui.json`. The web client has no settings surface of its
  * own, so this is the one place its window size is written down: enough that a
  * screenful of a long conversation arrives in one request, small enough that a

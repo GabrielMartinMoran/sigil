@@ -28,23 +28,25 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import UsageLimits
 
-from src.engine.agents.agent import create_agent
-from src.engine.agents.factory import AgentFactory, AgentSpec
-from src.engine.agents.profile.models.agent_not_found import AgentNotFound
-from src.engine.agents.profile.models.agent_parse_error import AgentParseError
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.engine.agents.profile.parser import parse_profile
-from src.engine.agents.profile.registry import AgentRegistry
-from src.engine.agents.profile.source import ProfileSource
-from src.engine.agents.tree.models.agent_node import AgentNode
-from src.engine.agents.tree.models.node_status import NodeStatus
-from src.engine.agents.tree.models.summon_error import SummonError
-from src.engine.agents.tree.rendering import render_subagents, summonable
-from src.engine.agents.tree.store import AgentTreeStore
-from src.engine.agents.tree.summoner import SigilDeps, SubagentSummoner
-from src.engine.agents.tree.tools import register_tree_tools
-from src.engine.agents.tree.tree import AgentTree
-from src.engine.sessions.session_store import SessionStore
+from src.core.agents.agent import create_agent
+from src.core.agents.agent_factory import AgentFactory
+from src.core.agents.agent_spec import AgentSpec
+from src.core.agents.profile.agent_registry import AgentRegistry
+from src.core.agents.profile.models.agent_not_found import AgentNotFound
+from src.core.agents.profile.models.agent_parse_error import AgentParseError
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.agents.profile.parser import parse_profile
+from src.core.agents.profile.profile_source import ProfileSource
+from src.core.agents.tree.agent_tree import AgentTree
+from src.core.agents.tree.agent_tree_store import AgentTreeStore
+from src.core.agents.tree.models.agent_node import AgentNode
+from src.core.agents.tree.models.node_status import NodeStatus
+from src.core.agents.tree.models.summon_error import SummonError
+from src.core.agents.tree.rendering import render_subagents, summonable
+from src.core.agents.tree.sigil_deps import SigilDeps
+from src.core.agents.tree.subagent_summoner import SubagentSummoner
+from src.core.agents.tree.tools import register_tree_tools
+from src.core.sessions.session_store import SessionStore
 
 FRONTMATTER = '---\nname: {name}\ndescription: {description}\n{extra}---\n{body}'
 
@@ -69,28 +71,28 @@ def write_profile(
 # --- roles -------------------------------------------------------------------
 
 
-def test_a_profile_is_an_agent_unless_it_says_otherwise(tmp_path):
+def test_a_profile_is_an_agent_unless_it_says_otherwise(tmp_path: Path) -> None:
     write_profile(tmp_path, 'wizard')
     profile, _ = parse_profile(tmp_path / 'wizard.md', source='project')
     assert profile.role is AgentRole.AGENT
     assert profile.role.selectable
 
 
-def test_a_profile_can_declare_itself_a_subagent(tmp_path):
+def test_a_profile_can_declare_itself_a_subagent(tmp_path: Path) -> None:
     write_profile(tmp_path, 'researcher', extra='role: subagent\n')
     profile, _ = parse_profile(tmp_path / 'researcher.md', source='project')
     assert profile.role is AgentRole.SUBAGENT
     assert not profile.role.selectable
 
 
-def test_an_unknown_role_is_an_error_and_not_a_fallback(tmp_path):
+def test_an_unknown_role_is_an_error_and_not_a_fallback(tmp_path: Path) -> None:
     """A typo here hides the profile from the picker or from `summon` silently."""
     write_profile(tmp_path, 'broken', extra='role: helper\n')
     with pytest.raises(AgentParseError, match='`role` must be one of'):
         parse_profile(tmp_path / 'broken.md', source='project')
 
 
-def test_the_registry_keeps_the_two_roles_apart(tmp_path):
+def test_the_registry_keeps_the_two_roles_apart(tmp_path: Path) -> None:
     write_profile(tmp_path, 'wizard')
     write_profile(tmp_path, 'researcher', extra='role: subagent\n')
     write_profile(tmp_path, 'reviewer', extra='role: subagent\n')
@@ -102,7 +104,7 @@ def test_the_registry_keeps_the_two_roles_apart(tmp_path):
     assert len(registry.list()) == 3
 
 
-def test_a_subagent_cannot_be_the_agent_of_the_session(tmp_path):
+def test_a_subagent_cannot_be_the_agent_of_the_session(tmp_path: Path) -> None:
     write_profile(tmp_path, 'wizard')
     write_profile(tmp_path, 'researcher', extra='role: subagent\n')
     registry = AgentRegistry([('project', tmp_path), ('builtin', tmp_path / 'none')], active='wizard')
@@ -111,7 +113,7 @@ def test_a_subagent_cannot_be_the_agent_of_the_session(tmp_path):
         registry.activate('researcher')
 
 
-def test_a_remembered_subagent_falls_back_to_an_agent(tmp_path):
+def test_a_remembered_subagent_falls_back_to_an_agent(tmp_path: Path) -> None:
     """A session saved under a subagent name must still open with someone."""
     write_profile(tmp_path, 'wizard')
     write_profile(tmp_path, 'researcher', extra='role: subagent\n')
@@ -120,7 +122,7 @@ def test_a_remembered_subagent_falls_back_to_an_agent(tmp_path):
     assert registry.active_name == 'wizard'
 
 
-def test_an_agent_cannot_be_summoned(tmp_path):
+def test_an_agent_cannot_be_summoned(tmp_path: Path) -> None:
     write_profile(tmp_path, 'wizard')
     registry = AgentRegistry([('project', tmp_path), ('builtin', tmp_path / 'none')])
 
@@ -139,13 +141,13 @@ def _registry_with(tmp_path: Path, *, permissions: str = '') -> AgentRegistry:
     return AgentRegistry([('project', tmp_path), ('builtin', tmp_path / 'none')], active='wizard')
 
 
-def test_without_a_summon_rule_every_subagent_is_listed(tmp_path):
+def test_without_a_summon_rule_every_subagent_is_listed(tmp_path: Path) -> None:
     registry = _registry_with(tmp_path)
     names = [profile.name for profile in summonable(registry, registry.active)]
     assert names == ['researcher', 'reviewer', 'secret']
 
 
-def test_an_allow_list_narrows_what_is_listed_and_what_is_allowed(tmp_path):
+def test_an_allow_list_narrows_what_is_listed_and_what_is_allowed(tmp_path: Path) -> None:
     permissions = 'permissions:\n  summon:\n    allow: ["researcher", "review*"]\n'
     registry = _registry_with(tmp_path, permissions=permissions)
 
@@ -153,7 +155,7 @@ def test_an_allow_list_narrows_what_is_listed_and_what_is_allowed(tmp_path):
     assert names == ['researcher', 'reviewer']
 
 
-def test_the_block_names_the_subagents_and_how_to_call_them(tmp_path):
+def test_the_block_names_the_subagents_and_how_to_call_them(tmp_path: Path) -> None:
     registry = _registry_with(tmp_path)
     block = render_subagents(registry, registry.active)
     assert '## Subagents you can summon' in block
@@ -162,14 +164,14 @@ def test_the_block_names_the_subagents_and_how_to_call_them(tmp_path):
     assert 'mode="async"' in block
 
 
-def test_a_closed_summon_rule_produces_no_block(tmp_path):
+def test_a_closed_summon_rule_produces_no_block(tmp_path: Path) -> None:
     permissions = 'permissions:\n  summon: deny\n'
     registry = _registry_with(tmp_path, permissions=permissions)
     assert render_subagents(registry, registry.active) == ''
     assert summonable(registry, registry.active) == []
 
 
-def test_a_subagent_profile_is_a_different_block(tmp_path):
+def test_a_subagent_profile_is_a_different_block(tmp_path: Path) -> None:
     write_profile(tmp_path, 'researcher', extra='role: subagent\n', body='You dig.')
     registry = AgentRegistry([('project', tmp_path), ('builtin', tmp_path / 'none')], active='researcher')
 
@@ -187,7 +189,7 @@ def test_a_subagent_profile_is_a_different_block(tmp_path):
 # --- the tree ----------------------------------------------------------------
 
 
-def test_the_tree_mints_one_root_and_keeps_its_name_in_step():
+def test_the_tree_mints_one_root_and_keeps_its_name_in_step() -> None:
     tree = AgentTree()
     root = tree.ensure_root('wizard')
     assert root.is_root and root.depth == 0 and root.role is AgentRole.AGENT
@@ -196,7 +198,7 @@ def test_the_tree_mints_one_root_and_keeps_its_name_in_step():
     assert len(tree) == 1
 
 
-def test_a_child_hangs_where_its_parent_is_and_not_at_a_fixed_depth():
+def test_a_child_hangs_where_its_parent_is_and_not_at_a_fixed_depth() -> None:
     tree = AgentTree()
     root = tree.ensure_root('wizard')
     first = tree.add(parent_id=root.id, name='researcher', role=AgentRole.SUBAGENT, task='a')
@@ -207,7 +209,7 @@ def test_a_child_hangs_where_its_parent_is_and_not_at_a_fixed_depth():
     assert [node.name for node in tree.path(second.id)] == ['wizard', 'researcher', 'reviewer']
 
 
-def test_the_nodes_are_read_depth_first():
+def test_the_nodes_are_read_depth_first() -> None:
     tree = AgentTree()
     root = tree.ensure_root('wizard')
     first = tree.add(parent_id=root.id, name='a', role=AgentRole.SUBAGENT)
@@ -217,7 +219,7 @@ def test_the_nodes_are_read_depth_first():
     assert [node.name for node in tree.nodes()] == ['wizard', 'a', 'a-child', 'b']
 
 
-def test_a_node_remembers_how_it_ended():
+def test_a_node_remembers_how_it_ended() -> None:
     node = AgentNode(id='1', name='x', role=AgentRole.SUBAGENT, parent_id='0', depth=1)
     assert node.status is NodeStatus.RUNNING
     node.finish('done!')
@@ -225,7 +227,7 @@ def test_a_node_remembers_how_it_ended():
     assert node.elapsed >= 0
 
 
-def test_a_tree_survives_a_round_trip_through_json():
+def test_a_tree_survives_a_round_trip_through_json() -> None:
     tree = AgentTree()
     root = tree.ensure_root('wizard')
     node = tree.add(parent_id=root.id, name='researcher', role=AgentRole.SUBAGENT, task='read', mode='async')
@@ -239,20 +241,20 @@ def test_a_tree_survives_a_round_trip_through_json():
     assert restored.node(node.id).mode == 'async'
 
 
-def test_a_node_without_a_parent_that_cannot_be_read_is_dropped():
+def test_a_node_without_a_parent_that_cannot_be_read_is_dropped() -> None:
     payload = {'nodes': [{'nope': True}, {'id': 'a', 'name': 'x', 'parent_id': None, 'depth': 0}]}
     restored = AgentTree.from_dict(payload)
     assert restored is not None
     assert [node.name for node in restored.nodes()] == ['x']
 
 
-def test_a_tree_that_cannot_be_read_is_none():
+def test_a_tree_that_cannot_be_read_is_none() -> None:
     assert AgentTree.from_dict(None) is None
     assert AgentTree.from_dict({'nodes': 'nope'}) is None
     assert AgentTree.from_dict({'nodes': []}) is None
 
 
-def test_the_tree_travels_with_the_session(tmp_path):
+def test_the_tree_travels_with_the_session(tmp_path: Path) -> None:
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'sessions')
     session = store.create_session()
     trees = AgentTreeStore()
@@ -268,7 +270,7 @@ def test_the_tree_travels_with_the_session(tmp_path):
     assert loaded.tree.node(node.id).result == 'read it'
 
 
-def test_a_session_with_no_tree_gets_a_root_when_it_is_bound(tmp_path):
+def test_a_session_with_no_tree_gets_a_root_when_it_is_bound(tmp_path: Path) -> None:
     """A conversation always has a root, minted the first time it is bound.
 
     The id is derived from the session, so the tree and the database name the same
@@ -363,7 +365,7 @@ def make_env(tmp_path: Path, *, permissions: str = '', root_answer: str = 'The w
         register_tree_tools(subagent, env.summoner)
         return subagent
 
-    def install(target):
+    def install(target) -> None:
         register_tree_tools(target, env.summoner)
 
     def root_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -390,7 +392,7 @@ def make_env(tmp_path: Path, *, permissions: str = '', root_answer: str = 'The w
     return env
 
 
-def test_a_sync_summon_returns_the_message_as_the_tool_result(tmp_path):
+def test_a_sync_summon_returns_the_message_as_the_tool_result(tmp_path: Path) -> None:
     env = make_env(tmp_path)
 
     async def inner():
@@ -412,10 +414,10 @@ def test_a_sync_summon_returns_the_message_as_the_tool_result(tmp_path):
     assert returns[0].outcome == 'success'
 
 
-def test_the_node_records_what_it_ran_and_what_it_answered(tmp_path):
+def test_the_node_records_what_it_ran_and_what_it_answered(tmp_path: Path) -> None:
     env = make_env(tmp_path)
 
-    async def inner():
+    async def inner() -> None:
         agent = env.agent()
         async with agent.iter('go', deps=SigilDeps()) as run:
             async for _node in run:
@@ -434,11 +436,11 @@ def test_the_node_records_what_it_ran_and_what_it_answered(tmp_path):
     assert _texts(worker.messages) == ['compute it']
 
 
-def test_a_subagent_runs_its_own_profile_and_not_the_active_one(tmp_path):
+def test_a_subagent_runs_its_own_profile_and_not_the_active_one(tmp_path: Path) -> None:
     """The worker's prompt is its own: `create_agent` is asked for that profile."""
     env = make_env(tmp_path)
 
-    async def inner():
+    async def inner() -> None:
         agent = env.agent()
         async with agent.iter('go', deps=SigilDeps()) as run:
             async for _node in run:
@@ -451,7 +453,7 @@ def test_a_subagent_runs_its_own_profile_and_not_the_active_one(tmp_path):
     assert 'You are a worker.' in instructions
 
 
-def test_a_name_the_permission_does_not_allow_is_refused_as_a_failed_call(tmp_path):
+def test_a_name_the_permission_does_not_allow_is_refused_as_a_failed_call(tmp_path: Path) -> None:
     env = make_env(tmp_path, permissions='permissions:\n  summon:\n    allow: ["someone-else"]\n')
 
     async def inner():
@@ -468,7 +470,7 @@ def test_a_name_the_permission_does_not_allow_is_refused_as_a_failed_call(tmp_pa
     assert len(env.tree()) == 1
 
 
-def test_an_unknown_subagent_names_the_ones_that_exist(tmp_path):
+def test_an_unknown_subagent_names_the_ones_that_exist(tmp_path: Path) -> None:
     env = make_env(tmp_path)
 
     async def inner():
@@ -478,21 +480,21 @@ def test_an_unknown_subagent_names_the_ones_that_exist(tmp_path):
         asyncio.run(inner())
 
 
-def test_an_agent_profile_cannot_be_summoned(tmp_path):
+def test_an_agent_profile_cannot_be_summoned(tmp_path: Path) -> None:
     env = make_env(tmp_path)
 
     with pytest.raises(SummonError, match='is an agent, not a subagent'):
         asyncio.run(env.summoner.summon(parent_id=None, name='wizard', task='x'))
 
 
-def test_a_summon_without_a_task_is_refused(tmp_path):
+def test_a_summon_without_a_task_is_refused(tmp_path: Path) -> None:
     env = make_env(tmp_path)
 
     with pytest.raises(SummonError, match='`task` is empty'):
         asyncio.run(env.summoner.summon(parent_id=None, name='worker', task='   '))
 
 
-def test_the_chain_of_subagents_is_capped(tmp_path):
+def test_the_chain_of_subagents_is_capped(tmp_path: Path) -> None:
     env = make_env(tmp_path)
     env.summoner = SubagentSummoner(
         trees=env.trees,
@@ -514,7 +516,7 @@ def test_the_chain_of_subagents_is_capped(tmp_path):
         asyncio.run(inner())
 
 
-def test_a_subagent_cannot_summon_itself(tmp_path):
+def test_a_subagent_cannot_summon_itself(tmp_path: Path) -> None:
     """The permissions would allow it; the loop it opens is what stops it."""
     env = make_env(tmp_path)
 
@@ -527,7 +529,7 @@ def test_a_subagent_cannot_summon_itself(tmp_path):
         asyncio.run(inner())
 
 
-def test_a_failing_subagent_tells_its_parent_why(tmp_path):
+def test_a_failing_subagent_tells_its_parent_why(tmp_path: Path) -> None:
     env = make_env(tmp_path)
 
     def broken(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -557,7 +559,7 @@ def test_a_failing_subagent_tells_its_parent_why(tmp_path):
 # --- async -------------------------------------------------------------------
 
 
-def test_an_async_answer_that_arrives_with_nobody_running_waits_for_the_next_turn(tmp_path):
+def test_an_async_answer_that_arrives_with_nobody_running_waits_for_the_next_turn(tmp_path: Path) -> None:
     env = make_env(tmp_path)
     taken: list[tuple[Any, str]] = []
 
@@ -575,7 +577,7 @@ def test_an_async_answer_that_arrives_with_nobody_running_waits_for_the_next_tur
         on_delivered=lambda node: taken.append(node),
     )
 
-    async def inner():
+    async def inner() -> None:
         # No root run at all: the answer must not be lost and must not start a turn.
         await env.summoner.summon(parent_id=None, name='worker', task='go', mode='async')
         for _ in range(50):
@@ -592,7 +594,7 @@ def test_an_async_answer_that_arrives_with_nobody_running_waits_for_the_next_tur
     assert env.summoner.drain_pending() == []
 
 
-def test_a_cancelled_async_subagent_sends_nothing(tmp_path):
+def test_a_cancelled_async_subagent_sends_nothing(tmp_path: Path) -> None:
     env = make_env(tmp_path)
     taken: list[Any] = []
 
@@ -606,7 +608,7 @@ def test_a_cancelled_async_subagent_sends_nothing(tmp_path):
         on_delivered=lambda node: taken.append(node),
     )
 
-    async def inner():
+    async def inner() -> None:
         await env.summoner.summon(parent_id=None, name='worker', task='go', mode='async')
         env.summoner.cancel_all()
         for _ in range(50):
@@ -622,7 +624,7 @@ def test_a_cancelled_async_subagent_sends_nothing(tmp_path):
     assert env.summoner.drain_pending() == []
 
 
-def test_a_subagent_of_a_subagent_climbs_to_the_root(tmp_path):
+def test_a_subagent_of_a_subagent_climbs_to_the_root(tmp_path: Path) -> None:
     """Nesting is allowed, and a grandfather still gets the message."""
     env = make_env(tmp_path)
 
@@ -658,7 +660,7 @@ def test_a_subagent_of_a_subagent_climbs_to_the_root(tmp_path):
         max_depth=3,
     )
 
-    async def inner():
+    async def inner() -> None:
         await env.summoner.summon(parent_id=None, name='middle', task='go', mode='async')
         for _ in range(100):
             await asyncio.sleep(0.01)
@@ -690,16 +692,16 @@ def _advertised(tmp_path: Path, *, permissions: str) -> set[str]:
     return seen
 
 
-def test_a_profile_that_may_not_summon_does_not_advertise_the_tool(tmp_path):
+def test_a_profile_that_may_not_summon_does_not_advertise_the_tool(tmp_path: Path) -> None:
     """A whole-tool denial hides it: the model cannot plan around a refusal."""
     assert 'summon' not in _advertised(tmp_path, permissions='permissions:\n  summon: deny\n')
 
 
-def test_a_profile_that_may_summon_does_advertise_the_tool(tmp_path):
+def test_a_profile_that_may_summon_does_advertise_the_tool(tmp_path: Path) -> None:
     assert 'summon' in _advertised(tmp_path, permissions='')
 
 
-def test_an_async_subagent_keeps_the_turn_alive_until_it_answers(tmp_path):
+def test_an_async_subagent_keeps_the_turn_alive_until_it_answers(tmp_path: Path) -> None:
     """The parent's run stays open while the node works, and the answer lands inside."""
     env = make_env(tmp_path)
     prompts: list[list[str]] = []
@@ -736,7 +738,7 @@ def test_an_async_subagent_keeps_the_turn_alive_until_it_answers(tmp_path):
     )
     agent = _agent_with_hold(env, root_model)
 
-    async def inner():
+    async def inner() -> None:
         async with agent.iter('go', deps=SigilDeps(), usage_limits=UsageLimits(request_limit=None)) as run:
             holder[0] = run
             async for _node in run:
@@ -760,7 +762,7 @@ def _agent_with_hold(env: Env, root_model) -> Agent[Any, Any]:
     ticks so a broken delivery fails the test instead of hanging it.
     """
 
-    def install(target):
+    def install(target) -> None:
         register_tree_tools(target, env.summoner)
 
         @target.tool_plain(name='hold')
@@ -777,7 +779,7 @@ def _agent_with_hold(env: Env, root_model) -> Agent[Any, Any]:
     ).root()
 
 
-def test_restricted_profile_resumes_allowed_worker_by_id_through_agent(tmp_path):
+def test_restricted_profile_resumes_allowed_worker_by_id_through_agent(tmp_path: Path) -> None:
     env = make_env(tmp_path, permissions='permissions:\n  summon:\n    allow: ["worker"]\n')
     root = env.tree().root
     node = env.tree().add(parent_id=root.id, name='worker', role=AgentRole.SUBAGENT, task='first')
@@ -799,10 +801,11 @@ def test_restricted_profile_resumes_allowed_worker_by_id_through_agent(tmp_path)
     assert 'The worker says 42.' in str(returns[0].content)
 
 
-def test_concurrent_subagents_tag_their_tool_events_without_leaking_to_parent(tmp_path):
-    from src.engine.tooling.events import CURRENT_NODE_ID, ToolCallEvent
-    from src.engine.tooling.logging import emit_tool_event
-    from src.engine.tooling.registrar import ToolRegistrar
+def test_concurrent_subagents_tag_their_tool_events_without_leaking_to_parent(tmp_path: Path) -> None:
+    from src.core.tooling.emit_tool_event import emit_tool_event
+    from src.core.tooling.events import CURRENT_NODE_ID
+    from src.core.tooling.tool_call_event import ToolCallEvent
+    from src.core.tooling.tool_registrar import ToolRegistrar
 
     env = make_env(tmp_path)
     events = []
@@ -829,7 +832,7 @@ def test_concurrent_subagents_tag_their_tool_events_without_leaking_to_parent(tm
 
     env.summoner._builder = lambda: build
 
-    async def inner():
+    async def inner() -> None:
         await asyncio.gather(
             env.summoner.summon(parent_id=None, name='worker', task='one', mode='sync'),
             env.summoner.summon(parent_id=None, name='worker', task='two', mode='sync'),
@@ -846,8 +849,9 @@ def test_concurrent_subagents_tag_their_tool_events_without_leaking_to_parent(tm
     assert events[-1].node_id is None
 
 
-def test_configured_subagent_and_nested_child_use_same_model_and_effort(tmp_path):
-    from src.engine.agents.tree.summoner import _ACTIVE_AGENT_MODEL, AgentRunModel
+def test_configured_subagent_and_nested_child_use_same_model_and_effort(tmp_path: Path) -> None:
+    from src.core.agents.tree.agent_run_model import AgentRunModel
+    from src.core.agents.tree.summoner import _ACTIVE_AGENT_MODEL
 
     env = make_env(tmp_path)
     write_profile(tmp_path, 'reviewer', extra='role: subagent\n')
@@ -879,8 +883,9 @@ def test_configured_subagent_and_nested_child_use_same_model_and_effort(tmp_path
     assert [node.model for node in env.tree().nodes()[1:]] == ['account:custom', 'account:custom']
 
 
-def test_concurrent_subagents_do_not_share_model_or_effort(tmp_path):
-    from src.engine.agents.tree.summoner import AgentRunModel, current_agent_model
+def test_concurrent_subagents_do_not_share_model_or_effort(tmp_path: Path) -> None:
+    from src.core.agents.tree.agent_run_model import AgentRunModel
+    from src.core.agents.tree.summoner import current_agent_model
 
     env = make_env(tmp_path)
     write_profile(tmp_path, 'reviewer', extra='role: subagent\n')
@@ -901,7 +906,7 @@ def test_concurrent_subagents_do_not_share_model_or_effort(tmp_path):
     }
     env.summoner._agent_model = selections.get
 
-    async def run():
+    async def run() -> None:
         await asyncio.gather(
             env.summoner.summon(parent_id=None, name='worker', task='one'),
             env.summoner.summon(parent_id=None, name='reviewer', task='two'),
@@ -912,8 +917,9 @@ def test_concurrent_subagents_do_not_share_model_or_effort(tmp_path):
     assert sorted(seen) == [('reviewer', 'b:model-b', 'low'), ('worker', 'a:model-a', 'high')]
 
 
-def test_unconfigured_subagent_captures_parent_model_and_effort(tmp_path):
-    from src.engine.agents.tree.summoner import AgentRunModel, current_agent_model
+def test_unconfigured_subagent_captures_parent_model_and_effort(tmp_path: Path) -> None:
+    from src.core.agents.tree.agent_run_model import AgentRunModel
+    from src.core.agents.tree.summoner import current_agent_model
 
     env = make_env(tmp_path)
     seen = []

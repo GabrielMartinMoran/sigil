@@ -4,44 +4,41 @@ from __future__ import annotations
 
 import pytest
 
-from src.engine.providers.domain.auth_method import AuthMethod, auth_methods_for
-from src.engine.providers.domain.model_capability import (
-    ModelCapability,
-    ModelCatalog,
-    normalize_efforts,
-)
-from src.engine.providers.domain.provider_account import (
-    ALIAS_MAX_LENGTH,
-    ProviderAccount,
-    normalize_alias,
-)
-from src.engine.providers.domain.provider_error import AliasError
-from src.engine.providers.domain.provider_kind import ProviderKind
-from src.engine.providers.domain.provider_variant import ProviderVariant, variants_for
-from src.engine.providers.domain.selection import Selection
-from src.engine.providers.domain.thinking import (
+from src.core.providers.domain.alias_error import AliasError
+from src.core.providers.domain.auth_method import AuthMethod
+from src.core.providers.domain.auth_methods_for import auth_methods_for
+from src.core.providers.domain.model_capability import ModelCapability
+from src.core.providers.domain.model_catalog import ModelCatalog
+from src.core.providers.domain.normalize_alias import ALIAS_MAX_LENGTH, normalize_alias
+from src.core.providers.domain.normalize_efforts import normalize_efforts
+from src.core.providers.domain.provider_account import ProviderAccount
+from src.core.providers.domain.provider_kind import ProviderKind
+from src.core.providers.domain.provider_variant import ProviderVariant
+from src.core.providers.domain.selection import Selection
+from src.core.providers.domain.thinking import (
     is_effort_level,
     label,
     parse_choice,
     settings_value,
 )
+from src.core.providers.domain.variants_for import variants_for
 
 
-def test_normalize_alias_collapses_inner_whitespace():
+def test_normalize_alias_collapses_inner_whitespace() -> None:
     assert normalize_alias('  work   openai  ') == 'work openai'
 
 
 @pytest.mark.parametrize('raw', ['', '   ', '-leading', '.dot', 'a' * (ALIAS_MAX_LENGTH + 1)])
-def test_normalize_alias_rejects_bad_values(raw):
+def test_normalize_alias_rejects_bad_values(raw) -> None:
     with pytest.raises(AliasError):
         normalize_alias(raw)
 
 
-def test_normalize_alias_accepts_the_documented_characters():
+def test_normalize_alias_accepts_the_documented_characters() -> None:
     assert normalize_alias('Work_Key.2-x 1') == 'Work_Key.2-x 1'
 
 
-def test_account_create_assigns_an_opaque_id_and_normalizes_the_alias():
+def test_account_create_assigns_an_opaque_id_and_normalizes_the_alias() -> None:
     account = ProviderAccount.create(' Work ', ProviderKind.OPENROUTER)
     assert len(account.id) == 32
     assert account.alias == 'Work'
@@ -50,15 +47,15 @@ def test_account_create_assigns_an_opaque_id_and_normalizes_the_alias():
     assert account.auth is AuthMethod.API_KEY
 
 
-def test_account_display_name_shows_kind_and_variant():
+def test_account_display_name_shows_kind_and_variant() -> None:
     account = ProviderAccount.create('work', ProviderKind.OPENCODE, ProviderVariant.GO)
     assert account.provider_label == 'OpenCode Go'
     assert account.display_name == 'work · OpenCode Go'
 
 
-def test_snapshot_display_name_names_the_model_and_where_it_comes_from():
+def test_snapshot_display_name_names_the_model_and_where_it_comes_from() -> None:
     """A notice that says which model is active has to say which account too."""
-    from src.engine.providers.snapshot import ModelSnapshot
+    from src.core.providers.model_snapshot import ModelSnapshot
 
     account = ProviderAccount.create('work', ProviderKind.OPENROUTER)
     snapshot = ModelSnapshot(
@@ -71,26 +68,26 @@ def test_snapshot_display_name_names_the_model_and_where_it_comes_from():
     assert ModelSnapshot().display_name == 'no model'
 
 
-def test_account_round_trips_through_dict_without_losing_fields():
+def test_account_round_trips_through_dict_without_losing_fields() -> None:
     account = ProviderAccount.create('work', ProviderKind.OPENAI, auth=AuthMethod.OAUTH).with_model('gpt-5')
     restored = ProviderAccount.from_dict(account.to_dict())
     assert restored == account
 
 
-def test_account_dict_has_no_secret_fields():
+def test_account_dict_has_no_secret_fields() -> None:
     account = ProviderAccount.create('work', ProviderKind.OPENROUTER)
     payload = account.to_dict()
     assert set(payload) == {'id', 'alias', 'kind', 'variant', 'auth', 'created_at', 'last_model'}
 
 
-def test_account_from_dict_tolerates_missing_optional_fields():
+def test_account_from_dict_tolerates_missing_optional_fields() -> None:
     restored = ProviderAccount.from_dict({'id': 'x', 'alias': 'a', 'kind': 'openrouter'})
     assert restored.variant is ProviderVariant.DEFAULT
     assert restored.auth is AuthMethod.API_KEY
     assert restored.last_model is None
 
 
-def test_rename_keeps_the_identity_and_the_model():
+def test_rename_keeps_the_identity_and_the_model() -> None:
     account = ProviderAccount.create('before', ProviderKind.OPENROUTER).with_model('m')
     renamed = account.renamed('after')
     assert renamed.id == account.id
@@ -98,14 +95,14 @@ def test_rename_keeps_the_identity_and_the_model():
     assert renamed.last_model == 'm'
 
 
-def test_variants_and_auth_methods_depend_on_the_kind():
+def test_variants_and_auth_methods_depend_on_the_kind() -> None:
     assert variants_for(ProviderKind.OPENCODE) == (ProviderVariant.ZEN, ProviderVariant.GO)
     assert variants_for(ProviderKind.OPENROUTER) == (ProviderVariant.DEFAULT,)
     assert auth_methods_for(ProviderKind.OPENAI) == (AuthMethod.API_KEY, AuthMethod.OAUTH)
     assert auth_methods_for(ProviderKind.OPENCODE) == (AuthMethod.API_KEY,)
 
 
-def test_selection_round_trips_and_rejects_incomplete_data():
+def test_selection_round_trips_and_rejects_incomplete_data() -> None:
     selection = Selection(account_id='abc', model='anthropic/x', thinking='high')
     assert Selection.from_dict(selection.to_dict()) == selection
     assert Selection.from_dict({}) is None
@@ -113,40 +110,40 @@ def test_selection_round_trips_and_rejects_incomplete_data():
     assert Selection.from_dict({'account_id': 'abc', 'model': 'x', 'thinking': None}).thinking == 'default'
 
 
-def test_selection_transitions_keep_the_other_fields():
+def test_selection_transitions_keep_the_other_fields() -> None:
     selection = Selection(account_id='a', model='m', thinking='low')
     assert selection.with_model('n').model == 'n'
     assert selection.with_model('n').thinking == 'low'
     assert selection.with_thinking('max').model == 'm'
 
 
-def test_parse_choice_accepts_levels_and_the_two_special_values():
+def test_parse_choice_accepts_levels_and_the_two_special_values() -> None:
     assert parse_choice(' HIGH ') == 'high'
     assert parse_choice('default') == 'default'
     assert parse_choice('off') == 'off'
     assert parse_choice('ludicrous') is None
 
 
-def test_settings_value_maps_default_to_nothing_and_off_to_false():
+def test_settings_value_maps_default_to_nothing_and_off_to_false() -> None:
     assert settings_value('default') is None
     assert settings_value('off') is False
     assert settings_value('medium') == 'medium'
     assert label('default') == 'default'
 
 
-def test_is_effort_level_only_accepts_real_levels():
+def test_is_effort_level_only_accepts_real_levels() -> None:
     assert is_effort_level('xhigh')
     assert not is_effort_level('default')
     assert not is_effort_level('off')
 
 
-def test_normalize_efforts_drops_unknown_levels_and_orders_them():
+def test_normalize_efforts_drops_unknown_levels_and_orders_them() -> None:
     assert normalize_efforts(['high', 'bogus', 'minimal', 'high']) == ('minimal', 'high')
     assert normalize_efforts(None) == ()
     assert normalize_efforts([]) == ()
 
 
-def test_capability_labels():
+def test_capability_labels() -> None:
     model = ModelCapability(name='m', context_window=200_000, efforts=('low', 'high'))
     assert model.window_label == '200k'
     assert model.efforts_label == 'low/high'
@@ -159,11 +156,11 @@ def test_capability_labels():
     assert not unknown.allows('low')
 
 
-def test_capability_window_label_handles_millions():
+def test_capability_window_label_handles_millions() -> None:
     assert ModelCapability(name='m', context_window=1_000_000).window_label == '1M'
 
 
-def test_catalog_find_and_failure_state():
+def test_catalog_find_and_failure_state() -> None:
     model = ModelCapability(name='a/b')
     catalog = ModelCatalog(models=(model,), source='remote')
     assert catalog.find('a/b') is model

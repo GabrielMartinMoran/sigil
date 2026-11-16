@@ -1,14 +1,15 @@
 import asyncio
+from pathlib import Path
 
 from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.test import TestModel
 
-from src.engine.agents.agent import create_agent
-from src.engine.skills.registry import SkillRegistry
+from src.core.agents.agent import create_agent
+from src.core.skills.skill_registry import SkillRegistry
 from tests.support.skills import write_skill
 
 
-def test_successful_resource_read_is_injected_into_next_request_without_load_call(tmp_path):
+def test_successful_resource_read_is_injected_into_next_request_without_load_call(tmp_path: Path) -> None:
     write_skill(tmp_path, 'demo', files={'references/doc.md': 'resource detail'})
     agent = create_agent(SkillRegistry([('project', tmp_path)]))
     history = [

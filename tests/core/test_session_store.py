@@ -1,5 +1,7 @@
 """Tests for session (conversation) persistence."""
 
+from pathlib import Path
+
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -7,7 +9,8 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from src.engine.sessions.session_store import SessionStore, cwd_hash
+from src.core.sessions.cwd_hash import cwd_hash
+from src.core.sessions.session_store import SessionStore
 
 
 def _sample_messages():
@@ -20,14 +23,14 @@ def _sample_messages():
 # --- Per-directory hash -------------------------------------------------------
 
 
-def test_cwd_hash_is_stable_and_short(tmp_path):
+def test_cwd_hash_is_stable_and_short(tmp_path: Path) -> None:
     first = cwd_hash(tmp_path)
     second = cwd_hash(tmp_path)
     assert first == second
     assert len(first) == 16
 
 
-def test_different_cwds_get_different_workspace_rows(tmp_path):
+def test_different_cwds_get_different_workspace_rows(tmp_path: Path) -> None:
     """Two directories are two workspaces in the same database."""
     a = SessionStore(cwd=tmp_path / 'a', base_dir=tmp_path / 'store')
     b = SessionStore(cwd=tmp_path / 'b', base_dir=tmp_path / 'store')
@@ -39,7 +42,7 @@ def test_different_cwds_get_different_workspace_rows(tmp_path):
 # --- Persistence --------------------------------------------------------------
 
 
-def test_save_and_load_roundtrip(tmp_path):
+def test_save_and_load_roundtrip(tmp_path: Path) -> None:
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     session = store.create_session()
     session.messages = _sample_messages()
@@ -52,7 +55,7 @@ def test_save_and_load_roundtrip(tmp_path):
     assert loaded.messages[1].parts[0].content == 'hey there'
 
 
-def test_mcp_overrides_are_saved_only_for_the_owning_session(tmp_path):
+def test_mcp_overrides_are_saved_only_for_the_owning_session(tmp_path: Path) -> None:
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     first = store.create_session()
     second = store.create_session()
@@ -63,7 +66,7 @@ def test_mcp_overrides_are_saved_only_for_the_owning_session(tmp_path):
     assert store.load(second.id).mcp_overrides == {}
 
 
-def test_create_session_persists_a_row(tmp_path):
+def test_create_session_persists_a_row(tmp_path: Path) -> None:
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     session = store.create_session()
 
@@ -78,12 +81,12 @@ def test_create_session_persists_a_row(tmp_path):
 # --- Last session -------------------------------------------------------------
 
 
-def test_load_last_returns_none_when_empty(tmp_path):
+def test_load_last_returns_none_when_empty(tmp_path: Path) -> None:
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     assert store.load_last() is None
 
 
-def test_load_last_returns_most_recently_saved(tmp_path):
+def test_load_last_returns_most_recently_saved(tmp_path: Path) -> None:
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     first = store.create_session()
     first.messages = _sample_messages()
@@ -98,7 +101,7 @@ def test_load_last_returns_most_recently_saved(tmp_path):
     assert last.id == second.id
 
 
-def test_new_store_instance_reads_last_session(tmp_path):
+def test_new_store_instance_reads_last_session(tmp_path: Path) -> None:
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     session = store.create_session()
     session.messages = _sample_messages()
@@ -114,7 +117,7 @@ def test_new_store_instance_reads_last_session(tmp_path):
 # --- Listing and search -------------------------------------------------------
 
 
-def test_list_sessions_returns_all_and_ignores_index(tmp_path):
+def test_list_sessions_returns_all_and_ignores_index(tmp_path: Path) -> None:
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     store.create_session()
     store.create_session()
@@ -123,7 +126,7 @@ def test_list_sessions_returns_all_and_ignores_index(tmp_path):
     assert len(sessions) == 2
 
 
-def test_find_by_id_prefix(tmp_path):
+def test_find_by_id_prefix(tmp_path: Path) -> None:
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     session = store.create_session()
 
@@ -131,7 +134,7 @@ def test_find_by_id_prefix(tmp_path):
     assert store.find('no-such-id') == []
 
 
-def test_load_unknown_session_returns_none(tmp_path):
+def test_load_unknown_session_returns_none(tmp_path: Path) -> None:
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     assert store.load('does-not-exist') is None
 
@@ -139,7 +142,7 @@ def test_load_unknown_session_returns_none(tmp_path):
 # --- Robustness ---------------------------------------------------------------
 
 
-def test_a_row_that_disappears_is_not_listed(tmp_path):
+def test_a_row_that_disappears_is_not_listed(tmp_path: Path) -> None:
     """The store lists rows, so a session it cannot see is one it does not offer."""
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     session = store.create_session()
@@ -148,7 +151,7 @@ def test_a_row_that_disappears_is_not_listed(tmp_path):
     assert store.list_sessions() == []
 
 
-def test_a_session_id_is_one_row(tmp_path):
+def test_a_session_id_is_one_row(tmp_path: Path) -> None:
     """The duplicate the file store had to filter is impossible now.
 
     `sessions.id` is the primary key, so two copies of one conversation cannot both
@@ -170,18 +173,18 @@ def test_a_session_id_is_one_row(tmp_path):
     assert [listed.id for listed in store.list_sessions()] == [session.id]
 
 
-def test_preview_uses_first_user_message(tmp_path):
+def test_preview_uses_first_user_message(tmp_path: Path) -> None:
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     session = store.create_session()
     session.messages = _sample_messages()
     assert session.preview == 'hello'
 
 
-def test_stale_writer_must_not_discard_newer_conversation(tmp_path):
+def test_stale_writer_must_not_discard_newer_conversation(tmp_path: Path) -> None:
     import pytest
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
-    from src.engine.sessions.session_store import SessionConflictError
+    from src.core.sessions.session_conflict_error import SessionConflictError
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'state')
     first = store.create_session()
@@ -198,11 +201,11 @@ def test_stale_writer_must_not_discard_newer_conversation(tmp_path):
     assert len(loaded.messages) == 2
 
 
-def test_stale_writer_cannot_replace_divergent_same_length_history(tmp_path):
+def test_stale_writer_cannot_replace_divergent_same_length_history(tmp_path: Path) -> None:
     import pytest
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
-    from src.engine.sessions.session_store import SessionConflictError
+    from src.core.sessions.session_conflict_error import SessionConflictError
 
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'state')
     first = store.create_session()
@@ -218,7 +221,7 @@ def test_stale_writer_cannot_replace_divergent_same_length_history(tmp_path):
     assert loaded.messages[0].parts[0].content == 'newer'
 
 
-def test_draft_is_not_saved_until_a_user_message(tmp_path):
+def test_draft_is_not_saved_until_a_user_message(tmp_path: Path) -> None:
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'store')
     session = store.draft_session()
     store.save_progress(session)

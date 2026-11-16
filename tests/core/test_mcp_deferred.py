@@ -22,10 +22,10 @@ from pydantic_ai import Agent, Tool
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 
-from src.engine.mcp.config.loader import load_config
-from src.engine.mcp.deferred import MCPGateway
-from src.engine.mcp.manager.manager import MCPManager
-from src.engine.mcp.pending import PendingToolset
+from src.core.mcp.config.loader import load_config
+from src.core.mcp.manager.mcp_manager import MCPManager
+from src.core.mcp.mcp_gateway import MCPGateway
+from src.core.mcp.pending_toolset import PendingToolset
 from tests.support.mcp_deferred import (
     SERVER_SCRIPT,
     _context,
@@ -34,7 +34,7 @@ from tests.support.mcp_deferred import (
 # --- the placeholder ---------------------------------------------------------
 
 
-def test_the_placeholder_starts_empty_and_becomes_transparent():
+def test_the_placeholder_starts_empty_and_becomes_transparent() -> None:
     """Before the load it answers nothing; after it, it is the real toolset."""
     pending = PendingToolset()
     assert pending.loaded is False
@@ -55,7 +55,7 @@ def test_the_placeholder_starts_empty_and_becomes_transparent():
     asyncio.run(inner())
 
 
-def test_calling_a_tool_before_the_load_raises_a_useful_error():
+def test_calling_a_tool_before_the_load_raises_a_useful_error() -> None:
     """A model cannot reach a tool that does not exist; the message says why."""
 
     async def inner() -> None:
@@ -65,7 +65,7 @@ def test_calling_a_tool_before_the_load_raises_a_useful_error():
     asyncio.run(inner())
 
 
-def test_the_agent_sees_tools_that_arrive_after_it_was_built():
+def test_the_agent_sees_tools_that_arrive_after_it_was_built() -> None:
     """The whole point: the agent is constructed before the MCP layer exists.
 
     pydantic-ai asks the toolset for its tools on every step, so filling the
@@ -89,7 +89,7 @@ def test_the_agent_sees_tools_that_arrive_after_it_was_built():
 # --- the gateway -------------------------------------------------------------
 
 
-def test_session_overrides_apply_before_and_after_gateway_install(tmp_path):
+def test_session_overrides_apply_before_and_after_gateway_install(tmp_path: Path) -> None:
     config = tmp_path / 'config.json'
     config.write_text(
         json.dumps(
@@ -116,8 +116,8 @@ def test_session_overrides_apply_before_and_after_gateway_install(tmp_path):
     assert gateway.toolsets == [manager.get('enabled').agent_toolset]
 
 
-def test_disabled_server_is_unavailable_to_agent_and_meta_tools(tmp_path):
-    from src.engine.mcp.config_models.mcp_config_error import MCPConfigError
+def test_disabled_server_is_unavailable_to_agent_and_meta_tools(tmp_path: Path) -> None:
+    from src.core.mcp.config_models.mcp_config_error import MCPConfigError
 
     script = tmp_path / 'server.py'
     script.write_text(SERVER_SCRIPT)
@@ -128,7 +128,7 @@ def test_disabled_server_is_unavailable_to_agent_and_meta_tools(tmp_path):
     gateway.install(manager)
     agent = Agent(TestModel(), toolsets=[gateway.pending])
 
-    async def run():
+    async def run() -> None:
         try:
             assert 'probe_add' in await gateway.pending.get_tools(_context(agent))
             gateway.set_overrides({'probe': False})
@@ -145,7 +145,7 @@ def test_disabled_server_is_unavailable_to_agent_and_meta_tools(tmp_path):
     asyncio.run(run())
 
 
-def test_session_switch_disconnects_keep_alive_server_and_reconnects(tmp_path):
+def test_session_switch_disconnects_keep_alive_server_and_reconnects(tmp_path: Path) -> None:
     import os
 
     pid_file = tmp_path / 'server.pid'
@@ -169,7 +169,7 @@ def test_session_switch_disconnects_keep_alive_server_and_reconnects(tmp_path):
     gateway = MCPGateway(configured=1)
     gateway.install(manager)
 
-    async def run():
+    async def run() -> None:
         assert (await gateway.describe(connect=True))[0].tools
         pid = int(pid_file.read_text())
         os.kill(pid, 0)
@@ -185,7 +185,7 @@ def test_session_switch_disconnects_keep_alive_server_and_reconnects(tmp_path):
     asyncio.run(run())
 
 
-def test_reenabled_server_waits_for_inflight_shutdown_before_agent_access(tmp_path):
+def test_reenabled_server_waits_for_inflight_shutdown_before_agent_access(tmp_path: Path) -> None:
     script = tmp_path / 'server.py'
     script.write_text(SERVER_SCRIPT)
     config = tmp_path / 'config.json'
@@ -195,11 +195,11 @@ def test_reenabled_server_waits_for_inflight_shutdown_before_agent_access(tmp_pa
     gateway.install(manager)
     agent = Agent(TestModel(), toolsets=[gateway.pending])
 
-    async def run():
+    async def run() -> None:
         started, release = asyncio.Event(), asyncio.Event()
         original = manager.stop_disabled
 
-        async def delayed_stop(name):
+        async def delayed_stop(name) -> None:
             started.set()
             await release.wait()
             await original(name)
@@ -218,13 +218,13 @@ def test_reenabled_server_waits_for_inflight_shutdown_before_agent_access(tmp_pa
     asyncio.run(run())
 
 
-def test_the_gateway_is_falsy_only_when_nothing_is_configured():
+def test_the_gateway_is_falsy_only_when_nothing_is_configured() -> None:
     """`if not manager` is how the app decides whether to paint the section."""
     assert not MCPGateway(configured=0)
     assert MCPGateway(configured=2)
 
 
-def test_the_gateway_waits_for_the_load_before_answering_about_servers(tmp_path: Path):
+def test_the_gateway_waits_for_the_load_before_answering_about_servers(tmp_path: Path) -> None:
     """`describe` is the diagnostic path: it waits instead of lying with an empty list."""
     gateway = MCPGateway(configured=1)
 
@@ -240,7 +240,7 @@ def test_the_gateway_waits_for_the_load_before_answering_about_servers(tmp_path:
     asyncio.run(inner())
 
 
-def test_a_failed_load_releases_whoever_is_waiting():
+def test_a_failed_load_releases_whoever_is_waiting() -> None:
     """An app whose MCP layer will never exist must not hang on `/mcp`."""
     gateway = MCPGateway(configured=1)
 
@@ -254,7 +254,7 @@ def test_a_failed_load_releases_whoever_is_waiting():
     asyncio.run(inner())
 
 
-def test_the_errors_are_a_flat_sequence_of_messages():
+def test_the_errors_are_a_flat_sequence_of_messages() -> None:
     """`errors` is iterated and joined by the callers, so it is flat and of strings.
 
     The regression: `errors` returned ``(self.config_errors, *load_errors)``, which
@@ -269,7 +269,7 @@ def test_the_errors_are_a_flat_sequence_of_messages():
     assert all(isinstance(error, str) for error in gateway.errors)
 
 
-def test_a_gateway_without_errors_reports_none():
+def test_a_gateway_without_errors_reports_none() -> None:
     """The common case: no config problems and a clean load."""
     gateway = MCPGateway(configured=1)
 
@@ -282,7 +282,7 @@ def test_a_gateway_without_errors_reports_none():
     asyncio.run(inner())
 
 
-def test_closing_before_the_load_finishes_is_harmless():
+def test_closing_before_the_load_finishes_is_harmless() -> None:
     """Quitting in the first second happens; it must not raise."""
     gateway = MCPGateway(configured=3)
 
@@ -295,7 +295,7 @@ def test_closing_before_the_load_finishes_is_harmless():
 # --- with a real server ------------------------------------------------------
 
 
-def test_installing_the_layer_makes_the_real_tools_available(tmp_path: Path):
+def test_installing_the_layer_makes_the_real_tools_available(tmp_path: Path) -> None:
     """End to end: placeholder in place, load finishes, the tool exists."""
     script = tmp_path / 'server.py'
     script.write_text(SERVER_SCRIPT, encoding='utf-8')

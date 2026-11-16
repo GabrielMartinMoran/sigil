@@ -6,10 +6,11 @@ from typing import get_type_hints
 
 import pytest
 
-from src.engine.tooling.events import ToolCallEvent
-from src.engine.tooling.logging import ToolLoggerHub
-from src.engine.tooling.registrar import ToolRegistrar, register_tool
-from src.engine.tooling.wrapper import wrap_tool
+from src.core.tooling.registrar import register_tool
+from src.core.tooling.tool_call_event import ToolCallEvent
+from src.core.tooling.tool_logger_hub import ToolLoggerHub
+from src.core.tooling.tool_registrar import ToolRegistrar
+from src.core.tooling.wrapper import wrap_tool
 
 
 class RecordingLogger:
@@ -45,7 +46,7 @@ class DummyAgent:
 # --- Wrapper ------------------------------------------------------------------
 
 
-def test_sync_tool_logs_start_and_success():
+def test_sync_tool_logs_start_and_success() -> None:
     logger = RecordingLogger()
 
     def add(a: int, b: int = 2) -> int:
@@ -60,7 +61,7 @@ def test_sync_tool_logs_start_and_success():
     assert logger.events[1].result_preview == '5'
 
 
-def test_async_tool_logs_start_and_success():
+def test_async_tool_logs_start_and_success() -> None:
     logger = RecordingLogger()
 
     async def shout(text: str) -> str:
@@ -74,7 +75,7 @@ def test_async_tool_logs_start_and_success():
     assert logger.events[1].result_preview == 'HI'
 
 
-def test_error_is_logged_and_reraised():
+def test_error_is_logged_and_reraised() -> None:
     logger = RecordingLogger()
 
     def boom() -> None:
@@ -88,7 +89,7 @@ def test_error_is_logged_and_reraised():
     assert 'ValueError: nope' in logger.events[1].error
 
 
-def test_context_tool_skips_ctx_in_logged_args():
+def test_context_tool_skips_ctx_in_logged_args() -> None:
     logger = RecordingLogger()
 
     def with_ctx(ctx: object, value: int) -> int:
@@ -100,7 +101,7 @@ def test_context_tool_skips_ctx_in_logged_args():
     assert logger.events[0].args == {'value': 7}
 
 
-def test_wrapper_preserves_name_docstring_and_signature():
+def test_wrapper_preserves_name_docstring_and_signature() -> None:
     def original(query: str, limit: int = 5) -> str:
         """Do something useful."""
         return query * limit
@@ -112,7 +113,7 @@ def test_wrapper_preserves_name_docstring_and_signature():
     assert inspect.signature(wrapped) == inspect.signature(original)
 
 
-def test_wrapper_resolves_string_annotations():
+def test_wrapper_resolves_string_annotations() -> None:
     def typed(value):
         return str(value)
 
@@ -123,7 +124,7 @@ def test_wrapper_resolves_string_annotations():
     assert hints['return'] is str
 
 
-def test_logging_failure_does_not_break_tool():
+def test_logging_failure_does_not_break_tool() -> None:
     def broken_logger(event: ToolCallEvent) -> None:
         raise RuntimeError('logger exploded')
 
@@ -134,7 +135,7 @@ def test_logging_failure_does_not_break_tool():
     assert wrapped(4) == 8
 
 
-def test_sync_tool_with_async_logger_in_event_loop():
+def test_sync_tool_with_async_logger_in_event_loop() -> None:
     events: list[ToolCallEvent] = []
 
     async def async_logger(event: ToolCallEvent) -> None:
@@ -145,7 +146,7 @@ def test_sync_tool_with_async_logger_in_event_loop():
 
     wrapped = wrap_tool(tool, tool_name='tool', logger=async_logger)
 
-    async def scenario():
+    async def scenario() -> None:
         assert wrapped(1) == 1
         await asyncio.sleep(0)
 
@@ -156,7 +157,7 @@ def test_sync_tool_with_async_logger_in_event_loop():
 # --- Registrar ----------------------------------------------------------------
 
 
-def test_registrar_registers_with_options():
+def test_registrar_registers_with_options() -> None:
     agent = DummyAgent()
     registrar = ToolRegistrar(agent)
 
@@ -169,7 +170,7 @@ def test_registrar_registers_with_options():
     assert agent.options['renamed'] == {'name': 'renamed', 'description': 'A description'}
 
 
-def test_register_tool_one_off():
+def test_register_tool_one_off() -> None:
     agent = DummyAgent()
 
     def plain(value: int) -> int:
@@ -179,7 +180,7 @@ def test_register_tool_one_off():
     assert agent.registered['plain'] is wrapped
 
 
-def test_context_tool_uses_agent_tool():
+def test_context_tool_uses_agent_tool() -> None:
     agent = DummyAgent()
     registrar = ToolRegistrar(agent)
 
@@ -193,7 +194,7 @@ def test_context_tool_uses_agent_tool():
 # --- Hub ----------------------------------------------------------------------
 
 
-def test_hub_fans_out_to_sync_and_async_sinks():
+def test_hub_fans_out_to_sync_and_async_sinks() -> None:
     sync_events: list[ToolCallEvent] = []
     async_events: list[ToolCallEvent] = []
 
@@ -202,7 +203,7 @@ def test_hub_fans_out_to_sync_and_async_sinks():
 
     hub = ToolLoggerHub([sync_events.append, async_sink])
 
-    async def scenario():
+    async def scenario() -> None:
         await hub.emit(ToolCallEvent('demo', 'start'))
 
     asyncio.run(scenario())
@@ -210,7 +211,7 @@ def test_hub_fans_out_to_sync_and_async_sinks():
     assert len(async_events) == 1
 
 
-def test_hub_remove_sink():
+def test_hub_remove_sink() -> None:
     events: list[ToolCallEvent] = []
     hub = ToolLoggerHub([events.append])
     hub.add_sink(events.append)  # duplicate: it is not added
@@ -219,7 +220,7 @@ def test_hub_remove_sink():
     assert len(hub._sinks) == 0
 
 
-def test_register_tool_wraps_an_external_function():
+def test_register_tool_wraps_an_external_function() -> None:
     agent = DummyAgent()
 
     def external(value: int) -> int:
@@ -229,8 +230,8 @@ def test_register_tool_wraps_an_external_function():
     assert 'external' in agent.registered
 
 
-def test_register_shell_tools_passes_the_logger():
-    from src.engine.shell.tools import register_shell_tools
+def test_register_shell_tools_passes_the_logger() -> None:
+    from src.core.shell.tools import register_shell_tools
 
     events: list[ToolCallEvent] = []
     hub = ToolLoggerHub([events.append])

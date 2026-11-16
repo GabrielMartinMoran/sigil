@@ -121,7 +121,7 @@ execution keeps a `running` status instead, because an execution resumes and a
 turn never does.
 
 **The rule that makes it a boundary rather than a rename:** no code outside the
-adapter mentions `run_id`. `src/engine/agents/turn_map.py` is the only module
+adapter mentions `run_id`. `src/core/agents/turn_map.py` is the only module
 that knows the library's identifier exists, and it exposes two functions:
 
 ```python
@@ -129,7 +129,7 @@ def turns_of(messages: Sequence[ModelMessage]) -> list[Turn]: ...  # an imported
 def turn_id_of(message: ModelMessage) -> str | None: ...  # one message, to its turn
 ```
 
-Everything else asks the domain. `grep -rn run_id src/engine
+Everything else asks the domain. `grep -rn run_id src/core
 --exclude=turn_map.py` returning nothing is the test, and it is a cheap one to
 run in review.
 
@@ -277,22 +277,22 @@ Selecting a workspace rebinds the composition's session store, scope tracker,
 workspace instructions, skill registry and agent registry to the new root. It
 does not change the process working directory, and a turn already running keeps
 the root it started with. The selection applies to subsequent turns
-(`src/engine/workspace/manager.py`).
+(`src/core/workspace/workspace_manager.py`).
 
 A service or standalone terminal turn binds an execution snapshot of its
 selected root for the whole `agent.iter` lifetime, including tool execution
-(`src/server/runtime.py`, `src/ui/turn_mixin.py`). Tools, permission checks and
+(`src/server/runtime/server_runtime.py`, `src/ui/mixins/turn_mixin.py`). Tools, permission checks and
 shell commands resolve against that snapshot; child tasks and synchronous tool
 work inherit it. Resolution order is the bound execution root, then the
 composition's workspace, then the process working directory when neither is
 bound. An explicit root argument on a path operation remains authoritative
 rather than becoming a fallback. The binding resets in `finally`, so completion,
 failure and cancellation restore the previous root
-(`src/engine/files/paths.py`).
+(`src/core/files/paths.py`).
 
 The composition's file tools, including conflict checks, plus its shell, image
 and permission boundaries call `Composition.execution_root()`
-(`src/engine/bootstrap.py`). Default project-skill discovery follows the same
+(`src/core/composition/bootstrap.py`). Default project-skill discovery follows the same
 composition root; an explicit skill-directory override keeps its roots, and a
 skill script still runs with its own directory as cwd. Other subprocesses that
 set an explicit directory keep it intentionally.
@@ -773,12 +773,12 @@ unfinished, and that work is never replayed automatically.
 A delivery confirmation names the accepting session, the request, the attempt
 and the actual turn identifier, and is written with the transcript in one
 transaction. A destination is valid only for the accepting session or a recovery
-copy linked to it. Confirmation is one-shot. See `src/server/runtime.py`,
-`src/server/ownership.py` and `src/engine/storage/accepted_inputs.py`.
+copy linked to it. Confirmation is one-shot. See `src/server/runtime/server_runtime.py`,
+`src/server/launch/server_ownership.py` and `src/core/storage/accepted_inputs.py`.
 
 The durable session contract distinguishes the transcript from the queue overlay:
 `pending` is accepted/claimed work without a checkpointed delivery; a delivery
 fact moves an entry out of the overlay and into the transcript. Recovery links
 carry availability, not a promise that the copy still exists, and entries whose
 delivery went to a recovery copy are domain facts of that copy, never messages of
-the original transcript. See `src/server/views.py::durable_session`.
+the original transcript. See `src/server/api/views.py::durable_session`.

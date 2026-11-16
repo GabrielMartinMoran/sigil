@@ -19,11 +19,11 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.engine.agents.profile.registry import AgentRegistry
-from src.engine.agents.tree.store import AgentTreeStore
-from src.engine.agents.tree.summoner import SubagentSummoner
-from src.engine.sessions.session_store import SessionStore
+from src.core.agents.profile.agent_registry import AgentRegistry
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.agents.tree.agent_tree_store import AgentTreeStore
+from src.core.agents.tree.subagent_summoner import SubagentSummoner
+from src.core.sessions.session_store import SessionStore
 
 
 def _summoner(tmp: str, tree: AgentTreeStore) -> SubagentSummoner:
@@ -34,7 +34,7 @@ def _summoner(tmp: str, tree: AgentTreeStore) -> SubagentSummoner:
 # --- the engine side ---------------------------------------------------------
 
 
-def test_an_answer_with_nobody_in_a_turn_stays_undelivered():
+def test_an_answer_with_nobody_in_a_turn_stays_undelivered() -> None:
     tree = AgentTreeStore()
     with tempfile.TemporaryDirectory() as tmp:
         summoner = _summoner(tmp, tree)
@@ -53,7 +53,7 @@ def test_an_answer_with_nobody_in_a_turn_stays_undelivered():
         assert summoner.take_messages() == []
 
 
-def test_the_undelivered_flag_survives_a_save_and_a_load(tmp_path: Path):
+def test_the_undelivered_flag_survives_a_save_and_a_load(tmp_path: Path) -> None:
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'sessions')
     session = store.create_session()
     tree = AgentTreeStore()

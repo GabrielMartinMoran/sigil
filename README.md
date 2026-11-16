@@ -61,10 +61,15 @@ publishes a page with a password nobody sees.
 generated (or reads `SIGIL_SERVER_PASSWORD`), and refuses to start when the
 committed bundle is stale.
 
-Both take the same database lock, so only one can own a workspace at a time.
-`sigil serve` next to a running backend fails with the lock message instead of
-attaching: the process that owns the store has to end first, and idle shutdown is
-what ends it when there is no work left.
+Both take the same database lock, so only one server can own the database at a
+time. `sigil serve` fails with a lock message while a backend owns the database;
+stop that backend first.
+
+A backend started automatically by the terminal stops after all terminal clients
+have closed or their presence expires, and no work remains. A terminal that loses
+the backend can start it again. Servers started explicitly with `sigil server` or
+`sigil serve` stay running by default; the optional `--idle-grace` flag configures
+their existing work-based idle shutdown.
 
 ## Working with agents
 
@@ -146,8 +151,8 @@ and args) and the UI reflects it in the chat. It works the same for sync, async
 and `RunContext` tools.
 
 ```python
-from src.engine.tooling.logging import ToolLoggerHub
-from src.engine.tooling.registrar import ToolRegistrar
+from src.core.tooling.logging import ToolLoggerHub
+from src.core.tooling.registrar import ToolRegistrar
 
 hub = ToolLoggerHub()  # the app adds its sink on mount
 registrar = ToolRegistrar(agent, hub)
@@ -180,7 +185,7 @@ and the previous calls, in emission order, and returns the reason for the
 conflict or `None`.
 
 ```python
-from src.engine.tooling.concurrency import ConcurrencyContext
+from src.core.tooling.concurrency import ConcurrencyContext
 
 
 def no_same_key(ctx: ConcurrencyContext) -> str | None:
@@ -209,7 +214,7 @@ what lets a profile rule on `write` instead of listing every tool that writes,
 and on the path instead of on the tool:
 
 ```python
-from src.engine.tooling.permission import ResourceKind, ToolGroup,
+from src.core.tooling.permission import ResourceKind, ToolGroup,
 ToolPermission
 
 _READ = ToolPermission(groups=(ToolGroup.READ,), resource='path',
@@ -2058,7 +2063,7 @@ The bundle carries the hash of the sources that produced it (`web/dist/build.jso
 `python -m src.server.webbuild` recomputes that hash and exits non-zero when the
 committed bundle no longer matches `web/src`, which is the only failure mode that
 committing `dist/` introduces. The recipe exists twice on purpose — Python in
-`src/server/webbuild.py`, Node in `web/scripts/source-hash.mjs` — because the server
+`src/server/web/webbuild.py`, Node in `web/scripts/source-hash.mjs` — because the server
 must answer without Node; `tests/server/test_web_dist.py` compares both so they cannot drift.
 
 ### The pre-commit hook

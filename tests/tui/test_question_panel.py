@@ -12,9 +12,10 @@ import asyncio
 from textual.app import App, ComposeResult
 from textual.widgets import Input, OptionList, Static
 
-from src.engine.interaction.models.question_answer import QuestionAnswer
-from src.engine.interaction.models.question_item import QuestionItem, QuestionOption
-from src.ui.widgets.question_panel import CUSTOM_ID, QuestionPanel
+from src.core.interaction.models.question_answer import QuestionAnswer
+from src.core.interaction.models.question_item import QuestionItem
+from src.core.interaction.models.question_option import QuestionOption
+from src.ui.widgets.panels.question_panel import CUSTOM_ID, QuestionPanel
 
 
 def _question(text: str = 'What do we do?') -> QuestionItem:
@@ -69,8 +70,8 @@ def _select(panel: QuestionPanel, index: int = 0) -> None:
     panel.on_option_list_option_selected(OptionList.OptionSelected(options, options.get_option_at_index(index), index))
 
 
-def test_select_recommended_option():
-    async def inner():
+def test_select_recommended_option() -> None:
+    async def inner() -> None:
         app = Host([_question()])
         async with app.run_test(size=(100, 40)) as pilot:
             await pilot.pause()
@@ -84,8 +85,8 @@ def test_select_recommended_option():
     _run(inner())
 
 
-def test_custom_option_opens_input():
-    async def inner():
+def test_custom_option_opens_input() -> None:
+    async def inner() -> None:
         app = Host([_question()])
         async with app.run_test(size=(100, 40)) as pilot:
             await pilot.pause()
@@ -104,8 +105,8 @@ def test_custom_option_opens_input():
     _run(inner())
 
 
-def test_cancel_returns_none():
-    async def inner():
+def test_cancel_returns_none() -> None:
+    async def inner() -> None:
         app = Host([_question()])
         async with app.run_test(size=(100, 40)) as pilot:
             await pilot.pause()
@@ -133,8 +134,8 @@ def test_multiple_questions_are_asked_in_order() -> None:
     _run(inner())
 
 
-def test_going_back_shows_the_answer_that_was_chosen():
-    async def inner():
+def test_going_back_shows_the_answer_that_was_chosen() -> None:
+    async def inner() -> None:
         app = Host([_question('First'), _question('Second')])
         async with app.run_test(size=(100, 40)) as pilot:
             await pilot.pause()
@@ -191,8 +192,8 @@ def test_changing_an_answer_replaces_it() -> None:
     _run(inner())
 
 
-def test_moving_forward_is_free_but_finishing_requires_every_answer():
-    async def inner():
+def test_moving_forward_is_free_but_finishing_requires_every_answer() -> None:
+    async def inner() -> None:
         app = Host([_question('First'), _question('Second')])
         async with app.run_test(size=(100, 40)) as pilot:
             await pilot.pause()
@@ -242,8 +243,8 @@ def test_previous_on_the_first_question_explains_itself() -> None:
     _run(inner())
 
 
-def test_going_back_keeps_text_that_was_not_submitted():
-    async def inner():
+def test_going_back_keeps_text_that_was_not_submitted() -> None:
+    async def inner() -> None:
         app = Host([_question('First'), _question('Second')])
         async with app.run_test(size=(100, 40)) as pilot:
             await pilot.pause()
@@ -261,8 +262,8 @@ def test_going_back_keeps_text_that_was_not_submitted():
     _run(inner())
 
 
-def test_tab_moves_between_the_list_and_the_text_field():
-    async def inner():
+def test_tab_moves_between_the_list_and_the_text_field() -> None:
+    async def inner() -> None:
         app = Host([_question()])
         async with app.run_test(size=(100, 40)) as pilot:
             await pilot.pause()
@@ -279,8 +280,8 @@ def test_tab_moves_between_the_list_and_the_text_field():
     _run(inner())
 
 
-def test_picking_an_option_after_typing_closes_the_field():
-    async def inner():
+def test_picking_an_option_after_typing_closes_the_field() -> None:
+    async def inner() -> None:
         app = Host([_question()])
         async with app.run_test(size=(100, 40)) as pilot:
             await pilot.pause()
@@ -298,5 +299,5 @@ def test_picking_an_option_after_typing_closes_the_field():
     _run(inner())
 
 
-def test_custom_option_id_is_defined():
+def test_custom_option_id_is_defined() -> None:
     assert CUSTOM_ID == '__custom__'

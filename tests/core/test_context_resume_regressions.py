@@ -5,9 +5,11 @@ import io
 from PIL import Image
 from pydantic_ai.messages import BinaryImage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 
-from src.engine.context.capability import compatible_model_history
-from src.engine.context.compaction.events import POLICY_VERSION, RECORD_KEY, CompactionState
-from src.engine.context.compaction.records import recorded_state
+from src.core.context.compaction.compaction_event import POLICY_VERSION
+from src.core.context.compaction.compaction_state import CompactionState
+from src.core.context.compaction.events import RECORD_KEY
+from src.core.context.compaction.records import recorded_state
+from src.core.context.compatible_model_history import compatible_model_history
 
 
 def test_invalid_frontier_is_ignored_without_replaying_its_summary() -> None:
@@ -45,12 +47,12 @@ def test_cross_model_history_normalizes_nonportable_images_without_editing_origi
 def test_prepared_record_uses_the_durable_transcript_clock() -> None:
     from types import SimpleNamespace
 
-    from src.engine.context.budget import ContextBudget
-    from src.engine.context.capability import ContextViewCapability
-    from src.engine.context.compaction.coordinator import CompactionPlan
-    from src.engine.context.meter.context_meter import ContextMeter
-    from src.engine.context.strategy.append_only import AppendOnlyStrategy
-    from src.engine.context.strategy.view_result import ViewResult
+    from src.core.context.compaction.compaction_plan import CompactionPlan
+    from src.core.context.context_budget import ContextBudget
+    from src.core.context.context_view_capability import ContextViewCapability
+    from src.core.context.meter.context_meter import ContextMeter
+    from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
+    from src.core.context.strategy.view_result import ViewResult
 
     messages = [ModelResponse(parts=[TextPart('answer')]), ModelRequest(parts=[UserPromptPart('continue')])]
     ctx = SimpleNamespace(messages=messages, run_id='run', run_step=1)

@@ -24,10 +24,11 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 
-from src.engine.sessions.recovery import recover_history
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
-from src.ui.widgets.chat_log import AssistantBlock, ChatLog
+from src.core.sessions.recover_history import recover_history
+from src.core.sessions.session_store import SessionStore
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.chat.assistant_block import AssistantBlock
+from src.ui.widgets.chat.chat_log import ChatLog
 
 
 def _cut_mid_tool_call() -> list:
@@ -64,10 +65,10 @@ async def _wait_idle(app, pilot, attempts: int = 80) -> None:
             return
 
 
-def test_a_session_saved_after_a_crash_starts_a_new_turn():
+def test_a_session_saved_after_a_crash_starts_a_new_turn() -> None:
     """Regression: the `unprocessed tool calls` error only showed up on the next prompt."""
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             agent = Agent(TestModel(custom_output_text='answered'), instructions='x')
 
@@ -101,7 +102,7 @@ def test_a_session_saved_after_a_crash_starts_a_new_turn():
     asyncio.run(inner())
 
 
-def test_a_turn_that_dies_on_an_exception_saves_a_usable_history():
+def test_a_turn_that_dies_on_an_exception_saves_a_usable_history() -> None:
     """The other half of the fix: the damage never reaches disk at all.
 
     A tool that raises mid-batch leaves the run cancelled with a response whose
@@ -109,7 +110,7 @@ def test_a_turn_that_dies_on_an_exception_saves_a_usable_history():
     open the session does not find a history a provider rejects.
     """
 
-    async def inner():
+    async def inner() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             agent = Agent(TestModel(call_tools=['hold']), instructions='x')
 

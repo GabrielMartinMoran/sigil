@@ -51,7 +51,7 @@ def test_the_entry_point_composes_no_engine() -> None:
     assert not hasattr(sigil, 'Composition')
 
 
-def test_no_module_reads_the_provider_environment_at_import():
+def test_no_module_reads_the_provider_environment_at_import() -> None:
     """The regression this whole refactor exists for.
 
     A fresh interpreter imports the application with a hostile environment and

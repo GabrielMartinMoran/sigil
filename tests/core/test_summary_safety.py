@@ -2,6 +2,7 @@
 
 import asyncio
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from pydantic_ai import Agent
@@ -17,12 +18,12 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.usage import RequestUsage
 
-from src.engine.context.budget import ContextBudget
-from src.engine.context.capability import ContextViewCapability
-from src.engine.context.compaction.summary import summary_boundary
-from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.context.meter.cost import session_cost
-from src.engine.context.strategy.append_only import AppendOnlyStrategy
+from src.core.context.compaction.summary_boundary import summary_boundary
+from src.core.context.context_budget import ContextBudget
+from src.core.context.context_view_capability import ContextViewCapability
+from src.core.context.meter.context_meter import ContextMeter
+from src.core.context.meter.cost import session_cost
+from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 from tests.support.append_only_pipeline import budget_for, conversation
 
 
@@ -36,8 +37,8 @@ def test_should_preserve_native_exchanges_outside_summary() -> None:
     assert summary_boundary(messages, reasoning_blocks=0, tool_calls=0) == 1
 
 
-def test_should_account_for_checkpoint_usage_after_sqlite_resume(tmp_path) -> None:
-    from src.engine.sessions.session_store import SessionStore
+def test_should_account_for_checkpoint_usage_after_sqlite_resume(tmp_path: Path) -> None:
+    from src.core.sessions.session_store import SessionStore
 
     def answer(messages, info):
         summary = '<conversation>' in str(messages[-1].parts[0].content)
@@ -83,7 +84,7 @@ def test_should_account_for_rejected_summary_response() -> None:
 
 
 def test_should_not_serialize_binary_bytes_or_history_metadata_into_checkpoint() -> None:
-    from src.engine.context.compaction.summary_generator import generate_summary
+    from src.core.context.compaction.summary_generator import generate_summary
     from tests.support.compaction_summary_generation import FakeModel
 
     model = FakeModel(ModelResponse(parts=[TextPart('checkpoint')]))
@@ -97,7 +98,7 @@ def test_should_not_serialize_binary_bytes_or_history_metadata_into_checkpoint()
 
 
 def test_should_reject_overfull_summary_before_network_call() -> None:
-    from src.engine.context.compaction.summary_generator import generate_summary
+    from src.core.context.compaction.summary_generator import generate_summary
     from tests.support.compaction_summary_generation import FakeModel
 
     model = FakeModel(ModelResponse(parts=[TextPart('checkpoint')]))

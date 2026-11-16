@@ -31,18 +31,19 @@ from typing import Any
 import pytest
 from pydantic_ai.models.test import TestModel
 
-from src.engine.agents.retry import RetryNotice
-from src.engine.bootstrap import Composition
-from src.engine.interaction.models.question_item import QuestionItem
-from src.engine.interaction.models.question_option import QuestionOption
-from src.engine.settings import load_settings
-from src.engine.storage.accepted_inputs import AcceptedInputs
-from src.engine.tooling.events import ToolCallEvent
-from src.server import session_runtime as session_runtime_module
-from src.server.events import EventHub
-from src.server.ownership import OwnershipError, ServerOwnership
-from src.server.runtime import ServerRuntime
-from src.server.session_runtime import SessionRuntime
+from src.core.agents.retry_notice import RetryNotice
+from src.core.composition.composition import Composition
+from src.core.config.load_settings import load_settings
+from src.core.interaction.models.question_item import QuestionItem
+from src.core.interaction.models.question_option import QuestionOption
+from src.core.storage.accepted_inputs import AcceptedInputs
+from src.core.tooling.tool_call_event import ToolCallEvent
+from src.server.launch.ownership_error import OwnershipError
+from src.server.launch.server_ownership import ServerOwnership
+from src.server.runtime import session_runtime as session_runtime_module
+from src.server.runtime.event_hub import EventHub
+from src.server.runtime.server_runtime import ServerRuntime
+from src.server.runtime.session_runtime import SessionRuntime
 
 DELEGATED_METHODS = [
     'ensure_workers',
@@ -110,7 +111,7 @@ async def _drop_task(owner: SessionRuntime) -> None:
 
 
 def _paths(tmp_path: Path):
-    from src.engine.providers.bootstrap import ProviderPaths
+    from src.core.providers.provider_paths import ProviderPaths
 
     home = tmp_path / '.sigil'
     home.mkdir(exist_ok=True)
@@ -187,21 +188,19 @@ def test_should_keep_the_constructor_signature(runtime: ServerRuntime) -> None:
 
 
 def test_should_keep_the_support_types_importable_from_the_runtime_module() -> None:
-    """Existing importers of `src.server.runtime` keep working unchanged."""
-    from src.server.runtime import (
-        CHECKPOINT_INTERVAL,
-        DEFAULT_IDLE_GRACE,
+    """Existing importers of `src.server.server_runtime` keep working unchanged."""
+    from src.core.agents.tree.reports import WAKE_PROMPT
+    from src.server.runtime.idle_shutdown import IdleShutdown
+    from src.server.runtime.incoming_image import IncomingImage
+    from src.server.runtime.pending_question import PendingQuestion
+    from src.server.runtime.runtime_support import (
         IDLE_POLL_INTERVAL,
         PREVIEW_CHARS,
         QUESTION_TIMEOUT_ENV,
-        QUESTION_TIMEOUT_SECONDS,
-        WAKE_PROMPT,
-        IdleShutdown,
-        IncomingImage,
-        PendingQuestion,
         decode_images,
         resolve_question_timeout,
     )
+    from src.server.runtime.server_runtime import CHECKPOINT_INTERVAL, DEFAULT_IDLE_GRACE, QUESTION_TIMEOUT_SECONDS
 
     assert CHECKPOINT_INTERVAL > 0
     assert DEFAULT_IDLE_GRACE is None
@@ -232,7 +231,7 @@ def test_should_not_import_the_facade_from_the_session_module() -> None:
             imported.add(node.module or '')
         elif isinstance(node, ast.Import):
             imported.update(alias.name for alias in node.names)
-    assert 'src.server.runtime' not in imported
+    assert 'src.server.server_runtime' not in imported
     assert 'runtime' not in imported
 
 
@@ -647,7 +646,7 @@ def test_resident_session_events_are_visible_only_to_their_owner(
 
 
 def test_event_stream_filters_replay_and_live_events(runtime: ServerRuntime, composition: Composition) -> None:
-    from src.server.app import _stream
+    from src.server.api.app import _stream
 
     first = runtime.session_runtime
     second = runtime.resident_session(composition.store.draft_session())
@@ -806,7 +805,7 @@ def test_idle_release_keeps_session_work(
 
 
 def test_switched_away_session_reads_its_own_finished_subagent_report(runtime: ServerRuntime) -> None:
-    from src.engine.agents.profile.models.agent_role import AgentRole
+    from src.core.agents.profile.models.agent_role import AgentRole
 
     first = runtime.session_runtime
     second = runtime.resident_session(runtime.composition.store.draft_session())
@@ -915,7 +914,7 @@ def test_cancelled_open_keeps_registry_ownership_until_factory_finishes(
 ) -> None:
     import threading
 
-    import src.server.runtime as runtime_module
+    import src.server.runtime.server_runtime as runtime_module
 
     session = runtime.composition.store.create_session()
     started = threading.Event()
@@ -972,7 +971,7 @@ def test_session_shutdown_cancels_and_awaits_its_background_title_task(
                 cleaned.set()
             return 'unused'
 
-        monkeypatch.setattr('src.engine.sessions.titling.generate_title', title)
+        monkeypatch.setattr('src.core.sessions.titling.generate_title', title)
         monkeypatch.setattr(composition.model_service, 'current_model', lambda: composition._model_override)
         owner = runtime.session_runtime
         owner._name_session(owner.session, 'hello')

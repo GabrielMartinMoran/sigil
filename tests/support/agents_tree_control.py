@@ -12,15 +12,17 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import UsageLimits
 
-from src.engine.agents.agent import create_agent
-from src.engine.agents.factory import AgentFactory, AgentSpec
-from src.engine.agents.profile.registry import AgentRegistry
-from src.engine.agents.profile.source import ProfileSource
-from src.engine.agents.tree.store import AgentTreeStore
-from src.engine.agents.tree.summoner import SigilDeps, SubagentSummoner
-from src.engine.agents.tree.tools import register_tree_tools
-from src.engine.agents.tree.tree import AgentTree
-from src.engine.sessions.session_store import SessionStore
+from src.core.agents.agent import create_agent
+from src.core.agents.agent_factory import AgentFactory
+from src.core.agents.agent_spec import AgentSpec
+from src.core.agents.profile.agent_registry import AgentRegistry
+from src.core.agents.profile.profile_source import ProfileSource
+from src.core.agents.tree.agent_tree import AgentTree
+from src.core.agents.tree.agent_tree_store import AgentTreeStore
+from src.core.agents.tree.sigil_deps import SigilDeps
+from src.core.agents.tree.subagent_summoner import SubagentSummoner
+from src.core.agents.tree.tools import register_tree_tools
+from src.core.sessions.session_store import SessionStore
 
 FRONTMATTER = '---\nname: {name}\ndescription: {description}\n{extra}---\n{body}'
 
@@ -115,7 +117,7 @@ def make_env(
 
         return agent
 
-    def install(target):
+    def install(target) -> None:
         register_tree_tools(target, env.summoner)
 
     env.summoner = SubagentSummoner(
@@ -165,7 +167,7 @@ class _LiveRun:
 
 
 def node_role():
-    from src.engine.agents.profile.models.agent_role import AgentRole
+    from src.core.agents.profile.models.agent_role import AgentRole
 
     return AgentRole.SUBAGENT
 

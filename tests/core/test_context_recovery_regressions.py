@@ -20,14 +20,14 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.usage import RequestUsage
 
-from src.engine.context.budget import ContextBudget
-from src.engine.context.capability import ContextViewCapability
-from src.engine.context.compaction.events import RECORD_KEY
-from src.engine.context.compaction.identity import legacy_part_key, part_key
-from src.engine.context.compaction.maintenance import receipts
-from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.context.meter.cost import session_cost
-from src.engine.context.strategy.append_only import AppendOnlyStrategy
+from src.core.context.compaction.events import RECORD_KEY
+from src.core.context.compaction.identity import legacy_part_key, part_key
+from src.core.context.compaction.receipts import receipts
+from src.core.context.context_budget import ContextBudget
+from src.core.context.context_view_capability import ContextViewCapability
+from src.core.context.meter.context_meter import ContextMeter
+from src.core.context.meter.cost import session_cost
+from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 from tests.support.append_only_pipeline import budget_for, conversation
 
 
@@ -74,7 +74,7 @@ def test_should_keep_image_occurrences_distinct_within_merged_request() -> None:
             parts=[ToolReturnPart('view_image', [image_a], tool_call_id='a'), UserPromptPart(['new', image_b])]
         )
     ]
-    from src.engine.context.strategy.rewriting import drop_stale_images
+    from src.core.context.strategy.rewriting import drop_stale_images
 
     projected, count = drop_stale_images(messages, turn_window=3, max_tokens=0)
     assert count == 2
@@ -127,7 +127,7 @@ def test_should_retain_auxiliary_receipt_through_failed_main_request_and_resume(
 
 
 def test_should_record_cancelled_summary_as_unmeasured_without_checkpoint() -> None:
-    async def cancel(messages, info):
+    async def cancel(messages, info) -> None:
         raise asyncio.CancelledError()
 
     history = conversation(30)
@@ -152,7 +152,7 @@ def test_should_record_cancelled_summary_as_unmeasured_without_checkpoint() -> N
 
 
 def test_should_keep_ambiguous_reasoning_identities_instead_of_dropping_protected_blocks() -> None:
-    from src.engine.context.compaction.coordinator import apply, plan
+    from src.core.context.compaction.coordinator import apply, plan
 
     timestamp = datetime(2026, 1, 1, tzinfo=UTC)
     messages = [ModelResponse(parts=[ThinkingPart('same')], timestamp=timestamp) for _ in range(7)]
@@ -162,7 +162,7 @@ def test_should_keep_ambiguous_reasoning_identities_instead_of_dropping_protecte
 
 
 def test_should_refuse_ambiguous_checkpoint_boundary() -> None:
-    from src.engine.context.compaction.summary import summary_request
+    from src.core.context.compaction.summary_request_builder import summary_request
 
     timestamp = datetime(2026, 1, 1, tzinfo=UTC)
     messages = [ModelRequest(parts=[UserPromptPart('same', timestamp=timestamp)]) for _ in range(5)]

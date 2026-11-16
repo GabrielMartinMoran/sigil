@@ -1,13 +1,14 @@
+from pathlib import Path
 from types import SimpleNamespace
 from xml.etree import ElementTree
 
-from src.engine.context.meter.request import snapshot_request
-from src.engine.skills.registry import SkillRegistry
-from src.engine.skills.rendering import render_available_skills, render_loaded_skills
+from src.core.context.meter.request import snapshot_request
+from src.core.skills.rendering import render_available_skills, render_loaded_skills
+from src.core.skills.skill_registry import SkillRegistry
 from tests.support.skills import write_skill
 
 
-def test_skill_sections_escape_content_and_preserve_resource_states(tmp_path):
+def test_skill_sections_escape_content_and_preserve_resource_states(tmp_path: Path) -> None:
     write_skill(tmp_path, 'demo', body='Use <example> & details.', files={'references/doc.md': 'A <tag> & B'})
     registry = SkillRegistry([('project', tmp_path)])
     available = ElementTree.fromstring(render_available_skills(registry))
@@ -25,10 +26,10 @@ def test_skill_sections_escape_content_and_preserve_resource_states(tmp_path):
     assert metrics['resources_tokens'] > 0
 
 
-def test_skill_catalog_precedes_project_and_loaded_skills(tmp_path):
-    from src.engine.agents.agent import create_agent
-    from src.engine.context.instructions.workspace_instructions import WorkspaceInstructions
-    from src.engine.context.scope import ScopeTracker
+def test_skill_catalog_precedes_project_and_loaded_skills(tmp_path: Path) -> None:
+    from src.core.agents.agent import create_agent
+    from src.core.context.instructions.workspace_instructions import WorkspaceInstructions
+    from src.core.context.scope_tracker import ScopeTracker
 
     agent = create_agent(
         SkillRegistry([('project', tmp_path)]), workspace=WorkspaceInstructions(tmp_path), scope=ScopeTracker(tmp_path)

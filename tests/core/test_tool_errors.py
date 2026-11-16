@@ -7,7 +7,8 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from src.engine.agents.tool_errors import MAX_ERROR_CHARS, ToolErrorRecovery, describe_tool_error
+from src.core.agents.describe_tool_error import MAX_ERROR_CHARS, describe_tool_error
+from src.core.agents.tool_error_recovery import ToolErrorRecovery
 
 
 def _model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:

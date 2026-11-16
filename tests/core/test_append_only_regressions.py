@@ -2,10 +2,13 @@
 
 from pydantic_ai.messages import BinaryImage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 
-from src.engine.context.budget import ContextBudget
-from src.engine.context.compaction.events import POLICY_VERSION, RECORD_KEY, CompactionReason
-from src.engine.context.compaction.summary import Summary, summary_request
-from src.engine.context.strategy.append_only import AppendOnlyStrategy
+from src.core.context.compaction.compaction_event import POLICY_VERSION
+from src.core.context.compaction.compaction_reason import CompactionReason
+from src.core.context.compaction.events import RECORD_KEY
+from src.core.context.compaction.summary import Summary
+from src.core.context.compaction.summary_request_builder import summary_request
+from src.core.context.context_budget import ContextBudget
+from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 from tests.support.append_only_pipeline import budget_for, conversation
 
 
@@ -59,7 +62,7 @@ def test_should_only_offer_incremental_span_when_updating_checkpoint() -> None:
 
 
 def test_should_report_failed_summary_consistently_in_diagnostics() -> None:
-    from src.engine.context.capability import _failed_summary
+    from src.core.context.context_view_capability import _failed_summary
 
     messages = conversation(30)
     view = AppendOnlyStrategy().view(messages, budget_for(messages, share=0.9))

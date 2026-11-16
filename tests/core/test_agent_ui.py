@@ -12,10 +12,12 @@ look finished and not be:
 
 from __future__ import annotations
 
-from src.engine.sessions.session_store import SessionStore
+from pathlib import Path
+
+from src.core.sessions.session_store import SessionStore
 
 
-def test_the_agent_survives_being_saved(tmp_path):
+def test_the_agent_survives_being_saved(tmp_path: Path) -> None:
     store = SessionStore(cwd=str(tmp_path), base_dir=tmp_path / 'sessions')
     session = store.create_session()
     session.agent = 'reviewer'
@@ -24,7 +26,7 @@ def test_the_agent_survives_being_saved(tmp_path):
     assert store.load(session.id).agent == 'reviewer'
 
 
-def test_a_session_without_a_profile_reads_back_empty(tmp_path):
+def test_a_session_without_a_profile_reads_back_empty(tmp_path: Path) -> None:
     """An empty profile means "no choice recorded": the registry's default applies."""
     store = SessionStore(cwd=str(tmp_path), base_dir=tmp_path / 'sessions')
     session = store.create_session()

@@ -13,12 +13,14 @@ from pathlib import Path
 
 from pydantic_ai import Agent
 
-from src.engine.providers.bootstrap import ProviderPaths, build_service
-from src.engine.providers.catalog.probe import ProbeResult
-from src.engine.providers.domain.model_capability import ModelCapability, ModelCatalog
-from src.engine.providers.domain.provider_kind import ProviderKind
-from src.engine.providers.domain.selection import Selection
-from src.engine.providers.factory.unconfigured import UnconfiguredModel
+from src.core.providers.bootstrap import build_service
+from src.core.providers.catalog.probe import ProbeResult
+from src.core.providers.domain.model_capability import ModelCapability
+from src.core.providers.domain.model_catalog import ModelCatalog
+from src.core.providers.domain.provider_kind import ProviderKind
+from src.core.providers.domain.selection import Selection
+from src.core.providers.factory.unconfigured_model import UnconfiguredModel
+from src.core.providers.provider_paths import ProviderPaths
 
 CATALOG = ModelCatalog(
     models=(
@@ -49,7 +51,7 @@ class FakeCatalog:
         self._cache[account.id] = self._catalog
         return self._catalog
 
-    def invalidate(self, account_id=None):
+    def invalidate(self, account_id=None) -> None:
         if account_id is None:
             self._cache.clear()
         else:
@@ -73,7 +75,7 @@ def _add(service, alias: str = 'work'):
 # --- the agent must hold the router ----------------------------------------
 
 
-def test_current_model_returns_the_router_not_the_wrapped_model(tmp_path):
+def test_current_model_returns_the_router_not_the_wrapped_model(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
 
@@ -81,7 +83,7 @@ def test_current_model_returns_the_router_not_the_wrapped_model(tmp_path):
     assert service.current_model() is not service.router.current
 
 
-def test_a_switch_reaches_an_agent_built_before_it(tmp_path):
+def test_a_switch_reaches_an_agent_built_before_it(tmp_path: Path) -> None:
     """The original symptom: the change only applied after a restart."""
     service = _service(tmp_path)
     agent = Agent(service.current_model(), instructions='x')
@@ -97,7 +99,7 @@ def test_a_switch_reaches_an_agent_built_before_it(tmp_path):
     assert agent.model.context_window == 200_000
 
 
-def test_the_agent_sees_the_new_window_after_a_switch(tmp_path):
+def test_the_agent_sees_the_new_window_after_a_switch(tmp_path: Path) -> None:
     service = _service(tmp_path)
     agent = Agent(service.current_model(), instructions='x')
     _add(service)
@@ -109,7 +111,7 @@ def test_the_agent_sees_the_new_window_after_a_switch(tmp_path):
     assert agent.model.context_window == 200_000
 
 
-def test_switching_accounts_reaches_the_agent(tmp_path):
+def test_switching_accounts_reaches_the_agent(tmp_path: Path) -> None:
     service = _service(tmp_path)
     agent = Agent(service.current_model(), instructions='x')
     _add(service, 'one')
@@ -124,7 +126,7 @@ def test_switching_accounts_reaches_the_agent(tmp_path):
 # --- the window must survive a restart -------------------------------------
 
 
-def test_the_selection_stores_the_window_and_the_efforts(tmp_path):
+def test_the_selection_stores_the_window_and_the_efforts(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     selection = service.state.last_selection()
@@ -134,7 +136,7 @@ def test_the_selection_stores_the_window_and_the_efforts(tmp_path):
     assert selection.efforts == ('low', 'high')
 
 
-def test_stored_window_reads_the_value_without_the_network(tmp_path):
+def test_stored_window_reads_the_value_without_the_network(tmp_path: Path) -> None:
     _add(_service(tmp_path))
     catalog = FakeCatalog()
     restarted = _service(tmp_path, session_id='other', catalog=catalog)
@@ -144,7 +146,7 @@ def test_stored_window_reads_the_value_without_the_network(tmp_path):
     assert catalog.fetches == 0
 
 
-def test_the_snapshot_after_a_restart_knows_the_window_and_the_efforts(tmp_path):
+def test_the_snapshot_after_a_restart_knows_the_window_and_the_efforts(tmp_path: Path) -> None:
     _add(_service(tmp_path))
     restarted = _service(tmp_path, session_id='other')
 
@@ -155,7 +157,7 @@ def test_the_snapshot_after_a_restart_knows_the_window_and_the_efforts(tmp_path)
     assert snapshot.label == 'work:first/model'
 
 
-def test_the_snapshot_without_a_stored_window_falls_back_to_unknown(tmp_path):
+def test_the_snapshot_without_a_stored_window_falls_back_to_unknown(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     # A model never seen in a catalogue has neither a stored nor a cached window.
@@ -169,7 +171,7 @@ def test_the_snapshot_without_a_stored_window_falls_back_to_unknown(tmp_path):
     assert snapshot.efforts == ()
 
 
-def test_the_snapshot_prefers_the_fresh_catalogue_over_the_stored_value(tmp_path):
+def test_the_snapshot_prefers_the_fresh_catalogue_over_the_stored_value(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     service.state.set_last_selection(Selection(account_id=service.list_accounts()[0].id, model='first/model', window=1))
@@ -178,7 +180,7 @@ def test_the_snapshot_prefers_the_fresh_catalogue_over_the_stored_value(tmp_path
     assert service.snapshot().window == 100_000
 
 
-def test_effort_setting_persists_the_window_alongside_it(tmp_path):
+def test_effort_setting_persists_the_window_alongside_it(tmp_path: Path) -> None:
     service = _service(tmp_path)
     _add(service)
     service.set_thinking('high')
@@ -190,7 +192,7 @@ def test_effort_setting_persists_the_window_alongside_it(tmp_path):
     assert snapshot.window == 100_000
 
 
-def test_a_selection_round_trips_through_json_with_the_capability(tmp_path):
+def test_a_selection_round_trips_through_json_with_the_capability(tmp_path: Path) -> None:
     selection = Selection(
         account_id='abc',
         model='m',

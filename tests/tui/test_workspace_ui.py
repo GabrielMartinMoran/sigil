@@ -13,13 +13,13 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from textual.widgets import OptionList
 
-from src.engine.roadmap.stores import RoadmapStores
-from src.engine.sessions.session_store import SessionStore
-from src.engine.workspace.manager import WorkspaceManager
-from src.ui.app import SigilApp
-from src.ui.widgets.chat_log import ChatLog
-from src.ui.widgets.sidebar_panel import SidebarPanel
-from src.ui.widgets.status_bar import StatusBar
+from src.core.roadmap.roadmap_stores import RoadmapStores
+from src.core.sessions.session_store import SessionStore
+from src.core.workspace.workspace_manager import WorkspaceManager
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.panels.sidebar_panel import SidebarPanel
+from src.ui.widgets.panels.status_bar import StatusBar
 from tests.support.ui import wait_until
 
 
@@ -78,10 +78,12 @@ def _texts(app: SigilApp) -> list[str]:
     return [child.render().plain for child in app.query_one(ChatLog).children]
 
 
-def test_new_without_arguments_stays_in_the_same_workspace(monkeypatch, tmp_path, repo):
+def test_new_without_arguments_stays_in_the_same_workspace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, repo
+) -> None:
     monkeypatch.chdir(repo)
 
-    async def inner():
+    async def inner() -> None:
         app = _app(repo, tmp_path)
         async with app.run_test() as pilot:
             await app.handle_command('/new')
@@ -94,10 +96,10 @@ def test_new_without_arguments_stays_in_the_same_workspace(monkeypatch, tmp_path
     asyncio.run(inner())
 
 
-def test_new_with_worktree_creates_it_and_works_there(monkeypatch, tmp_path, repo):
+def test_new_with_worktree_creates_it_and_works_there(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, repo) -> None:
     monkeypatch.chdir(repo)
 
-    async def inner():
+    async def inner() -> None:
         app = _app(repo, tmp_path)
         async with app.run_test() as pilot:
             assert app.query_one(StatusBar).plain().startswith('project')
@@ -124,7 +126,9 @@ def test_new_with_worktree_creates_it_and_works_there(monkeypatch, tmp_path, rep
     asyncio.run(inner())
 
 
-def test_the_picker_shows_every_workspace_and_marks_the_current_one(monkeypatch, tmp_path, repo):
+def test_the_picker_shows_every_workspace_and_marks_the_current_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, repo
+) -> None:
     """The listing is the feature: a session of another worktree has to be visible.
 
     This drives the real modal, exactly as the app does (`run_worker`), because the
@@ -132,7 +136,7 @@ def test_the_picker_shows_every_workspace_and_marks_the_current_one(monkeypatch,
     """
     monkeypatch.chdir(repo)
 
-    async def inner():
+    async def inner() -> None:
         app = _app(repo, tmp_path)
         async with app.run_test(size=(140, 40)) as pilot:
             app._session.messages = [ModelRequest(parts=[UserPromptPart(content='main task')])]
@@ -173,20 +177,22 @@ def test_the_picker_shows_every_workspace_and_marks_the_current_one(monkeypatch,
     asyncio.run(inner())
 
 
-def test_tools_operate_on_the_new_worktree_after_the_switch(monkeypatch, tmp_path, repo):
+def test_tools_operate_on_the_new_worktree_after_the_switch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, repo
+) -> None:
     """The point of the switch: the agent works *on the worktree*, not on the old tree."""
     import asyncio as _asyncio
 
     monkeypatch.chdir(repo)
 
-    async def inner():
+    async def inner() -> None:
         app = _app(repo, tmp_path)
         async with app.run_test() as pilot:
             await app.handle_command('/new', '--worktree isolated')
             await pilot.pause()
 
-            from src.engine.files.tools import register_file_tools
-            from src.engine.shell.runner import execute_commands
+            from src.core.files.tools import register_file_tools
+            from src.core.shell.runner import execute_commands
 
             class Recorder:
                 def __init__(self) -> None:
@@ -217,8 +223,8 @@ def test_tools_operate_on_the_new_worktree_after_the_switch(monkeypatch, tmp_pat
             # allowance is emptied here: the claim under test is that switching
             # worktree narrows the tools to the new tree, not that `/tmp` is
             # reachable.
-            from src.engine.files import paths
-            from src.engine.files.models.file_tool_error import FileToolError
+            from src.core.files import paths
+            from src.core.files.models.file_tool_error import FileToolError
 
             monkeypatch.setattr(paths, '_POSIX_TEMP_DIRS', ())
             monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path / 'scratch'))
@@ -229,10 +235,12 @@ def test_tools_operate_on_the_new_worktree_after_the_switch(monkeypatch, tmp_pat
     _asyncio.run(inner())
 
 
-def test_new_worktree_rejects_a_bad_name_without_switching(monkeypatch, tmp_path, repo):
+def test_new_worktree_rejects_a_bad_name_without_switching(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, repo
+) -> None:
     monkeypatch.chdir(repo)
 
-    async def inner():
+    async def inner() -> None:
         app = _app(repo, tmp_path)
         async with app.run_test() as pilot:
             await app.handle_command('/new', '--worktree nested/bad')
@@ -245,10 +253,10 @@ def test_new_worktree_rejects_a_bad_name_without_switching(monkeypatch, tmp_path
     asyncio.run(inner())
 
 
-def test_new_with_a_bad_flag_shows_the_usage(monkeypatch, tmp_path, repo):
+def test_new_with_a_bad_flag_shows_the_usage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, repo) -> None:
     monkeypatch.chdir(repo)
 
-    async def inner():
+    async def inner() -> None:
         app = _app(repo, tmp_path)
         async with app.run_test() as pilot:
             before = app._session.id
@@ -261,10 +269,10 @@ def test_new_with_a_bad_flag_shows_the_usage(monkeypatch, tmp_path, repo):
     asyncio.run(inner())
 
 
-def test_load_switches_to_the_workspace_of_the_session(monkeypatch, tmp_path, repo):
+def test_load_switches_to_the_workspace_of_the_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, repo) -> None:
     monkeypatch.chdir(repo)
 
-    async def inner():
+    async def inner() -> None:
         app = _app(repo, tmp_path)
         async with app.run_test() as pilot:
             await app.handle_command('/new', '--worktree fix-login')
@@ -294,7 +302,9 @@ def test_load_switches_to_the_workspace_of_the_session(monkeypatch, tmp_path, re
     asyncio.run(inner())
 
 
-def test_load_opens_the_picker_with_one_option_per_session(monkeypatch, tmp_path, repo):
+def test_load_opens_the_picker_with_one_option_per_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, repo
+) -> None:
     """`OptionList` refuses two options with the same id and the crash is unrecoverable.
 
     The file store could produce that duplicate: a copy left by a file manager in
@@ -304,7 +314,7 @@ def test_load_opens_the_picker_with_one_option_per_session(monkeypatch, tmp_path
     """
     monkeypatch.chdir(repo)
 
-    async def inner():
+    async def inner() -> None:
         app = _app(repo, tmp_path, sessions=['main task'])
         async with app.run_test(size=(140, 40)) as pilot:
             app._store.create_session()
@@ -323,7 +333,7 @@ def test_load_opens_the_picker_with_one_option_per_session(monkeypatch, tmp_path
     asyncio.run(inner())
 
 
-def test_switching_clears_the_scope(monkeypatch, tmp_path, repo):
+def test_switching_clears_the_scope(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, repo) -> None:
     """The scope describes the workspace that was left behind, so it resets.
 
     The loaded skills need no reset any more: they are derived from the transcript
@@ -331,8 +341,8 @@ def test_switching_clears_the_scope(monkeypatch, tmp_path, repo):
     """
     monkeypatch.chdir(repo)
 
-    async def inner():
-        from src.engine.context.scope import ScopeTracker
+    async def inner() -> None:
+        from src.core.context.scope_tracker import ScopeTracker
 
         scope = ScopeTracker(repo)
         app = _app(repo, tmp_path, scope=scope)
@@ -349,7 +359,9 @@ def test_switching_clears_the_scope(monkeypatch, tmp_path, repo):
     asyncio.run(inner())
 
 
-def test_load_across_worktrees_restores_the_workspace_and_the_model(monkeypatch, tmp_path, repo):
+def test_load_across_worktrees_restores_the_workspace_and_the_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, repo
+) -> None:
     """The two features have to compose: a session of another worktree keeps its model.
 
     Loading a session means two independent things at once — moving to the tree it
@@ -357,8 +369,8 @@ def test_load_across_worktrees_restores_the_workspace_and_the_model(monkeypatch,
     the model restore, a resumed conversation would silently change provider and
     price, which is exactly what the selection exists to prevent.
     """
-    from src.engine.providers.domain.selection import Selection
-    from src.engine.providers.snapshot import ModelSnapshot
+    from src.core.providers.domain.selection import Selection
+    from src.core.providers.model_snapshot import ModelSnapshot
 
     class FakeService:
         def __init__(self) -> None:
@@ -377,7 +389,7 @@ def test_load_across_worktrees_restores_the_workspace_and_the_model(monkeypatch,
 
     monkeypatch.chdir(repo)
 
-    async def inner():
+    async def inner() -> None:
         app = _app(repo, tmp_path)
         service = FakeService()
         app._model_service = service
@@ -410,11 +422,11 @@ def test_load_across_worktrees_restores_the_workspace_and_the_model(monkeypatch,
     asyncio.run(inner())
 
 
-def test_worktrees_dir_follows_the_environment(monkeypatch, tmp_path, repo):
+def test_worktrees_dir_follows_the_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, repo) -> None:
     monkeypatch.setenv('SIGIL_WORKTREES_DIR', str(tmp_path / 'configured'))
     monkeypatch.chdir(repo)
 
-    async def inner():
+    async def inner() -> None:
         app = _app(repo, tmp_path)
         # The manager resolves the directory lazily, so an unset override follows
         # whatever the environment says at the moment of creating the worktree.
@@ -430,7 +442,9 @@ def test_worktrees_dir_follows_the_environment(monkeypatch, tmp_path, repo):
 
 
 @pytest.mark.parametrize('args', ['', '--worktree recovered'])
-def test_new_session_survives_an_external_update(monkeypatch, tmp_path, repo, args: str) -> None:
+def test_new_session_survives_an_external_update(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, repo, args: str
+) -> None:
     monkeypatch.chdir(repo)
 
     async def inner() -> None:
@@ -452,10 +466,12 @@ def test_new_session_survives_an_external_update(monkeypatch, tmp_path, repo, ar
     asyncio.run(inner())
 
 
-def test_external_files_command_updates_only_current_session(monkeypatch, tmp_path, repo):
+def test_external_files_command_updates_only_current_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, repo
+) -> None:
     monkeypatch.chdir(repo)
 
-    async def inner():
+    async def inner() -> None:
         app = _app(repo, tmp_path)
         async with app.run_test():
             session_id = app._session.id

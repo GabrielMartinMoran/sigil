@@ -9,9 +9,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage
 
-from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.context.meter.debug import build_debug_report
-from src.engine.context.meter.request import snapshot_request
+from src.core.context.meter.context_meter import ContextMeter
+from src.core.context.meter.debug import build_debug_report
+from src.core.context.meter.request import snapshot_request
 
 
 def report():
@@ -24,7 +24,7 @@ def report():
     return build_debug_report(messages, snapshot=meter.snapshot(messages), request=snapshot_request(None))
 
 
-def test_unknown_and_native_parts_have_a_row_instead_of_silently_disappearing():
+def test_unknown_and_native_parts_have_a_row_instead_of_silently_disappearing() -> None:
     from pydantic_ai.messages import NativeToolCallPart
 
     snapshot = snapshot_request(
@@ -38,16 +38,16 @@ def test_unknown_and_native_parts_have_a_row_instead_of_silently_disappearing():
     assert 'PRIVATE' not in repr(snapshot)
 
 
-def test_real_agent_snapshot_excludes_the_response_it_has_not_received_yet():
+def test_real_agent_snapshot_excludes_the_response_it_has_not_received_yet() -> None:
     import asyncio
 
     from pydantic_ai import Agent
     from pydantic_ai.models.test import TestModel
 
-    from src.engine.context.capability import ContextViewCapability
-    from src.engine.context.strategy.append_only import AppendOnlyStrategy
+    from src.core.context.context_view_capability import ContextViewCapability
+    from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 
-    async def run():
+    async def run() -> None:
         cap = ContextViewCapability(strategy=AppendOnlyStrategy(), meter=ContextMeter(window=100000))
         agent = Agent(TestModel(custom_output_text='PRIVATE'), capabilities=[cap])
         first = await agent.run('PRIVATE')
@@ -60,8 +60,8 @@ def test_real_agent_snapshot_excludes_the_response_it_has_not_received_yet():
     asyncio.run(run())
 
 
-def test_plain_text_cache_uses_the_same_descending_order():
-    from src.engine.context.meter.debug_render import render_debug_report
+def test_plain_text_cache_uses_the_same_descending_order() -> None:
+    from src.core.context.meter.debug_render import render_debug_report
 
     text = render_debug_report(report())
     assert text.index(' | 2 |') < text.index(' | 1 |')

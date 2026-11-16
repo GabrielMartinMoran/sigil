@@ -17,18 +17,17 @@ import pytest
 from fastapi import FastAPI
 from PIL import Image
 
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.engine.bootstrap import Composition
-from src.engine.mcp.deferred import build_manager
-from src.server.app import create_app
-from src.server.config import ServerConfig
-from src.server.endpoint import Endpoint, EndpointPublisher
-from src.server.events import EventHub
-from src.server.runtime import ServerRuntime
-from src.ui.service_client import (
-    OutgoingImage,
-    ServiceClient,
-)
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.composition.composition import Composition
+from src.core.mcp.deferred import build_manager
+from src.server.api.app import create_app
+from src.server.launch.endpoint import Endpoint
+from src.server.launch.endpoint_publisher import EndpointPublisher
+from src.server.launch.server_config import ServerConfig
+from src.server.runtime.event_hub import EventHub
+from src.server.runtime.server_runtime import ServerRuntime
+from src.ui.client.outgoing_image import OutgoingImage
+from src.ui.client.service_client import ServiceClient
 from tests.support.server_parity import _composition
 
 PASSWORD = 'secret-pass'
@@ -191,7 +190,7 @@ class _Catalog:
         return self._catalog()
 
     def _catalog(self) -> Any:
-        from src.engine.providers.domain.model_capability import ModelCatalog
+        from src.core.providers.domain.model_catalog import ModelCatalog
 
         return ModelCatalog(models=self._models, source='remote')
 

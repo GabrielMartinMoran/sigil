@@ -23,15 +23,16 @@ from typing import Any
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.engine.agents.profile.registry import AgentRegistry
-from src.engine.agents.tree.store import AgentTreeStore
-from src.engine.agents.tree.summoner import SubagentSummoner
-from src.engine.sessions.session_store import SessionStore
-from src.ui.app import SigilApp
-from src.ui.messages import NodeOpened
-from src.ui.widgets.agent_view import AgentView
-from src.ui.widgets.chat_log import ChatLog, SummonBlock
+from src.core.agents.profile.agent_registry import AgentRegistry
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.core.agents.tree.agent_tree_store import AgentTreeStore
+from src.core.agents.tree.subagent_summoner import SubagentSummoner
+from src.core.sessions.session_store import SessionStore
+from src.ui.messages.node_opened import NodeOpened
+from src.ui.sigil_app import SigilApp
+from src.ui.widgets.chat.chat_log import ChatLog
+from src.ui.widgets.chat.summon_block import SummonBlock
+from src.ui.widgets.panels.agent_view import AgentView
 from tests.support.ui import render_text, wait_until
 
 
@@ -80,7 +81,7 @@ def _text_of(block: SummonBlock) -> str:
     return chr(10).join(part.plain for part in block._build().renderables)
 
 
-def test_a_block_that_knows_its_node_offers_a_way_in():
+def test_a_block_that_knows_its_node_offers_a_way_in() -> None:
     block = SummonBlock('summon', {'agent': 'researcher', 'task': 'read it', 'mode': 'async'})
     assert 'clickable' not in block.classes
 
@@ -90,7 +91,7 @@ def test_a_block_that_knows_its_node_offers_a_way_in():
     assert '#abcd1234' in _text_of(block)
 
 
-def test_a_block_still_running_is_not_clickable():
+def test_a_block_still_running_is_not_clickable() -> None:
     """No id yet means no target: the click has to be inert, not guess."""
     block = SummonBlock('summon', {'agent': 'researcher', 'task': 'read it', 'mode': 'async'})
     assert 'clickable' not in block.classes
@@ -98,7 +99,7 @@ def test_a_block_still_running_is_not_clickable():
     block.on_click()
 
 
-def test_the_block_underlines_the_name_only_when_it_is_a_target():
+def test_the_block_underlines_the_name_only_when_it_is_a_target() -> None:
     block = SummonBlock('summon', {'agent': 'researcher', 'task': 'read it'})
     before = _text_of(block)
 
@@ -114,7 +115,7 @@ def test_the_block_underlines_the_name_only_when_it_is_a_target():
 # --- the app -----------------------------------------------------------------
 
 
-def test_clicking_a_spawn_opens_the_subagent():
+def test_clicking_a_spawn_opens_the_subagent() -> None:
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
@@ -136,7 +137,7 @@ def test_clicking_a_spawn_opens_the_subagent():
     assert viewed == expected
 
 
-def test_the_click_resolves_the_short_id_the_block_shows():
+def test_the_click_resolves_the_short_id_the_block_shows() -> None:
     """The block paints eight characters and the tree stores thirty-two."""
 
     async def inner():
@@ -159,7 +160,7 @@ def test_the_click_resolves_the_short_id_the_block_shows():
     assert asyncio.run(inner()) is True
 
 
-def test_a_click_on_a_node_this_session_lost_says_so():
+def test_a_click_on_a_node_this_session_lost_says_so() -> None:
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
@@ -178,7 +179,7 @@ def test_a_click_on_a_node_this_session_lost_says_so():
     assert any('not part of this session' in text for text in texts)
 
 
-def test_a_click_does_not_open_anything_while_the_block_has_no_id():
+def test_a_click_does_not_open_anything_while_the_block_has_no_id() -> None:
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
@@ -194,7 +195,7 @@ def test_a_click_does_not_open_anything_while_the_block_has_no_id():
     assert asyncio.run(inner()) is False
 
 
-def test_opening_by_click_also_restores_the_chat_on_escape():
+def test_opening_by_click_also_restores_the_chat_on_escape() -> None:
     async def inner():
         with tempfile.TemporaryDirectory() as tmp:
             app = _app(tmp)
@@ -221,9 +222,9 @@ def test_opening_by_click_also_restores_the_chat_on_escape():
     assert shown is False
 
 
-def test_only_the_spawn_block_is_clickable():
+def test_only_the_spawn_block_is_clickable() -> None:
     """The rest of the chat stays text: a file read is not a way in."""
-    from src.ui.widgets.chat_log import block_for
+    from src.ui.widgets.chat.block_for import block_for
 
     plain = block_for('read_file', {'path': 'x'}, classes='tool-call')
     plain.set_result('contents')

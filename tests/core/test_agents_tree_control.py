@@ -25,16 +25,17 @@ import pytest
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo
 
-from src.engine.agents.factory import AgentFactory, AgentSpec
-from src.engine.agents.step_budget import PREFIX
-from src.engine.agents.tree.models.node_status import NodeStatus
-from src.engine.agents.tree.models.summon_error import SummonError
-from src.engine.agents.tree.rendering import render_peers
-from src.engine.agents.tree.tools import register_tree_tools
-from src.engine.agents.tree.tree import AgentTree
-from src.engine.context.capability import ContextViewCapability
-from src.engine.context.meter.context_meter import ContextMeter
-from src.engine.context.strategy.append_only import AppendOnlyStrategy
+from src.core.agents.agent_factory import AgentFactory
+from src.core.agents.agent_spec import AgentSpec
+from src.core.agents.notice import PREFIX
+from src.core.agents.tree.agent_tree import AgentTree
+from src.core.agents.tree.models.node_status import NodeStatus
+from src.core.agents.tree.models.summon_error import SummonError
+from src.core.agents.tree.rendering import render_peers
+from src.core.agents.tree.tools import register_tree_tools
+from src.core.context.context_view_capability import ContextViewCapability
+from src.core.context.meter.context_meter import ContextMeter
+from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 from tests.support.agents_tree_control import (
     _LiveRun,
     _model,
@@ -50,7 +51,7 @@ from tests.support.agents_tree_control import (
 # --- max_steps ---------------------------------------------------------------
 
 
-def test_a_subagent_that_runs_out_of_steps_still_reports(tmp_path):
+def test_a_subagent_that_runs_out_of_steps_still_reports(tmp_path: Path) -> None:
     """The report is partial, and the header says so — that is what makes it usable."""
     calls = {'n': 0}
 
@@ -67,7 +68,7 @@ def test_a_subagent_that_runs_out_of_steps_still_reports(tmp_path):
         scripts={'worker': busy},
     )
 
-    def install(target):
+    def install(target) -> None:
         register_tree_tools(target, env.summoner)
 
     env.factory = AgentFactory(
@@ -90,7 +91,7 @@ def test_a_subagent_that_runs_out_of_steps_still_reports(tmp_path):
     assert any(PREFIX in text for text in _texts(node.messages))
 
 
-def test_an_exhausted_subagent_can_be_resumed_with_its_id(tmp_path):
+def test_an_exhausted_subagent_can_be_resumed_with_its_id(tmp_path: Path) -> None:
     """The second call continues the conversation: nothing it read is lost."""
     state = {'n': 0}
 
@@ -129,14 +130,14 @@ def test_an_exhausted_subagent_can_be_resumed_with_its_id(tmp_path):
     assert any('read the second half' in text for text in _texts(node.messages))
 
 
-def test_a_resume_of_an_unknown_id_explains_what_the_id_is(tmp_path):
+def test_a_resume_of_an_unknown_id_explains_what_the_id_is(tmp_path: Path) -> None:
     env = make_env(tmp_path, root=_root_calling('list_agents', {}))
 
     with pytest.raises(SummonError, match='not the name of the profile'):
         asyncio.run(env.summoner.summon(parent_id=None, task='go', agent_id='nope'))
 
 
-def test_a_running_node_cannot_be_resumed(tmp_path):
+def test_a_running_node_cannot_be_resumed(tmp_path: Path) -> None:
     env = make_env(tmp_path, root=_root_calling('list_agents', {}), profiles={'worker': {}})
     tree = env.tree()
     root = tree.ensure_root('wizard')
@@ -146,7 +147,7 @@ def test_a_running_node_cannot_be_resumed(tmp_path):
         asyncio.run(env.summoner.summon(parent_id=None, task='more', agent_id=node.id))
 
 
-def test_two_summons_without_an_id_are_two_nodes(tmp_path):
+def test_two_summons_without_an_id_are_two_nodes(tmp_path: Path) -> None:
     env = make_env(
         tmp_path,
         root=_root_calling('list_agents', {}),
@@ -154,7 +155,7 @@ def test_two_summons_without_an_id_are_two_nodes(tmp_path):
         scripts={'worker': lambda m, i: ModelResponse(parts=[TextPart('done')])},
     )
 
-    async def inner():
+    async def inner() -> None:
         await env.summoner.summon(parent_id=None, name='worker', task='a')
         await env.summoner.summon(parent_id=None, name='worker', task='b')
 
@@ -167,7 +168,7 @@ def test_two_summons_without_an_id_are_two_nodes(tmp_path):
 # --- killing -----------------------------------------------------------------
 
 
-def test_killing_a_node_stops_it_and_everything_under_it(tmp_path):
+def test_killing_a_node_stops_it_and_everything_under_it(tmp_path: Path) -> None:
     env = make_env(tmp_path, root=_root_calling('list_agents', {}), profiles={'worker': {}, 'deeper': {}})
     tree = env.tree()
     root = tree.ensure_root('wizard')
@@ -181,7 +182,7 @@ def test_killing_a_node_stops_it_and_everything_under_it(tmp_path):
     assert child.status is NodeStatus.CANCELLED
 
 
-def test_killing_a_finished_node_is_a_no_op(tmp_path):
+def test_killing_a_finished_node_is_a_no_op(tmp_path: Path) -> None:
     env = make_env(tmp_path, root=_root_calling('list_agents', {}), profiles={'worker': {}})
     tree = env.tree()
     root = tree.ensure_root('wizard')
@@ -191,7 +192,7 @@ def test_killing_a_finished_node_is_a_no_op(tmp_path):
     assert 'had already finished' in env.summoner.kill(None, node.id)
 
 
-def test_a_node_cannot_kill_its_own_parent(tmp_path):
+def test_a_node_cannot_kill_its_own_parent(tmp_path: Path) -> None:
     env = make_env(tmp_path, root=_root_calling('list_agents', {}), profiles={'worker': {}, 'deeper': {}})
     tree = env.tree()
     root = tree.ensure_root('wizard')
@@ -202,7 +203,7 @@ def test_a_node_cannot_kill_its_own_parent(tmp_path):
         env.summoner.kill(child.id, parent.id)
 
 
-def test_the_root_cannot_be_killed(tmp_path):
+def test_the_root_cannot_be_killed(tmp_path: Path) -> None:
     env = make_env(tmp_path, root=_root_calling('list_agents', {}))
     root = env.tree().ensure_root('wizard')
 
@@ -210,7 +211,7 @@ def test_the_root_cannot_be_killed(tmp_path):
         env.summoner.kill(None, root.id)
 
 
-def test_a_killed_sync_summon_does_not_cancel_the_callers_turn(tmp_path):
+def test_a_killed_sync_summon_does_not_cancel_the_callers_turn(tmp_path: Path) -> None:
     """Killing a subagent from the UI must not take the parent's turn with it."""
     env = make_env(
         tmp_path,
@@ -238,7 +239,7 @@ def test_a_killed_sync_summon_does_not_cancel_the_callers_turn(tmp_path):
 # --- the background ----------------------------------------------------------
 
 
-def test_a_blocking_call_can_be_moved_to_the_background(tmp_path):
+def test_a_blocking_call_can_be_moved_to_the_background(tmp_path: Path) -> None:
     """The caller stops waiting; the node finishes and its answer arrives later."""
     env = make_env(
         tmp_path,
@@ -274,7 +275,7 @@ def test_a_blocking_call_can_be_moved_to_the_background(tmp_path):
     assert waiting and 'arrived late' in waiting[0]
 
 
-def test_a_finished_node_cannot_be_backgrounded(tmp_path):
+def test_a_finished_node_cannot_be_backgrounded(tmp_path: Path) -> None:
     env = make_env(tmp_path, root=_root_calling('list_agents', {}), profiles={'worker': {}})
     tree = env.tree()
     root = tree.ensure_root('wizard')
@@ -288,7 +289,7 @@ def test_a_finished_node_cannot_be_backgrounded(tmp_path):
 # --- the channel -------------------------------------------------------------
 
 
-def test_a_unidirectional_child_cannot_talk_back(tmp_path):
+def test_a_unidirectional_child_cannot_talk_back(tmp_path: Path) -> None:
     env = make_env(tmp_path, root=_root_calling('list_agents', {}), profiles={'worker': {}})
     tree = env.tree()
     root = tree.ensure_root('wizard')
@@ -298,7 +299,7 @@ def test_a_unidirectional_child_cannot_talk_back(tmp_path):
         env.summoner.send_message(sender_id=node.id, target_id=root.id, text='hi')
 
 
-def test_a_bidirectional_child_reaches_its_parent_when_it_is_working(tmp_path):
+def test_a_bidirectional_child_reaches_its_parent_when_it_is_working(tmp_path: Path) -> None:
     """The channel decides *whether*; the live turn decides *now*."""
     env = make_env(
         tmp_path,
@@ -319,7 +320,7 @@ def test_a_bidirectional_child_reaches_its_parent_when_it_is_working(tmp_path):
     assert tree.notifications.for_receiver(root.id)[0].text == 'found something'
 
 
-def test_a_parent_steers_a_running_child_with_an_instruction(tmp_path):
+def test_a_parent_steers_a_running_child_with_an_instruction(tmp_path: Path) -> None:
     env = make_env(tmp_path, root=_root_calling('list_agents', {}), profiles={'worker': {}, 'deeper': {}})
     tree = env.tree()
     root = tree.ensure_root('wizard')
@@ -339,7 +340,7 @@ def test_a_parent_steers_a_running_child_with_an_instruction(tmp_path):
     message = env.summoner.send_message(sender_id=root.id, target_id=node.id, text='go left instead')
 
     assert 'queued' in message
-    from src.engine.agents.message_types import type_of
+    from src.core.agents.type_of import type_of
 
     delivered = run.enqueued[0]
     assert 'go left instead' in delivered.parts[0].content
@@ -347,7 +348,7 @@ def test_a_parent_steers_a_running_child_with_an_instruction(tmp_path):
     assert type_of(delivered, delivered.parts[0])['type'] == 'agent_message'
 
 
-def test_a_parent_cannot_message_a_child_that_is_not_running(tmp_path):
+def test_a_parent_cannot_message_a_child_that_is_not_running(tmp_path: Path) -> None:
     """Nothing waits for a dead node: the parent is told which call brings it back."""
     env = make_env(tmp_path, root=_root_calling('list_agents', {}), profiles={'worker': {}})
     tree = env.tree()
@@ -367,7 +368,7 @@ def test_a_parent_cannot_message_a_child_that_is_not_running(tmp_path):
     assert 'keeps its transcript' in message
 
 
-def test_a_finished_node_keeps_nothing_waiting(tmp_path):
+def test_a_finished_node_keeps_nothing_waiting(tmp_path: Path) -> None:
     """A queue nobody promised to drain is a queue that grows in the dark."""
     env = make_env(tmp_path, root=_root_calling('list_agents', {}), profiles={'worker': {}})
     tree = env.tree()
@@ -381,7 +382,7 @@ def test_a_finished_node_keeps_nothing_waiting(tmp_path):
     assert not hasattr(node, 'inbox')
 
 
-def test_a_sibling_needs_its_name_in_the_channel(tmp_path):
+def test_a_sibling_needs_its_name_in_the_channel(tmp_path: Path) -> None:
     siblings = 'channel:\n  mode: bidirectional\n  siblings: [reviewer]\n'
     env = make_env(
         tmp_path,
@@ -402,7 +403,7 @@ def test_a_sibling_needs_its_name_in_the_channel(tmp_path):
     assert tree.notifications.for_receiver(reviewer.id)[0].text == 'look at this'
 
 
-def test_a_sibling_that_is_not_running_cannot_be_messaged(tmp_path):
+def test_a_sibling_that_is_not_running_cannot_be_messaged(tmp_path: Path) -> None:
     siblings = 'channel:\n  mode: bidirectional\n  siblings: [reviewer]\n'
     env = make_env(
         tmp_path,
@@ -420,7 +421,7 @@ def test_a_sibling_that_is_not_running_cannot_be_messaged(tmp_path):
         env.summoner.send_message(sender_id=reader.id, target_id=reviewer.id, text='hey')
 
 
-def test_a_stranger_is_not_reachable(tmp_path):
+def test_a_stranger_is_not_reachable(tmp_path: Path) -> None:
     env = make_env(
         tmp_path,
         root=_root_calling('list_agents', {}),
@@ -440,7 +441,7 @@ def test_a_stranger_is_not_reachable(tmp_path):
 # --- what the prompt says ----------------------------------------------------
 
 
-def test_the_peers_block_lists_the_parent_and_the_ids(tmp_path):
+def test_the_peers_block_lists_the_parent_and_the_ids(tmp_path: Path) -> None:
     env = make_env(tmp_path, root=_root_calling('list_agents', {}), profiles={'worker': {}})
     tree = env.tree()
     root = tree.ensure_root('wizard')
@@ -455,7 +456,7 @@ def test_the_peers_block_lists_the_parent_and_the_ids(tmp_path):
     assert 'idle (not in a turn)' in block
 
 
-def test_the_peers_block_shows_only_the_siblings_the_channel_names(tmp_path):
+def test_the_peers_block_shows_only_the_siblings_the_channel_names(tmp_path: Path) -> None:
     siblings = 'channel:\n  mode: bidirectional\n  siblings: [reviewer]\n'
     env = make_env(
         tmp_path,
@@ -474,7 +475,7 @@ def test_the_peers_block_shows_only_the_siblings_the_channel_names(tmp_path):
     assert '**other**' not in block
 
 
-def test_the_root_gets_no_peers_block(tmp_path):
+def test_the_root_gets_no_peers_block(tmp_path: Path) -> None:
     env = make_env(tmp_path, root=_root_calling('list_agents', {}))
     tree = env.tree()
     root = tree.ensure_root('wizard')
@@ -483,7 +484,7 @@ def test_the_root_gets_no_peers_block(tmp_path):
     assert render_peers(tree, root.id) == ''
 
 
-def test_a_child_cannot_message_a_parent_that_is_not_in_a_turn(tmp_path):
+def test_a_child_cannot_message_a_parent_that_is_not_in_a_turn(tmp_path: Path) -> None:
     """The rule holds in both directions; the advice differs, because the fix does."""
     env = make_env(
         tmp_path,
@@ -505,7 +506,7 @@ def test_a_child_cannot_message_a_parent_that_is_not_in_a_turn(tmp_path):
     assert env.summoner.take_messages() == []
 
 
-def test_answering_a_finished_child_resumes_it_with_the_message(tmp_path):
+def test_answering_a_finished_child_resumes_it_with_the_message(tmp_path: Path) -> None:
     """What the refusal asks for, done: the reply becomes the task of the resume."""
     env = make_env(
         tmp_path,
@@ -536,14 +537,14 @@ def test_answering_a_finished_child_resumes_it_with_the_message(tmp_path):
 # --- what the tools hand the model -------------------------------------------
 
 
-def test_list_agents_shows_the_ids_and_who_summoned_who(tmp_path):
+def test_list_agents_shows_the_ids_and_who_summoned_who(tmp_path: Path) -> None:
     env = make_env(tmp_path, root=_root_calling('list_agents', {}), profiles={'worker': {}})
     tree = env.tree()
     root = tree.ensure_root('wizard')
     node = tree.add(parent_id=root.id, name='worker', role=node_role(), task='read it')
     node.finish('done')
 
-    from src.engine.agents.tree.tools import render_tree_table
+    from src.core.agents.tree.tools import render_tree_table
 
     table = render_tree_table(tree, root.id)
     assert 'id | agent | state' in table
@@ -552,15 +553,15 @@ def test_list_agents_shows_the_ids_and_who_summoned_who(tmp_path):
     assert 'read it' in table
 
 
-def test_list_agents_on_a_session_with_no_subagents_says_so(tmp_path):
-    from src.engine.agents.tree.tools import render_tree_table
+def test_list_agents_on_a_session_with_no_subagents_says_so(tmp_path: Path) -> None:
+    from src.core.agents.tree.tools import render_tree_table
 
     tree = AgentTree()
     tree.ensure_root('wizard')
     assert 'no subagents' in render_tree_table(tree, None)
 
 
-def test_a_node_that_ends_stops_what_it_had_running_under_it(tmp_path):
+def test_a_node_that_ends_stops_what_it_had_running_under_it(tmp_path: Path) -> None:
     """A branch cannot hang from a parent that stopped: children die with it."""
     env = make_env(
         tmp_path,
@@ -594,7 +595,7 @@ def test_a_node_that_ends_stops_what_it_had_running_under_it(tmp_path):
 # --- ids as agents actually see them -----------------------------------------
 
 
-def test_a_short_id_is_enough_to_message_or_resume(tmp_path):
+def test_a_short_id_is_enough_to_message_or_resume(tmp_path: Path) -> None:
     """The ids agents read are eight characters: the tools must accept them."""
     env = make_env(
         tmp_path,
@@ -614,7 +615,7 @@ def test_a_short_id_is_enough_to_message_or_resume(tmp_path):
     assert node.runs == 2
 
 
-def test_a_short_id_reaches_a_live_sibling(tmp_path):
+def test_a_short_id_reaches_a_live_sibling(tmp_path: Path) -> None:
     siblings = 'channel:\n  mode: bidirectional\n  siblings: [worker]\n'
     env = make_env(
         tmp_path,
@@ -635,7 +636,7 @@ def test_a_short_id_reaches_a_live_sibling(tmp_path):
     assert tree.notifications.for_receiver(worker.id)[0].text == 'look'
 
 
-def test_an_ambiguous_prefix_is_refused_instead_of_guessing(tmp_path):
+def test_an_ambiguous_prefix_is_refused_instead_of_guessing(tmp_path: Path) -> None:
     """Two executions of the same subagent must not be confusable."""
     env = make_env(tmp_path, root=_root_calling('list_agents', {}), profiles={'worker': {}})
     tree = env.tree()
@@ -651,7 +652,7 @@ def test_an_ambiguous_prefix_is_refused_instead_of_guessing(tmp_path):
         env.summoner.kill(None, shared)
 
 
-def test_an_unknown_id_says_what_an_id_is(tmp_path):
+def test_an_unknown_id_says_what_an_id_is(tmp_path: Path) -> None:
     env = make_env(tmp_path, root=_root_calling('list_agents', {}), profiles={'worker': {}})
 
     with pytest.raises(SummonError, match='not the name of the profile'):
@@ -661,7 +662,7 @@ def test_an_unknown_id_says_what_an_id_is(tmp_path):
 # --- context -----------------------------------------------------------------
 
 
-def test_a_subagent_on_the_session_model_keeps_the_known_window(tmp_path):
+def test_a_subagent_on_the_session_model_keeps_the_known_window(tmp_path: Path) -> None:
     """A node that inherits the model must not lose the window the meter holds.
 
     A subagent whose profile configures no model sends to the model the session is on,
@@ -687,9 +688,9 @@ def test_a_subagent_on_the_session_model_keeps_the_known_window(tmp_path):
     assert 'read half the tree.' in str(_tool_returns(messages)[0].content)
 
 
-def test_a_subagent_with_an_unknown_window_does_not_inherit_the_root_window(tmp_path):
+def test_a_subagent_with_an_unknown_window_does_not_inherit_the_root_window(tmp_path: Path) -> None:
     """A different model may run, but its unknown window remains unknown."""
-    from src.engine.agents.tree.summoner import AgentRunModel
+    from src.core.agents.tree.agent_run_model import AgentRunModel
 
     notices: list[tuple[str, str]] = []
     capability = ContextViewCapability(
@@ -717,7 +718,7 @@ def test_a_subagent_with_an_unknown_window_does_not_inherit_the_root_window(tmp_
 
 @pytest.mark.parametrize('mode', ['sync', 'async'])
 def test_should_await_model_resolution_on_spawn_and_resume(tmp_path: Path, mode: str) -> None:
-    from src.engine.agents.tree.summoner import AgentRunModel
+    from src.core.agents.tree.agent_run_model import AgentRunModel
 
     resolutions: list[str] = []
     worker = _model(lambda messages, info: ModelResponse(parts=[TextPart('finished')]))
@@ -752,7 +753,7 @@ def test_should_await_model_resolution_on_spawn_and_resume(tmp_path: Path, mode:
 
 
 def test_should_preserve_cancellation_during_model_resolution(tmp_path: Path) -> None:
-    from src.engine.agents.tree.summoner import AgentRunModel
+    from src.core.agents.tree.agent_run_model import AgentRunModel
 
     async def resolve(name: str) -> AgentRunModel:
         raise asyncio.CancelledError()

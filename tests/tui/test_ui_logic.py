@@ -1,15 +1,15 @@
 """Tests for the pure UI logic (command registry and effort wording)."""
 
-from src.engine.providers.domain.model_capability import ModelCapability
-from src.engine.providers.domain.provider_account import ProviderAccount
-from src.engine.providers.domain.provider_kind import ProviderKind
-from src.engine.providers.domain.selection import Selection
-from src.engine.providers.snapshot import ModelSnapshot
-from src.ui.model_view_mixin import effort_label
+from src.core.providers.domain.model_capability import ModelCapability
+from src.core.providers.domain.provider_account import ProviderAccount
+from src.core.providers.domain.provider_kind import ProviderKind
+from src.core.providers.domain.selection import Selection
+from src.core.providers.model_snapshot import ModelSnapshot
+from src.ui.state.effort_label import effort_label
 from tests.support.ui import render_text
 
 
-def test_effort_label_falls_back_to_the_selection():
+def test_effort_label_falls_back_to_the_selection() -> None:
     account = ProviderAccount.create('work', ProviderKind.OPENROUTER)
     snapshot = ModelSnapshot(
         account=account,
@@ -21,8 +21,8 @@ def test_effort_label_falls_back_to_the_selection():
     assert effort_label(ModelSnapshot(), 'bogus') == 'default'
 
 
-def test_assistant_block_renders_markdown_and_collapses_reasoning():
-    from src.ui.widgets.chat_log import AssistantBlock
+def test_assistant_block_renders_markdown_and_collapses_reasoning() -> None:
+    from src.ui.widgets.chat.assistant_block import AssistantBlock
 
     collapsed = AssistantBlock(reasoning_visible=False)
     collapsed.add_thinking('thinking hard')
@@ -41,8 +41,9 @@ def test_assistant_block_renders_markdown_and_collapses_reasoning():
     assert 'thinking hard' in render_text(expanded._build())
 
 
-def test_assistant_block_without_reasoning_is_just_markdown():
-    from src.ui.widgets.chat_log import AssistantBlock, LinkedMarkdown
+def test_assistant_block_without_reasoning_is_just_markdown() -> None:
+    from src.ui.widgets.chat.assistant_block import AssistantBlock
+    from src.ui.widgets.chat.linked_markdown import LinkedMarkdown
 
     block = AssistantBlock(reasoning_visible=False)
     block.add_text('# Hello')
@@ -50,10 +51,10 @@ def test_assistant_block_without_reasoning_is_just_markdown():
     assert isinstance(block._build(), LinkedMarkdown)
 
 
-def test_assistant_block_without_content_is_empty_text():
+def test_assistant_block_without_content_is_empty_text() -> None:
     from rich.text import Text
 
-    from src.ui.widgets.chat_log import AssistantBlock
+    from src.ui.widgets.chat.assistant_block import AssistantBlock
 
     block = AssistantBlock()
     block.finalize()
@@ -61,8 +62,8 @@ def test_assistant_block_without_content_is_empty_text():
     assert block._build().plain == ''
 
 
-def test_collapsed_reasoning_reports_how_much_it_hides():
-    from src.ui.widgets.chat_log import AssistantBlock
+def test_collapsed_reasoning_reports_how_much_it_hides() -> None:
+    from src.ui.widgets.chat.assistant_block import AssistantBlock
 
     block = AssistantBlock(reasoning_visible=False)
     block.add_thinking('one\ntwo\nthree')
@@ -72,8 +73,8 @@ def test_collapsed_reasoning_reports_how_much_it_hides():
     assert '/reasoning-visibility' not in text
 
 
-def test_unavailable_reasoning_is_only_shown_when_expanded():
-    from src.ui.widgets.chat_log import AssistantBlock
+def test_unavailable_reasoning_is_only_shown_when_expanded() -> None:
+    from src.ui.widgets.chat.assistant_block import AssistantBlock
 
     block = AssistantBlock()
     block.add_thinking('')

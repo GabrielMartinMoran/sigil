@@ -12,18 +12,18 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
 from textual.app import App
 from textual.widgets import OptionList
 
-from src.engine.agents.model_defaults import ConfigScope, read_defaults, save_default
-from src.engine.agents.profile.models.agent_profile import AgentProfile
-from src.engine.agents.profile.models.agent_role import AgentRole
-from src.ui.provider_mixin import defaults_rows
-from src.ui.widgets.model_defaults_screen import (
-    DefaultsChoice,
-    DefaultsRow,
-    ModelDefaultsScreen,
-)
+from src.core.agents.config_scope import ConfigScope
+from src.core.agents.model_defaults import read_defaults, save_default
+from src.core.agents.profile.models.agent_profile import AgentProfile
+from src.core.agents.profile.models.agent_role import AgentRole
+from src.ui.state.defaults_rows import defaults_rows
+from src.ui.widgets.models.defaults_choice import DefaultsChoice
+from src.ui.widgets.models.defaults_row import DefaultsRow
+from src.ui.widgets.screens.model_defaults_screen import ModelDefaultsScreen
 from tests.support.ui import render_text, wait_until
 
 
@@ -105,7 +105,7 @@ def _mounted(screen: ModelDefaultsScreen) -> dict[str, str]:
 # --- the destination ---------------------------------------------------------
 
 
-def test_should_start_the_destination_where_the_entry_lives(tmp_path: Path):
+def test_should_start_the_destination_where_the_entry_lives(tmp_path: Path) -> None:
     state = _state(tmp_path, project={'agents': {'wizard': {'account': 'w', 'model': 'm', 'effort': 'low'}}})
     screen = ModelDefaultsScreen(_rows(state), state)
 
@@ -127,7 +127,7 @@ def test_should_start_the_destination_where_the_entry_lives(tmp_path: Path):
     asyncio.run(inner())
 
 
-def test_should_return_the_row_and_the_destination(tmp_path: Path):
+def test_should_return_the_row_and_the_destination(tmp_path: Path) -> None:
     state = _state(tmp_path, user={'default_model': {'account': 'w', 'model': 'm', 'effort': 'low'}})
     screen = ModelDefaultsScreen(_rows(state), state)
 
@@ -139,7 +139,7 @@ def test_should_return_the_row_and_the_destination(tmp_path: Path):
     assert choice.clear is False
 
 
-def test_should_only_clear_where_the_entry_is_written(tmp_path: Path):
+def test_should_only_clear_where_the_entry_is_written(tmp_path: Path) -> None:
     state = _state(tmp_path, user={'agents': {'wizard': {'account': 'w', 'model': 'm', 'effort': 'low'}}})
     screen = ModelDefaultsScreen(_rows(state), state)
 
@@ -173,7 +173,7 @@ def test_should_only_clear_where_the_entry_is_written(tmp_path: Path):
 # --- what the rows say -------------------------------------------------------
 
 
-def test_should_show_which_file_sets_each_entry(tmp_path: Path):
+def test_should_show_which_file_sets_each_entry(tmp_path: Path) -> None:
     state = _state(
         tmp_path,
         project={'agents': {'wizard': {'account': 'p', 'model': 'p/m', 'effort': 'high'}}},
@@ -186,7 +186,7 @@ def test_should_show_which_file_sets_each_entry(tmp_path: Path):
     assert 'Default for new conversations' in painted['list']
 
 
-def test_should_show_an_invalid_entry_as_invalid(tmp_path: Path):
+def test_should_show_an_invalid_entry_as_invalid(tmp_path: Path) -> None:
     state = _state(tmp_path, project={'agents': {'wizard': {'account': 'a', 'model': 'm', 'effort': 'typo'}}})
     row = DefaultsRow(
         target='wizard',
@@ -202,7 +202,9 @@ def test_should_show_an_invalid_entry_as_invalid(tmp_path: Path):
     assert 'project, invalid' in text
 
 
-def test_should_lock_the_destination_when_sigil_config_replaces_both(tmp_path: Path, monkeypatch):
+def test_should_lock_the_destination_when_sigil_config_replaces_both(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     fixed = tmp_path / 'explicit.json'
     monkeypatch.setenv('SIGIL_CONFIG', str(fixed))
     state = read_defaults()
@@ -223,7 +225,7 @@ def test_should_lock_the_destination_when_sigil_config_replaces_both(tmp_path: P
 # --- the rows the command builds ---------------------------------------------
 
 
-def test_should_list_installed_profiles_before_ones_only_the_config_knows(tmp_path: Path):
+def test_should_list_installed_profiles_before_ones_only_the_config_knows(tmp_path: Path) -> None:
     state = _state(
         tmp_path,
         project={'agents': {'wizard': {'account': 'work', 'model': 'm', 'effort': 'high'}}},
@@ -245,7 +247,7 @@ def test_should_list_installed_profiles_before_ones_only_the_config_knows(tmp_pa
     assert "account 'deleted' is not configured" in rows[2].summary
 
 
-def test_should_list_agents_and_subagents_each_with_its_own_role(tmp_path: Path):
+def test_should_list_agents_and_subagents_each_with_its_own_role(tmp_path: Path) -> None:
     state = _state(tmp_path)
     profiles = {
         'wizard': _profile('wizard', AgentRole.AGENT),
@@ -262,7 +264,7 @@ def test_should_list_agents_and_subagents_each_with_its_own_role(tmp_path: Path)
     assert [row.label for row in rows[3:]] == ['Pas Qa', 'Scout']
 
 
-def test_should_head_each_role_and_the_orphans_apart(tmp_path: Path):
+def test_should_head_each_role_and_the_orphans_apart(tmp_path: Path) -> None:
     state = _state(
         tmp_path,
         project={'agents': {'gone': {'account': 'work', 'model': 'm', 'effort': 'low'}}},
@@ -284,8 +286,8 @@ def test_should_head_each_role_and_the_orphans_apart(tmp_path: Path):
     assert text.count('Agents') == 1
 
 
-def test_should_say_where_each_kind_of_default_takes_effect():
-    from src.ui.provider_mixin import _effect_note
+def test_should_say_where_each_kind_of_default_takes_effect() -> None:
+    from src.ui.mixins.provider_mixin import _effect_note
 
     default = DefaultsRow(None, 'Default for new conversations', '')
     agent = DefaultsRow('wizard', 'Wizard', '', role=AgentRole.AGENT)
@@ -304,8 +306,8 @@ def _sigil_app(root: Path, service, paths: tuple[Path, Path]):
     from pydantic_ai import Agent
     from pydantic_ai.models.test import TestModel
 
-    from src.engine.sessions.session_store import SessionStore
-    from src.ui.app import SigilApp
+    from src.core.sessions.session_store import SessionStore
+    from src.ui.sigil_app import SigilApp
 
     store = SessionStore(cwd=str(root), base_dir=root / 'sessions')
     return SigilApp(
@@ -318,9 +320,9 @@ def _sigil_app(root: Path, service, paths: tuple[Path, Path]):
     )
 
 
-def test_should_write_the_default_model_chosen_from_the_chat(tmp_path: Path):
-    from src.ui.widgets.effort_screen import EffortScreen
-    from src.ui.widgets.grouped_model_screen import GroupedModelScreen
+def test_should_write_the_default_model_chosen_from_the_chat(tmp_path: Path) -> None:
+    from src.ui.widgets.screens.effort_screen import EffortScreen
+    from src.ui.widgets.screens.grouped_model_screen import GroupedModelScreen
     from tests.support.provider_commands import _submit, _texts
     from tests.support.provider_setup import _prepared
 
@@ -350,10 +352,10 @@ def test_should_write_the_default_model_chosen_from_the_chat(tmp_path: Path):
     asyncio.run(inner())
 
 
-def test_should_say_when_the_other_file_still_overrides_the_write(tmp_path: Path):
+def test_should_say_when_the_other_file_still_overrides_the_write(tmp_path: Path) -> None:
     """Writing the user's file while the project sets the same agent is not a lie."""
-    from src.ui.widgets.effort_screen import EffortScreen
-    from src.ui.widgets.grouped_model_screen import GroupedModelScreen
+    from src.ui.widgets.screens.effort_screen import EffortScreen
+    from src.ui.widgets.screens.grouped_model_screen import GroupedModelScreen
     from tests.support.provider_commands import _submit, _texts
     from tests.support.provider_setup import _prepared
 

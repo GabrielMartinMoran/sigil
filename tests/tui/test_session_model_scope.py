@@ -12,13 +12,15 @@ Two rules, and they are the reason this file exists:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
+import pytest
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 
-from src.engine.bootstrap import Composition
-from src.engine.providers.bootstrap import ProviderPaths
-from src.engine.sessions.session_store import SessionStore
-from src.engine.settings import load_settings
+from src.core.composition.composition import Composition
+from src.core.config.load_settings import load_settings
+from src.core.providers.provider_paths import ProviderPaths
+from src.core.sessions.session_store import SessionStore
 from tests.support.provider_service import _add, _service
 
 # --- the config block --------------------------------------------------------
@@ -42,7 +44,7 @@ def _composition(tmp_path, monkeypatch, config: dict | None = None) -> tuple[Com
         _write(tmp_path, config)
     service = _service(tmp_path)
     _add(service)
-    monkeypatch.setattr('src.engine.bootstrap.build_service', lambda *args, **kwargs: service)
+    monkeypatch.setattr('src.core.composition.composition.build_service', lambda *args, **kwargs: service)
     composition = Composition(tmp_path, settings=load_settings({}), provider_paths=ProviderPaths(tmp_path / 'p'))
     return composition, service
 
@@ -50,7 +52,9 @@ def _composition(tmp_path, monkeypatch, config: dict | None = None) -> tuple[Com
 # --- and saving does not move it ---------------------------------------------
 
 
-def test_persisting_a_session_does_not_copy_the_active_model_into_it(tmp_path, monkeypatch):
+def test_persisting_a_session_does_not_copy_the_active_model_into_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """`persist` writes what the session has. It does not ask the router what to write.
 
     That was the leak: `persist` stamped the model currently in effect onto whatever
@@ -60,7 +64,7 @@ def test_persisting_a_session_does_not_copy_the_active_model_into_it(tmp_path, m
     from pydantic_ai import Agent
     from pydantic_ai.models.test import TestModel
 
-    from src.ui.app import SigilApp
+    from src.ui.sigil_app import SigilApp
 
     composition, service = _composition(tmp_path, monkeypatch)
     store = SessionStore(cwd=str(tmp_path), base_dir=tmp_path / 'sessions')
