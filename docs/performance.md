@@ -9,13 +9,13 @@ recent turn.
 ## What the web extraction changes
 
 The audit started at commit `be9a957`, which introduces the web client and moves
-composition from `src/sigil.py` into `src/core/bootstrap.py`.
+composition from `src/sigil.py` into `src/core/composition/bootstrap.py`.
 
 The terminal path remains `SigilApp` → `TurnMixin.run_turn` → `Agent.iter`.
 It does not pass through FastAPI, HTTP, the server event hub, SSE, or the browser
 store. The web runtime is a separate driver of the same engine components, not
 an intermediary for the terminal client. The web commit does not change
-`src/ui/turn_mixin.py`.
+`src/ui/mixins/turn_mixin.py`.
 
 There is still an architectural maintenance risk: the TUI and web runtime have
 separate implementations of checkpointing, steering, cancellation, and turn

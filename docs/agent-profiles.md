@@ -119,7 +119,7 @@ metadata; the engine still enforces the parsed permission rules on tool calls.
 
 The implementation lives in [composition binding](../src/core/bootstrap.py),
 [profile selection](../src/core/agents/profile/agent_registry.py), and
-[server projections](../src/server/views.py). The
+[server projections](../src/server/api/views.py). The
 [profile scenarios](../specs/features/application/agent_profiles.feature)
 record the behavioral contract.
 

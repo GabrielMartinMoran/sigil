@@ -2058,7 +2058,7 @@ The bundle carries the hash of the sources that produced it (`web/dist/build.jso
 `python -m src.server.webbuild` recomputes that hash and exits non-zero when the
 committed bundle no longer matches `web/src`, which is the only failure mode that
 committing `dist/` introduces. The recipe exists twice on purpose — Python in
-`src/server/webbuild.py`, Node in `web/scripts/source-hash.mjs` — because the server
+`src/server/web/webbuild.py`, Node in `web/scripts/source-hash.mjs` — because the server
 must answer without Node; `tests/server/test_web_dist.py` compares both so they cannot drift.
 
 ### The pre-commit hook

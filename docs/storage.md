@@ -71,7 +71,7 @@ at the time of writing. The absolute values depend on the machine; the shape
 does not.
 
 A turn checkpoints once per second and once per stream event
-(`CHECKPOINT_INTERVAL` in `src/ui/turn_mixin.py`), and each checkpoint
+(`CHECKPOINT_INTERVAL` in `src/ui/mixins/turn_mixin.py`), and each checkpoint
 re-serializes the entire session and rewrites the file:
 
 | History | File on disk | One checkpoint | Blocked loop per 60 s turn |
@@ -905,14 +905,14 @@ it is at `2` as of the context measurement described in [Schema steps](#schema-s
 | `src/core/context/strategy/turns.py` | `split_turns` becomes `split_prompts`, which is what it has always cut |
 | `src/core/skills/loads.py` | **deleted**: `SkillLoads` stops existing. `loaded_skills(messages)` in `skills/loaded.py` becomes a function over a transcript, not a registry |
 | `src/core/skills/tools.py` | `load_skill` stops writing to a registry; the call in the log is the record |
-| `src/ui/commands_mixin.py`, `workspace_mixin.py`, `tree_mixin.py` | the three `reset()` calls disappear; the sidebar reads `loaded_skills(execution_id)` from the core |
+| `src/ui/mixins/commands_mixin.py`, `workspace_mixin.py`, `tree_mixin.py` | the three `reset()` calls disappear; the sidebar reads `loaded_skills(execution_id)` from the core |
 | `src/core/agents/tree/agent_tree_store.py` | unchanged in behaviour; `save` persists executions with the session. The root is no longer special: `Tree.root()` reads the execution with no parent |
 | `src/core/roadmap/persistence.py`, `stores.py` | ✅ rows instead of files (`persistence.py` deleted); the per-execution registry stays, and the root's plan is keyed by the root's id instead of a sentinel |
 | `src/core/providers/store/` | ✅ `FileAccountStore` → `SqliteAccountStore` and `FileStateStore` → `SqliteStateStore`, on `accounts` and `app_state`. `SecretStore` untouched: credentials stay a `0600` file |
-| `src/core/paths.py` | unchanged: the database path is resolved by `storage.database_path()` from `sigil_home()`. The old session directories stay on disk, unread and undeleted |
-| `src/ui/commands_mixin.py` | `catalog()` returns summaries; `load_session` unchanged otherwise |
-| `src/core/settings.py` | `keep_recent_turns` → `keep_recent_prompts` and `image_rounds` → `image_turns`, because each counted a different unit under the same sentence. The environment variables keep their published names. `keep_recent_prompts` was later removed with prompt dropping; only `image_turns` remains |
-| `src/ui/widgets/session_picker.py` | reads the summary fields it already uses |
+| `src/core/config/paths.py` | unchanged: the database path is resolved by `storage.database_path()` from `sigil_home()`. The old session directories stay on disk, unread and undeleted |
+| `src/ui/mixins/commands_mixin.py` | `catalog()` returns summaries; `load_session` unchanged otherwise |
+| `src/core/config/settings.py` | `keep_recent_turns` → `keep_recent_prompts` and `image_rounds` → `image_turns`, because each counted a different unit under the same sentence. The environment variables keep their published names. `keep_recent_prompts` was later removed with prompt dropping; only `image_turns` remains |
+| `src/ui/widgets/screens/session_picker.py` | reads the summary fields it already uses |
 | `tests/` | the store tests move to a temporary database; the round-trip test becomes the contract |
 
 The test that matters most is the round trip: a `list[ModelMessage]` written and
