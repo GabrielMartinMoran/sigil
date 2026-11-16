@@ -11,7 +11,7 @@ from src.core.agents.tree.models.agent_node import AgentNode
 from src.core.agents.tree.models.node_status import NodeStatus
 from src.core.agents.tree.reports import WAKE_PROMPT, report_view
 from src.core.agents.tree.subagent_summoner import _envelope
-from src.server import views
+from src.server.api import views
 
 
 def _node(result: str = 'the report body', status: NodeStatus = NodeStatus.DONE) -> AgentNode:

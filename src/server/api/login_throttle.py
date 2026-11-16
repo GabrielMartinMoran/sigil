@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from src.server.auth import FAILURE_WINDOW_SECONDS, MAX_DELAY_SECONDS, MAX_FAILURES_PER_WINDOW
+from src.server.api.auth import FAILURE_WINDOW_SECONDS, MAX_DELAY_SECONDS, MAX_FAILURES_PER_WINDOW
 
 
 class LoginThrottle:

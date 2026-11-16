@@ -12,7 +12,7 @@ from pathlib import Path
 
 from src.core.workspace.models.workspace import Workspace
 from src.core.workspace.models.worktree import Worktree
-from src.server import views
+from src.server.api import views
 
 
 def _workspace(path: str, *, branch: str | None = 'x', main: bool = False) -> Workspace:

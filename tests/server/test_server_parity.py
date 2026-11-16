@@ -37,8 +37,8 @@ from src.core.context.meter.context_snapshot import ContextSnapshot
 from src.core.context.meter.cost import session_cost
 from src.core.context.meter.session_cost import SessionCost
 from src.core.storage.accepted_inputs import AcceptedInputs
-from src.server import views
-from src.server.server_runtime import ServerRuntime
+from src.server.api import views
+from src.server.runtime.server_runtime import ServerRuntime
 from tests.support.agents import write_profile
 from tests.support.server_parity import (
     _busy,

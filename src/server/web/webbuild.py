@@ -28,8 +28,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from src.server.build_error import BuildError
-from src.server.staleness import Staleness
+from src.core.checkout import checkout_root
+from src.server.web.build_error import BuildError
+from src.server.web.staleness import Staleness
 
 HASH_CHARS = 16
 """Characters of the digest kept in `build.json`. Must match the Node script."""
@@ -57,7 +58,7 @@ MANIFEST = 'build.json'
 
 def web_root() -> Path:
     """The `web/` directory of this checkout."""
-    return Path(__file__).resolve().parents[2] / 'web'
+    return checkout_root() / 'web'
 
 
 def dist_root(root: Path | None = None) -> Path:

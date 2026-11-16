@@ -61,7 +61,7 @@ from src.core.theming.theme_registry import ThemeRegistry
 from src.core.tooling.tool_logger_hub import ToolLoggerHub
 from src.core.tooling.tool_summary import ToolSummary
 from src.core.workspace.workspace_manager import WorkspaceManager
-from src.server.diagnostics import record
+from src.server.launch.diagnostics import record
 from src.ui.activity_mixin import ActivityMixin
 from src.ui.agent_mixin import AgentMixin
 from src.ui.attention import Attention

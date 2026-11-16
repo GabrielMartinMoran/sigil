@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from src.server.default_entry_body import DefaultEntryBody
+from src.server.api.bodies.default_entry_body import DefaultEntryBody
 
 
 class ModelDefaultBody(BaseModel):

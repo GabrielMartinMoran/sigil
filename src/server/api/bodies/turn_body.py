@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from src.server.image_body import ImageBody
+from src.server.api.bodies.image_body import ImageBody
 
 
 class TurnBody(BaseModel):

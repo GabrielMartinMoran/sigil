@@ -24,7 +24,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from src.server.views import transcript
+from src.server.api.views import transcript
 
 
 def _png(width: int = 640, height: int = 480) -> bytes:

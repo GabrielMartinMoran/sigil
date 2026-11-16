@@ -35,18 +35,19 @@ from src.core.agents.tree.reports import WAKE_PROMPT
 from src.core.composition.composition import Composition
 from src.core.sessions.session import Session
 from src.core.storage.accepted_inputs import AcceptedInputs
-from src.server.diagnostics import record
-from src.server.event_hub import EventHub
+from src.server.launch.diagnostics import record
+from src.server.launch.ownership_error import OwnershipError
+from src.server.launch.server_ownership import ServerOwnership
+from src.server.runtime.event_hub import EventHub
 
 # Re-exported for the importers that already name these here: the routes, the CLI,
 # the terminal client and the existing tests. The definitions live in
 # `runtime_support`, and `__all__` names them so the re-export is deliberate rather
 # than an unused import.
-from src.server.idle_shutdown import IdleShutdown
-from src.server.incoming_image import IncomingImage
-from src.server.ownership_error import OwnershipError
-from src.server.pending_question import PendingQuestion
-from src.server.runtime_support import (
+from src.server.runtime.idle_shutdown import IdleShutdown
+from src.server.runtime.incoming_image import IncomingImage
+from src.server.runtime.pending_question import PendingQuestion
+from src.server.runtime.runtime_support import (
     CHECKPOINT_INTERVAL,
     DEFAULT_IDLE_GRACE,
     IDLE_POLL_INTERVAL,
@@ -59,8 +60,7 @@ from src.server.runtime_support import (
     decode_images,
     resolve_question_timeout,
 )
-from src.server.server_ownership import ServerOwnership
-from src.server.session_runtime import SessionRuntime
+from src.server.runtime.session_runtime import SessionRuntime
 
 
 class ServerRuntime:

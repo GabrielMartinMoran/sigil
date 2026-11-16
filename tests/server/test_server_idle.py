@@ -39,15 +39,15 @@ from src.core.storage.accepted_inputs import AcceptedInputs
 from src.core.storage.confirm_delivery import confirm_delivery
 from src.core.storage.database_path import database_path
 from src.core.storage.delivery_confirmation import DeliveryConfirmation
+from src.server.api.graceful_stop import GracefulStop
 from src.server.cli import build_parser
-from src.server.endpoint_file import read_endpoint
-from src.server.event_hub import EventHub
-from src.server.graceful_stop import GracefulStop
-from src.server.idle_shutdown import IdleShutdown
-from src.server.pending_question import PendingQuestion
-from src.server.runtime_support import IDLE_POLL_INTERVAL
-from src.server.server_runtime import ServerRuntime
-from src.server.service_launch import live_endpoint
+from src.server.launch.endpoint_file import read_endpoint
+from src.server.launch.service_launch import live_endpoint
+from src.server.runtime.event_hub import EventHub
+from src.server.runtime.idle_shutdown import IdleShutdown
+from src.server.runtime.pending_question import PendingQuestion
+from src.server.runtime.runtime_support import IDLE_POLL_INTERVAL
+from src.server.runtime.server_runtime import ServerRuntime
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -489,14 +489,14 @@ from pydantic_ai.models.test import TestModel
 
 from src.core.composition.composition import Composition
 from src.core.config.load_settings import load_settings
-from src.server.graceful_stop import GracefulStop
-from src.server.app import create_app
+from src.server.api.graceful_stop import GracefulStop
+from src.server.api.app import create_app
 from src.server.cli import listening_socket
-from src.server.server_config import ServerConfig
-from src.server.endpoint_publisher import EndpointPublisher
-from src.server.event_hub import EventHub
-from src.server.server_ownership import ServerOwnership
-from src.server.server_runtime import ServerRuntime
+from src.server.launch.server_config import ServerConfig
+from src.server.launch.endpoint_publisher import EndpointPublisher
+from src.server.runtime.event_hub import EventHub
+from src.server.launch.server_ownership import ServerOwnership
+from src.server.runtime.server_runtime import ServerRuntime
 
 composition = Composition(
     {workspace!r},
@@ -535,8 +535,8 @@ import sys
 
 sys.path.insert(0, {root!r})
 
-from src.server.ownership_error import OwnershipError
-from src.server.server_ownership import ServerOwnership
+from src.server.launch.ownership_error import OwnershipError
+from src.server.launch.server_ownership import ServerOwnership
 
 try:
     ServerOwnership({database!r}).acquire()
@@ -639,7 +639,7 @@ def test_a_service_with_no_work_stops_after_the_window_and_releases_the_store(tm
 def test_should_close_streams_even_when_the_stop_event_is_skipped(connected: bool) -> None:
     from fastapi import FastAPI, Request
 
-    from src.server.app import _stream
+    from src.server.api.app import _stream
 
     async def go() -> None:
         app = FastAPI()

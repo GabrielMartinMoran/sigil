@@ -51,8 +51,8 @@ from src.core.storage.executions import root_id_for
 from src.core.tooling.outputs import present_output
 from src.core.tooling.presentation import human_bytes
 from src.core.workspace.models.workspace import Workspace
-from src.server.session_not_stored import SessionNotStored
-from src.server.transcript_page import TranscriptPage
+from src.server.runtime.session_not_stored import SessionNotStored
+from src.server.runtime.transcript_page import TranscriptPage
 
 MAX_ITEM_CHARS = 200_000
 """Ceiling of one projected text block.

@@ -52,43 +52,43 @@ from src.core.sessions.catalog import catalog
 from src.core.sessions.catalog import workspaces as discover_workspaces
 from src.core.workspace.git_repository import GitRepository
 from src.core.workspace.models.workspace_error import WorkspaceError
-from src.server import views
-from src.server.account_body import AccountBody
-from src.server.agent_body import AgentBody
-from src.server.answer_body import AnswerBody
-from src.server.auth import Auth
-from src.server.auth_cookies import cleared_cookie, session_cookie
-from src.server.auth_middleware import AuthMiddleware
-from src.server.body_limit_middleware import MAX_COMMAND_BYTES, BodyLimitMiddleware
-from src.server.client_key import client_key
-from src.server.debug_diagnostics import DebugDiagnostics
-from src.server.diagnostics import record
-from src.server.effort_body import EffortBody
-from src.server.endpoint_publisher import EndpointPublisher
-from src.server.event_hub import EventHub
-from src.server.external_files_body import ExternalFilesBody
-from src.server.fork_body import ForkBody
-from src.server.graceful_stop import GracefulStop
-from src.server.incoming_image import IncomingImage
-from src.server.login_body import LoginBody
-from src.server.login_throttle import LoginThrottle
-from src.server.mcp_body import McpBody
-from src.server.model_body import ModelBody
-from src.server.model_default_body import ModelDefaultBody
-from src.server.new_session_body import NewSessionBody
-from src.server.node_body import NodeBody
-from src.server.rename_body import RenameBody
-from src.server.rollback_body import RollbackBody
-from src.server.runtime_support import IDLE_POLL_INTERVAL
-from src.server.server_config import ServerConfig
-from src.server.server_runtime import DEFAULT_IDLE_GRACE, ServerRuntime
-from src.server.session_body import SessionBody
-from src.server.session_lease_middleware import SessionLeaseMiddleware
-from src.server.session_runtime import SessionRuntime
-from src.server.turn_body import TurnBody
-from src.server.webbuild import dist_root, staleness
-from src.server.workspace_body import WorkspaceBody
-from src.server.worktree_body import WorktreeBody
+from src.server.api import views
+from src.server.api.auth import Auth
+from src.server.api.auth_cookies import cleared_cookie, session_cookie
+from src.server.api.auth_middleware import AuthMiddleware
+from src.server.api.bodies.account_body import AccountBody
+from src.server.api.bodies.agent_body import AgentBody
+from src.server.api.bodies.answer_body import AnswerBody
+from src.server.api.bodies.effort_body import EffortBody
+from src.server.api.bodies.external_files_body import ExternalFilesBody
+from src.server.api.bodies.fork_body import ForkBody
+from src.server.api.bodies.login_body import LoginBody
+from src.server.api.bodies.mcp_body import McpBody
+from src.server.api.bodies.model_body import ModelBody
+from src.server.api.bodies.model_default_body import ModelDefaultBody
+from src.server.api.bodies.new_session_body import NewSessionBody
+from src.server.api.bodies.node_body import NodeBody
+from src.server.api.bodies.rename_body import RenameBody
+from src.server.api.bodies.rollback_body import RollbackBody
+from src.server.api.bodies.session_body import SessionBody
+from src.server.api.bodies.turn_body import TurnBody
+from src.server.api.bodies.workspace_body import WorkspaceBody
+from src.server.api.bodies.worktree_body import WorktreeBody
+from src.server.api.body_limit_middleware import MAX_COMMAND_BYTES, BodyLimitMiddleware
+from src.server.api.client_key import client_key
+from src.server.api.graceful_stop import GracefulStop
+from src.server.api.login_throttle import LoginThrottle
+from src.server.api.session_lease_middleware import SessionLeaseMiddleware
+from src.server.launch.debug_diagnostics import DebugDiagnostics
+from src.server.launch.diagnostics import record
+from src.server.launch.endpoint_publisher import EndpointPublisher
+from src.server.launch.server_config import ServerConfig
+from src.server.runtime.event_hub import EventHub
+from src.server.runtime.incoming_image import IncomingImage
+from src.server.runtime.runtime_support import IDLE_POLL_INTERVAL
+from src.server.runtime.server_runtime import DEFAULT_IDLE_GRACE, ServerRuntime
+from src.server.runtime.session_runtime import SessionRuntime
+from src.server.web.webbuild import dist_root, staleness
 
 HEARTBEAT_SECONDS = 20.0
 """How often an idle stream says something, so a proxy does not close it."""

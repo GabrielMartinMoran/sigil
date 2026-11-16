@@ -18,10 +18,10 @@ from src.core.agents.tree.models.agent_node import AgentNode
 from src.core.composition.composition import Composition
 from src.core.config.load_settings import load_settings
 from src.core.providers.provider_paths import ProviderPaths
-from src.server.app import create_app
-from src.server.event_hub import EventHub
-from src.server.server_config import ServerConfig
-from src.server.server_runtime import ServerRuntime
+from src.server.api.app import create_app
+from src.server.launch.server_config import ServerConfig
+from src.server.runtime.event_hub import EventHub
+from src.server.runtime.server_runtime import ServerRuntime
 from tests.support.agents import write_profile
 from tests.support.provider_service import _add, _service
 

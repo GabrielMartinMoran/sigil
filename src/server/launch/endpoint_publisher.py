@@ -11,8 +11,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 from src.core.config.paths import endpoint_file
-from src.server.endpoint import ENDPOINT_FILE_MODE, TOKEN_BYTES, Endpoint
-from src.server.endpoint_file import _remove_quietly, ensure_service_dir, read_endpoint
+from src.server.launch.endpoint import ENDPOINT_FILE_MODE, TOKEN_BYTES, Endpoint
+from src.server.launch.endpoint_file import _remove_quietly, ensure_service_dir, read_endpoint
 
 
 class EndpointPublisher:

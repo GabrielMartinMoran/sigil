@@ -14,7 +14,7 @@ from pydantic_ai.usage import RequestUsage
 
 from src.core.context.meter.debug_render import render_debug_report
 from src.core.context.strategy.view_result import ViewResult
-from src.server.server_runtime import ServerRuntime
+from src.server.runtime.server_runtime import ServerRuntime
 from tests.support.server_parity import _composition, _runtime, _signed_in
 
 
@@ -110,7 +110,7 @@ def test_should_share_off_loop_calculation_and_survive_reader_cancellation(
 ) -> None:
     import threading
 
-    from src.server.debug_diagnostics import DebugDiagnostics
+    from src.server.launch.debug_diagnostics import DebugDiagnostics
 
     entered, release = threading.Event(), threading.Event()
     owner = threading.get_ident()

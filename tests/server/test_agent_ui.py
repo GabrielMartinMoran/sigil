@@ -28,7 +28,7 @@ def _write(root: Path, name: str, *, description: str = 'An agent.', body: str =
 
 
 def test_agent_projection_includes_authoritative_permissions(tmp_path: Path) -> None:
-    from src.server.views import agent_view
+    from src.server.api.views import agent_view
 
     _write(tmp_path, 'restricted', extra='permissions:\n  write: deny\n')
     profile = AgentRegistry([('project', tmp_path)]).require('restricted')

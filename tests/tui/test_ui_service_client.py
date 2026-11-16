@@ -38,11 +38,11 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 
 from src.core.agents.tree.models.node_status import NodeStatus
 from src.core.composition.composition import Composition
-from src.server.event_hub import EventHub
-from src.server.launch import Launch
-from src.server.pending_question import PendingQuestion
-from src.server.server_runtime import ServerRuntime
-from src.server.service_starting import ServiceStarting
+from src.server.launch.launch import Launch
+from src.server.launch.service_starting import ServiceStarting
+from src.server.runtime.event_hub import EventHub
+from src.server.runtime.pending_question import PendingQuestion
+from src.server.runtime.server_runtime import ServerRuntime
 from src.ui.outgoing_image import OutgoingImage
 from src.ui.payload_too_large import PayloadTooLarge
 from src.ui.request_rejected import RequestRejected
@@ -860,7 +860,7 @@ def test_a_catalog_that_never_answers_is_a_bounded_refusal(
     The bound is shortened here; the assertion is that the route stops waiting and
     says so, which is the behaviour a client depends on.
     """
-    monkeypatch.setattr('src.server.app.CATALOG_TIMEOUT_SECONDS', 0.05)
+    monkeypatch.setattr('src.server.api.app.CATALOG_TIMEOUT_SECONDS', 0.05)
     _with_catalog(runtime, _Catalog(hangs=True))
 
     async def go() -> None:

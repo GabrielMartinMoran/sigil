@@ -13,10 +13,10 @@ from src.core.providers.provider_paths import ProviderPaths
 def test_server_lifespan_unloads_extensions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from pydantic_ai.models.test import TestModel
 
-    from src.server.app import create_app
-    from src.server.event_hub import EventHub
-    from src.server.server_config import ServerConfig
-    from src.server.server_runtime import ServerRuntime
+    from src.server.api.app import create_app
+    from src.server.launch.server_config import ServerConfig
+    from src.server.runtime.event_hub import EventHub
+    from src.server.runtime.server_runtime import ServerRuntime
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
     directory = tmp_path / 'home' / 'tools' / 'lifecycle'

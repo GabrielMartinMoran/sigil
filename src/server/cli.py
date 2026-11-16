@@ -40,19 +40,19 @@ from types import FrameType
 from dotenv import load_dotenv
 
 from src.core.composition.composition import Composition
-from src.server import webbuild
-from src.server.app import create_app
-from src.server.config import banner, resolve_config
-from src.server.diagnostics import diagnose_server, record
-from src.server.endpoint_publisher import EndpointPublisher
-from src.server.event_hub import EventHub
-from src.server.graceful_stop import GracefulStop
-from src.server.ownership_error import OwnershipError
-from src.server.server_config import ServerConfig
-from src.server.server_config_error import ServerConfigError
-from src.server.server_defaults import PASSWORD_ENV
-from src.server.server_ownership import ServerOwnership
-from src.server.server_runtime import DEFAULT_IDLE_GRACE, ServerRuntime
+from src.server.api.app import create_app
+from src.server.api.graceful_stop import GracefulStop
+from src.server.launch.config import banner, resolve_config
+from src.server.launch.diagnostics import diagnose_server, record
+from src.server.launch.endpoint_publisher import EndpointPublisher
+from src.server.launch.ownership_error import OwnershipError
+from src.server.launch.server_config import ServerConfig
+from src.server.launch.server_config_error import ServerConfigError
+from src.server.launch.server_defaults import PASSWORD_ENV
+from src.server.launch.server_ownership import ServerOwnership
+from src.server.runtime.event_hub import EventHub
+from src.server.runtime.server_runtime import DEFAULT_IDLE_GRACE, ServerRuntime
+from src.server.web import webbuild
 
 MAX_IDLE_GRACE = 24 * 60 * 60.0
 """Largest accepted ``--idle-grace``: one day.

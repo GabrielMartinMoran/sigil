@@ -30,7 +30,7 @@ class _RuntimeStub:
     """Only the pieces `create_app` touches around the lifespan; no route is called."""
 
     def __init__(self) -> None:
-        from src.server.event_hub import EventHub
+        from src.server.runtime.event_hub import EventHub
 
         self.hub = EventHub()
         self.composition = MagicMock()

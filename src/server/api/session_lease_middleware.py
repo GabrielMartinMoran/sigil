@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlencode
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 if TYPE_CHECKING:
-    from src.server.server_runtime import ServerRuntime
+    from src.server.runtime.server_runtime import ServerRuntime
 
 
 class SessionLeaseMiddleware:

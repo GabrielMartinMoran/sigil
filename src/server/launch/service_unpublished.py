@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from src.server.child import Child
-from src.server.launch_error import LaunchError
+from src.server.launch.child import Child
+from src.server.launch.launch_error import LaunchError
 
 
 class ServiceUnpublished(LaunchError):

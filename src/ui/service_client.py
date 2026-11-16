@@ -63,11 +63,11 @@ from pydantic import ValidationError
 
 from src.core.context.meter.debug_snapshot import DEBUG_SNAPSHOT_ADAPTER, DebugSnapshot
 from src.core.storage.database_path import database_path
-from src.server.diagnostics import record
-from src.server.endpoint import Endpoint
-from src.server.launch import Launch
-from src.server.launch_error import LaunchError
-from src.server.service_launch import DEFAULT_READY_TIMEOUT, ensure_service
+from src.server.launch.diagnostics import record
+from src.server.launch.endpoint import Endpoint
+from src.server.launch.launch import Launch
+from src.server.launch.launch_error import LaunchError
+from src.server.launch.service_launch import DEFAULT_READY_TIMEOUT, ensure_service
 from src.ui.no_history_yet import NoHistoryYet
 from src.ui.outgoing_image import OutgoingImage
 from src.ui.payload_too_large import PayloadTooLarge

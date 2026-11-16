@@ -13,7 +13,7 @@ from src.core.agents.request import request
 from src.core.agents.type_of import type_of
 from src.core.sessions.session_store import SessionStore
 from src.core.storage.database import Database
-from src.server.views import transcript, transcript_window
+from src.server.api.views import transcript, transcript_window
 
 
 def _report() -> dict:

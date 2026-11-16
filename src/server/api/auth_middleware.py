@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from src.server.auth import Auth, _deny, _is_free
+from src.server.api.auth import Auth, _deny, _is_free
 
 
 class AuthMiddleware:

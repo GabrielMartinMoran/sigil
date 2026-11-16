@@ -38,12 +38,12 @@ from src.core.interaction.models.question_item import QuestionItem
 from src.core.interaction.models.question_option import QuestionOption
 from src.core.storage.accepted_inputs import AcceptedInputs
 from src.core.tooling.tool_call_event import ToolCallEvent
-from src.server import session_runtime as session_runtime_module
-from src.server.event_hub import EventHub
-from src.server.ownership_error import OwnershipError
-from src.server.server_ownership import ServerOwnership
-from src.server.server_runtime import ServerRuntime
-from src.server.session_runtime import SessionRuntime
+from src.server.launch.ownership_error import OwnershipError
+from src.server.launch.server_ownership import ServerOwnership
+from src.server.runtime import session_runtime as session_runtime_module
+from src.server.runtime.event_hub import EventHub
+from src.server.runtime.server_runtime import ServerRuntime
+from src.server.runtime.session_runtime import SessionRuntime
 
 DELEGATED_METHODS = [
     'ensure_workers',
@@ -190,17 +190,17 @@ def test_should_keep_the_constructor_signature(runtime: ServerRuntime) -> None:
 def test_should_keep_the_support_types_importable_from_the_runtime_module() -> None:
     """Existing importers of `src.server.server_runtime` keep working unchanged."""
     from src.core.agents.tree.reports import WAKE_PROMPT
-    from src.server.idle_shutdown import IdleShutdown
-    from src.server.incoming_image import IncomingImage
-    from src.server.pending_question import PendingQuestion
-    from src.server.runtime_support import (
+    from src.server.runtime.idle_shutdown import IdleShutdown
+    from src.server.runtime.incoming_image import IncomingImage
+    from src.server.runtime.pending_question import PendingQuestion
+    from src.server.runtime.runtime_support import (
         IDLE_POLL_INTERVAL,
         PREVIEW_CHARS,
         QUESTION_TIMEOUT_ENV,
         decode_images,
         resolve_question_timeout,
     )
-    from src.server.server_runtime import CHECKPOINT_INTERVAL, DEFAULT_IDLE_GRACE, QUESTION_TIMEOUT_SECONDS
+    from src.server.runtime.server_runtime import CHECKPOINT_INTERVAL, DEFAULT_IDLE_GRACE, QUESTION_TIMEOUT_SECONDS
 
     assert CHECKPOINT_INTERVAL > 0
     assert DEFAULT_IDLE_GRACE is None
@@ -646,7 +646,7 @@ def test_resident_session_events_are_visible_only_to_their_owner(
 
 
 def test_event_stream_filters_replay_and_live_events(runtime: ServerRuntime, composition: Composition) -> None:
-    from src.server.app import _stream
+    from src.server.api.app import _stream
 
     first = runtime.session_runtime
     second = runtime.resident_session(composition.store.draft_session())
@@ -914,7 +914,7 @@ def test_cancelled_open_keeps_registry_ownership_until_factory_finishes(
 ) -> None:
     import threading
 
-    import src.server.server_runtime as runtime_module
+    import src.server.runtime.server_runtime as runtime_module
 
     session = runtime.composition.store.create_session()
     started = threading.Event()

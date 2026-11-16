@@ -18,8 +18,8 @@ if TYPE_CHECKING:
 
     from src.core.context.context_view_capability import ContextViewCapability
     from src.core.providers.model_snapshot import ModelSnapshot
-    from src.server.server_runtime import ServerRuntime
-    from src.server.session_runtime import SessionRuntime
+    from src.server.runtime.server_runtime import ServerRuntime
+    from src.server.runtime.session_runtime import SessionRuntime
 
 logger = logging.getLogger(__name__)
 

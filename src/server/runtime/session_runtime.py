@@ -76,10 +76,10 @@ from src.core.storage.accepted_input import AcceptedInput
 from src.core.storage.accepted_inputs import AcceptedInputs
 from src.core.storage.delivery_confirmation import DeliveryConfirmation
 from src.core.tooling.outputs import present_output
-from src.server.event_hub import EventHub
-from src.server.incoming_image import IncomingImage
-from src.server.pending_question import PendingQuestion
-from src.server.runtime_support import (
+from src.server.runtime.event_hub import EventHub
+from src.server.runtime.incoming_image import IncomingImage
+from src.server.runtime.pending_question import PendingQuestion
+from src.server.runtime.runtime_support import (
     CHECKPOINT_INTERVAL,
     PREVIEW_CHARS,
     QUEUE_POLL_INTERVAL,

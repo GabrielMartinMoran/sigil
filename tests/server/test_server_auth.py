@@ -16,11 +16,11 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.server.auth import Auth
-from src.server.auth_middleware import AuthMiddleware
-from src.server.endpoint_publisher import EndpointPublisher
-from src.server.event_hub import EventHub
-from src.server.server_config import ServerConfig
+from src.server.api.auth import Auth
+from src.server.api.auth_middleware import AuthMiddleware
+from src.server.launch.endpoint_publisher import EndpointPublisher
+from src.server.launch.server_config import ServerConfig
+from src.server.runtime.event_hub import EventHub
 
 PASSWORD = 'secret-pass'
 
@@ -137,7 +137,7 @@ class _RuntimeStub:
 
 
 def _app_client(tmp_path: Path, publisher: EndpointPublisher) -> TestClient:
-    from src.server.app import create_app
+    from src.server.api.app import create_app
 
     app = create_app(
         _RuntimeStub(),  # type: ignore[arg-type] - the auth boundary is the subject here

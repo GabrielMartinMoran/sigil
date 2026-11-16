@@ -3,7 +3,7 @@ from src.core.agents.origin import origin
 from src.core.agents.profile.models.agent_role import AgentRole
 from src.core.agents.request import request
 from src.core.agents.tree.agent_tree_store import AgentTreeStore
-from src.server.views import node_view
+from src.server.api.views import node_view
 
 
 def test_subagent_projection_distinguishes_instructions_and_internal_budget_notice() -> None:

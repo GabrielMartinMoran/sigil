@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.server.launch_error import LaunchError
+from src.server.launch.launch_error import LaunchError
 
 
 class ServiceDied(LaunchError):

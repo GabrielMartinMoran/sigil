@@ -27,9 +27,9 @@ import pytest
 
 from src.core.config.paths import endpoint_file, service_dir
 from src.server.cli import listening_socket
-from src.server.endpoint import Endpoint
-from src.server.endpoint_file import read_endpoint
-from src.server.endpoint_publisher import EndpointPublisher
+from src.server.launch.endpoint import Endpoint
+from src.server.launch.endpoint_file import read_endpoint
+from src.server.launch.endpoint_publisher import EndpointPublisher
 from tests.support.server_endpoint import _RuntimeStub, _umask
 
 
@@ -226,8 +226,8 @@ def test_the_app_publishes_when_it_starts_and_unpublishes_when_it_stops(tmp_path
 
     from fastapi.testclient import TestClient
 
-    from src.server.app import create_app
-    from src.server.server_config import ServerConfig
+    from src.server.api.app import create_app
+    from src.server.launch.server_config import ServerConfig
 
     path = tmp_path / 'service' / 'endpoint.json'
     publisher = EndpointPublisher(path=path)
@@ -265,8 +265,8 @@ def test_the_port_is_listening_before_the_endpoint_is_published() -> None:
 def test_lifespan_releases_runtime_when_session_shutdown_fails(tmp_path: Path) -> None:
     from fastapi.testclient import TestClient
 
-    from src.server.app import create_app
-    from src.server.server_config import ServerConfig
+    from src.server.api.app import create_app
+    from src.server.launch.server_config import ServerConfig
 
     runtime = _RuntimeStub()
     runtime.session_runtime.aclose.side_effect = RuntimeError('shutdown failed')

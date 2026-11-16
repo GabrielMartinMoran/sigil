@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Self
 
-from src.server.ownership_error import OwnershipError
+from src.server.launch.ownership_error import OwnershipError
 
 OWNER_PID_PREFIX = 'pid='
 """First field ``acquire`` writes. ``owner_pid`` reads it back."""

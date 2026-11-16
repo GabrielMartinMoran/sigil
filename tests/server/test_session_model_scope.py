@@ -60,8 +60,8 @@ def test_switching_workspace_starts_empty_and_an_explicit_open_restores_the_mode
     where a conversation's model is restored, in one place, for every client, so the
     conversation opened on purpose runs on its own model again.
     """
-    from src.server.event_hub import EventHub
-    from src.server.server_runtime import ServerRuntime
+    from src.server.runtime.event_hub import EventHub
+    from src.server.runtime.server_runtime import ServerRuntime
 
     other = tmp_path / 'other'
     other.mkdir()
@@ -112,8 +112,8 @@ def test_resident_compositions_keep_independent_model_snapshots(
         'src.core.composition.composition.build_service',
         lambda *args, **kwargs: replace(service, router=copy(service.router)),
     )
-    from src.server.event_hub import EventHub
-    from src.server.server_runtime import ServerRuntime
+    from src.server.runtime.event_hub import EventHub
+    from src.server.runtime.server_runtime import ServerRuntime
 
     runtime = ServerRuntime(composition, EventHub(), require_ownership=False)
     first = runtime.session_runtime

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.server.server_defaults import DEFAULT_HOST, DEFAULT_PORT
+from src.server.launch.server_defaults import DEFAULT_HOST, DEFAULT_PORT
 
 
 @dataclass(frozen=True, slots=True)

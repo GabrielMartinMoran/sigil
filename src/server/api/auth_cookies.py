@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.server.auth import Auth
+from src.server.api.auth import Auth
 
 
 def session_cookie(auth: Auth, token: str, *, secure: bool = False) -> str:

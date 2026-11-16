@@ -72,14 +72,14 @@ from src.core.mcp.manager.mcp_manager import MCPManager
 from src.core.providers.provider_paths import ProviderPaths
 from src.core.roadmap.models.todo_item import TodoItem
 from src.core.sessions.session import Session
-from src.server.app import create_app
-from src.server.endpoint import Endpoint
-from src.server.endpoint_publisher import EndpointPublisher
-from src.server.event import Event
-from src.server.event_hub import EventHub
-from src.server.launch import Launch
-from src.server.server_config import ServerConfig
-from src.server.server_runtime import ServerRuntime
+from src.server.api.app import create_app
+from src.server.launch.endpoint import Endpoint
+from src.server.launch.endpoint_publisher import EndpointPublisher
+from src.server.launch.launch import Launch
+from src.server.launch.server_config import ServerConfig
+from src.server.runtime.event import Event
+from src.server.runtime.event_hub import EventHub
+from src.server.runtime.server_runtime import ServerRuntime
 from src.ui import command_transport
 from src.ui.command_transport import TRANSPORT
 from src.ui.commands_mixin import BUSY_UNKNOWN
@@ -4192,7 +4192,7 @@ def test_a_transcript_with_nothing_above_asks_for_nothing(composition: Compositi
 
 
 def test_cut_stream_relaunches_service_and_reports_one_outage(composition: Composition, tmp_path: Path) -> None:
-    from src.server.service_died import ServiceDied
+    from src.server.launch.service_died import ServiceDied
 
     async def inner() -> None:
         async with _service_under_test(composition, tmp_path) as (runtime, transport, _attached):

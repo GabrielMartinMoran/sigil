@@ -5,8 +5,8 @@ from src.core.config.load_settings import load_settings
 from src.core.providers.provider_paths import ProviderPaths
 from src.core.storage.accepted_inputs import AcceptedInputs
 from src.core.storage.image_input import ImageInput
-from src.server.event_hub import EventHub
-from src.server.server_runtime import ServerRuntime
+from src.server.runtime.event_hub import EventHub
+from src.server.runtime.server_runtime import ServerRuntime
 
 """Characterize the real agent delivery event and snapshot boundary."""
 
@@ -448,7 +448,7 @@ def test_send_fails_when_the_consumer_is_dead(runtime: ServerRuntime) -> None:
 
 
 def test_ensure_workers_requires_ownership(runtime: ServerRuntime) -> None:
-    from src.server.ownership_error import OwnershipError
+    from src.server.launch.ownership_error import OwnershipError
 
     async def go() -> None:
         with pytest.raises(OwnershipError, match='requires the database lock'):
@@ -458,7 +458,7 @@ def test_ensure_workers_requires_ownership(runtime: ServerRuntime) -> None:
 
 
 def test_close_releases_the_database_lock(runtime: ServerRuntime) -> None:
-    from src.server.server_ownership import ServerOwnership
+    from src.server.launch.server_ownership import ServerOwnership
 
     runtime.start()
     path = runtime.composition.store.database.path
@@ -529,7 +529,7 @@ def test_durable_read_separates_pending_from_delivered(tmp_path: Path, monkeypat
 
     from src.core.sessions.session_store import SessionStore
     from src.core.storage.delivery_confirmation import DeliveryConfirmation
-    from src.server import views
+    from src.server.api import views
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'home')
@@ -557,7 +557,7 @@ def test_durable_read_separates_pending_from_delivered(tmp_path: Path, monkeypat
 
 def test_durable_read_keeps_stopped_and_interrupted_visible(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from src.core.sessions.session_store import SessionStore
-    from src.server import views
+    from src.server.api import views
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'home')
@@ -584,7 +584,7 @@ def test_durable_read_exposes_recovery_and_keeps_conflict_separate(
 
     from src.core.sessions.session_store import SessionStore
     from src.core.storage.delivery_confirmation import DeliveryConfirmation
-    from src.server import views
+    from src.server.api import views
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
     store = SessionStore(cwd=tmp_path, base_dir=tmp_path / 'home')

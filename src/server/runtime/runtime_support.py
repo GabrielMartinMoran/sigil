@@ -24,8 +24,8 @@ from src.core.attachments.images import MAX_IMAGE_BYTES, prepare_image
 from src.core.context.media_compatibility import PORTABLE_IMAGE_TYPES
 from src.core.storage.accepted_input import AcceptedInput
 from src.core.storage.image_input import ImageInput
-from src.server.incoming_image import IncomingImage
-from src.server.pending_question import PendingQuestion
+from src.server.runtime.incoming_image import IncomingImage
+from src.server.runtime.pending_question import PendingQuestion
 
 OwnershipGuard = Callable[[], None]
 """Validates that this process still owns the store, or raises ``OwnershipError``.

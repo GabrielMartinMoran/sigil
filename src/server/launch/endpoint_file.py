@@ -8,7 +8,7 @@ import stat
 from pathlib import Path
 
 from src.core.config.paths import endpoint_file
-from src.server.endpoint import GROUP_AND_OTHER, SERVICE_DIR_MODE, Endpoint
+from src.server.launch.endpoint import GROUP_AND_OTHER, SERVICE_DIR_MODE, Endpoint
 
 
 def ensure_service_dir(path: Path) -> Path:

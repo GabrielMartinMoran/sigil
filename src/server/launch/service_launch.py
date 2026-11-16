@@ -50,17 +50,18 @@ import tempfile
 import time
 from pathlib import Path
 
-from src.server.child import Child
-from src.server.diagnostics import record
-from src.server.endpoint import Endpoint
-from src.server.endpoint_file import read_endpoint
-from src.server.launch import Launch
-from src.server.launch_command import LaunchCommand
-from src.server.launch_error import LaunchError
-from src.server.server_ownership import ServerOwnership
-from src.server.service_died import ServiceDied
-from src.server.service_starting import ServiceStarting
-from src.server.service_unpublished import ServiceUnpublished
+from src.core.checkout import checkout_root
+from src.server.launch.child import Child
+from src.server.launch.diagnostics import record
+from src.server.launch.endpoint import Endpoint
+from src.server.launch.endpoint_file import read_endpoint
+from src.server.launch.launch import Launch
+from src.server.launch.launch_command import LaunchCommand
+from src.server.launch.launch_error import LaunchError
+from src.server.launch.server_ownership import ServerOwnership
+from src.server.launch.service_died import ServiceDied
+from src.server.launch.service_starting import ServiceStarting
+from src.server.launch.service_unpublished import ServiceUnpublished
 
 HEALTH_PATH = '/health'
 """The one route a probe asks for: unauthenticated, and it answers without state."""
@@ -83,7 +84,7 @@ DEFAULT_POLL_INTERVAL = 0.05
 MAX_PROBE_BYTES = 4096
 """Bounded read of the health body. The answer is the status; the body is a gift."""
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = checkout_root()
 """The checkout this code was imported from: `src/server/launch.py` → repository."""
 
 

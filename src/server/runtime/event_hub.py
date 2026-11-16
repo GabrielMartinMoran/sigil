@@ -27,8 +27,8 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
-from src.server.event import Event
-from src.server.subscription import Subscription
+from src.server.runtime.event import Event
+from src.server.runtime.subscription import Subscription
 
 DEFAULT_BUFFER = 2000
 """Events kept for a reconnect: a few minutes of a busy turn."""

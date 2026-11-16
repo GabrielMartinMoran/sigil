@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Self
 
-from src.server.event import Event
+from src.server.runtime.event import Event
 
 if TYPE_CHECKING:
-    from src.server.event_hub import EventHub
+    from src.server.runtime.event_hub import EventHub
 
 
 class Subscription:

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.server.child import Child
-from src.server.endpoint import Endpoint
+from src.server.launch.child import Child
+from src.server.launch.endpoint import Endpoint
 
 
 @dataclass(frozen=True, slots=True)

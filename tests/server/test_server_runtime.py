@@ -45,16 +45,16 @@ from src.core.composition.composition import Composition
 from src.core.config.load_settings import load_settings
 from src.core.interaction.models.question_item import QuestionItem
 from src.core.interaction.models.question_option import QuestionOption
-from src.server import views
-from src.server.app import create_app
-from src.server.body_limit_middleware import BodyLimitMiddleware
-from src.server.event_hub import EventHub
-from src.server.ownership_error import OwnershipError
-from src.server.pending_question import PendingQuestion
-from src.server.runtime_support import QUESTION_TIMEOUT_ENV, resolve_question_timeout
-from src.server.server_config import ServerConfig
-from src.server.server_ownership import ServerOwnership
-from src.server.server_runtime import ServerRuntime
+from src.server.api import views
+from src.server.api.app import create_app
+from src.server.api.body_limit_middleware import BodyLimitMiddleware
+from src.server.launch.ownership_error import OwnershipError
+from src.server.launch.server_config import ServerConfig
+from src.server.launch.server_ownership import ServerOwnership
+from src.server.runtime.event_hub import EventHub
+from src.server.runtime.pending_question import PendingQuestion
+from src.server.runtime.runtime_support import QUESTION_TIMEOUT_ENV, resolve_question_timeout
+from src.server.runtime.server_runtime import ServerRuntime
 
 
 @pytest.fixture
@@ -148,7 +148,7 @@ def test_abort_when_idle_is_a_no_op(runtime: ServerRuntime) -> None:
 
 
 def test_the_state_projection_has_every_section_the_client_reads(runtime: ServerRuntime) -> None:
-    from src.server.app import _state
+    from src.server.api.app import _state
 
     state = asyncio.run(_state(runtime))
 
@@ -351,7 +351,7 @@ def test_the_routes_answer_with_the_projections(tmp_path: Path, composition: Com
     """The HTTP surface, exercised through the app with a real runtime behind it."""
     from fastapi.testclient import TestClient
 
-    from src.server.app import create_app
+    from src.server.api.app import create_app
 
     runtime = ServerRuntime(composition, EventHub(), require_ownership=False)
     config = ServerConfig(host='127.0.0.1', port=8760, password='secret-pass')
@@ -383,7 +383,7 @@ def test_the_bundle_missing_is_a_503_and_not_a_crash(tmp_path: Path, composition
     """A server that starts without a bundle must say so, not fail to answer."""
     from fastapi.testclient import TestClient
 
-    from src.server.app import create_app
+    from src.server.api.app import create_app
 
     runtime = ServerRuntime(composition, EventHub())
     client = TestClient(create_app(runtime, ServerConfig(password='x'), dist=tmp_path / 'nope'))
@@ -411,8 +411,8 @@ def test_the_api_backend_serves_no_client_and_no_login(tmp_path: Path, compositi
     """
     from fastapi.testclient import TestClient
 
-    from src.server.app import create_app
-    from src.server.config import resolve_config
+    from src.server.api.app import create_app
+    from src.server.launch.config import resolve_config
 
     runtime = ServerRuntime(composition, EventHub())
     config = resolve_config(host='127.0.0.1', port=8760, env={}, web=False)
@@ -433,9 +433,9 @@ def test_serve_mounts_the_client_and_asks_for_the_password(tmp_path: Path, compo
     """`sigil serve` is the same process plus the page, and the page is behind a password."""
     from fastapi.testclient import TestClient
 
-    from src.server.app import create_app
-    from src.server.config import resolve_config
-    from src.server.server_defaults import PASSWORD_ENV
+    from src.server.api.app import create_app
+    from src.server.launch.config import resolve_config
+    from src.server.launch.server_defaults import PASSWORD_ENV
 
     runtime = ServerRuntime(composition, EventHub())
     config = resolve_config(host='127.0.0.1', port=8760, env={PASSWORD_ENV: 'secret-pass'})
@@ -455,9 +455,9 @@ def test_serve_mounts_the_client_and_asks_for_the_password(tmp_path: Path, compo
 
 def test_the_backend_accepts_the_endpoint_token_for_a_turn(tmp_path: Path, runtime: ServerRuntime) -> None:
     """The API surface is still the whole API: the token opens `/api/turn`."""
-    from src.server.app import create_app
-    from src.server.config import resolve_config
-    from src.server.endpoint_publisher import EndpointPublisher
+    from src.server.api.app import create_app
+    from src.server.launch.config import resolve_config
+    from src.server.launch.endpoint_publisher import EndpointPublisher
 
     publisher = EndpointPublisher(path=tmp_path / 'service' / 'endpoint.json')
     app = create_app(
@@ -484,7 +484,7 @@ def test_the_backend_accepts_the_endpoint_token_for_a_turn(tmp_path: Path, runti
 def test_logout_clears_the_cookie(tmp_path: Path, composition: Composition) -> None:
     from fastapi.testclient import TestClient
 
-    from src.server.app import create_app
+    from src.server.api.app import create_app
 
     runtime = ServerRuntime(composition, EventHub())
     client = TestClient(create_app(runtime, ServerConfig(password='secret-pass'), dist=tmp_path / 'nope'))
@@ -646,8 +646,8 @@ def test_abort_cancels_only_the_runtime_composition(runtime: ServerRuntime) -> N
 
 
 def test_the_durable_endpoint_is_registered(runtime: ServerRuntime) -> None:
-    from src.server.app import create_app
-    from src.server.server_config import ServerConfig
+    from src.server.api.app import create_app
+    from src.server.launch.server_config import ServerConfig
 
     app = create_app(runtime, ServerConfig(password='x'), dist=runtime.composition.root / 'missing')
 
@@ -1095,7 +1095,7 @@ def test_a_command_body_over_the_ceiling_is_refused_without_writing(
     runtime: ServerRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The 64 MiB cap is exercised with a tiny one: the ceiling, not the size matters."""
-    from src.server import app as app_module
+    from src.server.api import app as app_module
 
     monkeypatch.setattr(app_module, 'MAX_COMMAND_BYTES', 512)
 
@@ -1162,7 +1162,7 @@ def test_a_chunked_body_is_refused_at_the_ceiling_while_it_arrives() -> None:
 
 def test_a_body_that_grows_after_the_response_started_is_not_refused_twice() -> None:
     """Defence in depth: a response already going out cannot be replaced by a 413."""
-    from src.server.body_limit_middleware import _BodyTooLarge
+    from src.server.api.body_limit_middleware import _BodyTooLarge
 
     limit = 512
     sent: list[dict[str, object]] = []
@@ -1221,7 +1221,7 @@ def test_a_streamed_body_over_the_ceiling_is_refused_without_writing(
     runtime: ServerRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The chunked path through the real app: 413 at the ceiling, nothing accepted."""
-    from src.server import app as app_module
+    from src.server.api import app as app_module
 
     monkeypatch.setattr(app_module, 'MAX_COMMAND_BYTES', 512)
 
@@ -1248,7 +1248,7 @@ def test_a_streamed_body_under_the_ceiling_is_accepted(
     runtime: ServerRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Counting the bytes must not refuse a chunked body that stays under the cap."""
-    from src.server import app as app_module
+    from src.server.api import app as app_module
 
     monkeypatch.setattr(app_module, 'MAX_COMMAND_BYTES', 512)
 
@@ -1273,7 +1273,7 @@ def test_an_unauthenticated_body_is_refused_before_the_ceiling(
     runtime: ServerRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Auth runs outside the cap: a stranger is answered 401, not told the limit."""
-    from src.server import app as app_module
+    from src.server.api import app as app_module
 
     monkeypatch.setattr(app_module, 'MAX_COMMAND_BYTES', 64)
     app = create_app(runtime, ServerConfig(password=_PASSWORD), dist=tmp_path / 'missing')
@@ -1298,8 +1298,8 @@ ROOT = Path(__file__).resolve().parents[2]
 OTHER_PROCESS = """
 import sys
 
-from src.server.ownership_error import OwnershipError
-from src.server.server_ownership import ServerOwnership
+from src.server.launch.ownership_error import OwnershipError
+from src.server.launch.server_ownership import ServerOwnership
 
 try:
     ServerOwnership({database!r}).acquire()
@@ -2000,7 +2000,7 @@ def test_a_turn_that_says_nothing_says_once_that_it_is_still_waiting(
 
     # The threshold belongs to the implementation module now: the watcher reads
     # it there, so a patch on the facade's re-export would change nothing.
-    from src.server import session_runtime as session_runtime_module
+    from src.server.runtime import session_runtime as session_runtime_module
 
     monkeypatch.setattr(session_runtime_module, 'SLOW_TURN_NOTICE_SECONDS', 0.01)
     release = asyncio.Event()
@@ -2046,7 +2046,7 @@ def test_an_unconfigured_model_projects_an_unknown_image_capability() -> None:
     """
     from types import SimpleNamespace
 
-    from src.server import views
+    from src.server.api import views
 
     assert views.model_view(SimpleNamespace(is_configured=False, images=True))['images'] is None
     assert views.model_view(SimpleNamespace(is_configured=True, images=False))['images'] is False
@@ -2100,7 +2100,7 @@ def test_the_defaults_projection_names_both_files_and_what_each_one_holds(tmp_pa
     from types import SimpleNamespace
 
     from src.core.agents.model_defaults import read_defaults
-    from src.server import views
+    from src.server.api import views
 
     project, user = tmp_path / 'project' / 'config.json', tmp_path / 'home' / 'config.json'
     _config(project, {'agents': {'wizard': _entry('work', 'project/model')}})
@@ -2137,7 +2137,7 @@ def test_the_defaults_projection_names_both_files_and_what_each_one_holds(tmp_pa
 def test_a_defaults_file_that_is_not_there_is_an_empty_file_and_not_an_error(tmp_path: Path) -> None:
     """A missing file is a state to show, with nothing in it: the first write creates it."""
     from src.core.agents.model_defaults import read_defaults
-    from src.server import views
+    from src.server.api import views
 
     project, user = tmp_path / 'project' / 'config.json', tmp_path / 'home' / 'config.json'
 
@@ -2156,7 +2156,7 @@ def test_a_defaults_file_that_is_not_there_is_an_empty_file_and_not_an_error(tmp
 def test_a_defaults_file_the_reader_cannot_use_is_reported_instead_of_guessed(tmp_path: Path) -> None:
     """A file that does not parse is named, and an entry it rejects is not silently dropped."""
     from src.core.agents.model_defaults import read_defaults
-    from src.server import views
+    from src.server.api import views
 
     project, user = tmp_path / 'project' / 'config.json', tmp_path / 'home' / 'config.json'
     project.parent.mkdir(parents=True, exist_ok=True)
@@ -2624,7 +2624,7 @@ def test_session_operations_reject_a_missing_selector(
 def test_bootstrap_state_holds_a_session_lease_until_response_finishes(
     runtime: ServerRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import src.server.app as app_module
+    import src.server.api.app as app_module
 
     async def go() -> None:
         started = asyncio.Event()
