@@ -669,7 +669,7 @@ class SessionRuntime:
             # for this process's failure. `stopped` is the terminal state the table
             # allows from `claimed` — there is no failure state, and `interrupted` is
             # reserved for reconciling a process that died. See
-            # `docs/architecture.md`, part A.
+            # `docs/technical/architecture/service-runtime.md`.
             self._stop_pending(session.id)
             self._aborting = False
 

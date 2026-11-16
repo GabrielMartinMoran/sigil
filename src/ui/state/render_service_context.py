@@ -26,7 +26,8 @@ def render_service_context(context: Mapping[str, Any], workspace: Mapping[str, A
     zero for a session that has not made a request yet.
 
     The scope section of the old report is absent, not empty: no endpoint projects
-    the active directories or the instruction files (see docs/architecture.md).
+    the active directories or the instruction files
+    (see docs/technical/architecture/terminal-client.md).
     """
     budget = context.get('budget') or {}
     cost = context.get('cost') or {}

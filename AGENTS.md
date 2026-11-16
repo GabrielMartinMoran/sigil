@@ -33,7 +33,8 @@ uv run ruff format --check src tests
 Test suites are separated by responsibility. Shared builders belong in
 `tests/support/`; test modules must not import other test modules. Keep engine
 selections free of TUI and server application imports. See the
-[test guide](tests/README.md) for the component boundaries and isolation rules.
+[test guide](docs/technical/development/testing.md) for the component boundaries
+and isolation rules.
 
 Run the complete suite once the code is stable, not after every small edit.
 Documentation-only changes need content, link, and diff checks rather than an
@@ -113,8 +114,8 @@ uv run pytest -q -p no:sugar --durations=20
 
 The default full-suite verification remains `-n 8`; parallel speedup does not
 prove a reduction in total work. See the
-[test suite performance investigation](docs/test-suite-performance.md) for the
-recorded measurements and outstanding sequential goal.
+[test suite performance investigation](docs/technical/performance/test-suite.md)
+for the recorded measurements and outstanding sequential goal.
 
 When reviewing the experimental clean-python validator's findings, exclude
 findings in `tests/` and `scripts/` from the production-code assessment. Report

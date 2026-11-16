@@ -1961,7 +1961,8 @@ def test_a_turn_that_ends_in_error_leaves_its_row_terminal(runtime: ServerRuntim
     model answering badly: nothing was delivered, so no checkpoint ever confirms the
     row, and only the end of the turn can close it. `stopped` is the terminal state
     the table allows from `claimed`; there is no failure state, and `interrupted` is
-    reserved for reconciling a process that died (see `docs/architecture.md`).
+    reserved for reconciling a process that died
+    (see `docs/technical/architecture/service-runtime.md`).
     """
     from src.core.storage.accepted_inputs import AcceptedInputs
 
