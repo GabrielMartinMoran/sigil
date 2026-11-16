@@ -19,6 +19,7 @@
     "prepare": "node scripts/install-hooks.mjs"
   },
   "dependencies": {
+    "prismjs": "^1.30.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
@@ -29,6 +30,7 @@
     "@eslint/js": "^9.39.0",
     "@tailwindcss/vite": "^4.1.14",
     "@types/node": "^24.0.0",
+    "@types/prismjs": "^1.26.6",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.0.4",

@@ -81,9 +81,9 @@ def test_the_last_matching_rule_wins() -> None:
 
 
 def test_a_tool_rule_beats_the_group_it_sits_in() -> None:
-    permissions = parse_permissions({'write': 'allow', 'patch_file': 'deny'})
-    assert permissions.advertises('write_file', (ToolGroup.WRITE,))
-    assert not permissions.advertises('patch_file', (ToolGroup.WRITE,))
+    permissions = parse_permissions({'read': 'allow', 'read_file': 'deny'})
+    assert not permissions.advertises('read_file', (ToolGroup.READ,))
+    assert permissions.advertises('read_url', (ToolGroup.WEB,))
 
 
 def test_a_wildcard_over_names_targets_one_mcp_server() -> None:

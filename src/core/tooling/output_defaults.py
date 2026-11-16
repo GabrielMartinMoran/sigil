@@ -30,6 +30,19 @@ def process_output(value: Any) -> ToolOutput:
     return ToolOutput('\n\n'.join(blocks), describe_run({}, results))
 
 
+def code_output(value: Any) -> ToolOutput:
+    if not isinstance(value, dict):
+        return ToolOutput(readable(value))
+    timed_out = bool(value.get('timed_out'))
+    returncode = value.get('returncode')
+    failed = timed_out or returncode != 0
+    message = 'timed out' if timed_out else f'exit {returncode}'
+    output = '\n'.join(str(value[key]).rstrip() for key in ('stdout', 'stderr') if value.get(key))
+    if value.get('stdout_truncated') or value.get('stderr_truncated'):
+        output += '\n… (output truncated)'
+    return ToolOutput(output or message, ToolSummary(message, 'bad' if failed else 'good'))
+
+
 def file_output(value: Any) -> ToolOutput:
     from src.core.files.models.file_content import FileContent
     from src.core.files.tools import describe_read
@@ -45,6 +58,11 @@ def write_output(value: Any) -> ToolOutput:
     from src.core.files.models.write_result import WriteResult
     from src.core.files.tools import describe_write
 
+    if isinstance(value, dict) and 'operations' in value and 'bytes_after' in value:
+        path = str(value['path'])
+        action = 'created' if value.get('created') else 'updated'
+        summary = ToolSummary(f'{action} · {value["operations"]} operations · {human_bytes(value["bytes_after"])}')
+        return ToolOutput(f'{path}\n{summary.text}', summary)
     result = WriteResult.model_validate(value)
     summary = describe_write({}, result)
     return ToolOutput(f'{result.path}\n{summary.text}', summary)
@@ -124,6 +142,8 @@ def roadmap_output(value: Any) -> ToolOutput:
 def builtin_presenters() -> dict[str, OutputPresenter]:
     return {
         'run': process_output,
+        'shell': process_output,
+        'execute_code': code_output,
         'run_skill_script': process_output,
         'read_file': file_output,
         'write_file': write_output,

@@ -135,6 +135,22 @@ def _run_output(value: Any) -> Any:
 RUN_COMPACTOR = _policy(_run_input, _run_output, preserve=('timeout_seconds',))
 
 
+def _code_input(args: dict[str, Any]) -> dict[str, Any]:
+    return _compact_fields(args, ('timeout_seconds',), _limit('file_edit_input'), text_keys=('code',))
+
+
+def _code_output(value: Any) -> Any:
+    return _compact_fields(
+        value,
+        ('returncode', 'timed_out', 'stdout_truncated', 'stderr_truncated'),
+        _limit('file_output'),
+        text_keys=('stdout', 'stderr'),
+    )
+
+
+EXECUTE_CODE_COMPACTOR = _policy(_code_input, _code_output, preserve=('timeout_seconds',))
+
+
 # --- files ----------------------------------------------------------------
 
 
@@ -175,6 +191,23 @@ def _file_output(value: Any) -> Any:
     return _compact_fields(value, keep, limit, text_keys=('content', 'text', 'preview'))
 
 
+def _edit_input(args: dict[str, Any]) -> dict[str, Any]:
+    if 'operations' not in args:
+        return _path_input(args)
+    limit = _limit('file_edit_input')
+    operations = [
+        _compact_fields(
+            item,
+            ('type', 'start_line', 'end_line', 'replace_all'),
+            limit,
+            text_keys=('content', 'old', 'new', 'expected_text'),
+        )
+        for item in _items(args.get('operations', []))
+    ]
+    return {'path': args.get('path'), 'operations': operations}
+
+
+EDIT_FILE_COMPACTOR = _policy(_edit_input, _file_output, preserve=('path',))
 READ_FILE_COMPACTOR = _policy(_path_input, _file_output, preserve=('path',))
 WRITE_FILE_COMPACTOR = _policy(_path_input, _file_output, preserve=('path',))
 PATCH_FILE_COMPACTOR = _policy(_path_input, _file_output, preserve=('path',))
@@ -458,8 +491,11 @@ GET_MCP_PROMPT_COMPACTOR = _policy(_mcp_prompt_input, _mcp_output)
 
 ALL_COMPACTORS: dict[str, ToolCompactor] = {
     'run': RUN_COMPACTOR,
+    'shell': RUN_COMPACTOR,
+    'execute_code': EXECUTE_CODE_COMPACTOR,
     'read_file': READ_FILE_COMPACTOR,
-    'write_file': WRITE_FILE_COMPACTOR,
+    'edit_file': EDIT_FILE_COMPACTOR,
+    'write_file': EDIT_FILE_COMPACTOR,
     'patch_file': PATCH_FILE_COMPACTOR,
     'web_search': WEB_SEARCH_COMPACTOR,
     'read_url': READ_URL_COMPACTOR,

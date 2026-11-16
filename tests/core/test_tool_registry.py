@@ -238,10 +238,10 @@ def test_register_shell_tools_passes_the_logger() -> None:
     agent = DummyAgent()
     register_shell_tools(agent, logger=hub)
 
-    asyncio.run(agent.registered['run'](['true']))
+    asyncio.run(agent.registered['shell'](['true']))
 
     assert [event.phase for event in events] == ['start', 'success']
-    assert events[0].tool_name == 'run'
+    assert events[0].tool_name == 'shell'
     assert events[0].args['cmds'] == ['true']
 
 

@@ -213,10 +213,10 @@ class StatusBar(Static):
     def _right(self) -> Text:
         text = Text()
         workspace = self._workspace
-        if workspace is not None and workspace.label:
-            text.append(workspace.label, style='bold yellow' if workspace.is_worktree else 'bold cyan')
-            if workspace.branch:
-                text.append(f' {workspace.branch}', style=color(self, 'muted'))
+        if workspace is not None and workspace.branch:
+            text.append(workspace.branch, style=f'bold {color(self, "accent")}')
+            if workspace.is_worktree and workspace.label:
+                text.append(f' ({workspace.label})', style=color(self, 'muted'))
         diff = self._diff
         if diff is not None:
             if text.plain:

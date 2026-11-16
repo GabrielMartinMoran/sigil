@@ -41,9 +41,19 @@ LONG = 'payload ' * 2000
 def samples() -> dict:
     return {
         'run': [RunToolOutput(returncode=1, stdout=LONG, stderr='failure')],
+        'shell': [RunToolOutput(returncode=1, stdout=LONG, stderr='failure')],
+        'execute_code': {
+            'returncode': 0,
+            'stdout': LONG,
+            'stderr': '',
+            'timed_out': False,
+            'stdout_truncated': False,
+            'stderr_truncated': False,
+        },
         'read_file': FileContent(
             path='file.py', size=1000, truncated=True, binary=False, encoding='utf-8', content=LONG
         ),
+        'edit_file': {'path': 'file.py', 'created': True, 'operations': 2, 'bytes_after': 100},
         'write_file': WriteResult(path='file.py', bytes_written=100, created=True, appended=False),
         'patch_file': PatchResult(
             path='file.py', mode='string', replacements=1, bytes_before=1, bytes_after=2, preview=LONG

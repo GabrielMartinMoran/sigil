@@ -38,9 +38,9 @@ def _tools():
 def test_write_and_read_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     tools = _tools()
-    result = tools['write_file'](path='notes.txt', content='hello\n')
-    assert result.created is True
-    assert result.bytes_written == 6
+    result = tools['write_file'](path='notes.txt', operations=[{'type': 'write', 'content': 'hello\n'}])
+    assert result['created'] is True
+    assert result['bytes_after'] == 6
 
     read = tools['read_file'](path='notes.txt')
     assert read.content == 'hello\n'
@@ -73,9 +73,9 @@ def test_patch_string_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.chdir(tmp_path)
     Path('a.txt').write_text('one\ntwo\nthree\n')
     tools = _tools()
-    result = tools['patch_file'](path='a.txt', old_string='two', new_string='TWO')
-    assert result.mode == 'string'
-    assert result.replacements == 1
+    result = tools['write_file'](path='a.txt', operations=[{'type': 'replace', 'old': 'two', 'new': 'TWO'}])
+    assert result['operations'] == 1
+    assert result['bytes_after'] == len('one\nTWO\nthree\n')
     assert Path('a.txt').read_text() == 'one\nTWO\nthree\n'
 
 
@@ -84,15 +84,17 @@ def test_patch_requires_unique_match(tmp_path: Path, monkeypatch: pytest.MonkeyP
     Path('a.txt').write_text('x\nx\n')
     tools = _tools()
     with pytest.raises(FileToolError, match='appears 2 times'):
-        tools['patch_file'](path='a.txt', old_string='x', new_string='y')
+        tools['write_file'](path='a.txt', operations=[{'type': 'replace', 'old': 'x', 'new': 'y'}])
 
 
 def test_patch_replace_all(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     Path('a.txt').write_text('x\nx\n')
     tools = _tools()
-    result = tools['patch_file'](path='a.txt', old_string='x', new_string='y', replace_all=True)
-    assert result.replacements == 2
+    result = tools['write_file'](
+        path='a.txt', operations=[{'type': 'replace', 'old': 'x', 'new': 'y', 'replace_all': True}]
+    )
+    assert result['bytes_after'] == len('y\ny\n')
     assert Path('a.txt').read_text() == 'y\ny\n'
 
 
@@ -100,8 +102,10 @@ def test_patch_line_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.chdir(tmp_path)
     Path('a.txt').write_text('one\ntwo\nthree\n')
     tools = _tools()
-    result = tools['patch_file'](path='a.txt', start_line=2, end_line=2, new_string='TWO')
-    assert result.mode == 'lines'
+    result = tools['write_file'](
+        path='a.txt', operations=[{'type': 'replace_lines', 'start_line': 2, 'end_line': 2, 'new': 'TWO'}]
+    )
+    assert result['operations'] == 1
     assert Path('a.txt').read_text() == 'one\nTWO\nthree\n'
 
 
@@ -110,7 +114,12 @@ def test_patch_line_mode_validates_expected_text(tmp_path: Path, monkeypatch: py
     Path('a.txt').write_text('one\ntwo\nthree\n')
     tools = _tools()
     with pytest.raises(FileToolError, match='expected_text'):
-        tools['patch_file'](path='a.txt', start_line=2, end_line=2, new_string='X', expected_text='wrong')
+        tools['write_file'](
+            path='a.txt',
+            operations=[
+                {'type': 'replace_lines', 'start_line': 2, 'end_line': 2, 'new': 'X', 'expected_text': 'wrong'}
+            ],
+        )
 
 
 def test_patch_line_mode_accepts_expected_text_without_trailing_newline(
@@ -119,7 +128,10 @@ def test_patch_line_mode_accepts_expected_text_without_trailing_newline(
     monkeypatch.chdir(tmp_path)
     Path('a.txt').write_text('one\ntwo\nthree\n')
     tools = _tools()
-    tools['patch_file'](path='a.txt', start_line=2, end_line=2, new_string='TWO', expected_text='two')
+    tools['write_file'](
+        path='a.txt',
+        operations=[{'type': 'replace_lines', 'start_line': 2, 'end_line': 2, 'new': 'TWO', 'expected_text': 'two'}],
+    )
     assert Path('a.txt').read_text() == 'one\nTWO\nthree\n'
 
 
@@ -128,17 +140,21 @@ def test_patch_rejects_expected_text_in_string_mode(tmp_path: Path, monkeypatch:
     Path('a.txt').write_text('one\ntwo\n')
     tools = _tools()
     with pytest.raises(FileToolError, match='expected_text'):
-        tools['patch_file'](path='a.txt', old_string='two', new_string='TWO', expected_text='two')
+        tools['write_file'](
+            path='a.txt', operations=[{'type': 'replace', 'old': 'two', 'new': 'TWO', 'expected_text': 'two'}]
+        )
 
 
 def test_patch_preserves_crlf(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     Path('a.txt').write_bytes(b'one\r\ntwo\r\nthree\r\n')
     tools = _tools()
-    tools['patch_file'](path='a.txt', start_line=2, end_line=2, new_string='TWO')
+    tools['write_file'](
+        path='a.txt', operations=[{'type': 'replace_lines', 'start_line': 2, 'end_line': 2, 'new': 'TWO'}]
+    )
     assert Path('a.txt').read_bytes() == b'one\r\nTWO\r\nthree\r\n'
 
-    tools['patch_file'](path='a.txt', old_string='three', new_string='THREE')
+    tools['write_file'](path='a.txt', operations=[{'type': 'replace', 'old': 'three', 'new': 'THREE'}])
     assert Path('a.txt').read_bytes() == b'one\r\nTWO\r\nTHREE\r\n'
 
 
@@ -146,7 +162,9 @@ def test_patch_line_mode_keeps_missing_trailing_newline(tmp_path: Path, monkeypa
     monkeypatch.chdir(tmp_path)
     Path('a.txt').write_text('one\ntwo')
     tools = _tools()
-    tools['patch_file'](path='a.txt', start_line=2, end_line=2, new_string='TWO')
+    tools['write_file'](
+        path='a.txt', operations=[{'type': 'replace_lines', 'start_line': 2, 'end_line': 2, 'new': 'TWO'}]
+    )
     assert Path('a.txt').read_text() == 'one\nTWO'
 
 
@@ -207,10 +225,12 @@ def test_write_file_creates_a_file_in_the_os_temp_directory(tmp_path: Path, monk
     scratch = _scratch(monkeypatch, tmp_path)
     tools = _tools()
 
-    result = tools['write_file'](path=str(scratch / 'notes.txt'), content='scratch\n')
+    result = tools['write_file'](
+        path=str(scratch / 'notes.txt'), operations=[{'type': 'write', 'content': 'scratch\n'}]
+    )
 
-    assert result.created is True
-    assert result.appended is False
+    assert result['created'] is True
+    assert result['operations'] == 1
     assert (scratch / 'notes.txt').read_text() == 'scratch\n'
 
 
@@ -220,7 +240,7 @@ def test_write_file_creates_parent_directories_in_the_os_temp_directory(
     scratch = _scratch(monkeypatch, tmp_path)
     tools = _tools()
 
-    tools['write_file'](path=str(scratch / 'deep' / 'dir' / 'a.txt'), content='x')
+    tools['write_file'](path=str(scratch / 'deep' / 'dir' / 'a.txt'), operations=[{'type': 'write', 'content': 'x'}])
 
     assert (scratch / 'deep' / 'dir' / 'a.txt').read_text() == 'x'
 
@@ -239,9 +259,11 @@ def test_patch_file_edits_a_file_in_the_os_temp_directory(tmp_path: Path, monkey
     (scratch / 'log.txt').write_text('one\ntwo\n')
     tools = _tools()
 
-    result = tools['patch_file'](path=str(scratch / 'log.txt'), old_string='two', new_string='TWO')
+    result = tools['write_file'](
+        path=str(scratch / 'log.txt'), operations=[{'type': 'replace', 'old': 'two', 'new': 'TWO'}]
+    )
 
-    assert result.mode == 'string'
+    assert result['operations'] == 1
     assert (scratch / 'log.txt').read_text() == 'one\nTWO\n'
 
 
@@ -294,15 +316,17 @@ def test_a_sibling_of_the_temp_directory_is_still_refused(tmp_path: Path, monkey
     tools = _tools()
 
     with pytest.raises(FileToolError, match='outside the workspace'):
-        tools['write_file'](path=str(tmp_path / 'scratch' / '..' / 'escaped.txt'), content='x')
+        tools['write_file'](
+            path=str(tmp_path / 'scratch' / '..' / 'escaped.txt'), operations=[{'type': 'write', 'content': 'x'}]
+        )
     assert not (tmp_path / 'escaped.txt').exists()
 
 
 def test_write_creates_parent_directories(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     tools = _tools()
-    result = tools['write_file'](path='a/b/c.txt', content='x')
-    assert result.created is True
+    result = tools['write_file'](path='a/b/c.txt', operations=[{'type': 'write', 'content': 'x'}])
+    assert result['created'] is True
     assert Path('a/b/c.txt').read_text() == 'x'
 
 
@@ -320,19 +344,11 @@ def test_mutating_file_tools_declare_a_concurrency_guard() -> None:
     tools = _agent_with_files()._function_toolset.tools
 
     # The context the guard needs does not appear in the model schema.
-    assert sorted(tools['patch_file'].function_schema.json_schema['properties']) == [
-        'end_line',
-        'expected_text',
-        'new_string',
-        'old_string',
-        'path',
-        'replace_all',
-        'start_line',
-    ]
-    assert sorted(tools['write_file'].function_schema.json_schema['properties']) == ['append', 'content', 'path']
+    assert sorted(tools['write_file'].function_schema.json_schema['properties']) == ['operations', 'path']
+    assert 'patch_file' not in tools
+    assert 'edit_file' not in tools
 
     # No barriers: parallelism stays enabled except for the specific conflict.
-    assert tools['patch_file'].sequential is False
     assert tools['write_file'].sequential is False
     assert tools['read_file'].sequential is False
 
@@ -375,8 +391,8 @@ def test_two_patches_on_the_same_file_conflict(tmp_path: Path, monkeypatch: pyte
         tmp_path,
         monkeypatch,
         [
-            ('patch_file', {'path': 'a.txt', 'old_string': 'one', 'new_string': 'ONE'}),
-            ('patch_file', {'path': 'a.txt', 'old_string': 'two', 'new_string': 'TWO'}),
+            ('write_file', {'path': 'a.txt', 'operations': [{'type': 'replace', 'old': 'one', 'new': 'ONE'}]}),
+            ('write_file', {'path': 'a.txt', 'operations': [{'type': 'replace', 'old': 'two', 'new': 'TWO'}]}),
         ],
     )
 
@@ -394,8 +410,8 @@ def test_patch_and_write_on_the_same_file_conflict(tmp_path: Path, monkeypatch: 
         tmp_path,
         monkeypatch,
         [
-            ('write_file', {'path': 'a.txt', 'content': 'new\n'}),
-            ('patch_file', {'path': 'a.txt', 'old_string': 'new', 'new_string': 'other'}),
+            ('write_file', {'path': 'a.txt', 'operations': [{'type': 'write', 'content': 'new\n'}]}),
+            ('write_file', {'path': 'a.txt', 'operations': [{'type': 'replace', 'old': 'new', 'new': 'other'}]}),
         ],
     )
 
@@ -411,8 +427,8 @@ def test_patches_on_different_files_run_in_parallel(tmp_path: Path, monkeypatch:
         tmp_path,
         monkeypatch,
         [
-            ('patch_file', {'path': 'a.txt', 'old_string': 'one', 'new_string': 'ONE'}),
-            ('patch_file', {'path': 'b.txt', 'old_string': 'two', 'new_string': 'TWO'}),
+            ('write_file', {'path': 'a.txt', 'operations': [{'type': 'replace', 'old': 'one', 'new': 'ONE'}]}),
+            ('write_file', {'path': 'b.txt', 'operations': [{'type': 'replace', 'old': 'two', 'new': 'TWO'}]}),
         ],
     )
 
@@ -429,7 +445,7 @@ def test_reading_a_file_does_not_conflict_with_editing_it(tmp_path: Path, monkey
         monkeypatch,
         [
             ('read_file', {'path': 'a.txt'}),
-            ('patch_file', {'path': 'a.txt', 'old_string': 'one', 'new_string': 'ONE'}),
+            ('write_file', {'path': 'a.txt', 'operations': [{'type': 'replace', 'old': 'one', 'new': 'ONE'}]}),
         ],
     )
 
@@ -453,15 +469,15 @@ def test_external_access_follows_current_session_for_all_file_tools(
 
     for name, arguments in (
         ('read_file', {}),
-        ('write_file', {'content': 'new'}),
-        ('patch_file', {'old_string': 'before', 'new_string': 'after'}),
+        ('write_file', {'operations': [{'type': 'write', 'content': 'new'}]}),
+        ('write_file', {'operations': [{'type': 'replace', 'old': 'before', 'new': 'after'}]}),
     ):
         with pytest.raises(FileToolError):
             tools[name](path=str(external), **arguments)
     allowed = True
     assert tools['read_file'](path=str(external)).content == 'before'
-    tools['patch_file'](path=str(external), old_string='before', new_string='after')
-    tools['write_file'](path=str(external), content='new')
+    tools['write_file'](path=str(external), operations=[{'type': 'replace', 'old': 'before', 'new': 'after'}])
+    tools['write_file'](path=str(external), operations=[{'type': 'write', 'content': 'new'}])
     assert external.read_text() == 'new'
     allowed = False
     with pytest.raises(FileToolError):

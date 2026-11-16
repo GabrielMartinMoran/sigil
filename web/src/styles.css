@@ -177,6 +177,40 @@ body {
   color: var(--color-ink);
   font: inherit;
 }
+.tool-code-label {
+  margin: 0.55rem 0 0 2ch;
+  color: var(--color-ink-muted);
+  font-size: 0.8rem;
+}
+.tool-code {
+  background: var(--color-tool-panel);
+  border: 1px solid var(--color-tool-line);
+  border-radius: 6px;
+  margin: 0.3rem 0 0.8rem 2ch;
+  padding: 0.65rem 0.9rem;
+  max-height: 24rem;
+  overflow: auto;
+  white-space: pre;
+  color: var(--color-ink);
+  font-family: monospace;
+}
+.syntax-keyword,
+.syntax-operator {
+  color: var(--color-accent);
+}
+.syntax-string,
+.syntax-number,
+.syntax-boolean {
+  color: var(--color-tool-good);
+}
+.syntax-comment {
+  color: var(--color-ink-muted);
+  font-style: italic;
+}
+.syntax-function,
+.syntax-class-name {
+  color: var(--color-tool-structure);
+}
 .tool-row:hover {
   background: color-mix(in srgb, var(--color-tool-structure) 5%, transparent);
 }

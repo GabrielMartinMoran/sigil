@@ -250,7 +250,7 @@ def test_should_refresh_the_branch_after_an_external_checkout(tmp_path: Path) ->
             _git(root, 'checkout', '-q', '--detach')
             await app.refresh_diff().wait()
             assert 'updated' not in bar.plain()
-            assert 'main@' in bar.plain()
+            assert 'detached @' in bar.plain()
 
     asyncio.run(inner())
 

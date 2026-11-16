@@ -114,18 +114,24 @@ class ActivityMixin:
         manager = getattr(self, '_workspace_manager', None)
         if manager is not None:
             workspace = manager.current()
-            return WorkspaceBadge(
-                label=workspace.label,
-                branch=workspace.branch,
-                is_worktree=workspace.is_worktree,
-            )
+            worktree = workspace.worktree
+            if worktree is None:
+                return None
+            branch = worktree.branch or (f'detached @{worktree.short_head}' if worktree.short_head else 'detached')
+            return WorkspaceBadge(label=worktree.name, branch=branch, is_worktree=workspace.is_worktree)
         reported = self._reported_workspace()
         if reported is None:
             return None
+        worktree = reported.get('worktree')
+        if not isinstance(worktree, dict):
+            return None
         branch = reported.get('branch')
+        if not isinstance(branch, str) or not branch:
+            head = worktree.get('head')
+            branch = f'detached @{head[:7]}' if isinstance(head, str) and head else 'detached'
         return WorkspaceBadge(
-            label=str(reported.get('label') or ''),
-            branch=str(branch) if isinstance(branch, str) else None,
+            label=str(worktree.get('name') or ''),
+            branch=branch,
             is_worktree=bool(reported.get('is_worktree')),
         )
 

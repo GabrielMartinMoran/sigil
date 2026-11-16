@@ -238,6 +238,8 @@ def test_the_shipped_wizard_parses() -> None:
     profile = registry.require('wizard')
     assert profile.source == 'builtin'
     assert 'Wizard' in registry.active_body()
+    assert profile.permissions.advertises('shell', ('run',))
+    assert profile.permissions.advertises('write_file', ('write',))
 
 
 def test_the_shipped_set_has_an_agent_and_a_subagent() -> None:
@@ -258,7 +260,8 @@ def test_the_shipped_scout_exposes_research_without_direct_mutation_tools() -> N
     permissions = AgentRegistry([('builtin', _builtin_root())], active='scout').require('scout').permissions
     allowed = {
         'read_file',
-        'run',
+        'shell',
+        'execute_code',
         'web_search',
         'read_url',
         'list_skills',
@@ -274,11 +277,13 @@ def test_the_shipped_scout_exposes_research_without_direct_mutation_tools() -> N
     }
     advertised = {name for name, group in BUILTIN_TOOLS.items() if permissions.advertises(name, (group,))}
     assert advertised == allowed
-    run_rules = [rule for rule in permissions.rules if rule.matches_tool('run', (ToolGroup.RUN,))]
-    assert run_rules[-1].effect is Effect.ALLOW
-    assert not run_rules[-1].patterns
-    assert permissions.permits('run', (ToolGroup.RUN,), ('git status',), ResourceKind.COMMAND)
-    assert permissions.permits('run', (ToolGroup.RUN,), ('grep -R approval src',), ResourceKind.COMMAND)
+    shell_rules = [rule for rule in permissions.rules if rule.matches_tool('shell', (ToolGroup.RUN,))]
+    assert shell_rules[-1].effect is Effect.ALLOW
+    assert not shell_rules[-1].patterns
+    assert permissions.permits('shell', (ToolGroup.RUN,), ('git status',), ResourceKind.COMMAND)
+    assert permissions.permits('shell', (ToolGroup.RUN,), ('grep -R approval src',), ResourceKind.COMMAND)
+    assert not permissions.advertises('write_file', (ToolGroup.WRITE,))
+    assert not permissions.permits('write_file', (ToolGroup.WRITE,), ('file.txt',), ResourceKind.PATH)
 
 
 @pytest.mark.parametrize(

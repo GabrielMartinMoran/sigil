@@ -200,3 +200,25 @@ def test_the_gate_reads_the_model_per_request() -> None:
     state['images'] = True
 
     assert [tool.name for tool in _run(gate, tools)] == ['view_image']
+
+
+@pytest.mark.parametrize('tool_name', ['shell', 'execute_code', 'write_file'])
+def test_real_prompt_tool_guidance_follows_tool_availability(tool_name: str) -> None:
+    from src.core.agents.agent import _load_prompt
+
+    template = _load_prompt()
+    without = render(template, {'read_file'})
+    with_tool = render(template, {'read_file', tool_name})
+
+    assert f'### Choosing `{tool_name}`' not in without
+    assert f'### Choosing `{tool_name}`' in with_tool
+    assert '<!--' not in with_tool
+
+
+def test_real_prompt_does_not_recommend_hidden_base_tools() -> None:
+    from src.core.agents.agent import _load_prompt
+
+    rendered = render(_load_prompt(), set())
+
+    for tool_name in ('read_file', 'write_file', 'shell', 'execute_code'):
+        assert f'`{tool_name}`' not in rendered

@@ -156,8 +156,8 @@ def test_register_shell_tools_registers_run() -> None:
     agent = _DummyAgent()
     register_shell_tools(agent)
 
-    assert 'run' in agent.registered
-    result = asyncio.run(agent.registered['run'](['pwd']))
+    assert 'shell' in agent.registered
+    result = asyncio.run(agent.registered['shell'](['pwd']))
     assert len(result) == 1
     assert result[0].returncode == 0
 
@@ -268,7 +268,7 @@ def test_the_run_tool_uses_the_execution_root_without_moving_the_process(
     register_shell_tools(agent, root=workspace_root)
 
     with execution_workspace(bound):
-        result = asyncio.run(agent.registered['run'](['pwd']))
+        result = asyncio.run(agent.registered['shell'](['pwd']))
 
     assert Path(result[0].stdout.strip()).resolve() == bound.resolve()
     assert Path.cwd() == outside

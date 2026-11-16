@@ -27,6 +27,7 @@ from src.core.agents.profile.agent_registry import AgentRegistry
 from src.core.agents.tree.agent_tree_store import AgentTreeStore
 from src.core.agents.tree.subagent_summoner import SubagentSummoner
 from src.core.agents.tree.tools import register_tree_tools
+from src.core.codemode.tools import register_code_tools
 from src.core.files.tools import register_file_tools
 from src.core.interaction.question_hub import QuestionHub
 from src.core.interaction.tools import register_interaction_tools
@@ -44,6 +45,7 @@ def _registered_tools() -> dict[str, Any]:
     """The declarations of every built-in tool, read out of the real agent."""
     agent = create_agent(SkillRegistry(), model=TestModel())
     register_shell_tools(agent)
+    register_code_tools(agent)
     register_file_tools(agent)
     register_web_tools(agent)
     register_skill_tools(agent, SkillRegistry())

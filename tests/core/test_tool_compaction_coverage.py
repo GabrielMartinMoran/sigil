@@ -20,14 +20,14 @@ def test_the_catalogue_covers_every_registered_tool() -> None:
         assert composition.tool_catalog.uncovered() == ()
         declared = set(composition.tool_catalog.names())
         # The tree tools are registered by the factory; every other own tool is here.
-        assert {'run', 'read_file', 'load_skill', 'view_image'} <= declared
+        assert {'shell', 'read_file', 'load_skill', 'view_image'} <= declared
 
 
 def test_the_view_reads_the_declared_compactor_and_not_the_generic_one() -> None:
     with tempfile.TemporaryDirectory() as root:
         composition = Composition(Path(root), settings=load_settings({}))
         lookup = composition.tool_catalog.compactor
-        assert lookup('run') is ALL_COMPACTORS['run']
+        assert lookup('shell') is ALL_COMPACTORS['shell']
         assert lookup('summon') is ALL_COMPACTORS['summon']
         assert lookup('an_external_tool') is None
 
@@ -37,7 +37,7 @@ def test_the_strategy_is_built_with_the_catalogue() -> None:
         composition = Composition(Path(root), settings=load_settings({}))
         strategy = build_strategy(load_settings({}), lookup=composition.tool_catalog.compactor)
         assert strategy.lookup is not None
-        assert strategy.lookup('run') is ALL_COMPACTORS['run']
+        assert strategy.lookup('shell') is ALL_COMPACTORS['shell']
 
 
 def test_an_uncovered_tool_is_reported_and_does_not_silently_pass() -> None:

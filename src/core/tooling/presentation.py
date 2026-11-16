@@ -81,9 +81,12 @@ def human_bytes(size: int) -> str:
 
 DISPLAY_NAMES: Mapping[str, str] = {
     'run': 'run',
+    'shell': 'shell',
+    'execute_code': 'python',
     'read_file': 'read',
     'write_file': 'write',
     'patch_file': 'patch',
+    'edit_file': 'edit',
     'web_search': 'search',
     'read_url': 'fetch',
     'list_skills': 'skills',
