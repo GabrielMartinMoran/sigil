@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from src.server.api.bodies.default_entry_body import DefaultEntryBody
+from src.server.api.schemas.default_entry_schema import DefaultEntrySchema
 
 
-class ModelDefaultBody(BaseModel):
+class ModelDefaultSchema(BaseModel):
     """One default to write, and the file it belongs to.
 
     ``config`` is required and nullable on purpose: ``null`` clears the entry, which
@@ -19,4 +19,4 @@ class ModelDefaultBody(BaseModel):
     """An agent name, or ``null`` for the block a conversation starts on."""
     scope: str = Field(min_length=1)
     """Which of the two files: ``project`` or ``global``."""
-    config: DefaultEntryBody | None
+    config: DefaultEntrySchema | None

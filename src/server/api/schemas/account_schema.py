@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
-class AccountBody(BaseModel):
+class AccountSchema(BaseModel):
     """A provider account to add, with the credential it needs.
 
     ``auth`` is accepted so an OAuth request is answered explicitly instead of

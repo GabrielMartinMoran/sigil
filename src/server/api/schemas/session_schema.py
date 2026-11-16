@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
-class SessionBody(BaseModel):
+class SessionSchema(BaseModel):
     """A conversation to open."""
 
     id: str = Field(min_length=1)

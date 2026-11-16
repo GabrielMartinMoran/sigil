@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
-class McpBody(BaseModel):
+class McpSchema(BaseModel):
     """One MCP server to enable or disable for this session."""
 
     name: str = Field(min_length=1)

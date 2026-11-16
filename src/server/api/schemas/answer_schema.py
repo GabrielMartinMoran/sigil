@@ -7,7 +7,7 @@ from typing import Any
 from pydantic import BaseModel
 
 
-class AnswerBody(BaseModel):
+class AnswerSchema(BaseModel):
     """An answer to the questions the agent asked."""
 
     id: str

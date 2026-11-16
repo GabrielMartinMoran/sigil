@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 
-class NewSessionBody(BaseModel):
+class NewSessionSchema(BaseModel):
     """A conversation to start, optionally in a worktree cut first."""
 
     worktree: str | None = None

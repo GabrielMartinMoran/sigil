@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
-class RollbackBody(BaseModel):
+class RollbackSchema(BaseModel):
     """A rollback point to return to.
 
     ``files`` restores the workspace snapshot too; ``False`` puts the conversation

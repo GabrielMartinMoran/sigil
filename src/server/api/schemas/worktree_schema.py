@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
-class AgentBody(BaseModel):
-    """A profile to activate for the next turn."""
+class WorktreeSchema(BaseModel):
+    """A worktree to create and move into."""
 
     name: str = Field(min_length=1)

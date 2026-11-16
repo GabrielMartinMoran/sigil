@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
-class ImageBody(BaseModel):
+class ImageSchema(BaseModel):
     """One image of a message, in the order the text marks it.
 
     The shape is deliberately the bytes and nothing else: ``media_type`` is what the

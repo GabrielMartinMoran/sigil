@@ -56,28 +56,28 @@ from src.server.api import views
 from src.server.api.auth import Auth
 from src.server.api.auth_cookies import cleared_cookie, session_cookie
 from src.server.api.auth_middleware import AuthMiddleware
-from src.server.api.bodies.account_body import AccountBody
-from src.server.api.bodies.agent_body import AgentBody
-from src.server.api.bodies.answer_body import AnswerBody
-from src.server.api.bodies.effort_body import EffortBody
-from src.server.api.bodies.external_files_body import ExternalFilesBody
-from src.server.api.bodies.fork_body import ForkBody
-from src.server.api.bodies.login_body import LoginBody
-from src.server.api.bodies.mcp_body import McpBody
-from src.server.api.bodies.model_body import ModelBody
-from src.server.api.bodies.model_default_body import ModelDefaultBody
-from src.server.api.bodies.new_session_body import NewSessionBody
-from src.server.api.bodies.node_body import NodeBody
-from src.server.api.bodies.rename_body import RenameBody
-from src.server.api.bodies.rollback_body import RollbackBody
-from src.server.api.bodies.session_body import SessionBody
-from src.server.api.bodies.turn_body import TurnBody
-from src.server.api.bodies.workspace_body import WorkspaceBody
-from src.server.api.bodies.worktree_body import WorktreeBody
 from src.server.api.body_limit_middleware import MAX_COMMAND_BYTES, BodyLimitMiddleware
 from src.server.api.client_key import client_key
 from src.server.api.graceful_stop import GracefulStop
 from src.server.api.login_throttle import LoginThrottle
+from src.server.api.schemas.account_schema import AccountSchema
+from src.server.api.schemas.agent_schema import AgentSchema
+from src.server.api.schemas.answer_schema import AnswerSchema
+from src.server.api.schemas.effort_schema import EffortSchema
+from src.server.api.schemas.external_files_schema import ExternalFilesSchema
+from src.server.api.schemas.fork_schema import ForkSchema
+from src.server.api.schemas.login_schema import LoginSchema
+from src.server.api.schemas.mcp_schema import McpSchema
+from src.server.api.schemas.model_default_schema import ModelDefaultSchema
+from src.server.api.schemas.model_schema import ModelSchema
+from src.server.api.schemas.new_session_schema import NewSessionSchema
+from src.server.api.schemas.node_schema import NodeSchema
+from src.server.api.schemas.rename_schema import RenameSchema
+from src.server.api.schemas.rollback_schema import RollbackSchema
+from src.server.api.schemas.session_schema import SessionSchema
+from src.server.api.schemas.turn_schema import TurnSchema
+from src.server.api.schemas.workspace_schema import WorkspaceSchema
+from src.server.api.schemas.worktree_schema import WorktreeSchema
 from src.server.api.session_lease_middleware import SessionLeaseMiddleware
 from src.server.launch.debug_diagnostics import DebugDiagnostics
 from src.server.launch.diagnostics import record
@@ -364,7 +364,7 @@ def create_app(
     if config.web:
 
         @app.post('/api/login')
-        async def login(body: LoginBody, request: Request) -> JSONResponse:
+        async def login(body: LoginSchema, request: Request) -> JSONResponse:
             """Exchanges the password for a signed cookie.
 
             Registered only on `sigil serve`: the API surface has no password and no
@@ -559,7 +559,7 @@ def create_app(
     # --- actions -------------------------------------------------------
 
     @app.post('/api/turn')
-    async def turn(body: TurnBody, session_id: str | None = None) -> dict[str, Any]:
+    async def turn(body: TurnSchema, session_id: str | None = None) -> dict[str, Any]:
         """Sends a message: a new turn, or a steer into the running one.
 
         The images travel validated and ordered; a refusal is a `ValueError` from the
@@ -584,12 +584,12 @@ def create_app(
         return {'stopped': selected_session(session_id).stop_all()}
 
     @app.post('/api/answer')
-    async def answer(body: AnswerBody, session_id: str | None = None) -> dict[str, Any]:
+    async def answer(body: AnswerSchema, session_id: str | None = None) -> dict[str, Any]:
         resolved = selected_session(session_id).answer(body.id, body.answers)
         return {'resolved': resolved}
 
     @app.post('/api/session/new')
-    async def new_session(body: NewSessionBody | None = None, session_id: str | None = None) -> dict[str, Any]:
+    async def new_session(body: NewSessionSchema | None = None, session_id: str | None = None) -> dict[str, Any]:
         """Create an independent conversation without interrupting its source."""
         source = selected_session(session_id)
         root = None
@@ -603,7 +603,7 @@ def create_app(
         return {'session': views.session_view(owner.session)}
 
     @app.post('/api/worktree')
-    async def create_worktree(body: WorktreeBody, session_id: str | None = None) -> dict[str, Any]:
+    async def create_worktree(body: WorktreeSchema, session_id: str | None = None) -> dict[str, Any]:
         """Create a worktree and independent session for the requesting client."""
         source = selected_session(session_id)
         try:
@@ -618,7 +618,7 @@ def create_app(
         }
 
     @app.post('/api/session/open')
-    async def open_session(body: SessionBody, session_id: str | None = None) -> dict[str, Any]:
+    async def open_session(body: SessionSchema, session_id: str | None = None) -> dict[str, Any]:
         """Load the named session; its ID is the request's target, not a global switch."""
         try:
             owner = await runtime.open_resident(body.id)
@@ -627,7 +627,7 @@ def create_app(
         return {'session': views.session_view(owner.session)}
 
     @app.post('/api/workspace')
-    async def switch_workspace(body: WorkspaceBody, session_id: str | None = None) -> dict[str, Any]:
+    async def switch_workspace(body: WorkspaceSchema, session_id: str | None = None) -> dict[str, Any]:
         """Create a session in the requested workspace, leaving the source running."""
         source = selected_session(session_id)
         try:
@@ -694,7 +694,7 @@ def create_app(
         return {'accounts': _account_rows(owner.composition.model_service)}
 
     @app.post('/api/accounts')
-    async def add_account(body: AccountBody, session_id: str | None = None) -> dict[str, Any]:
+    async def add_account(body: AccountSchema, session_id: str | None = None) -> dict[str, Any]:
         """Adds an API-key account and makes it active, refused while a turn runs."""
         owner = selected_session(session_id)
         service = owner.composition.model_service
@@ -785,7 +785,7 @@ def create_app(
         return {'accounts': _account_rows(service)}
 
     @app.post('/api/accounts/{alias}/rename')
-    async def rename_account(alias: str, body: RenameBody, session_id: str | None = None) -> dict[str, Any]:
+    async def rename_account(alias: str, body: RenameSchema, session_id: str | None = None) -> dict[str, Any]:
         """Changes an account's label. Its id, and saved sessions, stay valid."""
         owner = selected_session(session_id)
         service = owner.composition.model_service
@@ -800,7 +800,7 @@ def create_app(
         return {'accounts': _account_rows(service)}
 
     @app.post('/api/model')
-    async def change_model(body: ModelBody, session_id: str | None = None) -> dict[str, Any]:
+    async def change_model(body: ModelSchema, session_id: str | None = None) -> dict[str, Any]:
         """Switches the model of the session, refused while a turn runs.
 
         The refusal is the engine's (`BusyError` from `ModelService.select`), which
@@ -818,7 +818,7 @@ def create_app(
         return {'model': views.model_view(snapshot)}
 
     @app.post('/api/effort')
-    async def change_effort(body: EffortBody, session_id: str | None = None) -> dict[str, Any]:
+    async def change_effort(body: EffortSchema, session_id: str | None = None) -> dict[str, Any]:
         """Sets the reasoning level, effective on the next step and not this one."""
         owner = selected_session(session_id)
         try:
@@ -830,7 +830,7 @@ def create_app(
         return {'model': views.model_view(snapshot)}
 
     @app.post('/api/agent')
-    async def change_agent(body: AgentBody, session_id: str | None = None) -> dict[str, Any]:
+    async def change_agent(body: AgentSchema, session_id: str | None = None) -> dict[str, Any]:
         """Activates an agent profile for the next turn, refused while one runs."""
         owner = selected_session(session_id)
         try:
@@ -855,7 +855,7 @@ def create_app(
         }
 
     @app.post('/api/rollback')
-    async def rollback(body: RollbackBody, session_id: str | None = None) -> dict[str, Any]:
+    async def rollback(body: RollbackSchema, session_id: str | None = None) -> dict[str, Any]:
         """Returns the session to before a turn, rows and optionally files.
 
         Off the event loop: the filesystem half diffs and restores the workspace,
@@ -882,7 +882,7 @@ def create_app(
         }
 
     @app.post('/api/fork')
-    async def fork(body: ForkBody, session_id: str | None = None) -> dict[str, Any]:
+    async def fork(body: ForkSchema, session_id: str | None = None) -> dict[str, Any]:
         """Branches a new session at the instant before a turn. Nothing is destroyed."""
         owner = selected_session(session_id)
         try:
@@ -894,7 +894,7 @@ def create_app(
     # --- the tree ------------------------------------------------------
 
     @app.post('/api/tree/stop')
-    async def stop_node(body: NodeBody, session_id: str | None = None) -> dict[str, Any]:
+    async def stop_node(body: NodeSchema, session_id: str | None = None) -> dict[str, Any]:
         """Stops a subagent and everything it summoned.
 
         The refusals are the terminal's: an id that names no node is a request
@@ -910,7 +910,7 @@ def create_app(
         return _tree_reply(owner, node, message)
 
     @app.post('/api/tree/background')
-    async def background_node(body: NodeBody, session_id: str | None = None) -> dict[str, Any]:
+    async def background_node(body: NodeSchema, session_id: str | None = None) -> dict[str, Any]:
         """Sends a running subagent to the background: it answers as a message later."""
         owner = selected_session(session_id)
         try:
@@ -938,7 +938,7 @@ def create_app(
     # --- session settings ----------------------------------------------
 
     @app.post('/api/mcp')
-    async def toggle_mcp(body: McpBody, session_id: str | None = None) -> dict[str, Any]:
+    async def toggle_mcp(body: McpSchema, session_id: str | None = None) -> dict[str, Any]:
         """Enables or disables one MCP server for this session, and remembers it.
 
         Refused mid-turn and while a subagent runs, the two criteria the terminal
@@ -954,7 +954,7 @@ def create_app(
         return {'session': views.session_view(session), 'mcp': await _mcp_state(owner.composition)}
 
     @app.post('/api/external-files')
-    async def external_files(body: ExternalFilesBody, session_id: str | None = None) -> dict[str, Any]:
+    async def external_files(body: ExternalFilesSchema, session_id: str | None = None) -> dict[str, Any]:
         """Allows or denies file access outside the workspace for this session.
 
         Refused mid-turn, like the terminal's `/external-files`.
@@ -1008,7 +1008,7 @@ def create_app(
         return {'defaults': _defaults_payload(service, owner.model_defaults())}
 
     @app.post('/api/model-defaults')
-    async def write_model_default(body: ModelDefaultBody, session_id: str | None = None) -> dict[str, Any]:
+    async def write_model_default(body: ModelDefaultSchema, session_id: str | None = None) -> dict[str, Any]:
         """Sets or clears one default and answers with the state the write left.
 
         The write is the engine's (`Composition.save_model_default`), and so are the

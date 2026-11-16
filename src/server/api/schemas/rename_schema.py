@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
-class RenameBody(BaseModel):
+class RenameSchema(BaseModel):
     """The new label for an account. The id, and saved sessions, stay valid."""
 
     new_alias: str = Field(min_length=1)

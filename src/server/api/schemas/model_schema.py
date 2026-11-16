@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
-class ModelBody(BaseModel):
+class ModelSchema(BaseModel):
     """A model to switch the session to.
 
     ``thinking`` is optional: omitting it keeps the level the model would pick by

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from src.server.api.bodies.image_body import ImageBody
+from src.server.api.schemas.image_schema import ImageSchema
 
 
-class TurnBody(BaseModel):
+class TurnSchema(BaseModel):
     """A message from the composer: text, an optional request id, ordered images.
 
     ``images[0]`` is ``[Image #1]`` in the text; the position is the number, and it
@@ -17,5 +17,5 @@ class TurnBody(BaseModel):
     text: str = Field(min_length=1)
     request_id: str | None = None
     """Client-generated UUIDv4, reused by a retry of the same deliberate send."""
-    images: list[ImageBody] = Field(default_factory=list)
+    images: list[ImageSchema] = Field(default_factory=list)
     """Pictures in the order the text refers to them; bounded by the runtime."""

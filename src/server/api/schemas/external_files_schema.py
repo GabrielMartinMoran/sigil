@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, StrictBool
 
 
-class ExternalFilesBody(BaseModel):
+class ExternalFilesSchema(BaseModel):
     """Whether the session may read files outside its workspace.
 
     ``StrictBool`` on purpose: the terminal's `/external-files` refuses anything

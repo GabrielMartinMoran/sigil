@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
-class DefaultEntryBody(BaseModel):
+class DefaultEntrySchema(BaseModel):
     """One defaults entry: the account, the model and the level it starts on.
 
     The three keys are the file's own — `agents.<name>` and `default_model` hold
