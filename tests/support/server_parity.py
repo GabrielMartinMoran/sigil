@@ -15,8 +15,8 @@ from pydantic_ai.models.test import TestModel
 
 from src.core.agents.profile.models.agent_role import AgentRole
 from src.core.agents.tree.models.agent_node import AgentNode
-from src.core.composition import Composition
-from src.core.load_settings import load_settings
+from src.core.composition.composition import Composition
+from src.core.config.load_settings import load_settings
 from src.core.providers.provider_paths import ProviderPaths
 from src.server.app import create_app
 from src.server.event_hub import EventHub
@@ -45,7 +45,7 @@ def _composition(
     """
     service = _service(tmp_path)
     _add(service)
-    monkeypatch.setattr('src.core.composition.build_service', lambda *args, **kwargs: service)
+    monkeypatch.setattr('src.core.composition.composition.build_service', lambda *args, **kwargs: service)
     write_profile(tmp_path / '.sigil' / 'agents', 'reviewer', description='Reviews code.')
     if mcp_servers is not None:
         config = tmp_path / '.sigil' / 'config.json'

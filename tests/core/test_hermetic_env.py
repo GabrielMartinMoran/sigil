@@ -13,8 +13,8 @@ from pathlib import Path
 import dotenv
 import pytest
 
-from src.core.load_settings import load_settings
-from src.core.sigil_settings import (
+from src.core.config.load_settings import load_settings
+from src.core.config.sigil_settings import (
     DEFAULT_CONTEXT_STRATEGY,
     DEFAULT_MAX_STEPS,
     DEFAULT_MODEL_MAX_ATTEMPTS,

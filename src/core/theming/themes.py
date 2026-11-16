@@ -32,8 +32,8 @@ with two valid colors and one typo would paint an interface nobody designed.
 
 from __future__ import annotations
 
-from src.core.theme_definition import ROLES
-from src.core.theme_registry import _dark
+from src.core.theming.theme_definition import ROLES
+from src.core.theming.theme_registry import _dark
 
 """Color keys that become the theme palette instead of CSS variables."""
 

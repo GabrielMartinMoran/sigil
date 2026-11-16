@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from src.core.paths import endpoint_file, service_dir
+from src.core.config.paths import endpoint_file, service_dir
 from src.server.cli import listening_socket
 from src.server.endpoint import Endpoint
 from src.server.endpoint_file import read_endpoint

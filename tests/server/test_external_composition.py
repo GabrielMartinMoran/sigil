@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from src.core.composition import Composition
-from src.core.load_settings import load_settings
+from src.core.composition.composition import Composition
+from src.core.config.load_settings import load_settings
 from src.core.providers.provider_paths import ProviderPaths
 
 

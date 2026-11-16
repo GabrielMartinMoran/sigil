@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from src.core.load_file import load_file
-from src.core.paths import themes_dir
-from src.core.theme_definition import ThemeDefinition
-from src.core.theme_error import ThemeError
+from src.core.config.paths import themes_dir
+from src.core.theming.load_file import load_file
+from src.core.theming.theme_definition import ThemeDefinition
+from src.core.theming.theme_error import ThemeError
 
 
 def _sigil() -> ThemeDefinition:

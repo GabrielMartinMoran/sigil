@@ -17,8 +17,8 @@ from pathlib import Path
 import pytest
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 
-from src.core.composition import Composition
-from src.core.load_settings import load_settings
+from src.core.composition.composition import Composition
+from src.core.config.load_settings import load_settings
 from src.core.providers.provider_paths import ProviderPaths
 from src.core.sessions.session_store import SessionStore
 from tests.support.provider_service import _add, _service
@@ -44,7 +44,7 @@ def _composition(tmp_path, monkeypatch, config: dict | None = None) -> tuple[Com
         _write(tmp_path, config)
     service = _service(tmp_path)
     _add(service)
-    monkeypatch.setattr('src.core.composition.build_service', lambda *args, **kwargs: service)
+    monkeypatch.setattr('src.core.composition.composition.build_service', lambda *args, **kwargs: service)
     composition = Composition(tmp_path, settings=load_settings({}), provider_paths=ProviderPaths(tmp_path / 'p'))
     return composition, service
 

@@ -5,17 +5,17 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 
+from src.core.config.sigil_settings import (
+    DEFAULT_CONTEXT_STRATEGY,
+    DEFAULT_MAX_STEPS,
+    DEFAULT_MODEL_MAX_ATTEMPTS,
+    SigilSettings,
+)
 from src.core.context.compaction.compaction_policy import DEFAULT_POLICY
 from src.core.context.context_budget import DEFAULT_OUTPUT_RESERVE, DEFAULT_SAFETY_MARGIN_PERCENT
 from src.core.context.strategy.constants import (
     DEFAULT_IMAGE_MAX_PERCENT,
     DEFAULT_IMAGE_TURNS,
-)
-from src.core.sigil_settings import (
-    DEFAULT_CONTEXT_STRATEGY,
-    DEFAULT_MAX_STEPS,
-    DEFAULT_MODEL_MAX_ATTEMPTS,
-    SigilSettings,
 )
 
 ENV_MAX_STEPS = 'SIGIL_MAX_STEPS'

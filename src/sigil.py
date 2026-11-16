@@ -37,12 +37,12 @@ import rich
 from dotenv import load_dotenv
 
 from src.core.agents.profile.agent_registry import AgentRegistry
-from src.core.load_settings import load_settings
-from src.core.preferences_store import PreferencesStore
+from src.core.config.load_settings import load_settings
+from src.core.config.preferences_store import PreferencesStore
+from src.core.config.sigil_settings import SigilSettings
 from src.core.roadmap.roadmap_stores import RoadmapStores
 from src.core.sessions.session import Session
-from src.core.sigil_settings import SigilSettings
-from src.core.theme_registry import ThemeRegistry
+from src.core.theming.theme_registry import ThemeRegistry
 from src.ui.service_client import ServiceClient
 from src.ui.service_client_error import ServiceClientError
 from src.ui.service_unavailable import ServiceUnavailable

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from src.core.config.sigil_settings import SigilSettings
 from src.core.context.compaction.compaction_policy import CompactionPolicy
 from src.core.context.compaction.coordinator import PolicyLookup
 from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
 from src.core.context.strategy.context_strategy import ContextStrategy
 from src.core.context.strategy.passthrough_strategy import PassthroughStrategy
-from src.core.sigil_settings import SigilSettings
 
 
 def build_strategy(settings: SigilSettings, *, lookup: PolicyLookup | None = None) -> ContextStrategy:

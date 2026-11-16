@@ -12,8 +12,8 @@ from pathlib import Path
 from types import ModuleType
 
 from sigil_tools import ExtensionContext, ToolDeclaration
+from src.core.config.paths import sigil_home
 from src.core.extensions.extension_tool import ExtensionTool
-from src.core.paths import sigil_home
 
 
 @dataclass(frozen=True, slots=True)

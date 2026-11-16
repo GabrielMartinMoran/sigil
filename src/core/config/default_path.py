@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.core.paths import sigil_home
+from src.core.config.paths import sigil_home
 
 FILE_NAME = 'ui.json'
 

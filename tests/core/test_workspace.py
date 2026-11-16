@@ -256,7 +256,7 @@ def test_rebind_errors_do_not_abort_the_switch(repo, tmp_path: Path, monkeypatch
 
 
 def test_worktrees_dir_can_be_overridden_by_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from src.core.paths import worktrees_dir
+    from src.core.config.paths import worktrees_dir
 
     monkeypatch.setenv('SIGIL_WORKTREES_DIR', str(tmp_path / 'from-env'))
     manager = WorkspaceManager(tmp_path)
@@ -265,7 +265,7 @@ def test_worktrees_dir_can_be_overridden_by_environment(monkeypatch: pytest.Monk
 
 
 def test_worktrees_dir_defaults_under_the_sigil_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from src.core.paths import worktrees_dir
+    from src.core.config.paths import worktrees_dir
 
     monkeypatch.delenv('SIGIL_WORKTREES_DIR', raising=False)
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))

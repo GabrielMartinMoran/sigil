@@ -59,16 +59,16 @@ from src.core.agents.tree.models.node_status import NodeStatus
 from src.core.attachments.images import prepare_image
 from src.core.commands.catalog import owned_by
 from src.core.commands.command_owner import CommandOwner
-from src.core.composition import Composition
+from src.core.composition.composition import Composition
+from src.core.config.load_settings import load_settings
+from src.core.config.preferences import DEFAULT_TRANSCRIPT_WINDOW, Preferences
 from src.core.context.meter.debug_report import DebugReport
 from src.core.context.meter.debug_snapshot import DebugSnapshot
 from src.core.interaction.models.question_item import QuestionItem
 from src.core.interaction.models.question_option import QuestionOption
-from src.core.load_settings import load_settings
 from src.core.mcp.config.loader import load_config
 from src.core.mcp.deferred import build_manager
 from src.core.mcp.manager.mcp_manager import MCPManager
-from src.core.preferences import DEFAULT_TRANSCRIPT_WINDOW, Preferences
 from src.core.providers.provider_paths import ProviderPaths
 from src.core.roadmap.models.todo_item import TodoItem
 from src.core.sessions.session import Session
@@ -168,7 +168,7 @@ def _composition(
     monkeypatch.setenv('SIGIL_CONFIG', str(config))
     service = _service(tmp_path)
     _add(service)
-    monkeypatch.setattr('src.core.composition.build_service', lambda *args, **kwargs: service)
+    monkeypatch.setattr('src.core.composition.composition.build_service', lambda *args, **kwargs: service)
     write_profile(tmp_path / '.sigil' / 'agents', 'reviewer', description='Reviews code.')
     composition = Composition(
         root or tmp_path,

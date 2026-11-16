@@ -7,8 +7,8 @@ from pathlib import Path
 
 from textual.color import Color, ColorParseError
 
-from src.core.theme_definition import DEFAULT_DARK, ThemeDefinition
-from src.core.theme_error import ThemeError
+from src.core.theming.theme_definition import DEFAULT_DARK, ThemeDefinition
+from src.core.theming.theme_error import ThemeError
 
 SCHEMA_VERSION = 1
 

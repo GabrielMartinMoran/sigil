@@ -9,13 +9,13 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserProm
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
 
-from src.core.build_strategy import build_strategy
+from src.core.composition.build_strategy import build_strategy
+from src.core.config.load_settings import load_settings
 from src.core.context.compaction.events import RECORD_KEY
 from src.core.context.context_budget import ContextBudget
 from src.core.context.context_view_capability import ContextViewCapability
 from src.core.context.meter.context_meter import ContextMeter
 from src.core.context.strategy.append_only_strategy import AppendOnlyStrategy
-from src.core.load_settings import load_settings
 
 
 def test_should_expose_independent_retention_counts_and_safety_margin() -> None:

@@ -16,8 +16,8 @@ from pydantic_ai.models.test import TestModel
 
 from src.core.agents.profile.agent_registry import AgentRegistry
 from src.core.agents.tree.agent_tree_store import AgentTreeStore
+from src.core.config.sigil_settings import SigilSettings
 from src.core.sessions.session_store import SessionStore
-from src.core.sigil_settings import SigilSettings
 from src.ui.sigil_app import SigilApp
 
 

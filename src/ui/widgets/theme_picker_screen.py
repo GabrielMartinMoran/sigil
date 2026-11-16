@@ -24,7 +24,7 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
 
-from src.core.theme_definition import ROLES, ThemeDefinition
+from src.core.theming.theme_definition import ROLES, ThemeDefinition
 from src.ui.widgets.theme_box import EMPTY, ThemeBox
 from src.ui.widgets.theme_choice import ThemeChoice
 

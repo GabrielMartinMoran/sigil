@@ -8,9 +8,9 @@ from typing import Any
 from pydantic_ai.models.test import TestModel
 from pytest import MonkeyPatch
 
-from src.core.composition import Composition
+from src.core.composition.composition import Composition
+from src.core.config.sigil_settings import SigilSettings
 from src.core.providers.provider_paths import ProviderPaths
-from src.core.sigil_settings import SigilSettings
 
 
 def _profile(root: Path, name: str, body: str, *, subagent: bool = False) -> None:

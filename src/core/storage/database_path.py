@@ -9,7 +9,7 @@ DEFAULT_DATABASE_NAME = 'sigil.db'
 
 def database_path(base_dir: str | Path | None = None) -> Path:
     """``<base>/sigil.db``, with the base resolved by the caller."""
-    from src.core.paths import sigil_home
+    from src.core.config.paths import sigil_home
 
     base = Path(base_dir) if base_dir is not None else sigil_home()
     return base / DEFAULT_DATABASE_NAME

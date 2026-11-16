@@ -193,7 +193,7 @@ def test_should_use_session_sequence_across_receivers_and_equal_timestamps(env: 
 
 
 def test_should_render_for_root_and_isolate_sessions_in_composition(env: Env) -> None:
-    from src.core.composition import Composition
+    from src.core.composition.composition import Composition
 
     worker = add_worker(env)
     env.summoner.send_message(sender_id=worker.id, target_id=env.tree().root_id, text='root-only notice')

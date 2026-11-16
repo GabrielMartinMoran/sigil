@@ -21,7 +21,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from src.core.paths import sigil_home
+from src.core.config.paths import sigil_home
 
 AGENTS_DIRNAME = '.sigil/agents'
 BUILTIN_DIRNAME = Path(__file__).resolve().parent / 'builtin'

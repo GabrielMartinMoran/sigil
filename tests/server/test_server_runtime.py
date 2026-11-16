@@ -41,10 +41,10 @@ from src.core.agents.tree.models.agent_node import AgentNode
 from src.core.agents.tree.models.node_status import NodeStatus
 from src.core.agents.tree.models.summon_error import SummonError
 from src.core.agents.tree.reports import WAKE_PROMPT
-from src.core.composition import Composition
+from src.core.composition.composition import Composition
+from src.core.config.load_settings import load_settings
 from src.core.interaction.models.question_item import QuestionItem
 from src.core.interaction.models.question_option import QuestionOption
-from src.core.load_settings import load_settings
 from src.server import views
 from src.server.app import create_app
 from src.server.body_limit_middleware import BodyLimitMiddleware

@@ -18,7 +18,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from rich.text import Text
 
-from src.core.preferences_store import PreferencesStore
+from src.core.config.preferences_store import PreferencesStore
 from src.core.sessions.session_store import SessionStore
 from src.core.shell.models.run_tool_output import RunToolOutput
 from src.core.tooling.tool_summary import ToolSummary

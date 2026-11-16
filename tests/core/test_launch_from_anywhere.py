@@ -210,7 +210,7 @@ def test_the_state_home_does_not_follow_the_workspace(
     """Sessions belong to the user, not to the project being edited."""
     monkeypatch.chdir(foreign_project)
     monkeypatch.delenv('SIGIL_HOME', raising=False)
-    from src.core.paths import sessions_dir, sigil_home
+    from src.core.config.paths import sessions_dir, sigil_home
 
     assert sigil_home() == Path.home() / '.sigil'
     assert sessions_dir().name == 'sessions'

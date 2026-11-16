@@ -18,7 +18,7 @@ import os
 from pathlib import Path
 from typing import Protocol
 
-from src.core.paths import worktrees_dir as default_worktrees_dir
+from src.core.config.paths import worktrees_dir as default_worktrees_dir
 from src.core.workspace.git_repository import GitRepository
 from src.core.workspace.models.workspace import Workspace
 from src.core.workspace.models.workspace_error import WorkspaceError

@@ -16,8 +16,8 @@ from src.core.agents.tool_error_recovery import ToolErrorRecovery
 from src.core.agents.tree.agent_context_tail import AgentContextTail
 from src.core.agents.tree.rendering import render_subagents
 from src.core.agents.tree.sigil_deps import SigilDeps
+from src.core.config.sigil_settings import DEFAULT_MODEL_MAX_ATTEMPTS
 from src.core.providers.factory.unconfigured_model import UnconfiguredModel
-from src.core.sigil_settings import DEFAULT_MODEL_MAX_ATTEMPTS
 from src.core.skills.loaded import loaded_resources, loaded_skills
 from src.core.skills.rendering import render_available_skills, render_loaded_skills
 

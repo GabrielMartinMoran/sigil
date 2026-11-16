@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from src.core.composition import Composition
-from src.core.load_settings import load_settings
+from src.core.composition.composition import Composition
+from src.core.config.load_settings import load_settings
 from src.core.providers.provider_paths import ProviderPaths
 from tests.support.provider_service import _add, _service
 
@@ -42,7 +42,7 @@ def _composition(tmp_path, monkeypatch, config: dict | None = None) -> tuple[Com
         _write(tmp_path, config)
     service = _service(tmp_path)
     _add(service)
-    monkeypatch.setattr('src.core.composition.build_service', lambda *args, **kwargs: service)
+    monkeypatch.setattr('src.core.composition.composition.build_service', lambda *args, **kwargs: service)
     composition = Composition(tmp_path, settings=load_settings({}), provider_paths=ProviderPaths(tmp_path / 'p'))
     return composition, service
 
@@ -79,7 +79,8 @@ def test_switching_workspace_starts_empty_and_an_explicit_open_restores_the_mode
     from dataclasses import replace
 
     monkeypatch.setattr(
-        'src.core.composition.build_service', lambda *args, **kwargs: replace(service, router=copy(service.router))
+        'src.core.composition.composition.build_service',
+        lambda *args, **kwargs: replace(service, router=copy(service.router)),
     )
     # Leaving and coming back opens an empty draft instead of that conversation.
     runtime.switch_workspace(str(other))
@@ -108,7 +109,8 @@ def test_resident_compositions_keep_independent_model_snapshots(
     composition, service = _composition(tmp_path, monkeypatch)
     # The real factory makes one service/router per composition over shared stores.
     monkeypatch.setattr(
-        'src.core.composition.build_service', lambda *args, **kwargs: replace(service, router=copy(service.router))
+        'src.core.composition.composition.build_service',
+        lambda *args, **kwargs: replace(service, router=copy(service.router)),
     )
     from src.server.event_hub import EventHub
     from src.server.server_runtime import ServerRuntime

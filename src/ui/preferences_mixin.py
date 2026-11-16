@@ -19,11 +19,11 @@ reason: configuration, not data.
 
 from __future__ import annotations
 
-from src.core.paths import themes_dir
-from src.core.preferences import Preferences
-from src.core.preferences_store import PreferencesStore
-from src.core.theme_registry import ThemeRegistry
-from src.core.themes import theme_variable_defaults
+from src.core.config.paths import themes_dir
+from src.core.config.preferences import Preferences
+from src.core.config.preferences_store import PreferencesStore
+from src.core.theming.theme_registry import ThemeRegistry
+from src.core.theming.themes import theme_variable_defaults
 from src.ui.attention import Attention
 from src.ui.desktop_notifications import notification_command
 from src.ui.widgets.chat_log import ChatLog

@@ -6,9 +6,9 @@ import json
 import tempfile
 from pathlib import Path
 
-from src.core.build_strategy import build_strategy
-from src.core.composition import Composition
-from src.core.load_settings import load_settings
+from src.core.composition.build_strategy import build_strategy
+from src.core.composition.composition import Composition
+from src.core.config.load_settings import load_settings
 from src.core.tooling.compaction import GENERIC_COMPACTOR
 from src.core.tooling.compaction_policies import ALL_COMPACTORS
 

@@ -33,8 +33,8 @@ import httpx
 import pytest
 from pydantic_ai.models.test import TestModel
 
-from src.core.composition import Composition
-from src.core.load_settings import load_settings
+from src.core.composition.composition import Composition
+from src.core.config.load_settings import load_settings
 from src.core.storage.accepted_inputs import AcceptedInputs
 from src.core.storage.confirm_delivery import confirm_delivery
 from src.core.storage.database_path import database_path
@@ -487,8 +487,8 @@ sys.path.insert(0, {root!r})
 import uvicorn
 from pydantic_ai.models.test import TestModel
 
-from src.core.composition import Composition
-from src.core.load_settings import load_settings
+from src.core.composition.composition import Composition
+from src.core.config.load_settings import load_settings
 from src.server.graceful_stop import GracefulStop
 from src.server.app import create_app
 from src.server.cli import listening_socket

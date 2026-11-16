@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.core.preferences import Preferences
-from src.core.preferences_store import PreferencesStore
+from src.core.config.preferences import Preferences
+from src.core.config.preferences_store import PreferencesStore
 
 
 def test_defaults_are_the_sigil_theme_and_collapsed_reasoning() -> None:

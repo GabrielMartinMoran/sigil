@@ -37,7 +37,7 @@ from PIL import Image
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 
 from src.core.agents.tree.models.node_status import NodeStatus
-from src.core.composition import Composition
+from src.core.composition.composition import Composition
 from src.server.event_hub import EventHub
 from src.server.launch import Launch
 from src.server.pending_question import PendingQuestion
@@ -725,7 +725,7 @@ def test_terminal_launch_starts_a_blank_session_in_its_directory(
     runtime: ServerRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, other_directory: bool
 ) -> None:
     from src import sigil
-    from src.core.load_settings import load_settings
+    from src.core.config.load_settings import load_settings
 
     root = tmp_path / 'other' if other_directory else tmp_path
     root.mkdir(exist_ok=True)

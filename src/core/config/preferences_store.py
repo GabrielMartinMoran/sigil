@@ -6,8 +6,8 @@ import json
 import os
 from pathlib import Path
 
-from src.core.default_path import default_path
-from src.core.preferences import Preferences
+from src.core.config.default_path import default_path
+from src.core.config.preferences import Preferences
 
 
 class PreferencesStore:

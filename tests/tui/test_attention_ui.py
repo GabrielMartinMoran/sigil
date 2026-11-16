@@ -11,9 +11,9 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from textual.widgets._toast import Toast
 
+from src.core.config.preferences import Preferences
 from src.core.interaction.models.question_item import QuestionItem
 from src.core.interaction.models.question_option import QuestionOption
-from src.core.preferences import Preferences
 from src.core.sessions.session_store import SessionStore
 from src.ui.attention import Attention
 from src.ui.notification_context import NotificationContext

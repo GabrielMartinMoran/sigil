@@ -7,9 +7,9 @@ import pytest
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
-from src.core.composition import Composition
+from src.core.composition.composition import Composition
+from src.core.config.load_settings import load_settings
 from src.core.interaction.models.question_answer import QuestionAnswer
-from src.core.load_settings import load_settings
 from src.core.providers.provider_paths import ProviderPaths
 
 

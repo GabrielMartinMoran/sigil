@@ -12,7 +12,7 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 from textual.app import App, ComposeResult
 from textual.theme import Theme
 
-from src.core.theme_registry import ThemeRegistry
+from src.core.theming.theme_registry import ThemeRegistry
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.empty_logo import LOGO, SMALL_LOGO, logo_lines
 from src.ui.widgets.subagent_report import SubagentReport

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from src.core.theme_registry import DEFAULT_THEME_NAME
+from src.core.theming.theme_registry import DEFAULT_THEME_NAME
 
 THEME_KEY = 'theme'
 

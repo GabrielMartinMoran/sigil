@@ -37,6 +37,10 @@ from src.core.agents.retry_notice import RetryNotice
 from src.core.agents.retry_transient_model_errors import RetryTransientModelErrors
 from src.core.agents.tree.agent_tree_store import AgentTreeStore
 from src.core.agents.tree.subagent_summoner import SubagentSummoner
+from src.core.config.load_settings import load_settings
+from src.core.config.preferences import Preferences
+from src.core.config.preferences_store import PreferencesStore
+from src.core.config.sigil_settings import SigilSettings
 from src.core.context.capability import subagent_window_warning
 from src.core.context.context_view_capability import ContextViewCapability
 from src.core.context.instructions.workspace_instructions import WorkspaceInstructions
@@ -46,18 +50,14 @@ from src.core.interaction.models.question_answer import QuestionAnswer
 from src.core.interaction.models.question_item import QuestionItem
 from src.core.interaction.models.question_option import QuestionOption
 from src.core.interaction.question_hub import QuestionHub
-from src.core.load_settings import load_settings
 from src.core.mcp.manager.mcp_manager import MCPManager
-from src.core.preferences import Preferences
-from src.core.preferences_store import PreferencesStore
 from src.core.providers.model_service import ModelService
 from src.core.roadmap.roadmap_stores import RoadmapStores
 from src.core.sessions.session import Session
 from src.core.sessions.session_store import SessionStore
 from src.core.shell import kill_all as kill_all_commands
-from src.core.sigil_settings import SigilSettings
 from src.core.storage.database_path import database_path
-from src.core.theme_registry import ThemeRegistry
+from src.core.theming.theme_registry import ThemeRegistry
 from src.core.tooling.tool_logger_hub import ToolLoggerHub
 from src.core.tooling.tool_summary import ToolSummary
 from src.core.workspace.workspace_manager import WorkspaceManager

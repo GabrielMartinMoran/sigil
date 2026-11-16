@@ -65,12 +65,12 @@ from src.core.agents.tree.reports import WAKE_PROMPT, report_view
 from src.core.agents.turn_map import library_run_id
 from src.core.agents.turn_timings import TurnTimings
 from src.core.attachments.content import stored_content, stored_parts, user_content
-from src.core.composition import Composition
+from src.core.composition.composition import Composition
+from src.core.composition.model_settings import model_settings
 from src.core.context.capability import subagent_window_warning
 from src.core.files.paths import execution_workspace
 from src.core.interaction.models.question_answer import QuestionAnswer
 from src.core.interaction.models.question_item import QuestionItem
-from src.core.model_settings import model_settings
 from src.core.sessions.recover_history import recover_history
 from src.core.storage.accepted_input import AcceptedInput
 from src.core.storage.accepted_inputs import AcceptedInputs

@@ -11,7 +11,6 @@ from typing import Any
 from pydantic_ai import Agent
 
 from sigil_tools import ToolContext
-from src.core.active_provider import active_provider
 from src.core.agents.agent_factory import AgentFactory
 from src.core.agents.agent_model_config import AgentModelConfig
 from src.core.agents.agent_spec import AgentSpec
@@ -30,7 +29,11 @@ from src.core.agents.tree.subagent_summoner import SubagentSummoner
 from src.core.agents.tree.summoner import current_agent_model
 from src.core.agents.tree.tools import register_tree_tools
 from src.core.attachments.tools import register_image_tools
-from src.core.build_strategy import build_strategy
+from src.core.composition.active_provider import active_provider
+from src.core.composition.build_strategy import build_strategy
+from src.core.composition.model_settings import model_settings
+from src.core.config.paths import providers_dir
+from src.core.config.sigil_settings import SigilSettings
 from src.core.context.context_view_capability import ContextViewCapability
 from src.core.context.instructions.workspace_instructions import WorkspaceInstructions
 from src.core.context.meter.context_meter import ContextMeter
@@ -48,8 +51,6 @@ from src.core.mcp.manager.mcp_manager import MCPManager
 from src.core.mcp.mcp_gateway import MCPGateway
 from src.core.mcp.shutdown import read_shutdown_timeout
 from src.core.mcp.tools import register_mcp_tools
-from src.core.model_settings import model_settings
-from src.core.paths import providers_dir
 from src.core.providers.bootstrap import build_service
 from src.core.providers.domain.provider_error import ProviderError
 from src.core.providers.domain.selection import Selection
@@ -69,7 +70,6 @@ from src.core.sessions.session import Session
 from src.core.sessions.session_store import SessionStore
 from src.core.shell.running_commands import RunningCommands
 from src.core.shell.tools import register_shell_tools
-from src.core.sigil_settings import SigilSettings
 from src.core.skills.skill_registry import SkillRegistry
 from src.core.skills.tools import register_skill_tools
 from src.core.tooling.tool_catalog import ToolCatalog

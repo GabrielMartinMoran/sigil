@@ -7,7 +7,7 @@ import os
 import stat
 from pathlib import Path
 
-from src.core.paths import endpoint_file
+from src.core.config.paths import endpoint_file
 from src.server.endpoint import GROUP_AND_OTHER, SERVICE_DIR_MODE, Endpoint
 
 

@@ -299,7 +299,7 @@ def test_step_limit_gives_the_turn_one_last_answer(monkeypatch: pytest.MonkeyPat
     and a message saying why, so the user reads a report instead of a cut-off turn —
     and the context is still there for the next message.
     """
-    from src.core.sigil_settings import SigilSettings
+    from src.core.config.sigil_settings import SigilSettings
 
     # One step: the tool call of the first request uses it up, so the second
     # request is the extra one, with no tools.
@@ -360,7 +360,7 @@ def test_turn_is_not_cut_by_pydantic_ai_default_request_limit(monkeypatch: pytes
     from pydantic_ai.messages import ModelMessage, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 
-    from src.core.sigil_settings import SigilSettings
+    from src.core.config.sigil_settings import SigilSettings
 
     monkeypatch.setattr(appmod, 'load_settings', lambda *a, **k: SigilSettings(max_steps=200))
 
