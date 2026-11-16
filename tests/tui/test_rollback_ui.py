@@ -54,7 +54,7 @@ def _app(tmp: str, *, turns: int = 2) -> SigilApp:
 
 
 def test_a_point_shows_the_moment_the_prompt_and_the_file_cost() -> None:
-    from src.core.agents.rollback import Checkpoint
+    from src.core.agents.checkpoint import Checkpoint
 
     point = Point(
         checkpoint=Checkpoint(
@@ -79,7 +79,7 @@ def test_a_point_shows_the_moment_the_prompt_and_the_file_cost() -> None:
 
 
 def test_a_point_with_no_files_says_so_instead_of_nothing() -> None:
-    from src.core.agents.rollback import Checkpoint
+    from src.core.agents.checkpoint import Checkpoint
 
     point = Point(
         checkpoint=Checkpoint(

@@ -192,7 +192,7 @@ def test_should_load_the_subagent_account_catalog_before_building_its_model(
 
 
 def test_missing_configured_account_leaves_selection_unset(tmp_path: Path) -> None:
-    from src.core.agents.model_config import AgentModelConfig
+    from src.core.agents.agent_model_config import AgentModelConfig
     from src.core.bootstrap import Composition
     from src.core.settings import load_settings
 

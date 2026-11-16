@@ -13,7 +13,10 @@ from typing import Any
 
 from textual.css.query import NoMatches
 
-from src.core.agents.rollback import Checkpoint, Rollback, RollbackError, prompt_of_turn
+from src.core.agents.checkpoint import Checkpoint
+from src.core.agents.prompt_of_turn import prompt_of_turn
+from src.core.agents.rollback import Rollback
+from src.core.agents.rollback_error import RollbackError
 from src.core.attachments.image_attachment import ImageAttachment
 from src.core.attachments.image_metadata import new_image_id
 from src.core.attachments.tokens import numbers_in

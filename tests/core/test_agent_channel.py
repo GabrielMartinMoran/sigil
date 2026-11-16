@@ -17,7 +17,9 @@ from pathlib import Path
 import pytest
 
 from src.core.agents.profile.models.agent_parse_error import AgentParseError
-from src.core.agents.profile.models.channel import ChannelMode, ChannelPolicy, parse_channel
+from src.core.agents.profile.models.channel import parse_channel
+from src.core.agents.profile.models.channel_mode import ChannelMode
+from src.core.agents.profile.models.channel_policy import ChannelPolicy
 from src.core.agents.profile.parser import parse_profile
 
 FRONTMATTER = '---\nname: scout\ndescription: reads\n{extra}---\nbody\n'

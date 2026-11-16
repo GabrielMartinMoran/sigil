@@ -20,7 +20,8 @@ from unittest.mock import patch
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from textual.app import App, ComposeResult
 
-from src.core.agents.message_types import origin, request
+from src.core.agents.origin import origin
+from src.core.agents.request import request
 from src.core.agents.tree.reports import report_view
 from src.ui.widgets.chat_log import ChatLog
 from src.ui.widgets.tool_call_block import ToolCallBlock
@@ -242,7 +243,7 @@ def test_retry_prompt_is_attached_to_its_tool_call() -> None:
 def test_restored_subagent_report_is_an_event_not_a_user_message() -> None:
     from src.core.agents.profile.models.agent_role import AgentRole
     from src.core.agents.tree.models.agent_node import AgentNode
-    from src.core.agents.tree.summoner import _envelope
+    from src.core.agents.tree.subagent_summoner import _envelope
     from src.ui.widgets.subagent_report import SubagentReport
     from src.ui.widgets.user_message import UserMessage
 
@@ -270,7 +271,7 @@ def test_restored_subagent_report_is_an_event_not_a_user_message() -> None:
 def test_restored_report_preserves_user_text_and_does_not_hide_unmatched_prompts() -> None:
     from src.core.agents.profile.models.agent_role import AgentRole
     from src.core.agents.tree.models.agent_node import AgentNode
-    from src.core.agents.tree.summoner import _envelope
+    from src.core.agents.tree.subagent_summoner import _envelope
     from src.ui.widgets.subagent_report import SubagentReport
     from src.ui.widgets.user_message import UserMessage
 
@@ -302,7 +303,7 @@ def test_restored_report_preserves_user_text_and_does_not_hide_unmatched_prompts
 def test_multiple_reports_and_standalone_delivery_render_as_events() -> None:
     from src.core.agents.profile.models.agent_role import AgentRole
     from src.core.agents.tree.models.agent_node import AgentNode
-    from src.core.agents.tree.summoner import _envelope
+    from src.core.agents.tree.subagent_summoner import _envelope
     from src.ui.widgets.subagent_report import SubagentReport
     from src.ui.widgets.user_message import UserMessage
 

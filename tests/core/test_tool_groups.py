@@ -25,7 +25,7 @@ from pydantic_ai.tools import RunContext
 from src.core.agents.agent import create_agent
 from src.core.agents.profile.agent_registry import AgentRegistry
 from src.core.agents.tree.agent_tree_store import AgentTreeStore
-from src.core.agents.tree.summoner import SubagentSummoner
+from src.core.agents.tree.subagent_summoner import SubagentSummoner
 from src.core.agents.tree.tools import register_tree_tools
 from src.core.files.tools import register_file_tools
 from src.core.interaction.question_hub import QuestionHub

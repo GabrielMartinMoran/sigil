@@ -39,7 +39,7 @@ from textual.color import Color
 from textual.message import Message
 from textual.widgets import Static
 
-from src.core.agents.message_types import input_views
+from src.core.agents.input_views import input_views
 from src.core.agents.tree.models.agent_node import AgentNode
 from src.core.attachments.content import describe_attachments, images_in
 from src.core.attachments.image_attachment import ImageAttachment

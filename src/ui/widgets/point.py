@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.core.agents.rollback import Checkpoint
+from src.core.agents.checkpoint import Checkpoint
 
 
 @dataclass(frozen=True, slots=True)

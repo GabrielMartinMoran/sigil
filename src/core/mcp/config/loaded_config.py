@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from src.core.agents.model_config import AgentModelConfig
+from src.core.agents.agent_model_config import AgentModelConfig
 from src.core.mcp.config_models.mcp_server_spec import MCPServerSpec
 
 

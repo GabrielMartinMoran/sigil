@@ -13,12 +13,14 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import UsageLimits
 
 from src.core.agents.agent import create_agent
-from src.core.agents.factory import AgentFactory, AgentSpec
+from src.core.agents.agent_factory import AgentFactory
+from src.core.agents.agent_spec import AgentSpec
 from src.core.agents.profile.agent_registry import AgentRegistry
 from src.core.agents.profile.profile_source import ProfileSource
 from src.core.agents.tree.agent_tree import AgentTree
 from src.core.agents.tree.agent_tree_store import AgentTreeStore
-from src.core.agents.tree.summoner import SigilDeps, SubagentSummoner
+from src.core.agents.tree.sigil_deps import SigilDeps
+from src.core.agents.tree.subagent_summoner import SubagentSummoner
 from src.core.agents.tree.tools import register_tree_tools
 from src.core.sessions.session_store import SessionStore
 

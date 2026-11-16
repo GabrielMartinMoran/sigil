@@ -21,32 +21,19 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping
-from dataclasses import dataclass, field
-from enum import StrEnum
 from pathlib import Path
 
-from src.core.agents.model_config import AgentModelConfig, parse_agent_models, parse_default_model
+from src.core.agents.agent_model_config import AgentModelConfig
+from src.core.agents.config_file_state import ConfigFileState
+from src.core.agents.config_scope import ConfigScope
+from src.core.agents.model_config import parse_agent_models, parse_default_model
+from src.core.agents.model_defaults_state import ModelDefaultsState
 from src.core.mcp.config.constants import ENV_CONFIG
 from src.core.mcp.config.paths import config_paths
 from src.core.providers.store.atomic import write_json
 
 AGENTS_KEY = 'agents'
 DEFAULT_KEY = 'default_model'
-
-
-class ConfigScope(StrEnum):
-    """Which of the two files an entry belongs to.
-
-    ``PROJECT`` wins over ``GLOBAL``: the order here is the precedence order, and
-    the state below relies on it instead of restating it.
-    """
-
-    PROJECT = 'project'
-    GLOBAL = 'global'
-
-
-SCOPES: tuple[ConfigScope, ...] = (ConfigScope.PROJECT, ConfigScope.GLOBAL)
 
 
 def defaults_paths(cwd: str | os.PathLike[str] | None = None) -> tuple[Path, Path]:
@@ -65,84 +52,6 @@ def defaults_paths(cwd: str | os.PathLike[str] | None = None) -> tuple[Path, Pat
 def _fixed_path() -> Path | None:
     override = os.environ.get(ENV_CONFIG, '').strip()
     return Path(override).expanduser() if override else None
-
-
-@dataclass(frozen=True, slots=True)
-class ConfigFileState:
-    """What one config file says about models, and what is wrong with it."""
-
-    path: Path
-    default: AgentModelConfig | None = None
-    default_invalid: bool = False
-    agents: Mapping[str, AgentModelConfig] = field(default_factory=dict)
-    invalid_agents: frozenset[str] = frozenset()
-    errors: tuple[str, ...] = ()
-
-    def mentions(self, target: str | None) -> bool:
-        """Whether this file says anything about ``target``, validly or not.
-
-        It matters that an invalid entry still counts as a mention: a project file
-        that sets an agent badly shadows the user's file instead of falling back to
-        it, and the screen has to show that rather than a value the merge ignored.
-        """
-        if target is None:
-            return self.default is not None or self.default_invalid
-        return target in self.agents or target in self.invalid_agents
-
-    def entry(self, target: str | None) -> AgentModelConfig | None:
-        return self.default if target is None else self.agents.get(target)
-
-    def is_invalid(self, target: str | None) -> bool:
-        return self.default_invalid if target is None else target in self.invalid_agents
-
-
-@dataclass(frozen=True, slots=True)
-class ModelDefaultsState:
-    """Both config files, in precedence order, as the screen needs them."""
-
-    files: Mapping[ConfigScope, ConfigFileState]
-    fixed: Path | None = None
-    """The single explicit path, when ``SIGIL_CONFIG`` replaced the pair."""
-
-    @property
-    def destinations(self) -> tuple[ConfigScope, ...]:
-        return tuple(scope for scope in SCOPES if scope in self.files)
-
-    @property
-    def errors(self) -> tuple[str, ...]:
-        return tuple(error for scope in self.destinations for error in self.files[scope].errors)
-
-    def path_for(self, scope: ConfigScope) -> Path:
-        return self.files[scope].path
-
-    def sources(self, target: str | None) -> frozenset[ConfigScope]:
-        """The files that mention ``target``. One reading is enough for the screen."""
-        return frozenset(scope for scope in self.destinations if self.files[scope].mentions(target))
-
-    def effective(self, target: str | None) -> AgentModelConfig | None:
-        """The entry that wins, or ``None`` when no file sets one."""
-        for scope in self.destinations:
-            file = self.files[scope]
-            if file.mentions(target):
-                return file.entry(target)
-        return None
-
-    def invalid(self, target: str | None) -> bool:
-        """Whether the winning entry is one the files could not parse."""
-        for scope in self.destinations:
-            file = self.files[scope]
-            if file.mentions(target):
-                return file.is_invalid(target)
-        return False
-
-    def agent_names(self) -> tuple[str, ...]:
-        """Every agent either file mentions, including the badly written ones."""
-        names = set()
-        for scope in self.destinations:
-            file = self.files[scope]
-            names.update(file.agents)
-            names.update(file.invalid_agents)
-        return tuple(sorted(names))
 
 
 def read_defaults(
@@ -274,12 +183,4 @@ def _read_root(path: Path) -> tuple[dict | None, tuple[str, ...]]:
     return data, ()
 
 
-__all__ = [
-    'SCOPES',
-    'ConfigFileState',
-    'ConfigScope',
-    'ModelDefaultsState',
-    'defaults_paths',
-    'read_defaults',
-    'save_default',
-]
+__all__ = ['ConfigFileState', 'ConfigScope', 'ModelDefaultsState', 'defaults_paths', 'read_defaults', 'save_default']

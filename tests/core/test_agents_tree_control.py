@@ -25,8 +25,9 @@ import pytest
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo
 
-from src.core.agents.factory import AgentFactory, AgentSpec
-from src.core.agents.step_budget import PREFIX
+from src.core.agents.agent_factory import AgentFactory
+from src.core.agents.agent_spec import AgentSpec
+from src.core.agents.notice import PREFIX
 from src.core.agents.tree.agent_tree import AgentTree
 from src.core.agents.tree.models.node_status import NodeStatus
 from src.core.agents.tree.models.summon_error import SummonError
@@ -339,7 +340,7 @@ def test_a_parent_steers_a_running_child_with_an_instruction(tmp_path: Path) -> 
     message = env.summoner.send_message(sender_id=root.id, target_id=node.id, text='go left instead')
 
     assert 'queued' in message
-    from src.core.agents.message_types import type_of
+    from src.core.agents.type_of import type_of
 
     delivered = run.enqueued[0]
     assert 'go left instead' in delivered.parts[0].content
@@ -689,7 +690,7 @@ def test_a_subagent_on_the_session_model_keeps_the_known_window(tmp_path: Path) 
 
 def test_a_subagent_with_an_unknown_window_does_not_inherit_the_root_window(tmp_path: Path) -> None:
     """A different model may run, but its unknown window remains unknown."""
-    from src.core.agents.tree.summoner import AgentRunModel
+    from src.core.agents.tree.agent_run_model import AgentRunModel
 
     notices: list[tuple[str, str]] = []
     capability = ContextViewCapability(
@@ -717,7 +718,7 @@ def test_a_subagent_with_an_unknown_window_does_not_inherit_the_root_window(tmp_
 
 @pytest.mark.parametrize('mode', ['sync', 'async'])
 def test_should_await_model_resolution_on_spawn_and_resume(tmp_path: Path, mode: str) -> None:
-    from src.core.agents.tree.summoner import AgentRunModel
+    from src.core.agents.tree.agent_run_model import AgentRunModel
 
     resolutions: list[str] = []
     worker = _model(lambda messages, info: ModelResponse(parts=[TextPart('finished')]))
@@ -752,7 +753,7 @@ def test_should_await_model_resolution_on_spawn_and_resume(tmp_path: Path, mode:
 
 
 def test_should_preserve_cancellation_during_model_resolution(tmp_path: Path) -> None:
-    from src.core.agents.tree.summoner import AgentRunModel
+    from src.core.agents.tree.agent_run_model import AgentRunModel
 
     async def resolve(name: str) -> AgentRunModel:
         raise asyncio.CancelledError()

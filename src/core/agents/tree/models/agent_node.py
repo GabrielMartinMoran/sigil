@@ -27,7 +27,8 @@ from typing import Any
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 
 from src.core.agents.profile.models.agent_role import AgentRole
-from src.core.agents.profile.models.channel import UNIDIRECTIONAL, ChannelPolicy, parse_channel
+from src.core.agents.profile.models.channel import UNIDIRECTIONAL, parse_channel
+from src.core.agents.profile.models.channel_policy import ChannelPolicy
 from src.core.agents.tree.models.node_status import NodeStatus
 
 ROOT_TASK = 'Session agent'

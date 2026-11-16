@@ -22,7 +22,7 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import FunctionModel
 
 from src.core.agents.agent import create_agent
-from src.core.agents.tree.summoner import SigilDeps
+from src.core.agents.tree.sigil_deps import SigilDeps
 from src.core.roadmap.roadmap_stores import RoadmapStores
 from src.core.sessions.session_store import SessionStore
 from src.core.skills.loaded import loaded_skills

@@ -26,7 +26,7 @@ from src.core.storage.notifications import load_notifications, save_notification
 if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
 
-    from src.core.agents.profile.models.channel import ChannelPolicy
+    from src.core.agents.profile.models.channel_policy import ChannelPolicy
 
 
 def root_id_for(session_id: str) -> str:

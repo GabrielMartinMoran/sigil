@@ -67,7 +67,7 @@ def test_subagent_permissions_filter_external_tools_and_context_identifies_child
 ) -> None:
     from src.core.agents.profile.models.agent_profile import AgentProfile
     from src.core.agents.profile.permissions import parse_permissions
-    from src.core.agents.tree.summoner import SigilDeps
+    from src.core.agents.tree.sigil_deps import SigilDeps
 
     monkeypatch.setenv('SIGIL_HOME', str(tmp_path / 'home'))
     directory = tmp_path / 'home' / 'tools' / 'identity'

@@ -34,11 +34,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from src.core.agents.model_config import AgentModelConfig
-from src.core.agents.model_defaults import ConfigScope
+from src.core.agents.agent_model_config import AgentModelConfig
+from src.core.agents.config_scope import ConfigScope
 from src.core.agents.profile.models.agent_name import is_valid_agent_name
 from src.core.agents.profile.models.agent_not_found import AgentNotFound
-from src.core.agents.rollback import RollbackError, prompt_of_turn
+from src.core.agents.prompt_of_turn import prompt_of_turn
+from src.core.agents.rollback_error import RollbackError
 from src.core.agents.tree.models.summon_error import SummonError
 from src.core.context.meter.cost import session_cost
 from src.core.providers.domain.auth_method import AuthMethod, auth_methods_for

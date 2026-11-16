@@ -47,10 +47,11 @@ from textual import work
 from textual.css.query import NoMatches
 from textual.widgets import Static
 
-from src.core.agents.message_types import MessageTypes, origin
+from src.core.agents.message_types import MessageTypes
+from src.core.agents.origin import origin
 from src.core.agents.step_budget import StepBudget
 from src.core.agents.tree.reports import report_view
-from src.core.agents.turn_timing import TurnTimings
+from src.core.agents.turn_timings import TurnTimings
 from src.core.attachments.content import user_content
 from src.core.attachments.image_attachment import ImageAttachment
 from src.core.files.paths import execution_workspace

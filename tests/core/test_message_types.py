@@ -3,7 +3,7 @@
 import uuid
 from pathlib import Path
 
-from src.core.agents.message_types import origin
+from src.core.agents.origin import origin
 from src.core.sessions.session_store import SessionStore
 from src.core.storage.accepted_inputs import AcceptedInputs
 from src.core.storage.database import Database

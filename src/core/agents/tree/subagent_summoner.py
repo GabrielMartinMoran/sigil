@@ -1,0 +1,798 @@
+"""The SubagentSummoner value of the agents layer."""
+
+from __future__ import annotations
+
+import asyncio
+import inspect
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
+from typing import TYPE_CHECKING, Any, Literal
+
+from pydantic_ai.exceptions import RunCancelled, UserError
+from pydantic_ai.messages import ModelRequest
+from pydantic_ai.usage import UsageLimits
+
+from src.core.agents.message_types import MessageTypes
+from src.core.agents.origin import origin
+from src.core.agents.profile.models.agent_not_found import AgentNotFound
+from src.core.agents.request import request
+from src.core.agents.step_budget import StepBudget
+from src.core.agents.tree.agent_run_model import AgentRunModel
+from src.core.agents.tree.models.agent_message import AgentMessage
+from src.core.agents.tree.models.agent_node import AgentNode
+from src.core.agents.tree.models.node_status import NodeStatus
+from src.core.agents.tree.models.summon_error import SummonError
+from src.core.agents.tree.reports import report_view
+from src.core.agents.tree.sigil_deps import SigilDeps
+from src.core.sessions.recover_history import recover_history
+from src.core.tooling.events import CURRENT_NODE_ID
+
+if TYPE_CHECKING:
+    from pydantic_ai import Agent
+
+    from src.core.agents.profile.agent_registry import AgentRegistry
+    from src.core.agents.profile.models.agent_profile import AgentProfile
+    from src.core.agents.tree.agent_tree import AgentTree
+    from src.core.agents.tree.agent_tree_store import AgentTreeStore
+
+
+SummonMode = Literal['sync', 'async']
+
+
+REPORTED = (NodeStatus.DONE, NodeStatus.FAILED)
+
+
+DEFAULT_MAX_DEPTH = 3
+
+
+_ACTIVE_AGENT_MODEL: ContextVar[AgentRunModel | None] = ContextVar('active_agent_model', default=None)
+
+
+OnChange = Callable[[AgentNode], None]
+
+
+RootRun = Callable[[], Any | None]
+
+
+OnDelivered = Callable[[AgentNode], None]
+
+
+OnIdle = Callable[[], None]
+
+
+Builder = Callable[['AgentProfile'], 'Agent[Any]']
+
+
+class SubagentSummoner:
+    """Starts subagents, records them in the tree and carries the messages."""
+
+    def __init__(
+        self,
+        *,
+        trees: AgentTreeStore,
+        registry: AgentRegistry,
+        builder: Callable[[], Builder],
+        max_depth: int = DEFAULT_MAX_DEPTH,
+        max_steps: int = 0,
+        model: Callable[[], str] | None = None,
+        model_settings: Callable[[], dict[str, Any] | None] | None = None,
+        agent_model: Callable[[str], AgentRunModel | None | Awaitable[AgentRunModel | None]] | None = None,
+        base_model: Callable[[], AgentRunModel] | None = None,
+        on_change: OnChange | None = None,
+        root_run: RootRun | None = None,
+        on_delivered: OnDelivered | None = None,
+        on_idle: OnIdle | None = None,
+    ) -> None:
+        self._trees = trees
+        self._registry = registry
+        # The builder is resolved per summon and not held: the factory that builds
+        # agents needs this summoner to install the `summon` tool, so at the moment
+        # this object is created the factory does not exist yet.
+        self._builder = builder
+        self._max_depth = max_depth
+        self._max_steps = max_steps
+        self._model = model
+        self._model_settings = model_settings
+        self._agent_model = agent_model
+        self._base_model = base_model
+        self._on_change = on_change
+        self._root_run = root_run
+        self._on_delivered = on_delivered
+        self._on_idle = on_idle
+        self._tasks: dict[str, asyncio.Task[Any]] = {}
+        self._cancelling: set[asyncio.Task[Any]] = set()
+        self._detached: dict[str, asyncio.Event] = {}
+
+    # --- who listens -------------------------------------------------------
+
+    def listen(
+        self,
+        *,
+        on_change: OnChange | None = None,
+        root_run: RootRun | None = None,
+        on_delivered: OnDelivered | None = None,
+        on_idle: OnIdle | None = None,
+    ) -> None:
+        """Attaches the listeners of the UI, once it exists.
+
+        The engine is built before the app, and the app is what paints the tree and
+        holds the run a late message has to reach, so this is a setter and not a
+        constructor argument.
+        """
+        self._on_change = on_change
+        self._root_run = root_run
+        self._on_delivered = on_delivered
+        self._on_idle = on_idle
+
+    # --- what the tools ask for --------------------------------------------
+
+    def tree(self) -> AgentTree:
+        """The tree in effect: read by the tools and by the prompt blocks."""
+        return self._trees.active
+
+    def resolve(self, ref: str) -> AgentNode:
+        """The node a reference names, accepting a unique prefix of its id.
+
+        Agents never see the full 32-character id in the places where they read one
+        — the row of `list_agents`, the block of the agents around them, the note in
+        a status line — and copying eight characters is what a person does too. The
+        prefix is only accepted when it is unambiguous, because guessing between two
+        executions of the same subagent is how a message reaches the wrong one.
+
+        Raises:
+            SummonError: Nothing matches, or more than one node does.
+        """
+        text = ref.strip().lstrip('#')
+        tree = self._trees.active
+        exact = tree.node(text)
+        if exact is not None:
+            return exact
+        matches = [node for node in tree.nodes() if text and node.id.startswith(text)]
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
+            listed = ', '.join(f'#{node.short_id} ({node.name})' for node in matches[:5])
+            raise SummonError(f'{ref!r} matches more than one agent: {listed}. Use a longer id.')
+        raise SummonError(
+            f'No agent with id {ref!r} in this session. The id is the one `summon` returned '
+            '— or its first characters — not the name of the profile.'
+        )
+
+    def is_live(self, node: AgentNode) -> bool:
+        """Whether a node has a run right now, which is what makes it reachable.
+
+        A node's status is ``running`` from the moment it starts until it ends, and
+        the root's is ``running`` for the whole session: neither says whether there
+        is a run waiting to read a message. This does.
+        """
+        return self._run_of(node) is not None
+
+    async def summon(
+        self,
+        *,
+        parent_id: str | None,
+        name: str = '',
+        task: str,
+        mode: SummonMode = 'sync',
+        agent_id: str | None = None,
+    ) -> str:
+        """Starts — or continues — a subagent and returns what the caller reads.
+
+        For ``sync`` that is the subagent's own message; for ``async`` it is an
+        acknowledgement, and the message arrives later. Both carry the node id, so
+        the parent can talk to that execution later: send it a message, kill it, or
+        resume it when it ran out of steps.
+
+        Args:
+            parent_id: The node that is calling. ``None`` means the root.
+            name: Profile to start. Ignored when ``agent_id`` is given: a resume is
+                identified by the execution, not by the kind of agent.
+            task: What it has to do, or the new prompt of a resumed node.
+            mode: Whether to wait for the answer.
+            agent_id: Node to resume instead of starting a new one.
+
+        Raises:
+            SummonError: The subagent cannot be started: unknown or not a
+                subagent, no task, too deep, or the node cannot be resumed.
+        """
+        tree = self._trees.active
+        caller = tree.node(parent_id) or tree.root
+        if caller is None:
+            raise SummonError('There is no agent tree for this session: the run has no parent to hang a subagent from.')
+        if not task.strip():
+            raise SummonError(
+                '`task` is empty: a subagent cannot see this conversation, so its task has to say what it needs.'
+            )
+        if agent_id:
+            return await self._resume(caller, agent_id, task.strip(), mode)
+        return await self._spawn(caller, name, task.strip(), mode)
+
+    # --- a new node --------------------------------------------------------
+
+    async def _spawn(self, caller: AgentNode, name: str, task: str, mode: SummonMode) -> str:
+        tree = self._trees.active
+        if not name.strip():
+            raise SummonError(
+                '`agent` is required to start a subagent. Pass the name of a subagent from your '
+                'instructions, or `agent_id` to continue one that already ran.'
+            )
+        profile = self._profile(name)
+        if profile.name == caller.name:
+            raise SummonError(
+                f'`{profile.name}` is the agent that is calling: a subagent cannot summon itself. '
+                'Do this part yourself, or summon another profile.'
+            )
+        if caller.depth + 1 > self._max_depth:
+            raise SummonError(
+                f'Subagents are nested too deep ({self._max_depth} levels): `{profile.name}` '
+                f'would run at level {caller.depth + 1}. Do this part yourself, or have the '
+                'current agent report back to its parent and let the chain close.'
+            )
+        selected = await self._model_for(profile)
+        node = tree.add(
+            parent_id=caller.id,
+            name=profile.name,
+            role=profile.role,
+            task=task,
+            mode=mode,
+            model=selected.label,
+        )
+        node.channel = profile.channel
+        node.max_steps = profile.max_steps
+        return await self._launch(node, profile, task, mode, selected)
+
+    # --- the same node, again ----------------------------------------------
+
+    async def _resume(self, caller: AgentNode, agent_id: str, task: str, mode: SummonMode) -> str:
+        """Continues a node with a new prompt, on top of its own transcript."""
+        tree = self._trees.active
+        node = self.resolve(agent_id)
+        if node.is_root:
+            raise SummonError('That id is the agent of the session, not a subagent: send it a message instead.')
+        if not tree.can_reach(caller.id, node.id):
+            raise SummonError(
+                f'#{node.short_id} was not summoned by you or by an agent above you: you cannot resume it.'
+            )
+        if not node.status.finished:
+            raise SummonError(
+                f'#{node.short_id} is still working. Use `send_message` to steer it, or `kill_subagent` '
+                'to stop it before resuming with something else.'
+            )
+        profile = self._profile(node.name)
+        selected = await self._model_for(profile)
+        node.model = selected.label
+        # A node that was killed or cancelled mid-tool leaves a call with no
+        # answer; a prompt on top of that is refused for good. The tail is closed
+        # out here, before the history is handed back to the agent.
+        node.messages = recover_history(node.messages).messages
+        node.mode = mode
+        node.max_steps = profile.max_steps
+        node.channel = profile.channel
+        return await self._launch(node, profile, task, mode, selected)
+
+    # --- running one node --------------------------------------------------
+
+    async def _model_for(self, profile: AgentProfile) -> AgentRunModel:
+        try:
+            configured = self._agent_model(profile.name) if self._agent_model is not None else None
+            if inspect.isawaitable(configured):
+                configured = await configured
+        except Exception as exc:
+            raise SummonError(f'Cannot use the configured model for {profile.name}: {exc}') from exc
+        if configured is not None:
+            return configured
+        parent = _ACTIVE_AGENT_MODEL.get()
+        if parent is not None:
+            return parent
+        if self._base_model is not None:
+            return self._base_model()
+        return AgentRunModel(
+            None,
+            self._model_settings() if self._model_settings is not None else None,
+            self._model() if self._model is not None else '',
+        )
+
+    async def _launch(
+        self, node: AgentNode, profile: AgentProfile, task: str, mode: SummonMode, selected: AgentRunModel
+    ) -> str:
+        """Starts the run as a task, then decides whether to wait for it."""
+        node.start()
+        self._notify(node)
+        token = CURRENT_NODE_ID.set(node.id)
+        model_token = _ACTIVE_AGENT_MODEL.set(selected)
+        try:
+            handle = asyncio.create_task(self._execute(node, profile, task), name=f'subagent-{node.short_id}')
+        finally:
+            CURRENT_NODE_ID.reset(token)
+            _ACTIVE_AGENT_MODEL.reset(model_token)
+        self._tasks[node.id] = handle
+        handle.add_done_callback(lambda _finished, node_id=node.id: self._tasks.pop(node_id, None))
+        if mode == 'async':
+            return (
+                f'#{node.short_id} ({profile.label}) is working in the background. The answer arrives as a new '
+                'user message when it finishes — continue with something else, or stop and wait. '
+                'Do not summon the same task again.'
+            )
+        return await self._wait(node)
+
+    async def _wait(self, node: AgentNode) -> str:
+        """Waits for a sync node, unless somebody sends it to the background."""
+        handle = self._tasks.get(node.id)
+        if handle is None:
+            return f'#{node.short_id} finished before it could be awaited.'
+        detached = asyncio.Event()
+        self._detached[node.id] = detached
+        waiter = asyncio.create_task(detached.wait())
+        try:
+            done, _ = await asyncio.wait({handle, waiter}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            waiter.cancel()
+            self._detached.pop(node.id, None)
+        if waiter in done:
+            return (
+                f'#{node.short_id} ({node.label}) was moved to the background. It keeps working and its '
+                'answer will arrive as a new user message.'
+            )
+        return self._result(node, handle)
+
+    def _result(self, node: AgentNode, handle: asyncio.Task[Any]) -> str:
+        """What a sync caller gets: the message, or why there is none."""
+        if handle.cancelled():
+            # Killed from outside while this call was waiting. Not an exception in
+            # the parent's turn: killing one subagent must not cancel its caller.
+            return f'[{node.label} #{node.short_id} was stopped before it answered.]'
+        error = handle.exception()
+        if error is not None:
+            raise SummonError(f'#{node.short_id} ({node.name}) failed: {type(error).__name__}: {error}') from error
+        message = handle.result() or ''
+        if node.status is NodeStatus.FAILED:
+            raise SummonError(_envelope(node, message or (node.error or 'failed')))
+        return _envelope(node, message)
+
+    async def _execute(self, node: AgentNode, profile: AgentProfile, task: str) -> str:
+        """Runs the node to its end and returns the message it sends back."""
+        agent = self._builder()(profile)
+        budget = StepBudget(
+            max_steps=node.max_steps or self._max_steps or 1,
+            role='subagent',
+        )
+        run: Any = None
+        message = ''
+        selected = _ACTIVE_AGENT_MODEL.get()
+        assert selected is not None
+        try:
+            async with agent.iter(
+                task,
+                deps=SigilDeps(node_id=node.id),
+                message_history=list(node.messages) or None,
+                usage_limits=UsageLimits(request_limit=None),
+                capabilities=[budget, MessageTypes(initial=origin('agent_message'))],
+                model_settings=selected.settings,
+                **({'model': selected.model} if selected.model is not None else {}),
+            ) as run:
+                node.run = run
+                async for _step in run:
+                    # One transcript snapshot per step, announced to the UI: it is
+                    # what a live view of a running subagent paints, and it costs a
+                    # list copy against a model request.
+                    node.messages = list(run.all_messages())
+                    self._notify(node)
+            node.messages = list(run.all_messages())
+            message = _output(run)
+            node.finish(message, exhausted=budget.exhausted)
+        except RunCancelled:
+            node.cancel()
+        except asyncio.CancelledError:
+            if node.status is not NodeStatus.CANCELLED:
+                node.cancel()
+            raise
+        except Exception as exc:  # noqa: BLE001 - a node that dies is not a dead session
+            node.fail(f'{type(exc).__name__}: {exc}')
+            message = f'[{profile.label} failed: {node.error}]'
+        finally:
+            if run is not None and not node.messages:
+                node.messages = list(run.all_messages())
+            node.run = None
+            # A branch cannot hang from a parent that stopped: whatever is still
+            # running under this node is stopped with it.
+            self._cascade_stop(node)
+            self._notify(node)
+        # The mode is read at the end, not at the start: it may have been flipped
+        # to `async` while the node worked, which is exactly what "move it to the
+        # background" means.
+        if node.mode == 'async' and node.status in (NodeStatus.DONE, NodeStatus.FAILED):
+            self._deliver(node, message)
+        return message
+
+    # --- stopping ----------------------------------------------------------
+
+    def detach(self, node_id: str) -> str:
+        """Sends a running node to the background: nobody waits for it anymore.
+
+        The run is untouched — it was never in the caller's stack, only awaited by
+        it. Flipping the mode is what changes where the answer goes; waking the
+        waiter is what frees the caller.
+
+        The root is refused here, not by a caller: the terminal's tree lists every
+        node and binds `b` on the highlighted row, so a guard in one client would
+        leave the action reachable from another. The session's own agent has no
+        parent waiting for an answer, and flipping its mode would describe the
+        conversation as something it is not.
+
+        Raises:
+            SummonError: Nothing matches the reference, it is the session's agent,
+                or it already finished.
+        """
+        node = self.resolve(node_id)
+        if node.is_root:
+            raise SummonError('That is the agent of the session, not a subagent: stop the turn instead.')
+        if node.status.finished:
+            raise SummonError(f'#{node.short_id} already finished: there is nothing to move to the background.')
+        if node.mode == 'async':
+            return f'#{node.short_id} is already in the background.'
+        node.mode = 'async'
+        event = self._detached.get(node_id)
+        if event is not None:
+            event.set()
+        self._notify(node)
+        return f'#{node.short_id} ({node.label}) moved to the background: its answer will arrive as a message.'
+
+    def kill(self, actor_id: str | None, node_id: str) -> str:
+        """Stops a node and everything under it.
+
+        Killing is what makes a background subagent usable: it outlives the turn
+        that started it, so without this the only way to stop one is to quit.
+        """
+        tree = self._trees.active
+        node = self.resolve(node_id)
+        if node.is_root:
+            raise SummonError('That is the agent of the session, not a subagent: stop the turn instead.')
+        actor = tree.node(actor_id) or tree.root
+        if actor is not None and not tree.can_reach(actor.id, node.id):
+            raise SummonError(f'#{node.short_id} was not summoned by you or by an agent above you: you cannot stop it.')
+        if node.status.finished:
+            return f'#{node.short_id} ({node.label}) had already finished.'
+        self._stop(node)
+        return f'#{node.short_id} ({node.label}) stopped, along with everything it had summoned.'
+
+    def _stop(self, node: AgentNode) -> None:
+        """Cancels the node and its descendants, deepest first."""
+        for child in reversed(self._trees.active.descendants(node.id)):
+            self._cancel(child)
+        self._cancel(node)
+
+    def _cancel(self, node: AgentNode) -> None:
+        if node.status is NodeStatus.CANCELLED:
+            return
+        node.cancel()
+        handle = self._tasks.get(node.id)
+        if handle is not None:
+            handle.cancel()
+        self._notify(node)
+
+    def _cascade_stop(self, node: AgentNode) -> None:
+        """Stops what was still running under a node that just ended."""
+        for child in self._trees.active.descendants(node.id):
+            if not child.status.finished:
+                self._cancel(child)
+
+    def cancel_all(self) -> None:
+        """Stops every asynchronous node. Called when the turn or the session ends.
+
+        The state is written here and not only from the node's own handler: a task
+        cancelled before its coroutine ever ran never reaches that handler, and the
+        tree would keep a node saying it is still working.
+        """
+        tree = self._trees.active
+        for node_id, handle in tuple(self._tasks.items()):
+            node = tree.node(node_id)
+            if node is not None and not node.status.finished:
+                node.cancel()
+                self._notify(node)
+            self._cancelling.add(handle)
+            handle.add_done_callback(self._cancelling.discard)
+            handle.cancel()
+        self._tasks.clear()
+
+    async def cancel_all_and_wait(self) -> None:
+        """Cancel active subagents and wait for their cleanup to finish."""
+        self.cancel_all()
+        tasks = tuple(self._cancelling)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    def running(self) -> int:
+        return len(self._tasks)
+
+    # --- messages between agents -------------------------------------------
+
+    def send_message(self, *, sender_id: str | None, target_id: str, text: str) -> str:
+        """Steer a child directly, or add a notice to the receiver's context table.
+
+        Both paths require a live receiver. Final async reports retain their own
+        delivery mechanism; they are not intermediate notifications.
+        """
+        body = text.strip()
+        if not body:
+            raise SummonError('`message` is empty: say what you want to tell it.')
+        tree = self._trees.active
+        sender = tree.root if sender_id is None else tree.node(sender_id)
+        if sender is None:
+            raise SummonError('There is no agent tree for this session.')
+        target = self.resolve(target_id)
+        if target.id == sender.id:
+            raise SummonError('You are that agent: there is nothing to send.')
+
+        kind: Literal['instruction', 'notice'] = self._allowed(tree, sender, target)
+        if not self.is_live(target):
+            raise SummonError(self._unreachable(tree, sender, target, body))
+
+        if kind == 'notice':
+            notice = tree.notifications.publish(sender, target.id, body)
+            self._notify(target)
+            return f'Notification {notice.id} delivered to {target.label} #{target.short_id}; pending ACK.'
+        message = AgentMessage(sender_id=sender.id, sender_name=sender.name, kind=kind, text=body)
+        if not _enqueue(self._run_of(target), request(message.render(), origin('agent_message'))):
+            raise SummonError(self._unreachable(tree, sender, target, body))
+        self._announce_delivery(target)
+        return f'Instruction queued for {target.label} #{target.short_id} as steering.'
+
+    def ack_notifications(self, *, receiver_id: str | None, notification_ids: list[str]) -> str:
+        """Confirm receipt without removing content, changing order, or resolving it."""
+        tree = self._trees.active
+        receiver = tree.root if receiver_id is None else tree.node(receiver_id)
+        if receiver is None:
+            raise SummonError('There is no receiving execution in this session.')
+        try:
+            tree.notifications.acknowledge(receiver.id, notification_ids)
+        except ValueError as error:
+            raise SummonError(str(error)) from error
+        self._notify(receiver)
+        return f'ACK recorded for {", ".join(dict.fromkeys(notification_ids))}. Receipt only; notifications remain visible.'
+
+    def _allowed(self, tree: AgentTree, sender: AgentNode, target: AgentNode) -> Literal['instruction', 'notice']:
+        """Which message this is, or a refusal explaining why there is none.
+
+        Only the *relationship* is decided here. Whether the receiver can read it
+        now is a separate question, answered by ``_unreachable``.
+        """
+        if target.parent_id == sender.id:
+            # Parent to child: this is steering, always allowed.
+            return 'instruction'
+        if target.id == sender.parent_id:
+            if not sender.channel.may_message_parent():
+                raise SummonError(
+                    f'Your channel does not allow talking to your parent ({sender.channel.describe()}). '
+                    'Say what you need in your final message instead: it reaches them that way.'
+                )
+            return 'notice'
+        if target.parent_id == sender.parent_id:
+            if not sender.channel.may_message_sibling(target.name):
+                raise SummonError(
+                    f'You may not message `{target.name}`: your channel lists '
+                    f'{", ".join(sender.channel.to_siblings) or "no siblings"}. '
+                    'If it is needed, say so to your parent.'
+                )
+            return 'notice'
+        raise SummonError(
+            'You can only message your direct children, your parent, and the siblings your channel names. '
+            f'{target.label} #{target.short_id} is none of those.'
+        )
+
+    def _unreachable(self, tree: AgentTree, sender: AgentNode, target: AgentNode, body: str) -> str:
+        """Why the receiver cannot read a message, and what the sender can do.
+
+        The advice depends on who the sender is, because the fix does: a parent can
+        bring an execution back with the message as its task; a child cannot bring
+        its parent back at all; a sibling cannot resume anyone.
+        """
+        name = f'{target.label} #{target.short_id}'
+        if target.is_root:
+            return (
+                f'Your parent {name} is not in a turn right now, so nothing can read that message. '
+                'You cannot start it: put this in your final message instead, where it reaches '
+                'them with the rest of your report.'
+            )
+        if not target.status.finished:
+            # Running, but its run object is not there yet. It is a moment, not a
+            # state: saying "resume it" here would send the parent into a loop.
+            return f'{name} is starting up and cannot read a message yet: try again in a moment.'
+        if target.parent_id == sender.id:
+            return (
+                f'{name} is not running: it finished, so nothing can read that message now. '
+                'You are its parent, so resume it with the message as the new task:\n'
+                f'    summon(agent_id="{target.id}", task={body!r})\n'
+                'It keeps its transcript, so it reads your message on top of everything it '
+                'already did. Do this only if it needs to act on it — otherwise continue '
+                'yourself.'
+            )
+        if target.parent_id == sender.parent_id:
+            return (
+                f'{name} has already finished, and a sibling cannot resume it. '
+                'Ask your parent to, or put it in your final message.'
+            )
+        return (
+            f'{name} is not running, and it is above you in the tree: only an agent that summoned '
+            'it can resume it. Put this in your final message instead.'
+        )
+
+    def waiting(self) -> list[AgentNode]:
+        """Finished nodes whose answer nobody has read yet, in tree order."""
+        return [node for node in self._trees.active.nodes() if not node.delivered]
+
+    def take_messages(self) -> list[str]:
+        """The answers waiting for a turn, and marks them read.
+
+        It reads the tree and not a list held in memory: the flag travels with the
+        session, so closing the app between an answer and the next turn loses
+        nothing.
+        """
+        return self._drain(self.waiting())
+
+    def take_reports(self) -> list[str]:
+        """The waiting answers a wake may deliver, and marks them read.
+
+        Only ``done`` and ``failed`` are answers. A cancelled node keeps whatever
+        text it had produced and keeps ``delivered`` false when the cancellation
+        arrived before anyone read it, so taking it here would hand a turn the
+        report of work somebody stopped on purpose — the interruption would be
+        executed again, which is the one thing a stopped node must never get. A
+        failure is the opposite case and belongs: it is what the parent has to see.
+
+        The rule lives here and not in a client because ``_deliver`` decides in the
+        same place which nodes send anything at all; a second copy of it in the
+        service would drift from that one.
+        """
+        return self._drain([node for node in self.waiting() if node.status in REPORTED])
+
+    def _drain(self, waiting: list[AgentNode]) -> list[str]:
+        """Takes exactly ``waiting``: marks each read and returns its envelope."""
+        messages: list[str] = []
+        for node in waiting:
+            node.delivered = True
+            # A failed node never sets ``result``: the reason it stopped is the
+            # body its parent has to read, so it is the fallback and not a gap.
+            messages.append(_envelope(node, node.result or node.error or ''))
+        if waiting:
+            self._notify(waiting[-1])
+        return messages
+
+    def drain_pending(self) -> list[str]:
+        """Same queue, older name: the turn machinery already calls this."""
+        return self.take_messages()
+
+    @property
+    def pending(self) -> tuple[str, ...]:
+        """The answers waiting, without consuming them."""
+        return tuple(_envelope(node, node.result or '') for node in self.waiting())
+
+    def _wake(self) -> None:
+        """Tells the app an answer is waiting with nobody to read it. Never raises."""
+        if self._on_idle is None:
+            return
+        try:
+            self._on_idle()
+        except Exception:  # noqa: BLE001, S110 - the wake is not the delivery
+            pass
+
+    # --- the way back ------------------------------------------------------
+
+    def _deliver(self, node: AgentNode, message: str) -> None:
+        """Sends the node's message to whoever summoned it.
+
+        The parent is the node that called `summon`; when that node has already
+        finished, the message climbs to the nearest ancestor still able to read it
+        and, failing all of them, to the root.
+        """
+        node.delivered = False
+        text = _envelope(node, message)
+        if self._hand(node, text):
+            node.delivered = True
+            self._notify(node)
+            return
+        # Nobody took it. The flag is what makes the message survive the process:
+        # the tree is saved with the session, and the next open finds it waiting.
+        self._notify(node)
+        self._wake()
+
+    def _hand(self, node: AgentNode, text: str) -> bool:
+        """Offers the message to the nearest live run. ``False`` when none took it."""
+        tree = self._trees.active
+        parent = tree.parent(node.id)
+        while parent is not None:
+            run = self._run_of(parent)
+            if run is not None and _enqueue(
+                run,
+                request(
+                    text,
+                    origin('subagent_report', reports=[report_view(node)]),
+                ),
+            ):
+                self._announce_delivery(node)
+                return True
+            parent = tree.parent(parent.id)
+        return False
+
+    def _run_of(self, node: AgentNode) -> Any | None:
+        """The live run of a node: its own, or the root's turn when it is the root."""
+        if not node.is_root:
+            return node.run
+        if self._root_run is None:
+            return None
+        try:
+            return self._root_run()
+        except Exception:  # noqa: BLE001 - a broken provider is a missing run
+            return None
+
+    def _announce_delivery(self, node: AgentNode) -> None:
+        """Tells the UI that a message landed in a running turn. Never raises."""
+        if self._on_delivered is None:
+            return
+        try:
+            self._on_delivered(node)
+        except Exception:  # noqa: BLE001, S110 - the notice is not the delivery
+            pass
+
+    # --- notifications -----------------------------------------------------
+
+    def _profile(self, name: str) -> AgentProfile:
+        """The profile a summon names, mapped to a refusal the model can read."""
+        try:
+            return self._registry.require_subagent(name)
+        except AgentNotFound as exc:
+            raise SummonError(str(exc)) from exc
+
+    def _notify(self, node: AgentNode) -> None:
+        """Tells the UI a node was born or changed. Never raises into the run."""
+        if self._on_change is None:
+            return
+        try:
+            self._on_change(node)
+        except Exception:  # noqa: BLE001, S110 - the tree is not the run
+            pass
+
+
+def _enqueue(run: Any, text: str | ModelRequest) -> bool:
+    """Injects a message into a live run. ``False`` when that run is closed."""
+    try:
+        run.enqueue(text)
+    except UserError:
+        # The run ended between the check and the call. The caller falls through
+        # to the next way of delivering it.
+        return False
+    except Exception:  # noqa: BLE001 - enqueue can refuse content; never crash a node
+        return False
+    return True
+
+
+def _output(run: Any) -> str:
+    """The final message of a run, as the parent reads it."""
+    result = getattr(run, 'result', None)
+    output = getattr(result, 'output', None)
+    if output is None:
+        return '(the subagent finished without a message)'
+    text = output if isinstance(output, str) else str(output)
+    return text.strip() or '(the subagent finished without a message)'
+
+
+def _envelope(node: AgentNode, message: str) -> str:
+    """What the parent reads: the message under a header that names the node.
+
+    The header is not decoration. It carries the id, which is what lets the parent
+    act on that execution later — message it, kill it, or resume it when it ran out
+    of steps — and it says how the node ended, because a report from an agent that
+    used up its budget has to be read differently from a finished one.
+    """
+    state = {
+        NodeStatus.DONE: 'out of steps' if node.budget_exhausted else 'finished',
+        NodeStatus.FAILED: 'failed',
+        NodeStatus.CANCELLED: 'was cancelled',
+        NodeStatus.RUNNING: 'is still running',
+    }[node.status]
+    header = f'[subagent {node.label} ({node.name} #{node.short_id}, {node.mode}) {state}]'
+    if node.budget_exhausted:
+        header += (
+            '\n[it used all its steps: what follows is what it managed to establish. '
+            f'Resume it with summon(agent_id="{node.id}") to have it continue.]'
+        )
+    return f'{header}\n{message}'

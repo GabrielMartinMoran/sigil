@@ -13,8 +13,9 @@ from pathlib import Path
 
 import pytest
 
-from src.core.agents.model_config import AgentModelConfig
-from src.core.agents.model_defaults import ConfigScope, defaults_paths, read_defaults, save_default
+from src.core.agents.agent_model_config import AgentModelConfig
+from src.core.agents.config_scope import ConfigScope
+from src.core.agents.model_defaults import defaults_paths, read_defaults, save_default
 from src.core.mcp.config.loader import load_config
 
 PROJECT_MODEL = AgentModelConfig(account='work', model='openai/gpt-5', effort='high')

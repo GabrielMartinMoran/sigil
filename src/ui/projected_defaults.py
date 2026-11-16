@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.core.agents.model_defaults import ConfigScope
+from src.core.agents.config_scope import ConfigScope
 
 
 @dataclass(frozen=True, slots=True)

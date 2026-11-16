@@ -23,10 +23,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from src.core.agents.model_config import AgentModelConfig
-from src.core.agents.model_defaults import ConfigScope, ModelDefaultsState
+from src.core.agents.agent_model_config import AgentModelConfig
+from src.core.agents.checkpoint import Checkpoint
+from src.core.agents.config_scope import ConfigScope
+from src.core.agents.fork_outcome import ForkOutcome
+from src.core.agents.model_defaults_state import ModelDefaultsState
 from src.core.agents.profile.models.agent_profile import AgentProfile
-from src.core.agents.rollback import Checkpoint, ForkOutcome, RollbackOutcome
+from src.core.agents.rollback_outcome import RollbackOutcome
 from src.core.agents.tree.models.agent_node import AgentNode
 from src.core.agents.tree.reports import WAKE_PROMPT
 from src.core.bootstrap import Composition

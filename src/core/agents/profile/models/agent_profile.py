@@ -11,8 +11,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from src.core.agents.profile.models.agent_role import AgentRole
-from src.core.agents.profile.models.channel import UNIDIRECTIONAL, ChannelPolicy
-from src.core.agents.profile.permissions import ToolPermissions
+from src.core.agents.profile.models.channel import UNIDIRECTIONAL
+from src.core.agents.profile.models.channel_policy import ChannelPolicy
+from src.core.agents.profile.tool_permissions import ToolPermissions
 
 
 @dataclass(frozen=True, slots=True)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.core.agents.model_defaults import ConfigScope
+from src.core.agents.config_scope import ConfigScope
 from src.ui.widgets.defaults_row import DefaultsRow
 
 

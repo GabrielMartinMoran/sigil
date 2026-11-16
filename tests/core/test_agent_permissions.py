@@ -28,8 +28,10 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from src.core.agents.agent import create_agent
 from src.core.agents.profile.agent_registry import AgentRegistry
+from src.core.agents.profile.effect import Effect
 from src.core.agents.profile.models.agent_parse_error import AgentParseError
-from src.core.agents.profile.permissions import Effect, ToolPermissions, parse_permissions
+from src.core.agents.profile.permissions import parse_permissions
+from src.core.agents.profile.tool_permissions import ToolPermissions
 from src.core.agents.profile.tool_permissions_capability import DENIED_PREFIX
 from src.core.mcp.tools import register_mcp_tools
 from src.core.tooling.tool_group import ToolGroup
@@ -513,7 +515,7 @@ def test_summon_resume_permissions_use_resolved_node_identity(tmp_path: Path) ->
     from src.core.agents.profile.profile_source import ProfileSource
     from src.core.agents.profile.tool_permissions_capability import ToolPermissionsCapability
     from src.core.agents.tree.agent_tree_store import AgentTreeStore
-    from src.core.agents.tree.summoner import SubagentSummoner
+    from src.core.agents.tree.subagent_summoner import SubagentSummoner
     from src.core.agents.tree.tools import summon_permission
 
     _write(tmp_path, 'wizard', extra="permissions:\n  summon:\n    allow: ['worker']\n")

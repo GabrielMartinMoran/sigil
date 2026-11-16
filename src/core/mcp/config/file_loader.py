@@ -6,7 +6,8 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 
-from src.core.agents.model_config import AgentModelConfig, parse_agent_models, parse_default_model
+from src.core.agents.agent_model_config import AgentModelConfig
+from src.core.agents.model_config import parse_agent_models, parse_default_model
 from src.core.mcp.config.constants import TOP_LEVEL_KEYS
 from src.core.mcp.config.validation import build_spec
 from src.core.mcp.config_models.mcp_server_spec import MCPServerSpec

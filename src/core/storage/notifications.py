@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from src.core.agents.tree.notifications import AgentNotification, Notifications
+from src.core.agents.tree.agent_notification import AgentNotification
+from src.core.agents.tree.notifications import Notifications
 from src.core.storage.database import Database
 
 

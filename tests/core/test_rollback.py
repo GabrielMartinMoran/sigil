@@ -21,9 +21,11 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from src.core.agents.rollback import Checkpoints, Rollback, RollbackError, prompt_of_turn
-from src.core.agents.snapshots import WorkspaceSnapshots
+from src.core.agents.prompt_of_turn import prompt_of_turn
+from src.core.agents.rollback import Checkpoints, Rollback
+from src.core.agents.rollback_error import RollbackError
 from src.core.agents.tree.agent_tree import AgentTree
+from src.core.agents.workspace_snapshots import WorkspaceSnapshots
 from src.core.roadmap.models.todo_item import TodoItem
 from src.core.roadmap.roadmap_stores import RoadmapStores
 from src.core.sessions.recover_history import recover_history

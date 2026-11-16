@@ -29,7 +29,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import UsageLimits
 
 from src.core.agents.agent import create_agent
-from src.core.agents.factory import AgentFactory, AgentSpec
+from src.core.agents.agent_factory import AgentFactory
+from src.core.agents.agent_spec import AgentSpec
 from src.core.agents.profile.agent_registry import AgentRegistry
 from src.core.agents.profile.models.agent_not_found import AgentNotFound
 from src.core.agents.profile.models.agent_parse_error import AgentParseError
@@ -42,7 +43,8 @@ from src.core.agents.tree.models.agent_node import AgentNode
 from src.core.agents.tree.models.node_status import NodeStatus
 from src.core.agents.tree.models.summon_error import SummonError
 from src.core.agents.tree.rendering import render_subagents, summonable
-from src.core.agents.tree.summoner import SigilDeps, SubagentSummoner
+from src.core.agents.tree.sigil_deps import SigilDeps
+from src.core.agents.tree.subagent_summoner import SubagentSummoner
 from src.core.agents.tree.tools import register_tree_tools
 from src.core.sessions.session_store import SessionStore
 
@@ -848,7 +850,8 @@ def test_concurrent_subagents_tag_their_tool_events_without_leaking_to_parent(tm
 
 
 def test_configured_subagent_and_nested_child_use_same_model_and_effort(tmp_path: Path) -> None:
-    from src.core.agents.tree.summoner import _ACTIVE_AGENT_MODEL, AgentRunModel
+    from src.core.agents.tree.agent_run_model import AgentRunModel
+    from src.core.agents.tree.summoner import _ACTIVE_AGENT_MODEL
 
     env = make_env(tmp_path)
     write_profile(tmp_path, 'reviewer', extra='role: subagent\n')
@@ -881,7 +884,8 @@ def test_configured_subagent_and_nested_child_use_same_model_and_effort(tmp_path
 
 
 def test_concurrent_subagents_do_not_share_model_or_effort(tmp_path: Path) -> None:
-    from src.core.agents.tree.summoner import AgentRunModel, current_agent_model
+    from src.core.agents.tree.agent_run_model import AgentRunModel
+    from src.core.agents.tree.summoner import current_agent_model
 
     env = make_env(tmp_path)
     write_profile(tmp_path, 'reviewer', extra='role: subagent\n')
@@ -914,7 +918,8 @@ def test_concurrent_subagents_do_not_share_model_or_effort(tmp_path: Path) -> No
 
 
 def test_unconfigured_subagent_captures_parent_model_and_effort(tmp_path: Path) -> None:
-    from src.core.agents.tree.summoner import AgentRunModel, current_agent_model
+    from src.core.agents.tree.agent_run_model import AgentRunModel
+    from src.core.agents.tree.summoner import current_agent_model
 
     env = make_env(tmp_path)
     seen = []

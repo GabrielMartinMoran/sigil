@@ -6,8 +6,9 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from src.core.agents.model_config import AgentModelConfig
-from src.core.agents.model_defaults import ConfigScope, ModelDefaultsState
+from src.core.agents.agent_model_config import AgentModelConfig
+from src.core.agents.config_scope import ConfigScope
+from src.core.agents.model_defaults_state import ModelDefaultsState
 from src.core.agents.profile.models.agent_profile import AgentProfile
 from src.core.agents.profile.models.agent_role import AgentRole
 from src.ui.projected_defaults import ProjectedDefaults

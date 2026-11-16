@@ -16,7 +16,8 @@ import pytest
 from textual.app import App
 from textual.widgets import OptionList
 
-from src.core.agents.model_defaults import ConfigScope, read_defaults, save_default
+from src.core.agents.config_scope import ConfigScope
+from src.core.agents.model_defaults import read_defaults, save_default
 from src.core.agents.profile.models.agent_profile import AgentProfile
 from src.core.agents.profile.models.agent_role import AgentRole
 from src.ui.defaults_rows import defaults_rows

@@ -188,7 +188,7 @@ def _skill_metrics(parts: Sequence[object]) -> dict[str, int]:
 
 
 def _prompt_sections(messages: Sequence[ModelMessage]) -> tuple[PromptSection, ...]:
-    from src.core.agents.tree.prompt_tail import TAIL_MARKER
+    from src.core.agents.tree.agent_context_tail import TAIL_MARKER
 
     return tuple(
         PromptSection('dynamic', 'Agent context', part_tokens(part))

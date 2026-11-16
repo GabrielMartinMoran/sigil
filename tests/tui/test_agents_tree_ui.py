@@ -25,7 +25,7 @@ from textual.widgets import OptionList
 from src.core.agents.profile.agent_registry import AgentRegistry
 from src.core.agents.profile.models.agent_role import AgentRole
 from src.core.agents.tree.agent_tree_store import AgentTreeStore
-from src.core.agents.tree.summoner import SubagentSummoner
+from src.core.agents.tree.subagent_summoner import SubagentSummoner
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
 from src.ui.widgets.agent_tree_rows import node_row, status_text
@@ -562,7 +562,8 @@ def test_node_view_refreshes_when_a_message_changes_without_a_count_change() -> 
 
 
 def test_subagent_instructions_are_distinct_from_user_messages() -> None:
-    from src.core.agents.message_types import origin, request
+    from src.core.agents.origin import origin
+    from src.core.agents.request import request
     from src.ui.widgets.agent_message_block import AgentMessageBlock
     from src.ui.widgets.user_message import UserMessage
 

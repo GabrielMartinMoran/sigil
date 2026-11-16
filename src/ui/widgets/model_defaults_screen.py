@@ -21,7 +21,7 @@ from textual.binding import Binding
 from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
-from src.core.agents.model_defaults import ConfigScope
+from src.core.agents.config_scope import ConfigScope
 from src.core.agents.profile.models.agent_role import AgentRole
 from src.ui.widgets.defaults_choice import DefaultsChoice
 from src.ui.widgets.defaults_destinations import DefaultsDestinations

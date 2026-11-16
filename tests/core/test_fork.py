@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
-from src.core.agents.rollback import Rollback, RollbackError
+from src.core.agents.rollback import Rollback
+from src.core.agents.rollback_error import RollbackError
 from src.core.roadmap.models.todo_item import TodoItem
 from src.core.roadmap.roadmap_stores import RoadmapStores
 from src.core.sessions.session_store import SessionStore

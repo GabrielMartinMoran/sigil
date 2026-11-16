@@ -31,7 +31,7 @@ from typing import Any
 import pytest
 from pydantic_ai.models.test import TestModel
 
-from src.core.agents.retry import RetryNotice
+from src.core.agents.retry_notice import RetryNotice
 from src.core.bootstrap import Composition
 from src.core.interaction.models.question_item import QuestionItem
 from src.core.interaction.models.question_option import QuestionOption

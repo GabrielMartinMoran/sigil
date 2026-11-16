@@ -28,7 +28,8 @@ from typing import Any
 
 import pytest
 
-from src.core.agents.rollback import ForkOutcome, RollbackOutcome
+from src.core.agents.fork_outcome import ForkOutcome
+from src.core.agents.rollback_outcome import RollbackOutcome
 from src.core.agents.tree.models.node_status import NodeStatus
 from src.core.bootstrap import Composition
 from src.core.context.context_budget import ContextBudget

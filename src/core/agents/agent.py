@@ -11,11 +11,11 @@ from src.core.agents.profile.profile_source import ProfileSource
 from src.core.agents.profile.rendering import render_agent_profile
 from src.core.agents.profile.tool_permissions_capability import ToolPermissionsCapability
 from src.core.agents.prompts.render import render
-from src.core.agents.retry import RetryTransientModelErrors
-from src.core.agents.tool_errors import ToolErrorRecovery
-from src.core.agents.tree.prompt_tail import AgentContextTail
+from src.core.agents.retry_transient_model_errors import RetryTransientModelErrors
+from src.core.agents.tool_error_recovery import ToolErrorRecovery
+from src.core.agents.tree.agent_context_tail import AgentContextTail
 from src.core.agents.tree.rendering import render_subagents
-from src.core.agents.tree.summoner import SigilDeps
+from src.core.agents.tree.sigil_deps import SigilDeps
 from src.core.providers.factory.unconfigured import UnconfiguredModel
 from src.core.settings import DEFAULT_MODEL_MAX_ATTEMPTS
 from src.core.skills.loaded import loaded_resources, loaded_skills

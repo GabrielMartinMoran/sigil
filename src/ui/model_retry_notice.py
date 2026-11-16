@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from textual.message import Message
 
-from src.core.agents.retry import RetryNotice
+from src.core.agents.retry_notice import RetryNotice
 
 
 class ModelRetryNotice(Message):

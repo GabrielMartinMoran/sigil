@@ -22,7 +22,7 @@ from pathlib import Path
 from src.core.agents.profile.agent_registry import AgentRegistry
 from src.core.agents.profile.models.agent_role import AgentRole
 from src.core.agents.tree.agent_tree_store import AgentTreeStore
-from src.core.agents.tree.summoner import SubagentSummoner
+from src.core.agents.tree.subagent_summoner import SubagentSummoner
 from src.core.sessions.session_store import SessionStore
 
 

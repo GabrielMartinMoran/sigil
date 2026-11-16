@@ -22,7 +22,7 @@ from src.core.agents.profile.agent_registry import AgentRegistry
 from src.core.agents.profile.models.agent_role import AgentRole
 from src.core.agents.tree.agent_tree_store import AgentTreeStore
 from src.core.agents.tree.models.node_status import NodeStatus
-from src.core.agents.tree.summoner import SubagentSummoner
+from src.core.agents.tree.subagent_summoner import SubagentSummoner
 from src.core.sessions.session_store import SessionStore
 from src.ui.sigil_app import SigilApp
 from src.ui.widgets.agent_tree_rows import node_row, state_of, status_text

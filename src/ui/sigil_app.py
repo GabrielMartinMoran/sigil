@@ -33,9 +33,10 @@ from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 
 from src.core.agents.profile.agent_registry import AgentRegistry
-from src.core.agents.retry import RetryNotice, RetryTransientModelErrors
+from src.core.agents.retry_notice import RetryNotice
+from src.core.agents.retry_transient_model_errors import RetryTransientModelErrors
 from src.core.agents.tree.agent_tree_store import AgentTreeStore
-from src.core.agents.tree.summoner import SubagentSummoner
+from src.core.agents.tree.subagent_summoner import SubagentSummoner
 from src.core.context.capability import ContextViewCapability, subagent_window_warning
 from src.core.context.instructions.workspace_instructions import WorkspaceInstructions
 from src.core.context.meter.context_meter import ContextMeter

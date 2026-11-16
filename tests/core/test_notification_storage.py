@@ -8,7 +8,8 @@ from dataclasses import replace
 
 import pytest
 
-from src.core.agents.tree.notifications import AgentNotification, Notifications
+from src.core.agents.tree.agent_notification import AgentNotification
+from src.core.agents.tree.notifications import Notifications
 from src.core.storage.notifications import save_notifications
 
 

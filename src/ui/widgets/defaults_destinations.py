@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol
 
-from src.core.agents.model_defaults import ConfigScope
+from src.core.agents.config_scope import ConfigScope
 
 
 class DefaultsDestinations(Protocol):

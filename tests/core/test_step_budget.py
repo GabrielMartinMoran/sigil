@@ -15,7 +15,8 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import UsageLimits
 
-from src.core.agents.step_budget import PREFIX, StepBudget, notice
+from src.core.agents.notice import PREFIX, notice
+from src.core.agents.step_budget import StepBudget
 
 
 def _agent(seen: list[list[str]]) -> Agent:

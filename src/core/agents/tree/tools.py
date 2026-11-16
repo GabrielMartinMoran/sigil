@@ -31,7 +31,8 @@ from pydantic_ai.exceptions import ToolFailed
 
 from src.core.agents.tree.models.summon_error import SummonError
 from src.core.agents.tree.rendering import SUMMON_GROUP, SUMMON_TOOL
-from src.core.agents.tree.summoner import SigilDeps, SubagentSummoner, SummonMode
+from src.core.agents.tree.sigil_deps import SigilDeps
+from src.core.agents.tree.subagent_summoner import SubagentSummoner, SummonMode
 from src.core.tooling.compaction_policies import (
     ACK_NOTIFICATIONS_COMPACTOR,
     KILL_SUBAGENT_COMPACTOR,

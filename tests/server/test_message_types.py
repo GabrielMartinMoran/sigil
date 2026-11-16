@@ -7,7 +7,10 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 
-from src.core.agents.message_types import MessageTypes, origin, request, type_of
+from src.core.agents.message_types import MessageTypes
+from src.core.agents.origin import origin
+from src.core.agents.request import request
+from src.core.agents.type_of import type_of
 from src.core.sessions.session_store import SessionStore
 from src.core.storage.database import Database
 from src.server.views import transcript, transcript_window
@@ -118,7 +121,7 @@ def test_merged_history_types_are_restored_without_typing_old_user_parts() -> No
 def test_mixed_report_preserves_human_attachments() -> None:
     from pydantic_ai.messages import BinaryContent
 
-    from src.core.agents.message_types import mark
+    from src.core.agents.mark import mark
 
     part = UserPromptPart(['internal envelope and human text', BinaryContent(b'image', media_type='image/png')])
     message = ModelRequest(parts=[part])

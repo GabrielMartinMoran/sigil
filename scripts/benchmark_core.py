@@ -50,7 +50,7 @@ from src.core.agents.profile.models.agent_role import AgentRole
 from src.core.agents.tree.agent_tree import AgentTree
 from src.core.agents.tree.agent_tree_store import AgentTreeStore
 from src.core.agents.tree.models.node_status import NodeStatus
-from src.core.agents.tree.summoner import SubagentSummoner
+from src.core.agents.tree.subagent_summoner import SubagentSummoner
 from src.core.agents.tree.tools import register_tree_tools, render_tree_table
 from src.core.attachments.images import prepare_image
 from src.core.attachments.tools import image_id_for, register_image_tools

@@ -15,7 +15,7 @@ from src.core.agents.tree.agent_tree import AgentTree
 from src.core.agents.tree.models.agent_node import AgentNode
 from src.core.agents.tree.models.summon_error import SummonError
 from src.core.agents.tree.rendering import render_notifications
-from src.core.agents.tree.summoner import SigilDeps
+from src.core.agents.tree.sigil_deps import SigilDeps
 from src.core.agents.tree.tools import register_tree_tools
 from src.core.sessions.session_store import SessionStore
 from tests.support.agents_tree_control import Env, _LiveRun, _root_calling, make_env

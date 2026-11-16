@@ -342,7 +342,7 @@ def _run_two_calls(tmp_path, monkeypatch, calls):
     from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-    from src.core.agents.tool_errors import ToolErrorRecovery
+    from src.core.agents.tool_error_recovery import ToolErrorRecovery
 
     monkeypatch.chdir(tmp_path)
 

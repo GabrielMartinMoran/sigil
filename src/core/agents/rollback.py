@@ -33,184 +33,26 @@ import json
 import sqlite3
 import subprocess
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-from src.core.agents.snapshots import NotARepository, WorkspaceSnapshots
+from src.core.agents.checkpoint import Checkpoint
+from src.core.agents.checkpoints import REASON_PROMPT, Checkpoints, _new_id, _now
+from src.core.agents.fork_outcome import ForkOutcome
+from src.core.agents.not_a_repository import NotARepository
+from src.core.agents.prompt_of_turn import PROMPT_KIND
+from src.core.agents.rollback_error import RollbackError
+from src.core.agents.rollback_outcome import RollbackOutcome
+from src.core.agents.workspace_snapshots import WorkspaceSnapshots
 from src.core.sessions.session_store import SessionStore
-from src.core.storage.blobs import ABANDONED, ROADMAP, Blobs
+from src.core.storage.blobs import ABANDONED, ROADMAP
 from src.core.storage.database import Database
 from src.core.storage.executions import root_id_for
 from src.core.storage.roadmap import delete_items, plan_as_json, restore_plan_from_json
 
-if TYPE_CHECKING:
-    from pydantic_ai.messages import BinaryContent
-
-REASON_PROMPT = 'prompt'
 REASON_BEFORE_ROLLBACK = 'before_rollback'
 REASON_MANUAL = 'manual'
 
-PROMPT_KIND = 'user-prompt'
 """The part kind a turn opens with when the user started it by typing."""
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def _new_id() -> str:
-    import hashlib
-    import uuid
-
-    return hashlib.sha256(uuid.uuid4().bytes).hexdigest()[:32]
-
-
-class Checkpoints:
-    """The rows that record where a session and its workspace stood."""
-
-    def __init__(self, database: Database, blobs: Blobs) -> None:
-        self._db = database
-        self._blobs = blobs
-
-    # --- reading -------------------------------------------------------------
-
-    def of_session(self, session_id: str) -> list[Checkpoint]:
-        rows = self._db.query(
-            'SELECT * FROM checkpoints WHERE session_id = ? ORDER BY at',
-            (session_id,),
-        )
-        return [_checkpoint_from(row) for row in rows]
-
-    def of_turn(self, turn_id: str) -> Checkpoint | None:
-        row = self._db.one('SELECT * FROM checkpoints WHERE turn_id = ?', (turn_id,))
-        return None if row is None else _checkpoint_from(row)
-
-    def get(self, checkpoint_id: str) -> Checkpoint | None:
-        row = self._db.one('SELECT * FROM checkpoints WHERE id = ?', (checkpoint_id,))
-        return None if row is None else _checkpoint_from(row)
-
-    # --- writing -------------------------------------------------------------
-
-    def _plan_before(self, execution_id: str, *, conn: sqlite3.Connection | None = None) -> str:
-        """The plan the previous checkpoint of this execution recorded, or an empty one."""
-        execute = (conn or self._db.connection).execute
-        row = execute(
-            'SELECT roadmap_blob FROM checkpoints WHERE execution_id = ? AND roadmap_blob IS NOT NULL '
-            'ORDER BY at DESC LIMIT 1',
-            (execution_id,),
-        ).fetchone()
-        return '[]' if row is None else self._blobs.data(int(row[0])).decode('utf-8')
-
-    def take(
-        self,
-        session_id: str,
-        execution_id: str,
-        *,
-        turn_id: str | None,
-        reason: str = REASON_PROMPT,
-        label: str = '',
-        tree_commit: str | None = None,
-        carry_plan: bool = False,
-        conn: sqlite3.Connection | None = None,
-    ) -> Checkpoint:
-        """Records an instant, with the plan as it was.
-
-        The plan goes into a blob because a cascade cannot restore it: a task belongs
-        to an execution, so an item created by a dropped turn survives the cascade and
-        only a snapshot can tell which items the turn added.
-
-        ``carry_plan`` is what makes a turn's checkpoint mean *before that turn*. The
-        per-turn checkpoint is written from a save that already contains the turn's
-        messages and its plan changes, so snapshotting the plan "now" would restore a
-        plan that includes the work being undone. Carrying the previous checkpoint's
-        plan forward records the instant the user actually wants: the state before the
-        turn ran. An undo checkpoint passes ``False``: it is written live, before
-        anything is touched, so the plan it sees is the one to preserve.
-        """
-        checkpoint_id = _new_id()
-        execute = (conn or self._db.connection).execute
-        raw_plan = self._plan_before(execution_id, conn=conn) if carry_plan else plan_as_json(self._db, execution_id)
-        roadmap_blob = self._blobs.put(raw_plan or '[]', kind=ROADMAP, media_type='application/json', conn=conn)
-        execute(
-            'INSERT INTO checkpoints '
-            '(id, session_id, execution_id, turn_id, at, reason, label, tree_commit, roadmap_blob) '
-            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            (
-                checkpoint_id,
-                session_id,
-                execution_id,
-                turn_id,
-                _now(),
-                reason,
-                label,
-                tree_commit,
-                roadmap_blob,
-            ),
-        )
-        return Checkpoint(
-            id=checkpoint_id,
-            session_id=session_id,
-            execution_id=execution_id,
-            turn_id=turn_id,
-            at=_now(),
-            reason=reason,
-            label=label,
-            tree_commit=tree_commit,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ForkOutcome:
-    """What a fork produced."""
-
-    session_id: str
-    turns_copied: int
-    messages_copied: int
-    executions_copied: int
-
-
-@dataclass(frozen=True, slots=True)
-class RollbackError(Exception):
-    """A rollback that could not start, with the reason said plainly."""
-
-    reason: str
-
-    def __str__(self) -> str:
-        return self.reason
-
-
-@dataclass(frozen=True, slots=True)
-class Checkpoint:
-    """One instant a session can be returned to."""
-
-    id: str
-    session_id: str
-    execution_id: str
-    turn_id: str | None
-    at: str
-    reason: str
-    label: str
-    tree_commit: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class RollbackOutcome:
-    """What a rollback actually did, without optimism."""
-
-    target_turn_id: str
-    turns_dropped: int
-    executions_dropped: int
-    messages_dropped: int
-    files_restored: int
-    files_deleted: int
-    files_unavailable: bool
-    undo_checkpoint: str
-
-    @property
-    def touched_files(self) -> bool:
-        return self.files_restored > 0 or self.files_deleted > 0
 
 
 class Rollback:
@@ -800,81 +642,8 @@ def _opens_with_a_prompt(database: Database, execution_id: str, seq: int) -> boo
     return isinstance(first, dict) and first.get('part_kind') == PROMPT_KIND
 
 
-def prompt_of_turn(database: Database, turn_id: str) -> tuple[str, list[BinaryContent]] | None:
-    """The prompt that opened a turn: the text the user typed and its images.
-
-    It is what a rollback gives back — the preview on the list and the message the
-    composer is refilled with — so both read it from here, and a turn is identified
-    by its prompt instead of by whatever message happens to come first.
-
-    The lookup is filtered in SQL so a turn of two hundred steps costs one row and
-    not two hundred: the payload is JSON text and the part kind is a literal in it.
-    The full scan behind it is the rare path — a result whose arguments happen to
-    quote a prompt.
-    """
-    marker = f'%"part_kind":"{PROMPT_KIND}"%'
-    row = database.one(
-        'SELECT payload FROM messages WHERE turn_id = ? AND payload LIKE ? ORDER BY seq LIMIT 1',
-        (turn_id, marker),
-    )
-    found = None if row is None else _prompt_in(str(row['payload']))
-    if found is not None:
-        return found
-    for candidate in database.query('SELECT payload FROM messages WHERE turn_id = ? ORDER BY seq', (turn_id,)):
-        found = _prompt_in(str(candidate['payload']))
-        if found is not None:
-            return found
-    return None
-
-
-def _prompt_in(raw: str) -> tuple[str, list[BinaryContent]] | None:
-    """The prompt a serialized message carries, or ``None`` when it carries none."""
-    from pydantic_ai.messages import BinaryContent
-
-    try:
-        payload = json.loads(raw)
-    except ValueError:
-        return None
-    if not isinstance(payload, dict):
-        return None
-    for part in payload.get('parts') or []:
-        if not isinstance(part, dict) or part.get('part_kind') != PROMPT_KIND:
-            continue
-        content = part.get('content')
-        if isinstance(content, str):
-            return content, []
-        if isinstance(content, list):
-            text = ' '.join(item for item in content if isinstance(item, str))
-            images = [
-                BinaryContent(
-                    data=item['data'],
-                    media_type=item.get('media_type', 'application/octet-stream'),
-                    identifier=item.get('identifier'),
-                )
-                for item in content
-                if isinstance(item, dict)
-                and item.get('kind') == 'binary'
-                and str(item.get('media_type', '')).startswith('image/')
-            ]
-            return text, images
-    return None
-
-
 def _fork_title(title: object) -> str:
     return f'{title} (fork)' if isinstance(title, str) and title else 'fork'
-
-
-def _checkpoint_from(row: sqlite3.Row) -> Checkpoint:
-    return Checkpoint(
-        id=str(row['id']),
-        session_id=str(row['session_id']),
-        execution_id=str(row['execution_id']),
-        turn_id=None if row['turn_id'] is None else str(row['turn_id']),
-        at=str(row['at']),
-        reason=str(row['reason']),
-        label=str(row['label'] or ''),
-        tree_commit=None if row['tree_commit'] is None else str(row['tree_commit']),
-    )
 
 
 __all__ = [
@@ -888,5 +657,4 @@ __all__ = [
     'Rollback',
     'RollbackError',
     'RollbackOutcome',
-    'prompt_of_turn',
 ]

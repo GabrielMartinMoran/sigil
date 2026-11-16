@@ -34,8 +34,8 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from starlette.types import Message, Receive, Scope, Send
 
-from src.core.agents.model_config import AgentModelConfig
-from src.core.agents.model_defaults import ConfigScope
+from src.core.agents.agent_model_config import AgentModelConfig
+from src.core.agents.config_scope import ConfigScope
 from src.core.agents.profile.models.agent_role import AgentRole
 from src.core.agents.tree.models.agent_node import AgentNode
 from src.core.agents.tree.models.node_status import NodeStatus

@@ -3565,7 +3565,7 @@ def test_the_attached_defaults_screen_paints_what_the_service_reads(composition:
     set` here would be the client answering from a state it does not hold, and a
     profile missing from the list is exactly the default the user came to set.
     """
-    from src.core.agents.model_defaults import ConfigScope
+    from src.core.agents.config_scope import ConfigScope
     from src.ui.widgets.model_defaults_screen import ModelDefaultsScreen
 
     config = Path(os.environ['SIGIL_CONFIG'])

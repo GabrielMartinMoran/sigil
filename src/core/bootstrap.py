@@ -32,17 +32,22 @@ from typing import Any
 from pydantic_ai import Agent
 
 from sigil_tools import ToolContext
-from src.core.agents.factory import AgentFactory, AgentSpec
-from src.core.agents.model_config import AgentModelConfig
-from src.core.agents.model_defaults import ConfigScope, ModelDefaultsState, read_defaults, save_default
+from src.core.agents.agent_factory import AgentFactory
+from src.core.agents.agent_model_config import AgentModelConfig
+from src.core.agents.agent_spec import AgentSpec
+from src.core.agents.config_scope import ConfigScope
+from src.core.agents.model_defaults import read_defaults, save_default
+from src.core.agents.model_defaults_state import ModelDefaultsState
 from src.core.agents.model_feature_gate import IMAGE_INPUT, ModelFeatureGate
 from src.core.agents.profile.agent_registry import AgentRegistry
 from src.core.agents.profile.models.agent_not_found import AgentNotFound
-from src.core.agents.retry import RetryTransientModelErrors
+from src.core.agents.retry_transient_model_errors import RetryTransientModelErrors
 from src.core.agents.rollback import Rollback
+from src.core.agents.tree.agent_run_model import AgentRunModel
 from src.core.agents.tree.agent_tree_store import AgentTreeStore
 from src.core.agents.tree.rendering import SUMMON_TOOL, render_notifications, render_peers, summonable
-from src.core.agents.tree.summoner import AgentRunModel, SubagentSummoner, current_agent_model
+from src.core.agents.tree.subagent_summoner import SubagentSummoner
+from src.core.agents.tree.summoner import current_agent_model
 from src.core.agents.tree.tools import register_tree_tools
 from src.core.attachments.tools import register_image_tools
 from src.core.context.capability import ContextViewCapability

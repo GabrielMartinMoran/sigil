@@ -2,18 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
+from src.core.agents.agent_model_config import AgentModelConfig
 from src.core.agents.profile.models.agent_name import is_valid_agent_name
-from src.core.providers.domain.thinking import ThinkingChoice, parse_choice
-
-
-@dataclass(frozen=True, slots=True)
-class AgentModelConfig:
-    account: str
-    model: str
-    effort: ThinkingChoice
+from src.core.providers.domain.thinking import parse_choice
 
 
 def _entry(value: object, label: str) -> tuple[AgentModelConfig | None, str | None]:
