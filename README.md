@@ -482,7 +482,7 @@ with the two.
 | --- | --- |
 | `all` (or `'*'`) | Every tool |
 | `read`, `write`, `run`, `web`, `skills`, `mcp`, `ask`, `roadmap`, `summon` | A group of tools |
-| `read_file`, `patch_file`, … | One built-in tool |
+| `read_file`, `write_file`, … | One built-in tool |
 | `mcp_github_*` | A glob over names — how a whole MCP server is targeted |
 
 There are three shapes, from loosest to strictest:
@@ -497,9 +497,9 @@ permissions:                    # the explicit, ordered form
 ```
 
 **The last matching rule wins**, so a profile reads top to bottom: close
-everything first, then open what it needs. A tool rule beats the group it sits
-in, which is how `write: allow` plus `patch_file: deny` means "create files, but
-never edit one".
+everything first, then open what it needs. A tool rule can override its group.
+For compatibility, a legacy `patch_file` restriction also applies to the unified
+`write_file` tool, so migrating a profile does not broaden its access.
 
 A scope nobody can match is an error, not a silent no-op: `permissions: {reed:
 deny}` is rejected with the list of valid scopes, because a typo would leave the
@@ -527,7 +527,7 @@ against what the tool receives:
 | `skills`, `mcp` | The skill or server name | As given |
 | `summon` | The subagent name | As given |
 
-`run` executes several commands in one call: **one** denied command refuses the
+`shell` executes several commands in one call: **one** denied command refuses the
 whole call, and the model reads the refusal as a failed result it can adapt to.
 
 An **allow list** over a resource is exhaustive: a command it does not name is
@@ -929,10 +929,10 @@ duration and its arguments.
 
 | Tool | Group | What it does |
 | --- | --- | --- |
-| `run` | `run` | Runs a shell command with a timeout and an anti-self-launch guard |
+| `shell` | `run` | Runs shell commands with a timeout and an anti-self-launch guard |
+| `execute_code` | `run` | Composes permitted tools with async Python in an experimental Linux sandbox |
 | `read_file` | `read` | Reads a file, or a line range, with a byte limit |
-| `write_file` | `write` | Creates a file, or replaces or appends its content |
-| `patch_file` | `write` | Edits a file by exact text or by line range |
+| `write_file` | `write` | Creates or edits one file with ordered operations |
 | `web_search` | `web` | Searches the web and returns each result's title, URL and snippet |
 | `read_url` | `web` | Extracts a page as Markdown, text or HTML |
 | `list_skills`, `load_skill`, `read_skill_resource`, `run_skill_script` | `skills` | Discovers, loads and reads Agent Skills; a bundled script also counts as `run` |
@@ -945,23 +945,50 @@ duration and its arguments.
 | `list_agents` | `summon` | The ids, names, states and parents of the agents of the session |
 
 The group is what a profile's `permissions` rules on, together with the tool
-name: `permissions: {write: deny}` closes `write_file` and `patch_file` in one
-line. A tool declares its group once, next to its definition, and
+name: `permissions: {write: deny}` closes `write_file` in one line. A tool declares its group once, next to its definition, and
 `tests/core/test_tool_groups.py` fails if the declaration and the documented table
 drift apart.
 
 A tool error does not cut the turn: it goes back to the model as a failed result
-(`outcome: failed`) and the agent decides how to proceed. If a `patch_file`
-`old_string` does not appear, the model reads the error and corrects the call
+(`outcome: failed`) and the agent decides how to proceed. If a `write_file`
+replacement's `old` text does not appear, the model reads the error and corrects the call
 instead of handing control back to you mid-task.
 
 The one deliberate exception is a cancelled `ask_user`: that is not a tool
 failure but your decision to stop. It ends the turn and returns control to you,
 with the partial history kept and the unanswered call closed out.
 
+### Experimental Python execution
+
+`execute_code` runs Python with top-level `await` and exposes `read_file`,
+`write_file`, `web_search`, and `read_url` through `tools`. Each nested call uses
+its normal profile permissions. For example:
+
+```python
+result = await tools.read_file(path="README.md")
+print(result["content"])
+```
+
+The runtime requires Linux, bubblewrap, cgroup v2, and a working systemd user
+manager with delegation support. A trusted supervisor places the stopped
+payload in a delegated child cgroup before starting it. The supervisor keeps
+that cgroup observable until the host confirms `populated=0`. On cancellation
+or host disconnection, it terminates the payload using `cgroup.kill`. A separate
+control channel carries readiness and cleanup messages, not user output. If
+setup or cleanup verification fails, execution fails; there is no host fallback.
+The call's `timeout_seconds` defaults to 120 and accepts values from 1 to 120.
+Sandbox concurrency is limited to two calls per Sigil process, not across
+separate processes. System runtime directories are mounted read-only. This is
+experimental isolation, not a verified security boundary.
+
+Cancellation cannot undo completed effects. A synchronous nested tool already
+running in a thread may continue after cancellation. Writes are serialized
+within one execution; concurrent executions and other processes aren't covered
+by that lock.
+
 ### Files
 
-`read_file`, `write_file` and `patch_file` work inside the workspace and inside
+`read_file` and `write_file` work inside the workspace and inside
 the OS temporary directory: any other path is rejected with an error, it is not
 resolved silently.
 
@@ -976,19 +1003,25 @@ symlink is followed before the check, so it cannot be used to reach a file
 outside. A profile still rules on these paths like any other, so `write: {deny:
 ['/tmp/*']}` closes the scratch area for an agent that must not have one.
 
-`patch_file` has two modes:
+`write_file` accepts a path and an ordered list of operations. It applies all
+operations in memory before writing the result; if an operation fails, no edit
+is written. Available operations are:
 
-- **Exact text** (`old_string` + `new_string`): the recommended mode. The text
-  must appear exactly once, unless `replace_all=true`. If it appears several
-  times, the error lists the lines where it is.
-- **Line range** (`start_line` + `end_line`): useful when you already know the
-  line numbers. You can validate the current content with `expected_text`, the
-  text you expect to find in that range; the trailing newline is ignored.
+- `write` and `append`, each with `content`.
+- `replace`, with `old` and `new`; the match must be unique unless
+  `replace_all` is true. Set `new` to an empty string to delete text.
+- `replace_lines`, with `start_line`, `end_line`, `new`, and optional
+  `expected_text`. A trailing newline is ignored when checking expected text.
 
-Both modes respect the file's line endings: a CRLF file stays CRLF after the
-patch.
+Line replacements preserve the file's line endings. For existing files, atomic
+replacement attempts to preserve ownership, mode, and extended attributes,
+including ACLs stored as extended attributes. If it can't preserve them, the
+edit fails without replacing the original. Platforms without extended-attribute
+support in Python cannot edit existing files. Files observed with multiple hard
+links are rejected. These checks don't protect against concurrent external
+changes; atomic replacement prevents partial writes, not lost updates.
 
-`write_file` and `patch_file` declare a concurrency guard: two calls that write
+`write_file` declares a concurrency guard: two calls that write
 the same file in the same response clash. The first goes through and the second
 fails with a message asking the model to re-emit it in a separate step. Editing
 different files keeps running in parallel, and reading a file never clashes with

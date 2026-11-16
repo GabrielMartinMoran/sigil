@@ -9,6 +9,7 @@ from typing import Any, ClassVar
 from rich.console import Group
 from rich.panel import Panel
 from rich.style import Style as Click
+from rich.syntax import Syntax
 from rich.text import Text
 from textual.timer import Timer
 from textual.widgets import Static
@@ -166,9 +167,17 @@ class ToolCallBlock(Static):
 
     def _build(self) -> Text:
         body = [link_urls(line) for line in self._body()]
+        code = self._code_argument() if self._expanded else None
+        if code is not None:
+            contents: list[Any] = [Syntax(code, 'python', theme='ansi_dark', word_wrap=True)]
+            if body:
+                contents.append(Text('Output', style=color(self, 'tool-title')))
+                contents.append(Text('\n').join(line[len(GUTTER) :] for line in body))
+            panel = Panel(Group(*contents), title='Python', border_style=color(self, 'tool-border'), padding=(0, 1))
+            return Group(self._header(), panel)
         if self._expanded and body:
             output = Text('\n').join(line[len(GUTTER) :] for line in body)
-            if self._name == 'run':
+            if self._name in {'run', 'shell'}:
                 command = Text(f'$ {self._argument_hint()}\n', style=color(self, 'tool-title'))
                 output = command + output
             panel = Panel(output, border_style=color(self, 'tool-border'), padding=(0, 1))
@@ -194,6 +203,19 @@ class ToolCallBlock(Static):
         if arguments:
             text.append(f' {arguments}', style=color(self, 'text'))
         return fit(text, self._outcome(), self.size.width)
+
+    def _code_argument(self) -> str | None:
+        if self._name != 'execute_code':
+            return None
+        args = self._args
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except ValueError:
+                return None
+        if isinstance(args, dict) and isinstance(args.get('code'), str):
+            return args['code']
+        return None
 
     def _argument_hint(self) -> str:
         args = self._args

@@ -94,10 +94,10 @@ order: `[Image #1]` is the first image, `[Image #2]` the second.
 
 Use tools actually available to the active profile, according to their schemas:
 
-- **`run`** — execute shell commands. <!-- if: run -->
+- **`shell`** — execute independent shell commands in parallel. <!-- if: shell -->
+- **`execute_code`** — extract, transform, and combine tool results in isolated Python before returning relevant evidence to the model. <!-- if: execute_code -->
 - **`read_file`** — inspect files or specific line ranges. <!-- if: read_file -->
-- **`patch_file`** — make targeted file modifications. <!-- if: patch_file -->
-- **`write_file`** — create, replace, or append file content. <!-- if: write_file -->
+- **`write_file`** — create or edit one file with ordered operations. <!-- if: write_file -->
 - **`web_search`** — search for current information and documentation. <!-- if: web_search -->
 - **`read_url`** — retrieve web content. <!-- if: read_url -->
 - **`ask_user`** — request user input or authorization. <!-- if: ask_user -->
@@ -110,6 +110,44 @@ Use tools actually available to the active profile, according to their schemas:
 
 Read relevant content before editing; prefer targeted changes to full rewrites.
 Use questions and roadmaps according to the active agent's workflow and task size.
+Prefer a direct tool call when it already returns what you need; add orchestration
+only when it avoids meaningful model round trips or unnecessary result volume.
+
+<!-- if: execute_code -->
+### Choosing `execute_code`
+
+Use it to extract specific data or process tool results before they enter the
+model context: filter, join, sort, deduplicate, aggregate, or calculate, then print
+only the relevant findings. It can also compose dependent calls in one script or
+run independent calls concurrently. Do not wrap a trivial call without a concrete
+benefit. Only the nested tools listed in its contract are supported, subject to
+availability and profile permissions; it is not a gateway to every session tool.
+
+Keep source references and enough context to verify conclusions. Report errors,
+truncation, and missing results rather than filtering them away. After a partial
+failure or timeout, inspect completed effects before retrying mutations; rerunning
+a script is not a rollback and can duplicate work.
+<!-- endif -->
+
+<!-- if: write_file -->
+### Choosing `write_file`
+
+Use targeted replacements for existing content; `write` replaces the entire file
+and is appropriate for a new file or an intentional full rewrite. Group dependent
+edits to one file into ordered operations. A failed operation leaves that file
+unchanged, but edits across files are not a transaction. Serialize competing edits
+and inspect current content after a conflict before constructing a retry.
+<!-- endif -->
+
+<!-- if: shell -->
+### Choosing `shell`
+
+Use it for local discovery, processes, tests, and project checks, not as a routine
+substitute for available file tools. Entries in `cmds` run independently in
+parallel; put dependent steps in one command with explicit failure handling or
+use consecutive calls. Check each result: success in one does not prove that the
+whole batch succeeded.
+<!-- endif -->
 
 <!-- if: summon -->
 ## Asynchronous subagents

@@ -183,7 +183,8 @@ def test_creating_a_worktree_repaints_the_status_bar(monkeypatch: pytest.MonkeyP
             await pilot.pause()
             bar = app.query_one(StatusBar)
             before = bar.render().plain if callable(bar.render) else str(bar.render())
-            assert 'main' in before
+            assert app.workspace_badge().branch in before
+            assert 'main' not in before
 
             await app.handle_command('/new', '--worktree fix-login')
             await pilot.pause()
@@ -191,6 +192,6 @@ def test_creating_a_worktree_repaints_the_status_bar(monkeypatch: pytest.MonkeyP
             return before, after, app.workspace_badge()
 
     before, after, badge = asyncio.run(inner())
-    assert 'main' in before
-    assert 'fix-login' in after, 'the bar kept the label of the tree it came from'
+    assert 'main' not in before
+    assert 'sigil/fix-login (fix-login)' in after
     assert badge is not None and badge.is_worktree and badge.label == 'fix-login'

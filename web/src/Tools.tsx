@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 
+import { PythonCode } from './PythonCode';
+import { codeArgument } from './codePresentation';
 import { argumentHint, duration } from './toolPresentation';
 import type { ToolView } from './toolPresentation';
 
@@ -67,6 +69,7 @@ function ToolRow({ tool, now }: { tool: ToolView; now: number }) {
     ? `running${elapsed ? ` · ${elapsed}` : ''}`
     : (tool.summary ?? (tool.phase === 'interrupted' ? 'interrupted' : failed ? 'failed' : 'done'));
   const args = argumentHint(tool.args);
+  const code = codeArgument(tool.name, tool.args);
   const outputId = `tool-output-${tool.id}`;
   return (
     <div className={`tool-entry ${failed ? 'tool-failed' : ''}`}>
@@ -98,8 +101,17 @@ function ToolRow({ tool, now }: { tool: ToolView; now: number }) {
         <p className="tool-error">↳ {tool.output.split('\n').find((line) => line.trim()) || summary}</p>
       ) : null}
       <div id={outputId} hidden={!expanded}>
+        {code !== undefined ? (
+          <>
+            <div className="tool-code-label">Python</div>
+            <PythonCode code={code} />
+            <div className="tool-code-label">Output</div>
+          </>
+        ) : null}
         <pre className="tool-output scroll-thin">
-          {args ? `${tool.name === 'run' ? '$' : tool.name} ${args}\n` : ''}
+          {code === undefined && args
+            ? `${tool.name === 'run' || tool.name === 'shell' ? '$' : tool.name} ${args}\n`
+            : ''}
           {tool.output || (running ? 'Waiting for output…' : 'No output.')}
         </pre>
       </div>

@@ -33,6 +33,8 @@ class ToolPermissions:
         """Whether ``tool_name`` may be offered to the model at all."""
         if not self.rules:
             return True
+        if tool_name == 'write_file' and self._has_legacy_patch_rule() and not self.advertises('patch_file', groups):
+            return False
         matching = [rule for rule in self.rules if rule.matches_tool(tool_name, groups)]
         if not matching:
             return True
@@ -66,6 +68,18 @@ class ToolPermissions:
         """
         if not self.rules:
             return True
+        if tool_name == 'shell':
+            targeted = any(
+                rule.matches_tool('run', ()) and not rule.matches_tool(tool_name, groups) for rule in self.rules
+            )
+            if targeted and not self.permits('run', groups, resources, kind, root=root):
+                return False
+        if (
+            tool_name == 'write_file'
+            and self._has_legacy_patch_rule()
+            and not self.permits('patch_file', groups, resources, kind, root=root)
+        ):
+            return False
         decision: bool | None = None
         allow_listed = False
         for rule in self.rules:
@@ -79,6 +93,12 @@ class ToolPermissions:
         if decision is not None:
             return decision
         return not allow_listed
+
+    def _has_legacy_patch_rule(self) -> bool:
+        """Preserve old patch-specific restrictions on the unified writer."""
+        return any(
+            rule.matches_tool('patch_file', ()) and not rule.matches_tool('write_file', ()) for rule in self.rules
+        )
 
     # --- the picker --------------------------------------------------------
 

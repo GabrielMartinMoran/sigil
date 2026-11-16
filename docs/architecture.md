@@ -78,10 +78,9 @@ to serve a command from outside the terminal. See [the domain](domain.md).
 
 A second case is worth naming because it looks like a boundary violation and is
 not: **a tool says what it did, in one line**
-(`engine/tooling/presentation.py`). Only `patch_file` knows that "3
-replacements" is the interesting fact and that `bytes_before` is not, so the
-summary is declared next to the tool — the same reasoning `permission.py` gives
-for its group vocabulary. What crosses the line is data: a short string and a
+(`src/core/tooling/presentation.py`). For example, `shell` can summarize a
+test command by its result count or exit status. The summary is declared next to
+the tool — the same reasoning `permission.py` gives for its group vocabulary. What crosses the line is data: a short string and a
 `good`/`bad`/`neutral`, never a color, a width or a glyph. The row that draws it
 decides those.
 

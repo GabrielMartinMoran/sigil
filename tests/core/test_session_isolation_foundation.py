@@ -77,16 +77,16 @@ def test_compositions_use_own_roots_after_another_switch(tmp_path: Path, monkeyp
         a_tools, b_tools = _Recorder(), _Recorder()
         a.install_tools(a_tools)
         b.install_tools(b_tools)
-        a_tools.tools['write_file'](path='before.txt', content='first')
-        b_tools.tools['write_file'](path='before.txt', content='second')
+        a_tools.tools['write_file'](path='before.txt', operations=[{'type': 'write', 'content': 'first'}])
+        b_tools.tools['write_file'](path='before.txt', operations=[{'type': 'write', 'content': 'second'}])
         assert a_tools.tools['read_file'](path='before.txt').content == 'first'
         assert b_tools.tools['read_file'](path='before.txt').content == 'second'
         assert (first / 'before.txt').read_text() == 'first'
         assert (second / 'before.txt').read_text() == 'second'
         assert Path.cwd() == outside
         a.workspace_manager.switch(destination)
-        a_tools.tools['write_file'](path='after.txt', content='destination')
-        b_tools.tools['write_file'](path='after.txt', content='second')
+        a_tools.tools['write_file'](path='after.txt', operations=[{'type': 'write', 'content': 'destination'}])
+        b_tools.tools['write_file'](path='after.txt', operations=[{'type': 'write', 'content': 'second'}])
         assert (destination / 'after.txt').read_text() == 'destination'
         assert (second / 'after.txt').read_text() == 'second'
         assert Path.cwd() == outside
@@ -245,8 +245,8 @@ def test_shell_tools_use_each_composition_root(tmp_path: Path, monkeypatch: Monk
         a_tools, b_tools = _Recorder(), _Recorder()
         a.install_tools(a_tools)
         b.install_tools(b_tools)
-        result_a = asyncio.run(a_tools.tools['run'](cmds=['pwd']))
-        result_b = asyncio.run(b_tools.tools['run'](cmds=['pwd']))
+        result_a = asyncio.run(a_tools.tools['shell'](cmds=['pwd']))
+        result_b = asyncio.run(b_tools.tools['shell'](cmds=['pwd']))
         assert result_a[0].stdout.strip() == str(first)
         assert result_b[0].stdout.strip() == str(second)
         assert Path.cwd() == outside
@@ -303,9 +303,9 @@ def test_shell_cancellation_is_selective_during_spawn(tmp_path: Path, monkeypatc
 
         owner._lock = ObservedLock()
         with ThreadPoolExecutor(max_workers=3) as pool:
-            first_run = pool.submit(lambda: asyncio.run(a_tools.tools['run'](cmds=[command])))
+            first_run = pool.submit(lambda: asyncio.run(a_tools.tools['shell'](cmds=[command])))
             assert spawned_first.wait(10)
-            second_run = pool.submit(lambda: asyncio.run(b_tools.tools['run'](cmds=[command])))
+            second_run = pool.submit(lambda: asyncio.run(b_tools.tools['shell'](cmds=[command])))
             assert spawned_second.wait(10)
 
             def cancel_first() -> int:
@@ -378,8 +378,8 @@ def test_shell_cancel_stops_child_group_without_stopping_other_composition(
     second_command = f'exec {shlex.quote(sys.executable)} -c {shlex.quote("import signal; signal.pause()")}'
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
-            first_run = pool.submit(lambda: asyncio.run(first_tools.tools['run'](cmds=[first_command])))
-            second_run = pool.submit(lambda: asyncio.run(second_tools.tools['run'](cmds=[second_command])))
+            first_run = pool.submit(lambda: asyncio.run(first_tools.tools['shell'](cmds=[first_command])))
+            second_run = pool.submit(lambda: asyncio.run(second_tools.tools['shell'](cmds=[second_command])))
             try:
                 assert select.select([ready_fd], [], [], 10)[0], 'child did not become ready'
                 child_pid, child_group = map(int, os.read(ready_fd, 128).split())
@@ -453,11 +453,10 @@ def test_binding_restricted_profile_denies_real_patch_calls(tmp_path: Path, monk
             return ModelResponse(
                 parts=[
                     ToolCallPart(
-                        'patch_file',
+                        'write_file',
                         {
                             'path': target[0],
-                            'old_string': 'before',
-                            'new_string': 'after',
+                            'operations': [{'type': 'replace', 'old': 'before', 'new': 'after'}],
                         },
                     )
                 ]
@@ -565,7 +564,7 @@ def test_two_executions_resolve_their_own_roots_without_moving_the_process(
 
         def write(root: Path, tools: _Recorder) -> None:
             with execution_workspace(root):
-                tools.tools['write_file'](path='note.txt', content=root.name)
+                tools.tools['write_file'](path='note.txt', operations=[{'type': 'write', 'content': root.name}])
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             list(pool.map(lambda pair: write(*pair), ((first, a_tools), (second, b_tools))))
@@ -667,7 +666,7 @@ def test_registered_tool_callbacks_follow_the_bound_root(tmp_path: Path, monkeyp
         ctx = RunContext(deps=None, model=TestModel(), usage=None)
 
         with execution_workspace(bound):
-            tools.tools['write_file'](path='note.txt', content='bound')
+            tools.tools['write_file'](path='note.txt', operations=[{'type': 'write', 'content': 'bound'}])
             assert tools.tools['read_file'](path='note.txt').content == 'bound'
             assert (bound / 'note.txt').read_text() == 'bound'
             conflict = ConcurrencyContext(
@@ -677,7 +676,7 @@ def test_registered_tool_callbacks_follow_the_bound_root(tmp_path: Path, monkeyp
                 (SiblingCall('patch_file', {'path': str(bound / 'note.txt')}, None),),
             )
             assert same_file_conflict(conflict, composition.execution_root()) is not None
-            assert Path(asyncio.run(tools.tools['run'](['pwd']))[0].stdout.strip()).resolve() == bound.resolve()
+            assert Path(asyncio.run(tools.tools['shell'](['pwd']))[0].stdout.strip()).resolve() == bound.resolve()
             viewed = asyncio.run(tools.tools['view_image'](ctx, source='image.png'))
             size = Image.open(io.BytesIO(next(iter(viewed.content)).data)).size
 

@@ -79,14 +79,18 @@ def register_shell_tools(
     tools = ToolRegistrar(agent, logger, catalog)
 
     @tools.tool(permission=_SHELL, describe=describe_run, compaction=RUN_COMPACTOR)
-    async def run(
+    async def shell(
         cmds: list[str],
         timeout_seconds: int = DEFAULT_TIMEOUT,
     ) -> list[RunToolOutput]:
         """Execute several non-interactive Bash commands in parallel.
 
-        Each command runs independently in its own process; arguments,
-        pipes, redirects, and shell scripts are supported. Standard input is
+        Use for local discovery, processes, tests, and project checks; prefer
+        available file tools for routine file reads and edits. Entries in cmds
+        run independently in parallel, not as sequential steps. Put dependent
+        steps in one command with explicit failure handling or consecutive calls.
+        Each command runs in its own process; arguments, pipes, redirects, and
+        shell scripts are supported. Standard input is
         closed to prevent interactive blocking. Each command is terminated
         when its own timeout expires. Results are returned in the same order
         as `cmds`; a failed or timed-out command is reported in its result

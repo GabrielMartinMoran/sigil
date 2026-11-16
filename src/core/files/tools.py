@@ -7,9 +7,12 @@ lives in ``text``; the path logic, in ``paths``.
 
 from __future__ import annotations
 
+import os
+import secrets
+import stat
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, NotRequired, TypedDict
 
 from src.core.files.conflicts import same_file_conflict
 from src.core.files.limits import MAX_READ_BYTES
@@ -24,10 +27,12 @@ from src.core.files.text import (
     count_lines,
     decode,
     line_boundary,
-    preview,
     split_lines,
 )
-from src.core.tooling.compaction_policies import PATCH_FILE_COMPACTOR, READ_FILE_COMPACTOR, WRITE_FILE_COMPACTOR
+from src.core.tooling.compaction_policies import (
+    EDIT_FILE_COMPACTOR,
+    READ_FILE_COMPACTOR,
+)
 from src.core.tooling.logging import ToolLogger
 from src.core.tooling.presentation import human_bytes
 from src.core.tooling.resource_kind import ResourceKind
@@ -98,7 +103,7 @@ def _read_line_range(target: Any, path: str, size: int, start_line: int | None, 
     """Reads a line range from a text file."""
     try:
         # newline='' preserves CRLF so the text can be copied as is into
-        # `patch_file`.
+        # `write_file`.
         text = target.read_text(encoding='utf-8', newline='')
     except UnicodeDecodeError as exc:
         raise FileToolError(f'File {path!r} is not UTF-8 text; read it without a line range.') from exc
@@ -194,6 +199,105 @@ def _patched_text(
     return updated, 'lines', 1
 
 
+class WriteOperation(TypedDict):
+    type: Literal['write', 'append']
+    content: str
+
+
+class ReplaceOperation(TypedDict):
+    type: Literal['replace']
+    old: str
+    new: str
+    replace_all: NotRequired[bool]
+
+
+class ReplaceLinesOperation(TypedDict):
+    type: Literal['replace_lines']
+    start_line: int
+    end_line: int
+    new: str
+    expected_text: NotRequired[str | None]
+
+
+EditOperation = WriteOperation | ReplaceOperation | ReplaceLinesOperation
+
+
+def _apply_edit_operations(text: str | None, operations: list[EditOperation]) -> str:
+    if not operations:
+        raise FileToolError('Provide at least one operation.')
+    for index, operation in enumerate(operations, 1):
+        try:
+            kind = operation['type']
+            if kind == 'write':
+                text = operation['content']
+            elif kind == 'append':
+                text = (text or '') + operation['content']
+            elif text is None:
+                raise FileToolError('The file does not exist; use write or append first.')
+            elif kind == 'replace':
+                if 'expected_text' in operation:
+                    raise FileToolError('expected_text is only valid for replace_lines.')
+                text, _ = apply_string_patch(
+                    text, operation['old'], operation['new'], operation.get('replace_all', False)
+                )
+            elif kind == 'replace_lines':
+                text, _ = apply_line_patch(
+                    text,
+                    operation['start_line'],
+                    operation['end_line'],
+                    operation['new'],
+                    operation.get('expected_text'),
+                )
+            else:
+                raise FileToolError(f'Unknown operation: {kind!r}.')
+        except FileToolError as exc:
+            raise FileToolError(f'Operation {index}: {exc}') from exc
+    assert text is not None
+    return text
+
+
+def _preserve_metadata(target: Path, fd: int, existing: os.stat_result) -> None:
+    """Copy security-relevant metadata before replacing the original inode."""
+    if not all(hasattr(os, name) for name in ('listxattr', 'getxattr', 'setxattr', 'removexattr')):
+        raise FileToolError('Cannot verify extended attributes on this platform; file not changed.')
+    try:
+        current = os.fstat(fd)
+        if (current.st_uid, current.st_gid) != (existing.st_uid, existing.st_gid):
+            os.fchown(fd, existing.st_uid, existing.st_gid)
+        os.fchmod(fd, stat.S_IMODE(existing.st_mode))
+        attributes = {name: os.getxattr(target, name) for name in os.listxattr(target)}
+        for name in set(os.listxattr(fd)) - attributes.keys():
+            os.removexattr(fd, name)
+        for name, value in attributes.items():
+            os.setxattr(fd, name, value)
+        if stat.S_IMODE(os.fstat(fd).st_mode) != stat.S_IMODE(existing.st_mode):
+            raise OSError('File mode changed while copying metadata')
+    except OSError as exc:
+        raise FileToolError(f'Cannot preserve file metadata; file not changed: {exc}') from exc
+
+
+def _write_atomically(target: Path, text: str) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    existing = target.stat() if target.exists() else None
+    if existing is not None and existing.st_nlink > 1:
+        raise FileToolError('Cannot atomically edit a file with multiple hard links.')
+    mode = stat.S_IMODE(existing.st_mode) if existing is not None else None
+    name = str(target.parent / f'.{target.name}.{secrets.token_hex(16)}')
+    fd = os.open(name, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600 if mode is not None else 0o666)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8', newline='') as handle:
+            handle.write(text)
+            handle.flush()
+            if existing is not None:
+                _preserve_metadata(target, handle.fileno(), existing)
+        os.replace(name, target)
+    finally:
+        try:
+            os.unlink(name)
+        except FileNotFoundError:
+            pass
+
+
 def register_file_tools(
     agent: Any,
     logger: ToolLogger | None = None,
@@ -234,96 +338,36 @@ def register_file_tools(
     @tools.tool(
         concurrency=lambda ctx: same_file_conflict(ctx, None if root is None else root()),
         permission=_WRITE,
-        describe=describe_write,
-        compaction=WRITE_FILE_COMPACTOR,
+        compaction=EDIT_FILE_COMPACTOR,
     )
-    def write_file(path: str, content: str, append: bool = False) -> WriteResult:
-        """Write or append to a text file in an authorized location.
+    def write_file(path: str, operations: list[EditOperation]) -> dict[str, Any]:
+        """Create or edit one text file with ordered operations.
 
-        Parent directories are created as needed. Use `patch_file` for focused
-        edits to an existing file; use this tool to create a new file or to
-        replace/append its full content.
-
-        Two calls that write the same file in the same response conflict: the
-        later one fails and must be re-issued in a separate step.
+        Supported types are write, append, replace, and replace_lines. Read existing
+        content first and prefer targeted replacements. A write operation replaces
+        the entire content; use it for new files or intentional full rewrites.
+        Replace requires a unique exact match unless replace_all is true; use an
+        empty replacement to delete text. Line ranges are 1-indexed and inclusive,
+        evaluated against the content produced by preceding operations.
+        Group dependent edits to this file in one call: if any operation fails,
+        nothing is written. Separate files are not a transaction. After a conflict
+        or uncertain result, inspect current content before retrying edits.
 
         Args:
             path: File path, absolute or relative to the workspace.
-            content: Text to write.
-            append: When true, append instead of overwriting.
+            operations: Non-empty list of operations to apply in order.
         """
         target = resolve(path, allow_external=allow_external(), root=None if root is None else root())
-        created = not target.exists()
-        target.parent.mkdir(parents=True, exist_ok=True)
-        data = content.encode('utf-8')
-        with target.open('ab' if append else 'wb') as handle:
-            handle.write(data)
-        return WriteResult(path=str(target), bytes_written=len(data), created=created, appended=append)
-
-    @tools.tool(
-        concurrency=lambda ctx: same_file_conflict(ctx, None if root is None else root()),
-        permission=_WRITE,
-        describe=describe_patch,
-        compaction=PATCH_FILE_COMPACTOR,
-    )
-    def patch_file(
-        path: str,
-        old_string: str | None = None,
-        new_string: str | None = None,
-        start_line: int | None = None,
-        end_line: int | None = None,
-        expected_text: str | None = None,
-        replace_all: bool = False,
-    ) -> PatchResult:
-        """Edit an existing file in an authorized location, with two modes.
-
-        Prefer the exact-match mode: pass `old_string` (text to find) and
-        `new_string` (replacement). The old text must appear exactly once unless
-        `replace_all` is true. This is the most robust mode and what agents like
-        OpenCode and Claude Code use.
-
-        Alternatively, pass `start_line` and `end_line` (1-indexed, inclusive)
-        and `new_string` to replace those lines. Optionally validate the current
-        content with `expected_text` (the text you expect in that range, as
-        returned by `read_file`; a trailing newline is ignored). This mode is
-        useful when you know the line numbers.
-
-        Use `write_file` to create a new file; this tool only edits existing
-        files.
-
-        Two calls that edit the same file in the same response conflict: the
-        later one fails and must be re-issued in a separate step.
-
-        Args:
-            path: File path, absolute or relative to the workspace.
-            old_string: Exact text to find (string mode).
-            new_string: Replacement text (required in both modes).
-            start_line: First line to replace (line mode).
-            end_line: Last line to replace (line mode).
-            expected_text: Optional exact text of the target region, for
-                validation in line mode.
-            replace_all: Replace every occurrence in string mode.
-        """
-        target = _require_file(path, allow_external=allow_external(), root=None if root is None else root())
-        text = _read_text_for_patch(target, path)
-        before = len(text.encode('utf-8'))
-
-        updated, mode, count = _patched_text(
-            text,
-            old_string=old_string,
-            new_string=new_string,
-            start_line=start_line,
-            end_line=end_line,
-            expected_text=expected_text,
-            replace_all=replace_all,
-        )
-
-        target.write_text(updated, encoding='utf-8', newline='')
-        return PatchResult(
-            path=str(target),
-            mode=mode,
-            replacements=count,
-            bytes_before=before,
-            bytes_after=len(updated.encode('utf-8')),
-            preview=preview(new_string or ''),
-        )
+        exists = target.exists()
+        if exists and not target.is_file():
+            raise FileToolError(f'Not a file: {path!r}.')
+        replaces_all = bool(operations) and operations[0]['type'] == 'write'
+        text = _read_text_for_patch(target, path) if exists and not replaces_all else None
+        updated = _apply_edit_operations(text, operations)
+        _write_atomically(target, updated)
+        return {
+            'path': str(target),
+            'created': not exists,
+            'operations': len(operations),
+            'bytes_after': len(updated.encode('utf-8')),
+        }

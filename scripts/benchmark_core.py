@@ -356,17 +356,28 @@ async def main(root: Path, rounds: int) -> dict[str, Any]:
         ('read_file/9KiB', 'read_file', {'path': str(small)}, None),
         ('read_file/32MiB_cap4KiB', 'read_file', {'path': str(large), 'max_bytes': 4096}, None),
         ('read_file/32MiB_lines1-40', 'read_file', {'path': str(large), 'start_line': 1, 'end_line': 40}, None),
-        ('write_file/7KiB', 'write_file', {'path': str(output), 'content': 'before\n' * 1024}, None),
         (
-            'patch_file/string7KiB',
-            'patch_file',
-            {'path': str(output), 'old_string': 'before', 'new_string': 'before', 'replace_all': True},
+            'write_file/7KiB',
+            'write_file',
+            {'path': str(output), 'operations': [{'type': 'write', 'content': 'before\n' * 1024}]},
             None,
         ),
         (
-            'patch_file/lines7KiB',
-            'patch_file',
-            {'path': str(output), 'start_line': 1, 'end_line': 2, 'new_string': 'before\nbefore\n'},
+            'write_file/string7KiB',
+            'write_file',
+            {
+                'path': str(output),
+                'operations': [{'type': 'replace', 'old': 'before', 'new': 'before', 'replace_all': True}],
+            },
+            None,
+        ),
+        (
+            'write_file/lines7KiB',
+            'write_file',
+            {
+                'path': str(output),
+                'operations': [{'type': 'replace_lines', 'start_line': 1, 'end_line': 2, 'new': 'before\nbefore\n'}],
+            },
             None,
         ),
         ('list_skills/30', 'list_skills', {}, None),
@@ -379,9 +390,9 @@ async def main(root: Path, rounds: int) -> dict[str, Any]:
             context,
         ),
         ('ask_user/instant_answer_noUI', 'ask_user', {'questions': questions}, context),
-        ('run/printf', 'run', {'cmds': ['printf benchmark']}, None),
-        ('run/8printf', 'run', {'cmds': ['printf benchmark'] * 8}, None),
-        ('run/output1MiB', 'run', {'cmds': ['head -c 1048576 /dev/zero']}, None),
+        ('run/printf', 'shell', {'cmds': ['printf benchmark']}, None),
+        ('run/8printf', 'shell', {'cmds': ['printf benchmark'] * 8}, None),
+        ('run/output1MiB', 'shell', {'cmds': ['head -c 1048576 /dev/zero']}, None),
         ('run_skill_script/bash', 'run_skill_script', {'name': 'skill-0', 'script': 'script.sh'}, None),
     ]
     # Do not invoke login-shell startup files or collect user exports in this offline harness.

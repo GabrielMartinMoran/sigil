@@ -210,9 +210,9 @@ def test_tools_operate_on_the_new_worktree_after_the_switch(
 
             recorder = Recorder()
             register_file_tools(recorder, root=lambda: app._workspace_manager.root)
-            written = recorder.tools['write_file'](path='only-here.txt', content='x')
+            written = recorder.tools['write_file'](path='only-here.txt', operations=[{'type': 'write', 'content': 'x'}])
 
-            assert Path(written.path) == tmp_path / 'worktrees' / 'project' / 'isolated' / 'only-here.txt'
+            assert Path(written['path']) == tmp_path / 'worktrees' / 'project' / 'isolated' / 'only-here.txt'
             assert not (repo / 'only-here.txt').exists()
 
             pwd = await execute_commands(['pwd'], cwd=app._workspace_manager.root)

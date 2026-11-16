@@ -29,10 +29,10 @@ from src.core.tooling.tool_permission import PERMISSION_METADATA_KEY, ToolPermis
 
 
 BUILTIN_TOOLS: Mapping[str, ToolGroup] = {
-    'run': ToolGroup.RUN,
+    'shell': ToolGroup.RUN,
+    'execute_code': ToolGroup.RUN,
     'read_file': ToolGroup.READ,
     'write_file': ToolGroup.WRITE,
-    'patch_file': ToolGroup.WRITE,
     'web_search': ToolGroup.WEB,
     'read_url': ToolGroup.WEB,
     'list_skills': ToolGroup.SKILLS,
@@ -136,7 +136,13 @@ def scope_is_known(scope: str) -> bool:
     Wildcards are always accepted: that is how a profile targets an MCP server,
     whose tools are not known until it connects.
     """
-    return scope in ALL_SCOPES or scope in GROUP_NAMES or scope in BUILTIN_TOOL_NAMES or has_wildcard(scope)
+    return (
+        scope in ALL_SCOPES
+        or scope in GROUP_NAMES
+        or scope in BUILTIN_TOOL_NAMES
+        or scope == 'patch_file'
+        or has_wildcard(scope)
+    )
 
 
 def scope_problem(scope: str) -> str:

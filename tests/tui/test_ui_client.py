@@ -2856,6 +2856,7 @@ def test_the_chrome_reads_the_workspace_the_service_reports() -> None:
                     'branch': 'feat',
                     'is_worktree': True,
                     'repository': 'sigil',
+                    'worktree': {'name': 'better-debug', 'head': 'abcdef123'},
                 }
             }
             assert app.repository_label() == 'sigil:better-debug'
@@ -2896,7 +2897,7 @@ def test_attaching_paints_the_repository_the_service_runs_in(
                 workspace = app._service_state['workspace']
                 assert app.repository_label() == workspace['repository'] == repo.name
                 assert app._workspace_root() == str(repo)
-                assert workspace['label'] in _status(app), 'the worktree badge is the service label'
+                assert workspace['branch'] in _status(app), 'the branch comes from the service'
                 assert repo.name in app.window_title_text()
 
     asyncio.run(inner())

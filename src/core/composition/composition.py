@@ -29,6 +29,7 @@ from src.core.agents.tree.subagent_summoner import SubagentSummoner
 from src.core.agents.tree.summoner import current_agent_model
 from src.core.agents.tree.tools import register_tree_tools
 from src.core.attachments.tools import register_image_tools
+from src.core.codemode.tools import register_code_tools
 from src.core.composition.active_provider import active_provider
 from src.core.composition.build_strategy import build_strategy
 from src.core.composition.model_settings import model_settings
@@ -644,6 +645,7 @@ class Composition:
         register_shell_tools(
             target, logger=logger, catalog=catalog, root=self.execution_root, owner=self.shell_commands
         )
+        register_code_tools(target, logger=logger, catalog=catalog)
         register_skill_tools(target, self.skill_registry, logger=logger, catalog=catalog)
         register_mcp_tools(target, self.mcp, logger=logger, catalog=catalog)
         register_web_tools(target, logger=logger, catalog=catalog)
