@@ -65,6 +65,7 @@ from src.server.api.login_throttle import LoginThrottle
 from src.server.api.schemas.account_schema import AccountSchema
 from src.server.api.schemas.agent_schema import AgentSchema
 from src.server.api.schemas.answer_schema import AnswerSchema
+from src.server.api.schemas.compact_schema import CompactSchema
 from src.server.api.schemas.effort_schema import EffortSchema
 from src.server.api.schemas.external_files_schema import ExternalFilesSchema
 from src.server.api.schemas.fork_schema import ForkSchema
@@ -1005,6 +1006,17 @@ def create_app(
             node_id = None if node.is_root else node.id
         diagnostics = debug_diagnostics.setdefault(owner, DebugDiagnostics())
         return await diagnostics.read(owner, node_id)
+
+    @app.post('/api/context/compact')
+    async def compact_context(body: CompactSchema, session_id: str | None = None) -> dict[str, Any]:
+        owner = selected_session(session_id)
+        try:
+            result = await owner.compact(body.mode)
+        except RuntimeError as exc:
+            return _conflict(exc)  # type: ignore[return-value]
+        except Exception as exc:  # noqa: BLE001 - report model failures at the transport boundary
+            return JSONResponse({'error': f'Compaction failed: {type(exc).__name__}'}, status_code=502)  # type: ignore[return-value]
+        return {'status': result.status, 'before': result.before, 'after': result.after}
 
     @app.get('/api/context')
     async def context(session_id: str | None = None) -> dict[str, Any]:

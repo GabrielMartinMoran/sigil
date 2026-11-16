@@ -116,6 +116,11 @@ prove a reduction in total work. See the
 [test suite performance investigation](docs/test-suite-performance.md) for the
 recorded measurements and outstanding sequential goal.
 
+When reviewing the experimental clean-python validator's findings, exclude
+findings in `tests/` and `scripts/` from the production-code assessment. Report
+findings elsewhere and any validator execution errors. This exclusion does not
+apply to failures from pytest or from running scripts.
+
 Before finishing, inspect the actual diff and report the commands run, results,
 and any failures or blocked checks. Repeat affected verification after fixes;
 results from an earlier code tree do not validate later changes.

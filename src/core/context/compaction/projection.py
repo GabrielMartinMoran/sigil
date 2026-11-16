@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
+from typing import Literal
 
 from pydantic_ai.messages import ModelMessage, ThinkingPart, ToolCallPart, ToolReturnPart
 
@@ -47,6 +48,7 @@ def prepare(
     image_percent: int,
     summary: Summary | None = None,
     compact_opportunistically: bool = False,
+    manual_compaction: Literal['deterministic', 'llm'] | None = None,
     measurements: ProjectionMeasurements | None = None,
 ) -> ViewResult:
     """Project the history, compacting under pressure or at an instruction boundary."""
@@ -58,13 +60,22 @@ def prepare(
     pressured = _over(budget, working, policy.trigger_percent, measurements) or _exceeds_budget(
         budget, working, measurements
     )
-    if pressured or compact_opportunistically or summary is not None:
+    if pressured or compact_opportunistically or manual_compaction is not None or summary is not None:
         planned = _planned(
-            messages, policy, lookup, provider, pressure=pressured or compact_opportunistically, summary=summary
+            messages,
+            policy,
+            lookup,
+            provider,
+            pressure=pressured or compact_opportunistically or manual_compaction is not None,
+            summary=summary,
         )
         triggers = tuple(
             name
-            for enabled, name in ((pressured, 'pressure'), (compact_opportunistically, 'instruction change'))
+            for enabled, name in (
+                (pressured, 'pressure'),
+                (compact_opportunistically, 'instruction change'),
+                (manual_compaction is not None, 'manual'),
+            )
             if enabled
         )
         planned = replace(
@@ -98,7 +109,10 @@ def prepare(
             )
 
     request: SummaryRequest | None = None
-    if pressured and summary is None and _over(budget, working, policy.target_percent, measurements):
+    if summary is None and (
+        manual_compaction == 'llm'
+        or (manual_compaction is None and pressured and _over(budget, working, policy.target_percent, measurements))
+    ):
         request = summary_request(
             messages,
             boundary=planned.state.summary_boundary,

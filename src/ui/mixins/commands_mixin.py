@@ -43,6 +43,7 @@ BUSY_COMMANDS = frozenset(
         '/effort',
         '/external-files',
         '/mcp',
+        '/compact',
     }
 )
 """Commands a running turn refuses.
@@ -317,6 +318,7 @@ class CommandsMixin:
             '/sidebar': lambda: self.handle_sidebar(args, chat),
             '/mcp': lambda: self.show_mcp(chat),
             '/context': lambda: self.show_context(chat),
+            '/compact': lambda: self.handle_compact(args, chat),
             '/rollback': lambda: self.show_rollback(chat, args),
             '/debug': lambda: self.handle_debug(args, chat),
             '/help': lambda: self.show_help(chat),
@@ -696,6 +698,36 @@ class CommandsMixin:
             await chat.add_notice('Usage: /debug [on|off|--text]', style='yellow')
             return
         await chat.add_notice(f'Debug view {"shown" if self.debug_visible else "hidden"}.', style='cyan')
+
+    async def handle_compact(self, args: str, chat: ChatLog) -> None:
+        """Ask the session owner to compact without adding a conversation message."""
+        option = args.strip()
+        if option not in ('', '--deterministic', '--llm'):
+            await chat.add_notice('Usage: /compact [--deterministic|--llm]', style='yellow')
+            return
+        if self._client is None:
+            await chat.add_notice('Manual compaction requires the session service.', style='yellow')
+            return
+        mode = 'llm' if option == '--llm' else 'deterministic'
+        if mode == 'llm':
+            await chat.add_notice('Generating a context summary; this uses the selected model.', style='cyan')
+        try:
+            result = await self._client.compact(mode)
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        if result.get('status') == 'nothing_to_compact':
+            await chat.add_notice('Not enough eligible context to compact.', style='yellow')
+            return
+        if result.get('status') == 'not_reduced':
+            await chat.add_notice(
+                'The generated summary did not reduce the context; it was not applied.', style='yellow'
+            )
+            return
+        await chat.add_notice(
+            f'Context compacted: ~{result["before"]:,} → ~{result["after"]:,} history tokens.', style='cyan'
+        )
+        await self.refresh_service_state()
 
     async def show_context(self, chat: ChatLog) -> None:
         """Context breakdown: the service's measurement when attached.

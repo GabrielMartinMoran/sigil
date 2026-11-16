@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from typing import Literal
 
 from pydantic_ai.messages import ModelMessage
 
@@ -59,6 +60,7 @@ class AppendOnlyStrategy:
         *,
         summary: Summary | None = None,
         compact_opportunistically: bool = False,
+        manual_compaction: Literal['deterministic', 'llm'] | None = None,
     ) -> ViewResult:
         measurements = ProjectionMeasurements()
         prepared = prepare(
@@ -71,6 +73,7 @@ class AppendOnlyStrategy:
             image_percent=self.image_max_percent,
             summary=summary,
             compact_opportunistically=compact_opportunistically,
+            manual_compaction=manual_compaction,
             measurements=measurements,
         )
         return finish(

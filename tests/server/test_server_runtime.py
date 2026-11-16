@@ -2650,3 +2650,23 @@ def test_bootstrap_state_holds_a_session_lease_until_response_finishes(
             assert response.status_code == 200
 
     asyncio.run(go())
+
+
+def test_compaction_route_persists_and_validates_mode(runtime: ServerRuntime, tmp_path: Path) -> None:
+    from src.core.context.compaction.records import recorded_state
+    from tests.support.context_compaction_records import history
+
+    async def go() -> None:
+        runtime.session.messages = history(30)
+        runtime.composition.store.save(runtime.session)
+        async with _signed_in(runtime, tmp_path) as client:
+            path = f'/api/context/compact?session_id={runtime.session.id}'
+            invalid = await client.post(path, json={'mode': 'other'})
+            assert invalid.status_code == 422
+            response = await client.post(path, json={'mode': 'deterministic'})
+            assert response.status_code == 200, response.text
+            assert response.json()['status'] == 'complete'
+            saved = runtime.composition.store.load(runtime.session.id)
+            assert saved is not None and recorded_state(saved.messages)[0].compacted_calls
+
+    asyncio.run(go())
