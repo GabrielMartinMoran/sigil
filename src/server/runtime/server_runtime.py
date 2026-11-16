@@ -236,6 +236,8 @@ class ServerRuntime:
         grace: float,
         poll: float = IDLE_POLL_INTERVAL,
         clock: Callable[[], float] = time.monotonic,
+        can_shutdown: Callable[[], bool] | None = None,
+        has_work: Callable[[], bool] | None = None,
     ) -> None:
         """Asks for a graceful stop after ``grace`` seconds with no work left.
 
@@ -250,7 +252,7 @@ class ServerRuntime:
         do, and a service that dies because its store hiccuped is worse than one
         that lives an extra window.
         """
-        decision = IdleShutdown(self.has_active_work, grace=grace, clock=clock)
+        decision = IdleShutdown(has_work or self.has_active_work, grace=grace, clock=clock)
         # `poll` bounds how often the queue is asked, never how long the window is
         # observed late: a 50 ms window looked at every 5 s would make the flag a lie.
         interval = poll if decision.grace <= 0 else min(poll, decision.grace)
@@ -258,6 +260,8 @@ class ServerRuntime:
         while not self._closing:
             try:
                 idle = decision.expired()
+                if idle and can_shutdown is not None:
+                    idle = can_shutdown()
             except Exception as exc:  # noqa: BLE001 - a failed question is not a stop
                 if not complaining:
                     complaining = True

@@ -1356,3 +1356,36 @@ def test_late_open_reply_cannot_replace_a_newer_client_selection() -> None:
                 await asyncio.gather(late, return_exceptions=True)
 
     asyncio.run(go())
+
+
+def test_heartbeat_recovers_and_registers_again_after_disconnect() -> None:
+    from typing import cast
+
+    from src.sigil import _keep_present
+
+    async def go() -> None:
+        restored = asyncio.Event()
+
+        class Client:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            async def heartbeat(self, client_id: str) -> None:
+                self.calls.append(client_id)
+                if len(self.calls) == 1:
+                    raise ServiceUnavailable('disconnected')
+                restored.set()
+
+            async def refresh_endpoint(self) -> bool:
+                return True
+
+        client = Client()
+        task = asyncio.create_task(_keep_present(cast(ServiceClient, client), 'client-one', interval=0.001))
+        try:
+            await asyncio.wait_for(restored.wait(), timeout=2)
+            assert client.calls == ['client-one', 'client-one']
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(go())

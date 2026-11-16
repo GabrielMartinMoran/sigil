@@ -549,7 +549,7 @@ def test_the_default_command_re_executes_this_interpreter_and_main_py() -> None:
     command = default_command(workspace=Path('/tmp/workspace'))
 
     assert command.argv[:3] == (sys.executable, str(ROOT / 'main.py'), 'server')
-    assert command.argv[3:] == ('--workspace', '/tmp/workspace')
+    assert command.argv[3:] == ('--client-managed', '--workspace', '/tmp/workspace')
     # Nothing is stripped from the environment: the self-guard stays in force.
     assert command.env is None
 

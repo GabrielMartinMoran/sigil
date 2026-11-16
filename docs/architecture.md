@@ -306,8 +306,16 @@ publishes no page and invents no credential. The operational consequence is wort
 stating: `serve` while a backend is running fails with the ownership message from
 [part A](#durable-server-consumer-part-a) instead of attaching. This cut has no
 proxy between the two processes; a page that needs the API while a TUI owns the
-store is not supported yet. The lock is released when the owning process ends, and
-idle shutdown is what ends it when there is no work.
+store is not supported yet. The lock is released when the owning process ends.
+
+The terminal launcher marks its server as client-managed. Each attached terminal
+renews an in-memory presence lease and removes it on normal exit. A lease expires
+60 seconds after its last heartbeat, so an interrupted client can be removed and
+register again when it reconnects. The server stops only after the presence pool
+is empty, no work remains, and a short grace period passes. It refuses new
+requests once shutdown begins. An explicitly started `server` or `serve` does not
+use this automatic shutdown policy; its existing `--idle-grace` option remains
+available.
 
 ## Durable server consumer (part A)
 

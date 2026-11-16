@@ -186,7 +186,7 @@ def default_command(*, workspace: Path | None = None, entry: Path | None = None)
     """
 
     root = PROJECT_ROOT if entry is None else Path(entry).resolve().parent
-    argv: list[str] = [sys.executable, str(root / 'main.py'), 'server']
+    argv: list[str] = [sys.executable, str(root / 'main.py'), 'server', '--client-managed']
     if workspace is not None:
         argv.extend(['--workspace', str(workspace)])
     return LaunchCommand(argv=tuple(argv))

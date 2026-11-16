@@ -27,6 +27,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 from weakref import WeakKeyDictionary
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -57,6 +58,7 @@ from src.server.api.auth import Auth
 from src.server.api.auth_cookies import cleared_cookie, session_cookie
 from src.server.api.auth_middleware import AuthMiddleware
 from src.server.api.body_limit_middleware import MAX_COMMAND_BYTES, BodyLimitMiddleware
+from src.server.api.client_admission_middleware import ClientAdmissionMiddleware
 from src.server.api.client_key import client_key
 from src.server.api.graceful_stop import GracefulStop
 from src.server.api.login_throttle import LoginThrottle
@@ -83,6 +85,7 @@ from src.server.launch.debug_diagnostics import DebugDiagnostics
 from src.server.launch.diagnostics import record
 from src.server.launch.endpoint_publisher import EndpointPublisher
 from src.server.launch.server_config import ServerConfig
+from src.server.runtime.client_presence import ClientPresence
 from src.server.runtime.event_hub import EventHub
 from src.server.runtime.incoming_image import IncomingImage
 from src.server.runtime.runtime_support import IDLE_POLL_INTERVAL
@@ -220,6 +223,8 @@ def create_app(
     idle_grace: float | None = DEFAULT_IDLE_GRACE,
     idle_poll: float = IDLE_POLL_INTERVAL,
     session_idle_grace: float = 300,
+    client_managed: bool = False,
+    client_shutdown_grace: float = 10,
 ) -> FastAPI:
     """Builds the application around a runtime that is already wired.
 
@@ -246,6 +251,7 @@ def create_app(
     auth = Auth(config.password, service_token=publisher.token if publisher is not None else None)
     throttle = LoginThrottle()
     hub = runtime.hub
+    presence = ClientPresence(ttl=60)
     # `None` is not "no bundle found", it is "this surface has no bundle": the API
     # has no page, no assets and no login form, and `dist` is ignored rather than
     # mounted by accident.
@@ -272,13 +278,20 @@ def create_app(
                 publisher.publish(host=config.host, port=config.port)
             record('server_lifespan_ready', port=config.port)
             reaper = asyncio.create_task(runtime.reap_sessions(grace=session_idle_grace, poll=idle_poll))
-            watch = (
-                None
-                if request_shutdown is None or idle_grace is None
-                else asyncio.get_running_loop().create_task(
-                    runtime.stop_when_idle(stop_service, grace=idle_grace, poll=idle_poll)
+            if client_managed and request_shutdown is not None:
+                watch = asyncio.create_task(
+                    runtime.stop_when_idle(
+                        stop_service,
+                        grace=client_shutdown_grace,
+                        poll=idle_poll,
+                        has_work=lambda: presence.active() or runtime.has_active_work(),
+                        can_shutdown=lambda: presence.begin_shutdown(runtime.has_active_work),
+                    )
                 )
-            )
+            elif request_shutdown is not None and idle_grace is not None:
+                watch = asyncio.create_task(runtime.stop_when_idle(stop_service, grace=idle_grace, poll=idle_poll))
+            else:
+                watch = None
             try:
                 yield
             finally:
@@ -336,6 +349,18 @@ def create_app(
     app.add_middleware(SessionLeaseMiddleware, runtime=runtime)
     app.add_middleware(BodyLimitMiddleware, limit=MAX_COMMAND_BYTES)
     app.add_middleware(AuthMiddleware, auth=auth)
+    if client_managed:
+        app.add_middleware(ClientAdmissionMiddleware, presence=presence)
+
+    @app.post('/api/clients/{client_id}/heartbeat')
+    async def client_heartbeat(client_id: UUID) -> dict[str, bool]:
+        presence.heartbeat(str(client_id))
+        return {'ok': True}
+
+    @app.delete('/api/clients/{client_id}')
+    async def client_close(client_id: UUID) -> dict[str, bool]:
+        presence.remove(str(client_id))
+        return {'ok': True}
 
     # --- session -------------------------------------------------------
 

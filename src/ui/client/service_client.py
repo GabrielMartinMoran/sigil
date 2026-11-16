@@ -636,6 +636,12 @@ class ServiceClient:
         body = {'id': question_id, 'answers': None if answers is None else [dict(item) for item in answers]}
         return bool((await self._post('/api/answer', body)).get('resolved'))
 
+    async def heartbeat(self, client_id: str) -> None:
+        await self._post(f'/api/clients/{client_id}/heartbeat', {})
+
+    async def leave(self, client_id: str) -> None:
+        await self._delete(f'/api/clients/{client_id}')
+
     # --- following ----------------------------------------------------------
 
     async def events(self, *, after: int = 0) -> AsyncIterator[ServiceEvent]:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from src.ui.client.payload_too_large import PayloadTooLarge
 from src.ui.client.request_rejected import RequestRejected
 from src.ui.client.service_busy import ServiceBusy
+from src.ui.client.service_unavailable import ServiceUnavailable
 from src.ui.client.unauthorized import Unauthorized
 
 STATUS_ERRORS = {
@@ -12,4 +13,5 @@ STATUS_ERRORS = {
     401: Unauthorized,
     409: ServiceBusy,
     413: PayloadTooLarge,
+    503: ServiceUnavailable,
 }

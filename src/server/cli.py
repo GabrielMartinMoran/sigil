@@ -162,6 +162,8 @@ def build_parser(web: bool = True) -> argparse.ArgumentParser:
         metavar='SECONDS',
         help='seconds before releasing an unattached idle session (default 300)',
     )
+    if not web:
+        parser.add_argument('--client-managed', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--reload', action='store_true', help=argparse.SUPPRESS)
     return parser
 
@@ -266,6 +268,7 @@ def _run(args: argparse.Namespace, *, web: bool = True) -> int:
             request_shutdown=stop.request,
             idle_grace=args.idle_grace,
             session_idle_grace=args.session_idle_grace,
+            client_managed=not web and getattr(args, 'client_managed', False),
         )
 
         try:

@@ -61,10 +61,15 @@ publishes a page with a password nobody sees.
 generated (or reads `SIGIL_SERVER_PASSWORD`), and refuses to start when the
 committed bundle is stale.
 
-Both take the same database lock, so only one can own a workspace at a time.
-`sigil serve` next to a running backend fails with the lock message instead of
-attaching: the process that owns the store has to end first, and idle shutdown is
-what ends it when there is no work left.
+Both take the same database lock, so only one server can own the database at a
+time. `sigil serve` fails with a lock message while a backend owns the database;
+stop that backend first.
+
+A backend started automatically by the terminal stops after all terminal clients
+have closed or their presence expires, and no work remains. A terminal that loses
+the backend can start it again. Servers started explicitly with `sigil server` or
+`sigil serve` stay running by default; the optional `--idle-grace` flag configures
+their existing work-based idle shutdown.
 
 ## Working with agents
 

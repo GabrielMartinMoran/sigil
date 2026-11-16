@@ -30,6 +30,8 @@ rather than as a second engine started from the terminal.
 from __future__ import annotations
 
 import asyncio
+import uuid
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +45,7 @@ from src.core.config.sigil_settings import SigilSettings
 from src.core.roadmap.roadmap_stores import RoadmapStores
 from src.core.sessions.session import Session
 from src.core.theming.theme_registry import ThemeRegistry
+from src.server.launch.diagnostics import record
 from src.ui.client.service_client import ServiceClient
 from src.ui.client.service_client_error import ServiceClientError
 from src.ui.client.service_unavailable import ServiceUnavailable
@@ -71,8 +74,16 @@ async def _attached(settings: SigilSettings) -> None:
     except ServiceUnavailable as exc:
         _refuse(str(exc))
         return
+    client_id = str(uuid.uuid4())
+    heartbeat_task: asyncio.Task[None] | None = None
     try:
         try:
+            try:
+                await client.heartbeat(client_id)
+            except ServiceUnavailable:
+                await client.refresh_endpoint()
+                await client.heartbeat(client_id)
+            heartbeat_task = asyncio.create_task(_keep_present(client, client_id))
             await client.start_in_workspace(str(Path.cwd()))
             state = await client.state()
         except ServiceClientError as exc:
@@ -80,7 +91,28 @@ async def _attached(settings: SigilSettings) -> None:
             return
         await _app(client, state, settings).run_async()
     finally:
+        if heartbeat_task is not None:
+            heartbeat_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat_task
+            with suppress(ServiceClientError):
+                await client.leave(client_id)
         await client.aclose()
+
+
+async def _keep_present(client: ServiceClient, client_id: str, *, interval: float = 15) -> None:
+    """Renew presence and recover through the client's existing local launcher."""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await client.heartbeat(client_id)
+        except ServiceClientError as exc:
+            record('client_heartbeat_failed', error=exc)
+            try:
+                await client.refresh_endpoint()
+                await client.heartbeat(client_id)
+            except ServiceClientError as recovery_error:
+                record('client_heartbeat_recovery_failed', error=recovery_error)
 
 
 def _app(client: ServiceClient, state: dict[str, Any], settings: SigilSettings) -> SigilApp:
