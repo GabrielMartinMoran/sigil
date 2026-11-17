@@ -266,3 +266,44 @@ def test_should_correlate_parallel_same_name_finishes_by_invocation_id() -> None
     ends = {event.result_preview: event.invocation_id for event in logger.events if event.phase == 'success'}
     assert starts == ends
     assert starts['first'] and starts['first'] != starts['second']
+
+
+def test_file_tools_are_exposed_as_async() -> None:
+    from src.core.files.tools import register_file_tools
+
+    agent = DummyAgent()
+    register_file_tools(agent)
+    assert inspect.iscoroutinefunction(agent.registered['read_file'])
+    assert inspect.iscoroutinefunction(agent.registered['write_file'])
+
+
+def test_file_tools_run_disk_work_off_the_event_loop(tmp_path, monkeypatch) -> None:
+    import threading
+
+    from src.core.files import tools as file_tools
+
+    agent = DummyAgent()
+    file_tools.register_file_tools(agent, root=lambda: tmp_path)
+    threads = []
+    original_read = file_tools._require_file
+    original_write = file_tools._write_atomically
+
+    def read(*args, **kwargs):
+        threads.append(threading.get_ident())
+        return original_read(*args, **kwargs)
+
+    def write(*args, **kwargs):
+        threads.append(threading.get_ident())
+        return original_write(*args, **kwargs)
+
+    monkeypatch.setattr(file_tools, '_require_file', read)
+    monkeypatch.setattr(file_tools, '_write_atomically', write)
+
+    async def scenario() -> None:
+        loop_thread = threading.get_ident()
+        await agent.registered['write_file'](path='a.txt', operations=[{'type': 'write', 'content': 'hello'}])
+        result = await agent.registered['read_file'](path='a.txt')
+        assert result.content == 'hello'
+        assert len(threads) == 2 and all(thread != loop_thread for thread in threads)
+
+    asyncio.run(scenario())

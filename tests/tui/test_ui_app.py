@@ -528,3 +528,43 @@ def test_child_tool_events_do_not_enter_parent_chat() -> None:
                 assert [block._name for block in blocks] == ['run']
 
     asyncio.run(inner())
+
+
+def test_file_tool_results_stop_their_spinners(tmp_path: Path) -> None:
+    import json
+
+    from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+
+    from src.core.files.tools import register_file_tools
+
+    (tmp_path / 'input.txt').write_text('hello')
+
+    async def model(messages, _info):
+        if len(messages) == 1:
+            yield {
+                0: DeltaToolCall(name='read_file', json_args=json.dumps({'path': 'input.txt'}), tool_call_id='r1'),
+                1: DeltaToolCall(name='read_file', json_args=json.dumps({'path': 'input.txt'}), tool_call_id='r2'),
+                2: DeltaToolCall(
+                    name='write_file',
+                    json_args=json.dumps({'path': 'output.txt', 'operations': [{'type': 'write', 'content': 'ok'}]}),
+                    tool_call_id='w1',
+                ),
+            }
+        else:
+            yield 'done'
+
+    async def inner() -> None:
+        logger = ToolLoggerHub()
+        agent = Agent(FunctionModel(stream_function=model), instructions='x')
+        register_file_tools(agent, logger, root=lambda: tmp_path)
+        app = _make_app(agent, str(tmp_path), logger)
+        async with app.run_test() as pilot:
+            app.query_one(PromptInput).value = 'go'
+            await pilot.press('enter')
+            await wait_for_turn(app)
+            blocks = [widget for widget in app.query_one(ChatLog).children if isinstance(widget, ToolCallBlock)]
+            assert sorted(block.name for block in blocks) == ['read_file', 'read_file', 'write_file']
+            assert all(not block.pending and block._pending_timer is None for block in blocks)
+            assert (tmp_path / 'output.txt').read_text() == 'ok'
+
+    asyncio.run(inner())

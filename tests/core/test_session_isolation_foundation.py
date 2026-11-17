@@ -77,16 +77,18 @@ def test_compositions_use_own_roots_after_another_switch(tmp_path: Path, monkeyp
         a_tools, b_tools = _Recorder(), _Recorder()
         a.install_tools(a_tools)
         b.install_tools(b_tools)
-        a_tools.tools['write_file'](path='before.txt', operations=[{'type': 'write', 'content': 'first'}])
-        b_tools.tools['write_file'](path='before.txt', operations=[{'type': 'write', 'content': 'second'}])
-        assert a_tools.tools['read_file'](path='before.txt').content == 'first'
-        assert b_tools.tools['read_file'](path='before.txt').content == 'second'
+        asyncio.run(a_tools.tools['write_file'](path='before.txt', operations=[{'type': 'write', 'content': 'first'}]))
+        asyncio.run(b_tools.tools['write_file'](path='before.txt', operations=[{'type': 'write', 'content': 'second'}]))
+        assert asyncio.run(a_tools.tools['read_file'](path='before.txt')).content == 'first'
+        assert asyncio.run(b_tools.tools['read_file'](path='before.txt')).content == 'second'
         assert (first / 'before.txt').read_text() == 'first'
         assert (second / 'before.txt').read_text() == 'second'
         assert Path.cwd() == outside
         a.workspace_manager.switch(destination)
-        a_tools.tools['write_file'](path='after.txt', operations=[{'type': 'write', 'content': 'destination'}])
-        b_tools.tools['write_file'](path='after.txt', operations=[{'type': 'write', 'content': 'second'}])
+        asyncio.run(
+            a_tools.tools['write_file'](path='after.txt', operations=[{'type': 'write', 'content': 'destination'}])
+        )
+        asyncio.run(b_tools.tools['write_file'](path='after.txt', operations=[{'type': 'write', 'content': 'second'}]))
         assert (destination / 'after.txt').read_text() == 'destination'
         assert (second / 'after.txt').read_text() == 'second'
         assert Path.cwd() == outside
@@ -564,7 +566,9 @@ def test_two_executions_resolve_their_own_roots_without_moving_the_process(
 
         def write(root: Path, tools: _Recorder) -> None:
             with execution_workspace(root):
-                tools.tools['write_file'](path='note.txt', operations=[{'type': 'write', 'content': root.name}])
+                asyncio.run(
+                    tools.tools['write_file'](path='note.txt', operations=[{'type': 'write', 'content': root.name}])
+                )
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             list(pool.map(lambda pair: write(*pair), ((first, a_tools), (second, b_tools))))
@@ -666,8 +670,8 @@ def test_registered_tool_callbacks_follow_the_bound_root(tmp_path: Path, monkeyp
         ctx = RunContext(deps=None, model=TestModel(), usage=None)
 
         with execution_workspace(bound):
-            tools.tools['write_file'](path='note.txt', operations=[{'type': 'write', 'content': 'bound'}])
-            assert tools.tools['read_file'](path='note.txt').content == 'bound'
+            asyncio.run(tools.tools['write_file'](path='note.txt', operations=[{'type': 'write', 'content': 'bound'}]))
+            assert asyncio.run(tools.tools['read_file'](path='note.txt')).content == 'bound'
             assert (bound / 'note.txt').read_text() == 'bound'
             conflict = ConcurrencyContext(
                 'write_file',
