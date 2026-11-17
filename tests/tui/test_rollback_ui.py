@@ -145,18 +145,17 @@ def test_the_command_rolls_back_and_rebuilds_the_conversation(monkeypatch: pytes
             app = _app(tmp, turns=2)
             async with app.run_test(size=(120, 40)) as pilot:
                 before = len(app._session.messages)
-                app.run_worker(app.handle_command('/rollback'))
+                worker = app.run_worker(app.handle_command('/rollback'))
                 for _ in range(20):
                     await pilot.pause()
                     if isinstance(app.screen, RollbackScreen):
                         break
+                assert isinstance(app.screen, RollbackScreen)
 
                 await pilot.press('enter')
                 await pilot.press('enter')  # the first action: roll back with files
-                for _ in range(30):
-                    await pilot.pause()
-                    if not isinstance(app.screen, RollbackScreen):
-                        break
+                async with asyncio.timeout(15):
+                    await worker.wait()
 
                 # The newest point is the second turn: rolling back to it keeps the first.
                 assert len(app._session.messages) < before

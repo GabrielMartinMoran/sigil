@@ -225,11 +225,20 @@ void test('a new send marks the client busy', async () => {
   assert.equal(useStore.getState().busy, true);
 });
 
-void test('steer delivery and lagged events refresh the durable read', async () => {
+void test('steer delivery and lagged events refresh the durable read', { timeout: 2000 }, async () => {
   useStore.getState().applyEvent('steer_delivered', {});
   assert.equal(durableCalls, 1);
+
+  const fetch = globalThis.fetch;
+  const refreshed = new Promise<void>((resolve) => {
+    globalThis.fetch = (input, init) => {
+      const result = fetch(input, init);
+      if (durableCalls === 2) resolve();
+      return result;
+    };
+  });
   useStore.getState().applyEvent('lagged', {});
-  for (let i = 0; i < 5; i++) await Promise.resolve();
+  await refreshed;
   assert.equal(durableCalls, 2);
 });
 

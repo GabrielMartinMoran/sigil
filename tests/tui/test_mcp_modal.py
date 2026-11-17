@@ -129,3 +129,41 @@ def test_mcp_modal_toggles_and_persists_per_session(tmp_path: Path) -> None:
             assert not manager.get('first').enabled and manager.get('second').enabled
 
     asyncio.run(run())
+
+
+def test_mcp_probe_finishes_during_screen_teardown() -> None:
+    from textual.app import App
+
+    from src.core.mcp.tool_models.server_status import ServerStatus
+
+    async def run() -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def probe() -> list[ServerStatus]:
+            started.set()
+            await release.wait()
+            return []
+
+        async def toggle(name: str, enabled: bool) -> ServerStatus:
+            raise AssertionError('No toggle is expected')
+
+        app = App()
+        async with app.run_test() as pilot:
+            screen = MCPScreen([], toggle)
+            app.push_screen(screen)
+            await pilot.pause()
+            screen._probe = probe
+            task = asyncio.create_task(screen._refresh_statuses())
+            try:
+                async with asyncio.timeout(5):
+                    await started.wait()
+                    await screen.query_one(OptionList).remove()
+                    assert screen.is_mounted
+                    release.set()
+                    await task
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(run())

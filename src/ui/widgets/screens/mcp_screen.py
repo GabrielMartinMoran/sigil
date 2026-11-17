@@ -8,6 +8,7 @@ from typing import ClassVar
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.css.query import NoMatches
 from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
@@ -62,7 +63,10 @@ class MCPScreen(ProviderModal):
             return
         if not self.is_mounted:
             return
-        options = self.query_one(OptionList)
+        try:
+            options = self.query_one(OptionList)
+        except NoMatches:
+            return
         for status in statuses:
             previous = self._statuses.get(status.name)
             if previous is not None and previous.enabled == status.enabled:

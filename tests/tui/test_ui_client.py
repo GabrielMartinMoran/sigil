@@ -3851,13 +3851,29 @@ def test_reaching_the_top_loads_the_page_above_without_moving_the_reader(
             async with app.run_test(size=(100, 40)) as pilot:
                 chat = app.query_one(ChatLog)
                 await _until(pilot, lambda: len(chat.children) == DEFAULT_TRANSCRIPT_WINDOW, what='the window')
+                await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the initial reading position')
 
+                requested = asyncio.Event()
+                release = asyncio.Event()
+                transcript = client.transcript
+
+                async def delayed_transcript(**kwargs: Any) -> dict[str, Any]:
+                    requested.set()
+                    await release.wait()
+                    return await transcript(**kwargs)
+
+                client.transcript = delayed_transcript  # type: ignore[method-assign]
                 chat.scroll_to(y=0, animate=False, immediate=True)
+                async with asyncio.timeout(10):
+                    await requested.wait()
                 await pilot.pause()
                 watched = chat.children[0]
                 row = watched.region.y
+                release.set()
 
                 await _until(pilot, lambda: len(chat.children) == 2 * DEFAULT_TRANSCRIPT_WINDOW, what='the page above')
+                await _until(pilot, lambda: chat.older_cursor == 300, what='the committed page')
+                await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the restored reading position')
                 await _until(pilot, lambda: watched.region.y == row, what='the reading position')
 
                 assert reads[-1] == {'limit': DEFAULT_TRANSCRIPT_WINDOW, 'before': 400}, 'the cursor is where it starts'
@@ -3878,6 +3894,7 @@ def test_a_second_trip_to_the_top_loads_another_page(composition: Composition, t
             async with app.run_test(size=(100, 40)) as pilot:
                 chat = app.query_one(ChatLog)
                 await _until(pilot, lambda: len(chat.children) == DEFAULT_TRANSCRIPT_WINDOW, what='the window')
+                await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the initial reading position')
 
                 chat.scroll_to(y=0, animate=False, immediate=True)
                 await _until(pilot, lambda: len(chat.children) == 2 * DEFAULT_TRANSCRIPT_WINDOW, what='the first page')
@@ -3963,6 +3980,7 @@ def test_a_reader_at_the_top_lets_go_of_the_newest_page(composition: Composition
             async with app.run_test(size=(100, 40)) as pilot:
                 chat = app.query_one(ChatLog)
                 await _until(pilot, lambda: len(chat.children) == DEFAULT_TRANSCRIPT_WINDOW, what='the window')
+                await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the initial reading position')
 
                 for before in (400, 300, 200):
                     chat.scroll_to(y=0, animate=False, immediate=True)
@@ -3997,11 +4015,21 @@ def test_reaching_the_bottom_reads_the_newest_page_once(composition: Composition
             async with app.run_test(size=(100, 40)) as pilot:
                 chat = app.query_one(ChatLog)
                 await _until(pilot, lambda: len(chat.children) == DEFAULT_TRANSCRIPT_WINDOW, what='the window')
+                await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the initial reading position')
+                completed = {before: asyncio.Event() for before in (400, 300, 200)}
+                load_older_page = app.load_older_page
+
+                async def track_older_page(before: int) -> None:
+                    await load_older_page(before)
+                    completed[before].set()
+
+                app.load_older_page = track_older_page  # type: ignore[method-assign]
                 for before in (400, 300, 200):
                     chat.scroll_to(y=0, animate=False, immediate=True)
                     await _until(
                         pilot, lambda before=before: reads[-1].get('before') == before, what=f'the page before {before}'
                     )
+                    await _until(pilot, completed[before].is_set, what=f'the completed page before {before}')
                     await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the restored reading position')
                 assert chat._reaches_end is False
 
@@ -4042,6 +4070,7 @@ def test_a_reader_near_the_bottom_gives_up_the_page_at_the_top(composition: Comp
             async with app.run_test(size=(100, 40)) as pilot:
                 chat = app.query_one(ChatLog)
                 await _until(pilot, lambda: len(chat.children) == DEFAULT_TRANSCRIPT_WINDOW, what='the window')
+                await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the initial reading position')
                 for before in (400, 300):
                     chat.scroll_to(y=0, animate=False, immediate=True)
                     await _until(
@@ -4091,6 +4120,7 @@ def test_a_page_dropped_from_the_top_leaves_no_hole_in_the_transcript(compositio
             async with app.run_test(size=(100, 40)) as pilot:
                 chat = app.query_one(ChatLog)
                 await _until(pilot, lambda: len(chat._pages) == 1, what='the newest window')
+                await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the initial reading position')
 
                 for pages in (2, 3):
                     chat.scroll_to(y=0, animate=False, immediate=True)

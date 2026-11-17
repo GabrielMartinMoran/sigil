@@ -476,11 +476,11 @@ async def _execute_python(
                 raise SandboxUnavailable('Supervisor closed without a terminal status')
             assert cgroup_fd is not None
             await asyncio.to_thread(_wait_for_empty_fd, cgroup_fd)
-            writer.write(b'A')
-            await writer.drain()
             async with asyncio.timeout(5):
-                await process.wait()
                 await asyncio.gather(*captures)
+                writer.write(b'A')
+                await writer.drain()
+                await process.wait()
             if process.returncode != 0:
                 raise SandboxUnavailable('Supervisor failed during cleanup')
             return terminal['done']
