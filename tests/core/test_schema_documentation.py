@@ -11,7 +11,7 @@ import pytest
 
 from src.core.storage.schema import SCHEMA, USER_VERSION
 
-DOC = Path(__file__).resolve().parents[2] / 'docs' / 'storage.md'
+DOC = Path(__file__).resolve().parents[2] / 'docs' / 'technical' / 'architecture' / 'storage.md'
 
 
 def _documented_ddl() -> str:
