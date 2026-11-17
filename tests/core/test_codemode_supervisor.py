@@ -56,6 +56,75 @@ def test_combined_output_limit_is_shared_between_streams() -> None:
     assert result.stdout_truncated or result.stderr_truncated
 
 
+def test_output_is_drained_before_supervisor_acknowledgement(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        from src.core.codemode import sandbox
+
+        drained: set[str] = set()
+        payload_empty = asyncio.Event()
+        release_reads = asyncio.Event()
+        acknowledged = asyncio.Event()
+        spawn = asyncio.create_subprocess_exec
+        connect = asyncio.open_connection
+        to_thread = asyncio.to_thread
+
+        async def observe_empty(func, *args, **kwargs):
+            result = await to_thread(func, *args, **kwargs)
+            if func is sandbox._wait_for_empty_fd:
+                payload_empty.set()
+            return result
+
+        async def capture_spawn(*args, **kwargs):
+            process = await spawn(*args, **kwargs)
+            if any(isinstance(arg, str) and arg.startswith('--unit=') for arg in args):
+                for name in ('stdout', 'stderr'):
+                    stream = getattr(process, name)
+                    original = stream.read
+
+                    async def read(size, *, original=original, name=name):
+                        await release_reads.wait()
+                        result = await original(size)
+                        if not result:
+                            drained.add(name)
+                        return result
+
+                    monkeypatch.setattr(stream, 'read', read)
+            return process
+
+        async def capture_connection(*args, **kwargs):
+            reader, writer = await connect(*args, **kwargs)
+            original = writer.write
+
+            def write(data):
+                if data == b'A':
+                    acknowledged.set()
+                original(data)
+
+            monkeypatch.setattr(writer, 'write', write)
+            return reader, writer
+
+        monkeypatch.setattr(asyncio, 'create_subprocess_exec', capture_spawn)
+        monkeypatch.setattr(asyncio, 'open_connection', capture_connection)
+        monkeypatch.setattr(asyncio, 'to_thread', observe_empty)
+        task = asyncio.create_task(execute_python("print('complete')"))
+        try:
+            async with asyncio.timeout(10):
+                await payload_empty.wait()
+                assert not acknowledged.is_set()
+                release_reads.set()
+                result = await task
+                assert acknowledged.is_set()
+                assert drained == {'stdout', 'stderr'}
+                assert result.stdout.strip() == 'complete'
+        finally:
+            release_reads.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(run())
+
+
 def test_host_crash_triggers_supervisor_cleanup() -> None:
     import json
     import sys

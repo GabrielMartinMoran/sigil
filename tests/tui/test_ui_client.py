@@ -3853,12 +3853,27 @@ def test_reaching_the_top_loads_the_page_above_without_moving_the_reader(
                 await _until(pilot, lambda: len(chat.children) == DEFAULT_TRANSCRIPT_WINDOW, what='the window')
                 await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the initial reading position')
 
+                requested = asyncio.Event()
+                release = asyncio.Event()
+                transcript = client.transcript
+
+                async def delayed_transcript(**kwargs: Any) -> dict[str, Any]:
+                    requested.set()
+                    await release.wait()
+                    return await transcript(**kwargs)
+
+                client.transcript = delayed_transcript  # type: ignore[method-assign]
                 chat.scroll_to(y=0, animate=False, immediate=True)
+                async with asyncio.timeout(10):
+                    await requested.wait()
                 await pilot.pause()
                 watched = chat.children[0]
                 row = watched.region.y
+                release.set()
 
                 await _until(pilot, lambda: len(chat.children) == 2 * DEFAULT_TRANSCRIPT_WINDOW, what='the page above')
+                await _until(pilot, lambda: chat.older_cursor == 300, what='the committed page')
+                await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the restored reading position')
                 await _until(pilot, lambda: watched.region.y == row, what='the reading position')
 
                 assert reads[-1] == {'limit': DEFAULT_TRANSCRIPT_WINDOW, 'before': 400}, 'the cursor is where it starts'
