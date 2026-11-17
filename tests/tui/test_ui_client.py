@@ -3878,6 +3878,7 @@ def test_a_second_trip_to_the_top_loads_another_page(composition: Composition, t
             async with app.run_test(size=(100, 40)) as pilot:
                 chat = app.query_one(ChatLog)
                 await _until(pilot, lambda: len(chat.children) == DEFAULT_TRANSCRIPT_WINDOW, what='the window')
+                await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the initial reading position')
 
                 chat.scroll_to(y=0, animate=False, immediate=True)
                 await _until(pilot, lambda: len(chat.children) == 2 * DEFAULT_TRANSCRIPT_WINDOW, what='the first page')
@@ -3963,6 +3964,7 @@ def test_a_reader_at_the_top_lets_go_of_the_newest_page(composition: Composition
             async with app.run_test(size=(100, 40)) as pilot:
                 chat = app.query_one(ChatLog)
                 await _until(pilot, lambda: len(chat.children) == DEFAULT_TRANSCRIPT_WINDOW, what='the window')
+                await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the initial reading position')
 
                 for before in (400, 300, 200):
                     chat.scroll_to(y=0, animate=False, immediate=True)
