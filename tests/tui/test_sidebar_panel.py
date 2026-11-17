@@ -534,11 +534,12 @@ def test_roadmap_notes_wrap_under_their_task_and_keep_multiline_content() -> Non
         [
             TodoItem(title='First', status='done', notes='Alpha beta gamma delta\nSecond line'),
             TodoItem(title='Next', notes='Another note'),
+            TodoItem(title='Last'),
         ]
     )
 
     text = panel._build(width=18).plain
-    assert '✓ First\n  │ Alpha beta\n  │ gamma delta\n  │ Second line\n\n ○ Next\n  │ Another note' in text
+    assert '✓ First\n  │ Alpha beta\n  │ gamma delta\n  │ Second line\n ○ Next\n  │ Another note\n ○ Last' in text
 
 
 def test_roadmap_notes_reflow_at_different_widths() -> None:

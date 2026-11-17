@@ -58,6 +58,7 @@ class CommandPaletteScreen(ProviderModal):
                 command.description,
             )
             for command in COMMANDS
+            if command.name != '/compact'
         ]
         self._items.insert(
             1,
@@ -67,6 +68,22 @@ class CommandPaletteScreen(ProviderModal):
                 '/new --worktree',
                 'Start a session in a new worktree',
             ),
+        )
+        self._items.extend(
+            [
+                (
+                    PaletteChoice('/compact', args='--deterministic'),
+                    'Compact context — deterministic',
+                    '/compact --deterministic',
+                    'Reduce context without calling the model',
+                ),
+                (
+                    PaletteChoice('/compact', args='--llm'),
+                    'Compact context — LLM summary',
+                    '/compact --llm',
+                    'Summarize context using the selected model',
+                ),
+            ]
         )
         for value in ('allow', 'deny'):
             self._items.append(

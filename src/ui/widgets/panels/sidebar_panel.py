@@ -368,9 +368,7 @@ class SidebarPanel(Vertical):
         if not items:
             text.append(' No tasks yet.\n', style='dim')
             return
-        for index, item in enumerate(items):
-            if index:
-                text.append('\n')
+        for item in items:
             style = ROADMAP_STYLE.get(item.status, '')
             icon = ROADMAP_ICON.get(item.status, ROADMAP_FALLBACK_ICON)
             text.append(f' {icon} ', style=style)

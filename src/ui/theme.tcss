@@ -29,6 +29,21 @@ Screen {
     scrollbar-size-vertical: 1;
 }
 
+/* Keep the scrollbar in place while leaving space beside transcript content. */
+#chat > * {
+    margin-right: 1;
+}
+
+/* Preserve the vertical spacing of transcript blocks alongside the right gutter. */
+#chat > .user-msg, #chat > .agent-msg, #chat > .assistant-msg,
+#chat > .tool-call, #chat > .tool-group, #chat > .notice {
+    margin: 1 1 0 0;
+}
+
+#chat > .tool-call.tight {
+    margin: 0 1 0 0;
+}
+
 .user-msg {
     margin-top: 1;
     color: $text;
