@@ -4016,11 +4016,20 @@ def test_reaching_the_bottom_reads_the_newest_page_once(composition: Composition
                 chat = app.query_one(ChatLog)
                 await _until(pilot, lambda: len(chat.children) == DEFAULT_TRANSCRIPT_WINDOW, what='the window')
                 await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the initial reading position')
+                completed = {before: asyncio.Event() for before in (400, 300, 200)}
+                load_older_page = app.load_older_page
+
+                async def track_older_page(before: int) -> None:
+                    await load_older_page(before)
+                    completed[before].set()
+
+                app.load_older_page = track_older_page  # type: ignore[method-assign]
                 for before in (400, 300, 200):
                     chat.scroll_to(y=0, animate=False, immediate=True)
                     await _until(
                         pilot, lambda before=before: reads[-1].get('before') == before, what=f'the page before {before}'
                     )
+                    await _until(pilot, completed[before].is_set, what=f'the completed page before {before}')
                     await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the restored reading position')
                 assert chat._reaches_end is False
 
