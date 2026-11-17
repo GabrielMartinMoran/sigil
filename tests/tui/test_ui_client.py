@@ -3851,6 +3851,7 @@ def test_reaching_the_top_loads_the_page_above_without_moving_the_reader(
             async with app.run_test(size=(100, 40)) as pilot:
                 chat = app.query_one(ChatLog)
                 await _until(pilot, lambda: len(chat.children) == DEFAULT_TRANSCRIPT_WINDOW, what='the window')
+                await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the initial reading position')
 
                 chat.scroll_to(y=0, animate=False, immediate=True)
                 await pilot.pause()
@@ -3999,6 +4000,7 @@ def test_reaching_the_bottom_reads_the_newest_page_once(composition: Composition
             async with app.run_test(size=(100, 40)) as pilot:
                 chat = app.query_one(ChatLog)
                 await _until(pilot, lambda: len(chat.children) == DEFAULT_TRANSCRIPT_WINDOW, what='the window')
+                await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the initial reading position')
                 for before in (400, 300, 200):
                     chat.scroll_to(y=0, animate=False, immediate=True)
                     await _until(
@@ -4044,6 +4046,7 @@ def test_a_reader_near_the_bottom_gives_up_the_page_at_the_top(composition: Comp
             async with app.run_test(size=(100, 40)) as pilot:
                 chat = app.query_one(ChatLog)
                 await _until(pilot, lambda: len(chat.children) == DEFAULT_TRANSCRIPT_WINDOW, what='the window')
+                await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the initial reading position')
                 for before in (400, 300):
                     chat.scroll_to(y=0, animate=False, immediate=True)
                     await _until(
