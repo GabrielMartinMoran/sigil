@@ -4091,6 +4091,7 @@ def test_a_page_dropped_from_the_top_leaves_no_hole_in_the_transcript(compositio
             async with app.run_test(size=(100, 40)) as pilot:
                 chat = app.query_one(ChatLog)
                 await _until(pilot, lambda: len(chat._pages) == 1, what='the newest window')
+                await _until(pilot, lambda: chat.scroll_offset.y > 0, what='the initial reading position')
 
                 for pages in (2, 3):
                     chat.scroll_to(y=0, animate=False, immediate=True)
