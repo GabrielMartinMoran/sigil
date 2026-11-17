@@ -11,7 +11,7 @@ permissions:
 jobs:
   python:
     name: Python
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -20,8 +20,19 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      - name: Prepare sandbox prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl start "user@$(id -u).service"
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" >> "$GITHUB_ENV"
       - name: Install dependencies
         run: uv sync --locked
+      - name: Verify sandbox
+        run: |
+          uv run --locked python -c "import asyncio; from src.core.codemode.sandbox import execute_python; result = asyncio.run(execute_python('print(42)')); assert result.returncode == 0 and result.stdout.strip() == '42', result"
       - name: Lint
         run: uv run --locked ruff check src tests
       - name: Check formatting
