@@ -24,6 +24,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bubblewrap
+          printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' \
+            'profile sigil-ci-bwrap /usr/bin/bwrap flags=(unconfined) {' '  userns,' '}' \
+            | sudo tee /etc/apparmor.d/sigil-ci-bwrap > /dev/null
+          sudo apparmor_parser -r /etc/apparmor.d/sigil-ci-bwrap
           sudo loginctl enable-linger "$USER"
           sudo systemctl start "user@$(id -u).service"
           echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
