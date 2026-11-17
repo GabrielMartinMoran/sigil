@@ -32,7 +32,14 @@ class DummyAgent:
 def _tools():
     agent = DummyAgent()
     register_file_tools(agent)
-    return agent.tools
+
+    def sync_call(func):
+        def call(*args, **kwargs):
+            return asyncio.run(func(*args, **kwargs))
+
+        return call
+
+    return {name: sync_call(func) for name, func in agent.tools.items()}
 
 
 def test_write_and_read_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -473,15 +480,17 @@ def test_external_access_follows_current_session_for_all_file_tools(
         ('write_file', {'operations': [{'type': 'replace', 'old': 'before', 'new': 'after'}]}),
     ):
         with pytest.raises(FileToolError):
-            tools[name](path=str(external), **arguments)
+            asyncio.run(tools[name](path=str(external), **arguments))
     allowed = True
-    assert tools['read_file'](path=str(external)).content == 'before'
-    tools['write_file'](path=str(external), operations=[{'type': 'replace', 'old': 'before', 'new': 'after'}])
-    tools['write_file'](path=str(external), operations=[{'type': 'write', 'content': 'new'}])
+    assert asyncio.run(tools['read_file'](path=str(external))).content == 'before'
+    asyncio.run(
+        tools['write_file'](path=str(external), operations=[{'type': 'replace', 'old': 'before', 'new': 'after'}])
+    )
+    asyncio.run(tools['write_file'](path=str(external), operations=[{'type': 'write', 'content': 'new'}]))
     assert external.read_text() == 'new'
     allowed = False
     with pytest.raises(FileToolError):
-        tools['read_file'](path=str(external))
+        asyncio.run(tools['read_file'](path=str(external)))
 
 
 # --- execution workspace ------------------------------------------------------

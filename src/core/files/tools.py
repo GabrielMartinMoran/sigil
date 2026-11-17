@@ -7,6 +7,7 @@ lives in ``text``; the path logic, in ``paths``.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import secrets
 import stat
@@ -310,7 +311,7 @@ def register_file_tools(
     tools = ToolRegistrar(agent, logger, catalog)
 
     @tools.tool(permission=_READ, describe=describe_read, compaction=READ_FILE_COMPACTOR)
-    def read_file(
+    async def read_file(
         path: str,
         start_line: int | None = None,
         end_line: int | None = None,
@@ -329,18 +330,24 @@ def register_file_tools(
             max_bytes: Maximum bytes to read when no line range is given
                 (default 256 KiB).
         """
-        target = _require_file(path, allow_external=allow_external(), root=None if root is None else root())
-        size = target.stat().st_size
-        if start_line is not None or end_line is not None:
-            return _read_line_range(target, path, size, start_line, end_line)
-        return _read_whole(target, size, max_bytes)
+        external = allow_external()
+        workspace = None if root is None else root()
+
+        def read() -> FileContent:
+            target = _require_file(path, allow_external=external, root=workspace)
+            size = target.stat().st_size
+            if start_line is not None or end_line is not None:
+                return _read_line_range(target, path, size, start_line, end_line)
+            return _read_whole(target, size, max_bytes)
+
+        return await asyncio.to_thread(read)
 
     @tools.tool(
         concurrency=lambda ctx: same_file_conflict(ctx, None if root is None else root()),
         permission=_WRITE,
         compaction=EDIT_FILE_COMPACTOR,
     )
-    def write_file(path: str, operations: list[EditOperation]) -> dict[str, Any]:
+    async def write_file(path: str, operations: list[EditOperation]) -> dict[str, Any]:
         """Create or edit one text file with ordered operations.
 
         Supported types are write, append, replace, and replace_lines. Read existing
@@ -357,17 +364,23 @@ def register_file_tools(
             path: File path, absolute or relative to the workspace.
             operations: Non-empty list of operations to apply in order.
         """
-        target = resolve(path, allow_external=allow_external(), root=None if root is None else root())
-        exists = target.exists()
-        if exists and not target.is_file():
-            raise FileToolError(f'Not a file: {path!r}.')
-        replaces_all = bool(operations) and operations[0]['type'] == 'write'
-        text = _read_text_for_patch(target, path) if exists and not replaces_all else None
-        updated = _apply_edit_operations(text, operations)
-        _write_atomically(target, updated)
-        return {
-            'path': str(target),
-            'created': not exists,
-            'operations': len(operations),
-            'bytes_after': len(updated.encode('utf-8')),
-        }
+        external = allow_external()
+        workspace = None if root is None else root()
+
+        def write() -> dict[str, Any]:
+            target = resolve(path, allow_external=external, root=workspace)
+            exists = target.exists()
+            if exists and not target.is_file():
+                raise FileToolError(f'Not a file: {path!r}.')
+            replaces_all = bool(operations) and operations[0]['type'] == 'write'
+            text = _read_text_for_patch(target, path) if exists and not replaces_all else None
+            updated = _apply_edit_operations(text, operations)
+            _write_atomically(target, updated)
+            return {
+                'path': str(target),
+                'created': not exists,
+                'operations': len(operations),
+                'bytes_after': len(updated.encode('utf-8')),
+            }
+
+        return await asyncio.to_thread(write)

@@ -1,5 +1,6 @@
 """Behavior of batched file edits."""
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,11 @@ def edit_tool():
     register_file_tools(agent)
     assert 'edit_file' not in agent.tools
     assert 'patch_file' not in agent.tools
-    return agent.tools['write_file']
+
+    def call(*args, **kwargs):
+        return asyncio.run(agent.tools['write_file'](*args, **kwargs))
+
+    return call
 
 
 def test_edit_applies_operations_in_order(tmp_path: Path) -> None:

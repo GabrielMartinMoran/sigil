@@ -210,7 +210,9 @@ def test_tools_operate_on_the_new_worktree_after_the_switch(
 
             recorder = Recorder()
             register_file_tools(recorder, root=lambda: app._workspace_manager.root)
-            written = recorder.tools['write_file'](path='only-here.txt', operations=[{'type': 'write', 'content': 'x'}])
+            written = await recorder.tools['write_file'](
+                path='only-here.txt', operations=[{'type': 'write', 'content': 'x'}]
+            )
 
             assert Path(written['path']) == tmp_path / 'worktrees' / 'project' / 'isolated' / 'only-here.txt'
             assert not (repo / 'only-here.txt').exists()
@@ -230,7 +232,7 @@ def test_tools_operate_on_the_new_worktree_after_the_switch(
             monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path / 'scratch'))
 
             with pytest.raises(FileToolError):
-                recorder.tools['read_file'](path=str(repo / 'README.md'))
+                await recorder.tools['read_file'](path=str(repo / 'README.md'))
 
     _asyncio.run(inner())
 
