@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pydantic_ai.messages import ModelMessage
 
 from src.core.agents.tree.agent_tree import AgentTree
+from src.core.goal.state import Goal
 from src.core.providers.domain.selection import Selection
 from src.core.sessions.titling import first_user_message, shorten
 from src.core.storage.executions import (
@@ -56,6 +57,7 @@ class Session:
     though nothing is running now.
     """
 
+    goal: Goal | None = None
     allow_external_files: bool = False
     mcp_overrides: dict[str, bool] = field(default_factory=dict)
 

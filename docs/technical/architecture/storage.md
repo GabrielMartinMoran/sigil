@@ -1151,6 +1151,11 @@ CREATE TABLE sessions (
     updated_at   TEXT    NOT NULL
 ) STRICT, WITHOUT ROWID;
 
+CREATE TABLE session_goals (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    payload TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
+
 CREATE INDEX sessions_by_recency   ON sessions(updated_at DESC);
 CREATE INDEX sessions_by_workspace ON sessions(workspace_id, updated_at DESC);
 

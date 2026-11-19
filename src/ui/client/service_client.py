@@ -388,6 +388,16 @@ class ServiceClient:
         """
         return (await self._post('/api/external-files', {'allow': allow})).get('session') or {}
 
+    async def goal(self, argument: str) -> dict[str, Any]:
+        """Runs one ``/goal`` argument on the service's session, as typed.
+
+        The argument travels unparsed so the same function decides what ``--yolo``,
+        ``stop`` and ``status`` mean in process and through the service. A refused
+        activation — a question is waiting — is the service's ``409``, arriving as
+        `ServiceBusy`; this client answers no question on its own.
+        """
+        return await self._post('/api/goal', {'argument': argument})
+
     async def mcp_servers(self) -> list[dict[str, Any]]:
         """Every configured MCP server, as the service projects it."""
         return list((await self._get('/api/mcp')).get('servers') or ())

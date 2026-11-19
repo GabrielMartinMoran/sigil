@@ -20,13 +20,14 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
 
 from src.core.context.meter.session_cost import SessionCost
+from src.core.goal.state import Goal
 from src.core.mcp.config.loader import load_config
 from src.core.mcp.manager.mcp_manager import MCPManager
 from src.core.roadmap.models.todo_item import TodoItem
 from src.core.roadmap.roadmap_store import RoadmapStore
 from src.core.roadmap.roadmap_stores import RoadmapStores
 from src.core.sessions.session_store import SessionStore
-from src.ui.mixins.sidebar_mixin import SidebarMixin
+from src.ui.mixins.sidebar_mixin import SidebarMixin, _goal_from_state, _goal_reported, _roadmap_from_state
 from src.ui.sigil_app import SigilApp
 from src.ui.widgets.models.context_state import ContextState
 from src.ui.widgets.models.mcp_server_state import MCPServerState
@@ -570,3 +571,90 @@ def test_sidebar_renderable_uses_the_actual_console_width() -> None:
 
     assert '  │ One two\n  │ three\n  │ four' in rendered(12)
     assert '  │ One two three four' in rendered(30)
+
+
+def test_the_goal_sits_above_the_roadmap_even_when_the_plan_is_empty() -> None:
+    """The objective is the sentence the plan serves, and the two are read together."""
+    panel = _panel()
+    panel.update_goal(Goal(text='Ship the CSV export', status='active'))
+    panel.update_roadmap([])
+
+    text = panel._build().plain
+    assert 'Ship the CSV export' in text
+    assert text.index('Roadmap') < text.index('Ship the CSV export') < text.index('No tasks yet.')
+    assert 'Goal' not in text
+    assert 'No tasks yet.' in text
+
+
+def test_a_yolo_goal_says_so() -> None:
+    """A mode that removes questions is named, not left to a colour."""
+    panel = _panel()
+    panel.update_goal(Goal(text='Ship the CSV export', yolo=True, status='active'))
+    assert ' · yolo' in panel._build().plain
+
+
+def test_a_completed_goal_is_distinguishable() -> None:
+    panel = _panel()
+    panel.update_goal(Goal(text='Ship the CSV export', status='completed'))
+    text = panel._build().plain
+    assert ' ✓ Ship the CSV export' in text
+    assert 'green' in {span.style for span in panel._build().spans}
+
+
+def test_an_active_goal_carries_the_running_mark() -> None:
+    panel = _panel()
+    panel.update_goal(Goal(text='Ship the CSV export', status='active'))
+    assert ' ▶ Ship the CSV export' in panel._build().plain
+
+
+def test_a_session_without_a_goal_has_no_goal_section() -> None:
+    panel = _panel()
+    panel.update_goal(None)
+    assert 'Goal' not in panel._build().plain
+
+
+def test_a_goal_the_service_did_not_report_says_unknown() -> None:
+    """An absent goal key is a gap, not the claim that no goal was set."""
+    panel = _panel()
+    panel.update_goal(None, reported=False)
+    text = panel._build().plain
+    assert 'Roadmap' in text
+    assert 'the service did not report it' in text
+
+
+def test_the_service_projection_paints_the_goal_and_the_empty_roadmap() -> None:
+    """The attached seam: `/api/state` row -> panel, with no store in between."""
+    panel = _panel()
+    state = {
+        'session': {'goal': {'text': 'Ship the CSV export', 'yolo': True, 'status': 'active'}},
+        'roadmap': [],
+    }
+    panel.update_goal(_goal_from_state(state), reported=_goal_reported(state))
+    panel.update_roadmap(_roadmap_from_state(state))
+
+    text = panel._build().plain
+    assert 'Ship the CSV export' in text
+    assert ' · yolo' in text
+    assert 'No tasks yet.' in text
+
+
+def test_the_in_process_sidebar_paints_the_session_goal(tmp_path: Path) -> None:
+    """In process the session is the truth: the panel reads its own goal."""
+
+    async def inner() -> None:
+        store = SessionStore(cwd=str(tmp_path), base_dir=tmp_path / 'sessions')
+        session = store.create_session()
+        session.goal = Goal(text='Ship the CSV export', yolo=True, status='active')
+        app = SigilApp(
+            agent=Agent(TestModel(custom_output_text='ok'), instructions='x'),
+            store=store,
+            session=session,
+        )
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            text = app.query_one(SidebarPanel).text
+            assert 'Ship the CSV export' in text
+            assert ' · yolo' in text
+            assert 'Roadmap' in text
+
+    asyncio.run(inner())

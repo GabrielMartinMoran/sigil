@@ -18,12 +18,13 @@ import os
 import sqlite3
 import uuid
 from collections.abc import Callable, Sequence
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 
+from src.core.goal.state import Goal
 from src.core.providers.domain.selection import Selection
 from src.core.sessions.save_result import SaveResult
 from src.core.sessions.session import Session, _now
@@ -115,6 +116,7 @@ class SessionStore:
         if (
             _inside_transaction is None
             and session._draft
+            and session.goal is None
             and not any(
                 isinstance(part, UserPromptPart)
                 for message in session.messages
@@ -159,6 +161,14 @@ class SessionStore:
                     session.updated_at,
                 ),
             )
+            if session.goal is None:
+                conn.execute('DELETE FROM session_goals WHERE session_id = ?', (session.id,))
+            else:
+                conn.execute(
+                    'INSERT INTO session_goals (session_id, payload) VALUES (?, ?) '
+                    'ON CONFLICT(session_id) DO UPDATE SET payload = excluded.payload',
+                    (session.id, json.dumps(asdict(session.goal))),
+                )
             conn.execute(
                 'UPDATE workspaces SET last_session_id = ?, updated_at = ? WHERE id = ?',
                 (session.id, session.updated_at, self.workspace_id),
@@ -254,6 +264,7 @@ class SessionStore:
                 'agent': session.agent,
                 'allow_external_files': session.allow_external_files,
                 'mcp_overrides': session.mcp_overrides,
+                'goal': None if session.goal is None else asdict(session.goal),
             },
         )
 
@@ -269,6 +280,7 @@ class SessionStore:
         recovery.agent = session.agent
         recovery.allow_external_files = session.allow_external_files
         recovery.mcp_overrides = dict(session.mcp_overrides)
+        recovery.goal = session.goal
         recovery.title = f'{session.title or session.short_id} (recovered local changes)'
         recovery.tree = copy_tree(session.tree, recovery.id)
         return recovery
@@ -396,6 +408,8 @@ class SessionStore:
             allow_external_files=bool(row['allow_external_files']),
             mcp_overrides=_mcp_overrides_from(row['mcp_overrides']),
         )
+        raw_goal = self.database.value('SELECT payload FROM session_goals WHERE session_id = ?', (session.id,))
+        session.goal = None if raw_goal is None else Goal(**json.loads(str(raw_goal)))
         session.messages = root_messages(self.database, self.blobs, session.id)
         session.tree = load_tree(self.database, self.blobs, session.id)
         root = session.tree.root if session.tree is not None else None

@@ -38,6 +38,7 @@ from src.core.agents.tree.models.agent_node import AgentNode
 from src.core.context.images import image_size
 from src.core.context.meter.context_snapshot import ContextSnapshot
 from src.core.context.meter.session_cost import SessionCost
+from src.core.goal.state import Goal
 from src.core.mcp.tool_models.server_status import ServerStatus
 from src.core.providers.domain.model_catalog import ModelCatalog
 from src.core.roadmap.models.todo_item import TodoItem
@@ -174,8 +175,26 @@ def session_view(session: Session) -> dict[str, Any]:
         'created_at': session.created_at,
         'updated_at': session.updated_at,
         'messages': len(session.messages),
+        'goal': goal_view(session.goal),
         'external_files': session.allow_external_files,
         'mcp_overrides': dict(session.mcp_overrides),
+    }
+
+
+def goal_view(goal: Goal | None) -> dict[str, Any] | None:
+    """The objective the session is working toward, or ``None`` when it has none.
+
+    It travels with the session because both clients paint it above the roadmap,
+    and the roadmap alone does not say why the tasks exist. ``status`` is the
+    engine's own word so a client can mark a completed goal without inferring it
+    from the plan: an empty roadmap is not a finished objective.
+    """
+    if goal is None:
+        return None
+    return {
+        'text': goal.text,
+        'yolo': goal.yolo,
+        'status': goal.status,
     }
 
 
@@ -1025,6 +1044,7 @@ __all__ = [
     'agent_view',
     'context_view',
     'fork_view',
+    'goal_view',
     'mcp_view',
     'model_defaults_view',
     'model_view',

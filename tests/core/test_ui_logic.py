@@ -28,6 +28,7 @@ def test_match_commands_filters_by_prefix() -> None:
         '/mcp',
         '/context',
         '/compact',
+        '/goal',
         '/rollback',
         # only this client can
         '/reasoning-visibility',

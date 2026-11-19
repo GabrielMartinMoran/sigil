@@ -55,6 +55,8 @@ export type SessionView = {
   display_title: string;
   workspace: string;
   agent: string | null;
+  /** The objective the session is working toward: `null` when it has none. */
+  goal: GoalView | null;
   created_at: string;
   updated_at: string;
   messages: number;
@@ -116,6 +118,16 @@ export type RoadmapItem = {
   title: string;
   status: string;
   notes: string | null;
+};
+
+/**
+ * The goal the plan serves. `status` is the engine's word, not a client guess:
+ * an empty roadmap is not a finished objective.
+ */
+export type GoalView = {
+  text: string;
+  yolo: boolean;
+  status: string;
 };
 
 export type ModelView = {

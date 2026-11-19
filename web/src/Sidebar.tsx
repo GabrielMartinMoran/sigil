@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import { presentGoal } from './goalPresentation';
 import { useStore } from './store';
 
 type Tab = 'sessions' | 'workspaces' | 'plan';
@@ -30,6 +31,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   }, [open, loadSessions, loadWorkspaces]);
 
   const plan = state?.roadmap ?? [];
+  const goal = state?.session.goal ?? null;
+  const goalView = goal === null ? null : presentGoal(goal);
   const nodes = state?.tree.nodes ?? [];
 
   return (
@@ -159,6 +162,17 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             <div className="space-y-4">
               <section>
                 <h2 className="text-ink-faint px-1 pb-1 font-mono text-[10px] tracking-wide uppercase">roadmap</h2>
+                {goalView === null ? null : (
+                  <p className={`px-1 py-2 text-xs ${goalView.tone}`}>
+                    <span className="mr-1.5 font-mono text-[10px]">{goalView.mark}</span>
+                    <span>{goalView.text}</span>
+                    {goalView.mode === null ? null : (
+                      <span className="border-border-subtle text-warn ml-1.5 rounded border px-1 font-mono text-[9px] tracking-wide uppercase">
+                        {goalView.mode}
+                      </span>
+                    )}
+                  </p>
+                )}
                 {plan.length === 0 ? (
                   <p className="text-ink-faint px-1 py-2 text-xs">No plan for this execution.</p>
                 ) : (

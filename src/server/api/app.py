@@ -43,6 +43,8 @@ from src.core.agents.prompt_of_turn import prompt_of_turn
 from src.core.agents.rollback_error import RollbackError
 from src.core.agents.tree.models.summon_error import SummonError
 from src.core.context.meter.cost import session_cost
+from src.core.goal.command import describe_goal
+from src.core.goal.state import parse_goal_command
 from src.core.providers.domain.auth_method import AuthMethod
 from src.core.providers.domain.auth_methods_for import auth_methods_for
 from src.core.providers.domain.busy_error import BusyError
@@ -69,6 +71,7 @@ from src.server.api.schemas.compact_schema import CompactSchema
 from src.server.api.schemas.effort_schema import EffortSchema
 from src.server.api.schemas.external_files_schema import ExternalFilesSchema
 from src.server.api.schemas.fork_schema import ForkSchema
+from src.server.api.schemas.goal_schema import GoalSchema
 from src.server.api.schemas.login_schema import LoginSchema
 from src.server.api.schemas.mcp_schema import McpSchema
 from src.server.api.schemas.model_default_schema import ModelDefaultSchema
@@ -991,6 +994,49 @@ def create_app(
         except RuntimeError as exc:
             return _conflict(exc)  # type: ignore[return-value]
         return {'session': views.session_view(session)}
+
+    @app.get('/api/goal')
+    async def goal(session_id: str | None = None) -> dict[str, Any]:
+        """The goal the resident session carries.
+
+        Read-only and never refused, mid-turn and while a question waits included:
+        looking at the goal changes nothing, and a session waiting on an answer
+        still has to be able to say what it is working toward.
+        """
+        owner = selected_session(session_id)
+        return {'session': views.session_view(owner.session), 'notice': describe_goal(owner.session.goal)}
+
+    @app.post('/api/goal')
+    async def change_goal(body: GoalSchema, session_id: str | None = None) -> dict[str, Any]:
+        """Sets or stops the resident session's goal, allowed mid-turn by design.
+
+        The write belongs to the runtime: it persists the goal on the session row,
+        refuses YOLO while a question is pending instead of answering it,
+        publishes the new state and keeps the goal as steering for the running turn.
+        This route parses the same argument the terminal parses and projects the
+        answer; a refused activation is the service's ``409``, not a status invented
+        here.
+        """
+        owner = selected_session(session_id)
+        try:
+            command = parse_goal_command(body.argument)
+        except ValueError as exc:
+            return _refused(exc)  # type: ignore[return-value]
+        if command.action == 'status':
+            return {'session': views.session_view(owner.session), 'notice': describe_goal(owner.session.goal)}
+        apply_goal = getattr(owner, 'apply_goal', None)
+        if not callable(apply_goal):
+            # The route precedes the runtime hook in this cut. Saying so is the
+            # honest answer: a 200 here would paint a goal that no one persisted.
+            return JSONResponse(
+                {'error': 'The service runtime does not expose the goal hook yet, so no goal was changed.'},
+                status_code=501,
+            )
+        try:
+            update = apply_goal(command)
+        except RuntimeError as exc:
+            return _conflict(exc)  # type: ignore[return-value]
+        return {'session': views.session_view(owner.session), 'notice': update.notice}
 
     debug_diagnostics: WeakKeyDictionary[SessionRuntime, DebugDiagnostics] = WeakKeyDictionary()
 

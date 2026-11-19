@@ -43,6 +43,7 @@ from src.core.context.scope_tracker import ScopeTracker
 from src.core.extensions.extension_toolset import ExtensionToolset
 from src.core.files.paths import workspace_root
 from src.core.files.tools import register_file_tools
+from src.core.goal.policy import GoalQuestionGate
 from src.core.interaction.models.question_item import QuestionItem
 from src.core.interaction.models.question_option import QuestionOption
 from src.core.interaction.question_hub import QuestionHub
@@ -407,7 +408,11 @@ class Composition:
                 workspace=self.workspace,
                 scope=self.scope,
                 agent_registry=self.agent_registry,
-                extra_capabilities=[self.context_capability, self.feature_gate],
+                extra_capabilities=[
+                    self.context_capability,
+                    self.feature_gate,
+                    GoalQuestionGate(current_goal=lambda: self.session.goal),
+                ],
                 tool_registrars=[self.install_tools],
                 node_blocks=self.node_blocks,
                 available_features=self.available_features,

@@ -107,6 +107,8 @@ export const api = {
       text,
       request_id: requestId,
     }),
+  goal: (argument: string, sessionId?: string | null) =>
+    post<{ session: SessionView; notice: string }>(scoped('/api/goal', sessionId), { argument }),
   durable: (sessionId?: string | null) => request<DurableSession>(scoped('/api/session/durable', sessionId)),
   abort: (sessionId?: string | null) => post<{ stopped: boolean }>(scoped('/api/abort', sessionId)),
   answer: (

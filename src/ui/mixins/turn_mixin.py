@@ -23,9 +23,11 @@ Three responsibilities share this file because they share one object: the run.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import time
 from contextlib import AbstractContextManager, nullcontext
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai import Agent
@@ -34,6 +36,8 @@ from pydantic_ai.exceptions import RunCancelled
 from pydantic_ai.messages import (
     EnqueuedMessagesEvent,
     FunctionToolResultEvent,
+    ModelRequest,
+    ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
     TextPart,
@@ -41,12 +45,14 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
+    UserPromptPart,
 )
 from pydantic_ai.usage import UsageLimits
 from textual import work
 from textual.css.query import NoMatches
 from textual.widgets import Static
 
+from src.core.agents.mark import mark
 from src.core.agents.message_types import MessageTypes
 from src.core.agents.origin import origin
 from src.core.agents.step_budget import StepBudget
@@ -55,6 +61,10 @@ from src.core.agents.turn_timings import TurnTimings
 from src.core.attachments.content import user_content
 from src.core.attachments.image_attachment import ImageAttachment
 from src.core.files.paths import execution_workspace
+from src.core.goal.coordinator import ProgressTracker
+from src.core.goal.policy import GoalQuestionGate
+from src.core.goal.review import GoalReviewInput, conversation_context, review_goal
+from src.core.goal.state import goal_instructions
 from src.core.providers.domain.thinking import settings_value as thinking_settings
 from src.core.sessions.recover_history import recover_history
 from src.ui.client.outgoing_image import OutgoingImage
@@ -241,6 +251,14 @@ class TurnMixin:
             await chat.add_tool_result(event.part.tool_name, event.part.content, ok=ok, args=args)
             self.set_activity_label('Thinking')
         elif isinstance(event, EnqueuedMessagesEvent):
+            goal_enqueues = getattr(self, '_goal_enqueues', set())
+            if str(event.enqueue_id) in goal_enqueues:
+                for message in event.messages:
+                    for part in message.parts:
+                        if isinstance(part, UserPromptPart) and part in event.parts:
+                            mark(message, part, origin('internal_notice'))
+                goal_enqueues.discard(str(event.enqueue_id))
+                self.checkpoint(force=True)
             # The run just picked up a message typed mid-turn: its line stops
             # saying that it is waiting.
             self._mark_delivered(event.enqueue_id, chat)
@@ -343,6 +361,31 @@ class TurnMixin:
         self._steering.clear()
         return leftovers
 
+    def goal_changed(self) -> None:
+        """Deliver a changed objective at the next seam of an active run."""
+        if not self._turn_active:
+            return
+        instruction = goal_instructions(self._session.goal) or 'The user stopped the session goal mode.'
+        run = self._current_run
+        if run is None:
+            self._goal_pending_instruction = instruction
+            return
+        self._enqueue_goal_instruction(run, instruction)
+
+    def _enqueue_goal_instruction(self, run: Any, instruction: str) -> None:
+        try:
+            part = UserPromptPart(instruction)
+            request = ModelRequest(parts=[part])
+            mark(request, part, origin('internal_notice'))
+            enqueue_id = run.enqueue(request)
+        except Exception as exc:  # noqa: BLE001 - the saved goal remains in effect
+            self.post_message(ChatNotice(f'Goal saved, but the turn could not receive it: {exc}', style='yellow'))
+            return
+        if enqueue_id is not None:
+            if not hasattr(self, '_goal_enqueues'):
+                self._goal_enqueues = set()
+            self._goal_enqueues.add(str(enqueue_id))
+
     # --- abort -------------------------------------------------------------
 
     def request_abort(self) -> bool:
@@ -356,7 +399,8 @@ class TurnMixin:
         window expiring) calls it off: a confirmation that survives other typing
         is a confirmation by accident.
         """
-        if not self._turn_active:
+        review = getattr(self, '_goal_review_task', None)
+        if not self._turn_active and (review is None or review.done()):
             return False
         if self._abort_deadline is not None and time.monotonic() < self._abort_deadline:
             return True
@@ -406,6 +450,13 @@ class TurnMixin:
             # it started and reports when the turn is over.
             self.stop_service_turn()
             return
+        review = getattr(self, '_goal_review_task', None)
+        if review is not None and not review.done():
+            goal = self._session.goal
+            if goal is not None:
+                self._session.goal = replace(goal, status='stopped', revision=goal.revision + 1)
+                self._store.save_progress(self._session)
+            review.cancel()
         self._cancel_shell()
         # A subagent started by this turn has no reason to outlive it: `Esc` twice
         # means stop, and a background node still spending tokens is not stopped.
@@ -435,6 +486,14 @@ class TurnMixin:
         if self._turn_active:
             self.steer(text, attachments=attachments)
             return
+        goal = self._session.goal
+        if (
+            goal is not None
+            and goal.status in ('waiting', 'blocked')
+            and not self._wake_pending
+            and not getattr(self, '_goal_continuation', False)
+        ):
+            self._session.goal = replace(goal, status='armed', continuations=0, revision=goal.revision + 1)
         self._turn_active = True
         self.snapshot_workspace()
         # A session is named after the first thing it was asked to do. On the
@@ -549,7 +608,8 @@ class TurnMixin:
         # something the agent did earlier.
         waiting = self._summoner.waiting() if self._summoner is not None else []
         snapshots = [report_view(node) for node in waiting]
-        initial_origin = origin()
+        initial_origin = origin('agent_message' if getattr(self, '_goal_continuation', False) else 'user')
+        self._goal_continuation = False
         pending = self._take_subagent_messages()
         if pending:
             initial_origin = origin('subagent_report', reports=snapshots)
@@ -622,13 +682,23 @@ class TurnMixin:
                 async with self._agent.iter(
                     user_content(text, attachments),
                     message_history=history,
-                    capabilities=[ProcessEventStream(handler=handler), budget, MessageTypes(initial=initial_origin)],
+                    instructions=goal_instructions(session.goal),
+                    capabilities=[
+                        ProcessEventStream(handler=handler),
+                        budget,
+                        MessageTypes(initial=initial_origin),
+                        GoalQuestionGate(current_goal=lambda: session.goal, id='goal_root_gate'),
+                    ],
                     model_settings=self.model_settings(),
                     usage_limits=UsageLimits(request_limit=None),
                 ) as run:
                     self._current_run = run
                     # A message typed while the run was being built has no id yet.
                     self._flush_steering(run)
+                    pending_goal = getattr(self, '_goal_pending_instruction', None)
+                    self._goal_pending_instruction = None
+                    if pending_goal:
+                        self._enqueue_goal_instruction(run, pending_goal)
                     async for _node in timings.trace(run):
                         if Agent.is_model_request_node(_node):
                             self.set_activity_label('Waiting for model')
@@ -672,6 +742,9 @@ class TurnMixin:
         # active one, the turn's result is still saved where it belongs and the
         # conversation on screen is left alone.
         session.messages = history
+        goal = session.goal
+        if goal is not None and goal.status in ('armed', 'active') and attention is not Attention.FINISHED:
+            session.goal = replace(goal, status='stopped' if attention is None else 'blocked')
         self._meter.stamp(session)
         current = self._store.save_current(session)
         if session is self._session:
@@ -710,6 +783,8 @@ class TurnMixin:
         # was when the last poll ran.
         self.refresh_diff()
         timings.finish()
+        if attention is Attention.FINISHED and await self._review_local_goal(session, chat):
+            attention = None
         if attention is not None:
             # Not the end of the whole job: a subagent may still be working, and the
             # notification waits for it rather than calling the user back early.
@@ -718,6 +793,133 @@ class TurnMixin:
         refresh_debug = getattr(self, 'refresh_debug', None)
         if callable(refresh_debug):
             refresh_debug()
+
+    def goal_tree_changed(self) -> None:
+        """Resume a deferred review if subagents stop without a report wake-up."""
+        if not getattr(self, '_goal_waiting_for_subagents', False) or self._turn_active or self.subagents_running():
+            return
+        if self._summoner is not None and self._summoner.waiting():
+            self.subagents_idle()
+            return
+        self._goal_waiting_for_subagents = False
+        self.run_worker(self._resume_goal_after_subagents(self._session))
+
+    async def _resume_goal_after_subagents(self, session: Any) -> None:
+        chat = self.query_one(ChatLog)
+        if not await self._review_local_goal(session, chat) and self._session is session:
+            self.settle_attention(Attention.FINISHED)
+
+    async def _review_local_goal(self, session: Any, chat: ChatLog) -> bool:
+        """Return true when goal work remains or another continuation was scheduled."""
+        goal = session.goal
+        if goal is None or goal.status not in ('armed', 'active'):
+            return False
+        session.goal = goal = replace(goal, status='active')
+        self._store.save_progress(session)
+        self.refresh_sidebar()
+        waiting = self._summoner.waiting() if self._summoner is not None else []
+        if self.subagents_running() or waiting:
+            self._goal_waiting_for_subagents = True
+            if waiting:
+                self.subagents_idle()
+            return True
+        self._goal_waiting_for_subagents = False
+        revision = goal.revision
+        if goal.continuations >= self._settings.goal_max_continuations:
+            session.goal = replace(goal, status='blocked')
+            self._store.save_progress(session)
+            await chat.add_notice('Goal paused: automatic continuation limit reached.', style='yellow')
+            self.refresh_sidebar()
+            return False
+        report = next(
+            (
+                message.text
+                for message in reversed(session.messages)
+                if isinstance(message, ModelResponse) and message.text
+            ),
+            '',
+        )
+        store = self._roadmap_store
+        roadmap = (
+            ''
+            if store is None
+            else '\n'.join(f'{item.status}: {item.title} {item.notes or ""}' for item in store.root.snapshot())
+        )
+        self.set_activity(running=True, label='Reviewing goal')
+        try:
+            self._goal_review_task = asyncio.create_task(
+                review_goal(
+                    self._agent.model,
+                    GoalReviewInput(
+                        goal=goal, roadmap=roadmap, report=report, agreements=conversation_context(session.messages)
+                    ),
+                    model_settings=self.model_settings(),
+                )
+            )
+            decision = await self._goal_review_task
+        except asyncio.CancelledError:
+            return True
+        except Exception as exc:  # noqa: BLE001 - review failure must pause rather than claim success
+            decision = None
+            error = str(exc)
+        else:
+            error = ''
+        finally:
+            self._goal_review_task = None
+            self.set_activity(running=False)
+        current = session.goal
+        waiting = self._summoner.waiting() if self._summoner is not None else []
+        if self._session is session and (self.subagents_running() or waiting):
+            self._goal_waiting_for_subagents = True
+            if waiting:
+                self.subagents_idle()
+            return True
+        if (
+            self._session is session
+            and current is not None
+            and current.revision != revision
+            and current.status in ('armed', 'active')
+            and not self._turn_active
+            and not self.subagents_running()
+        ):
+            return await self._review_local_goal(session, chat)
+        if (
+            self._session is not session
+            or current is None
+            or current.revision != revision
+            or current.status != 'active'
+            or self._turn_active
+            or self.subagents_running()
+        ):
+            return True
+        if decision is None or decision.decision in ('needs_user', 'blocked'):
+            session.goal = replace(current, status='blocked')
+            reason = error if decision is None else decision.reason
+            await chat.add_notice(f'Goal paused: {reason}', style='yellow')
+        elif decision.decision == 'complete':
+            session.goal = replace(current, status='completed')
+        else:
+            key = (session.id, current.revision)
+            if getattr(self, '_goal_progress_key', None) != key:
+                self._goal_progress = ProgressTracker()
+                self._goal_progress_key = key
+            if self._goal_progress.stalled(report, roadmap, decision.reason):
+                session.goal = replace(current, status='blocked')
+                self._store.save_progress(session)
+                await chat.add_notice('Goal paused: repeated reviews show no observable progress.', style='yellow')
+                self.refresh_sidebar()
+                return False
+            session.goal = replace(current, continuations=current.continuations + 1)
+            self._store.save_progress(session)
+            text = f'Goal review: the objective is not complete. Continue: {decision.reason}'
+            await chat.add_agent_message(text)
+            self._goal_continuation = True
+            self.call_later(self.start_turn, text)
+            self.refresh_sidebar()
+            return True
+        self._store.save_progress(session)
+        self.refresh_sidebar()
+        return False
 
     def _turn_budget(self) -> int:
         """The steps this turn gets: the profile's own, or the configured default.
