@@ -45,6 +45,9 @@ class MessageTypes(AbstractCapability[Any]):
                 if not isinstance(part, UserPromptPart):
                     continue
                 key = part.timestamp.isoformat()
+                existing = (message.metadata or {}).get(KEY, {})
+                if key in existing:
+                    self._saved[key] = existing[key]
                 if key in self._saved:
                     mark(message, part, self._saved[key])
                 elif not self._marked and key not in self._historical:

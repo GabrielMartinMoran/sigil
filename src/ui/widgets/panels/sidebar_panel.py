@@ -8,8 +8,9 @@ the last section of the same list.
 
 The sections are ordered by how often they are read: the model with the budget of
 its window, the skills loaded in the session, the MCP servers and, at the end, the
-plan of the task. A section with nothing to say does not appear at all, so the
-panel stays short on a cold start and grows as the session does.
+goal the plan serves and the plan itself. A section with nothing to say does not
+appear at all, so the panel stays short on a cold start and grows as the session
+does.
 
 The context budget is a line of the model section and not a section of its own: it
 is a property of that model's window, it is read with the model, and a heading for
@@ -35,6 +36,7 @@ from textual.containers import Vertical
 from textual.widgets import Static
 
 from src.core.context.meter.session_cost import SessionCost
+from src.core.goal.state import Goal
 from src.core.roadmap.models.todo_item import TodoItem
 from src.core.roadmap.roadmap_store import RoadmapStore
 from src.ui.render.money_format import compact_usd
@@ -66,6 +68,23 @@ ROADMAP_STYLE = {
     'done': 'green',
 }
 ROADMAP_FALLBACK_ICON = '·'
+
+GOAL_ICON = {'armed': '○', 'active': '▶', 'waiting': '○', 'blocked': '!', 'completed': '✓', 'stopped': '·'}
+GOAL_STYLE = {
+    'armed': '',
+    'active': 'bold blue',
+    'waiting': '',
+    'blocked': 'bold yellow',
+    'completed': 'green',
+    'stopped': 'dim',
+}
+GOAL_FALLBACK_ICON = '·'
+"""The goal hangs off the roadmap's marks and colours.
+
+The two sections are read together, so `▶` is running and `✓` is done in both.
+The difference is what the glyph means: a task is one step, the goal is the
+sentence the steps serve.
+"""
 
 UNREPORTED = 'the service did not report it'
 """What a section says when the projection does not carry it.
@@ -103,6 +122,8 @@ class SidebarPanel(Vertical):
         self._skills_reported = True
         self._roadmap: tuple[TodoItem, ...] | None = None
         self._roadmap_reported = False
+        self._goal: Goal | None = None
+        self._goal_reported = True
         self._context_state: ContextState | None = None
 
     def compose(self) -> ComposeResult:
@@ -194,6 +215,18 @@ class SidebarPanel(Vertical):
         self._servers = tuple(servers)
         self._mcp_known = reported
         self._mcp_reported = True
+        self._repaint()
+
+    def update_goal(self, goal: Goal | None, *, reported: bool = True) -> None:
+        """The objective the roadmap serves.
+
+        ``reported=False`` is the attached case where the projection carried no
+        goal: the section names the gap instead of hiding it, because hiding it
+        would read as a session with no goal. ``None`` with ``reported=True`` is
+        that claim, and the section stays away.
+        """
+        self._goal = goal
+        self._goal_reported = reported
         self._repaint()
 
     def update_roadmap(self, items: Sequence[TodoItem] | None) -> None:
@@ -344,6 +377,29 @@ class SidebarPanel(Vertical):
                 text.append(f' {FAIL_MARK} ', style='bold red')
                 text.append(f'{server.name}\n', style='red')
 
+    def _append_goal(self, text: Text) -> None:
+        """The objective, directly above the plan it explains.
+
+        It is one line and not a box: the goal is a sentence, and the roadmap
+        under it is what turns that sentence into work. A session with no goal
+        has no section — an empty heading would spend two rows saying nothing.
+        """
+        if not self._goal_reported:
+            text.append(f' unknown goal — {UNREPORTED}\n', style='dim')
+            return
+        goal = self._goal
+        if goal is None or not goal.text:
+            return
+        style = GOAL_STYLE.get(goal.status, '')
+        icon = GOAL_ICON.get(goal.status, GOAL_FALLBACK_ICON)
+        text.append(f' {icon} ', style=style)
+        text.append(goal.text, style=style)
+        if goal.yolo:
+            # The mode is named, not left to a colour: it removes questions that
+            # the reader may be waiting for.
+            text.append(' · yolo', style='bold yellow')
+        text.append('\n')
+
     def _append_roadmap(self, text: Text, *, width: int = 0, console: Console | None = None) -> None:
         """The plan of the task, last in the panel.
 
@@ -351,10 +407,15 @@ class SidebarPanel(Vertical):
         what the agent is working with, and the plan is what it has done so far.
         With no store and no projection there is no plan to show, and the section
         stays away instead of announcing a feature this app was started without.
+        An empty plan still paints its heading and `No tasks yet.`, so the goal
+        above it is not the only thing left of a session that has not planned yet.
         """
-        if not self._roadmap_reported and self._store is None:
+        if not self._roadmap_reported and self._store is None and self._goal is None and self._goal_reported:
             return
         self._section(text, 'Roadmap')
+        self._append_goal(text)
+        if not self._roadmap_reported and self._store is None:
+            return
         if self._roadmap_reported:
             if self._roadmap is None:
                 text.append(f' unknown — {UNREPORTED}\n', style='dim')

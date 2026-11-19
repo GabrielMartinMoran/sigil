@@ -273,7 +273,16 @@ small however long the history gets.
 
 SCHEMA += V8_SCHEMA
 
-USER_VERSION = 8
+V9_SCHEMA = """
+CREATE TABLE IF NOT EXISTS session_goals (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    payload TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
+"""
+
+SCHEMA += V9_SCHEMA
+
+USER_VERSION = 9
 """The version `SCHEMA` describes.
 
 Steps start above the empty file: a database created today is written whole and its
@@ -282,6 +291,7 @@ written by an older Sigil.
 """
 
 MIGRATIONS: dict[int, str] = {
+    9: V9_SCHEMA,
     8: V8_SCHEMA,
     6: V6_SCHEMA,
     7: V7_SCHEMA,

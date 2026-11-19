@@ -13,6 +13,7 @@ set provider credentials or impose a billing cap.
 | Variable                                | Default       | What it does                                                                                                     |
 | --------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `SIGIL_MAX_STEPS`                       | `256`         | Model calls per turn when the profile declares no `max_steps`; running out ends it with a last tool-less answer. |
+| `SIGIL_GOAL_MAX_CONTINUATIONS`          | `10`          | Maximum automatic continuations per goal before the goal pauses. |
 | `SIGIL_MODEL_MAX_ATTEMPTS`              | `5`           | Attempts per model request on transient failures.                                                                |
 | `SIGIL_CONTEXT_STRATEGY`                | `append-only` | `append-only` or `passthrough`.                                                                                  |
 | `SIGIL_CONTEXT_TRIGGER_PERCENT`         | `60`          | Share of the window that starts a deterministic compaction.                                                      |

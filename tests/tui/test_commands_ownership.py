@@ -281,6 +281,7 @@ def test_a_delegated_row_has_a_route_and_is_dispatched_to_its_handler() -> None:
         '/default-models',
         '/effort',
         '/external-files',
+        '/goal',
         '/load',
         '/mcp',
         '/model',

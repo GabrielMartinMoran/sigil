@@ -14,7 +14,23 @@ Use these commands to choose the conversation and its working state:
 | `/load`                         | Open a saved session, switching to its workspace if needed        |
 | `/rollback [number]`            | Choose a user turn and roll back or fork from before it           |
 | `/agent [name]`                 | Open the agent picker or select a named profile                   |
+| `/goal [--yolo] <objective>`    | Set a session goal without starting a turn                        |
+| `/goal status`                  | Show the current goal                                             |
+| `/goal stop`                    | Stop goal mode                                                    |
 | `/external-files [allow\|deny]` | Show or change session file-tool access outside the workspace     |
+
+A goal is reviewed when the agent and its subagents have stopped working. If
+work remains, Sigil can continue automatically. The review uses the same model
+and can be wrong; it doesn't independently verify the agent's claims. The
+completed goal remains visible in the sidebar.
+
+`--yolo` lets the agent make reasonable decisions and proceed without asking for
+plan approval. It disables `ask_user`, but doesn't grant additional tool or file
+permissions. If a question is already open, answer or dismiss it before
+activating YOLO; Sigil doesn't invent an answer or interrupt the active turn.
+Sigil pauses on a blocker or when it reaches the configured
+[continuation limit](environment.md). Model reviews and continuations can incur
+additional costs.
 
 Read [Rollback](../guides/rollback.md) before restoring files, and
 [Safety](../guides/safety.md) before broadening access.
@@ -67,6 +83,9 @@ In the default service-backed terminal, `/new` and `/load` can change which
 session this client watches without cancelling work in another session. `/quit`
 detaches the client; it doesn't abort the service's work. Use the explicit stop
 action when cancellation is intended.
+
+You can set or change `/goal` while a turn is running. The active agent receives
+the updated objective; the command doesn't start a separate user turn.
 
 Read-only diagnostics and display controls can remain available. Plain messages
 are [queued into the active turn](../guides/conversations.md), not sent through

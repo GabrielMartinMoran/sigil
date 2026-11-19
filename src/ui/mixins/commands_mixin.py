@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from src.core.context.meter.render import render_report
+from src.core.goal.command import apply_goal_command
+from src.core.goal.state import parse_goal_command
 from src.core.mcp.tool_models.server_status import ServerStatus
 from src.core.sessions.catalog import catalog
 from src.core.sessions.catalog_entry import CatalogEntry
@@ -52,6 +54,10 @@ They are the ones that would change what the turn is working with: `/new` and
 `/load` swap the session out from under it, `/agent` swaps the instructions and
 the tool set of a run whose definitions were already computed, `/provider` adds
 and deletes accounts, and `/model` and `/effort` would swap the model mid-run.
+
+`/goal` is deliberately **not** here. A goal is steering for the work already
+running — setting it mid-turn is the point — and the service persists it on the
+session row rather than swapping anything the run was built with.
 
 `/quit` is deliberately **not** here. Leaving detaches — it sends nothing to the
 service and stops no work (see `action_quit`), so refusing it while a turn runs
@@ -311,6 +317,7 @@ class CommandsMixin:
             '/default-models': lambda: self.show_default_models(chat),
             '/effort': lambda: self.show_effort(chat, args),
             '/external-files': lambda: self.handle_external_files(args, chat),
+            '/goal': lambda: self.handle_goal(args, chat),
             '/reasoning-visibility': lambda: self.handle_reasoning_visibility(args, chat),
             '/tools': lambda: self.handle_tools(args, chat),
             '/alerts': lambda: self.handle_alerts(args, chat),
@@ -334,6 +341,64 @@ class CommandsMixin:
         # came out as a worker failure, which is a crash for the user.
         if inspect.isawaitable(result):
             await result
+
+    async def handle_goal(self, args: str, chat: ChatLog) -> None:
+        """Set, stop or report the session's goal, through the service when attached.
+
+        Allowed mid-turn on purpose: the goal steers the work already running, and
+        setting one is not a change to the model, the agent or the session identity.
+        The service owns the write when attached, because the goal is persisted on
+        the session row the service holds.
+
+        A pending question is not answered here. In process the shared helper
+        refuses YOLO while the question panel is waiting; attached, the service
+        returns its own conflict and this handler paints that refusal.
+        """
+        try:
+            command = parse_goal_command(args)
+        except ValueError as exc:
+            await chat.add_notice(str(exc), style='yellow')
+            return
+        if self._client is not None:
+            await self._service_goal(self._client, args, command.action, chat)
+            return
+        update = apply_goal_command(command, self._session.goal, question_pending=self._question_pending())
+        if update.refused:
+            await chat.add_notice(update.notice, style='yellow')
+            return
+        if update.changed:
+            self._session.goal = update.goal
+            self._store.save(self._session)
+            changed = getattr(self, 'goal_changed', None)
+            if callable(changed):
+                changed()
+            refresh = getattr(self, 'refresh_sidebar', None)
+            if callable(refresh):
+                refresh()
+        await chat.add_notice(update.notice, style='cyan')
+
+    def _question_pending(self) -> bool:
+        """Whether this terminal is waiting on an answer right now.
+
+        The panel belongs to the app, and some command tests build a host without
+        one. A missing panel is not a pending question.
+        """
+        pending = getattr(self, '_pending_question', None)
+        return callable(pending) and pending() is not None
+
+    async def _service_goal(self, client: ServiceClient, args: str, action: str, chat: ChatLog) -> None:
+        """Sends one `/goal` argument and paints the service's own answer."""
+        try:
+            reply = await client.goal(args)
+        except ServiceClientError as exc:
+            await chat.add_notice(f'✖ {failure_notice(exc)}', style='bold red')
+            return
+        notice = reply.get('notice')
+        if not isinstance(notice, str) or not notice:
+            notice = 'No goal state was reported by the service.' if action == 'status' else 'Goal updated.'
+        await chat.add_notice(notice, style='cyan')
+        if action != 'status':
+            await self.refresh_service_state()
 
     async def handle_external_files(self, args: str, chat: ChatLog) -> None:
         """Show or change this session's file access boundary."""

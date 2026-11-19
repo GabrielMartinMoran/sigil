@@ -39,12 +39,15 @@ from pydantic_ai.exceptions import RunCancelled
 from pydantic_ai.messages import (
     EnqueuedMessagesEvent,
     FunctionToolResultEvent,
+    ModelRequest,
+    ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    UserPromptPart,
 )
 from pydantic_ai.usage import UsageLimits
 
@@ -52,6 +55,7 @@ from src.core.agents.agent_model_config import AgentModelConfig
 from src.core.agents.checkpoint import Checkpoint
 from src.core.agents.config_scope import ConfigScope
 from src.core.agents.fork_outcome import ForkOutcome
+from src.core.agents.mark import mark
 from src.core.agents.message_types import MessageTypes
 from src.core.agents.model_defaults_state import ModelDefaultsState
 from src.core.agents.origin import origin
@@ -71,6 +75,11 @@ from src.core.composition.model_settings import model_settings
 from src.core.context.capability import subagent_window_warning
 from src.core.context.compaction.manual_compaction_result import ManualCompactionResult
 from src.core.files.paths import execution_workspace
+from src.core.goal.command import GoalUpdate, apply_goal_command
+from src.core.goal.coordinator import ProgressTracker
+from src.core.goal.policy import GoalQuestionGate
+from src.core.goal.review import GoalReviewInput, conversation_context, review_goal
+from src.core.goal.state import GoalCommand, goal_instructions
 from src.core.interaction.models.question_answer import QuestionAnswer
 from src.core.interaction.models.question_item import QuestionItem
 from src.core.sessions.recover_history import recover_history
@@ -158,6 +167,11 @@ class SessionRuntime:
         self._settled = asyncio.Event()
         self._settled.set()
         self._aborting = False
+        self._goal_needs_review = False
+        self._goal_review_task: asyncio.Task[Any] | None = None
+        self._goal_progress = ProgressTracker()
+        self._goal_progress_key: tuple[str, int] | None = None
+        self._goal_enqueues: set[str] = set()
         self._attempts: dict[str, str] = {}
         self._pending: dict[str, AcceptedInput] = {}
         self._enqueued: dict[str, str] = {}
@@ -212,7 +226,11 @@ class SessionRuntime:
 
     @property
     def busy(self) -> bool:
-        return self._compacting or (self._task is not None and not self._task.done())
+        return (
+            self._compacting
+            or (self._task is not None and not self._task.done())
+            or (self._goal_review_task is not None and not self._goal_review_task.done())
+        )
 
     def ensure_workers(self) -> None:
         """Starts the durable consumer and the MCP loader on the running loop.
@@ -300,7 +318,7 @@ class SessionRuntime:
         if latest is not None:
             self.composition.bind_session(latest)
             self._publish_state('session_reloaded')
-        kind = 'steer' if self.busy else 'turn'
+        kind = 'steer' if self._task is not None and not self._task.done() else 'turn'
         identifier = request_id or str(uuid.uuid4())
         existing = self.composition.store.database.one(
             'SELECT kind, state FROM accepted_inputs WHERE session_id = ? AND request_id = ?',
@@ -383,6 +401,11 @@ class SessionRuntime:
                     # wake is a turn, and this is the one place that starts them.
                     if await self._wake_from_subagents():
                         continue
+                    if self._goal_needs_review and not self._subagent_working():
+                        if await self._review_goal():
+                            continue
+                        if self._has_open_input():
+                            continue
                     self._settled.set()
                     try:
                         await asyncio.wait_for(self._wake.wait(), timeout=QUEUE_POLL_INTERVAL)
@@ -450,7 +473,20 @@ class SessionRuntime:
     def abort(self) -> bool:
         """Stops the turn: the shell commands die, then the run unwinds."""
         if self._task is None or self._task.done():
-            return False
+            review = self._goal_review_task
+            if (review is None or review.done()) and not self._goal_needs_review:
+                return False
+            goal = self.session.goal
+            if goal is not None:
+                self.session.goal = replace(goal, status='stopped', revision=goal.revision + 1)
+                self.composition.store.save_progress(self.session)
+            self._goal_needs_review = False
+            if review is not None and not review.done():
+                review.cancel()
+            self.composition.summoner.cancel_all()
+            self._publish('turn_finished', status='cancelled', error='', session_id=self.session.id)
+            self._publish_state('goal')
+            return True
         self._aborting = True
         self.composition.shell_commands.kill_all()
         self.composition.summoner.cancel_all()
@@ -557,6 +593,14 @@ class SessionRuntime:
     async def _turn(self, text: str, accepted: AcceptedInput | None = None) -> None:
         composition = self.composition
         session = composition.session
+        goal = session.goal
+        if (
+            goal is not None
+            and goal.status in ('waiting', 'blocked')
+            and accepted is not None
+            and (accepted.origin or {}).get('type', 'user') == 'user'
+        ):
+            session.goal = replace(goal, status='armed', continuations=0, revision=goal.revision + 1)
         self._turn_session = session
         self._last_checkpoint_at = 0.0
         self._aborting = False
@@ -606,10 +650,12 @@ class SessionRuntime:
                 async with agent.iter(
                     prompt,
                     message_history=history,
+                    instructions=goal_instructions(session.goal),
                     capabilities=[
                         ProcessEventStream(handler=self._stream),
                         budget,
                         MessageTypes(initial=(accepted.origin or origin()) if accepted else origin()),
+                        GoalQuestionGate(current_goal=lambda: session.goal, id='goal_root_gate'),
                     ],
                     model_settings=model_settings(composition.model_service),
                     usage_limits=UsageLimits(request_limit=None),
@@ -679,8 +725,124 @@ class SessionRuntime:
                 text=f'Step limit of {budget.max_steps} reached: the turn got one last call without tools.',
                 tone='warn',
             )
-        self._publish('turn_finished', status=status, error=error, session_id=session.id)
+        goal = session.goal
+        if goal is not None and goal.status in ('armed', 'active') and status == 'ok':
+            session.goal = replace(goal, status='active')
+            composition.store.save_progress(session)
+            self._goal_needs_review = True
+        else:
+            self._goal_needs_review = False
+            if goal is not None and goal.status in ('armed', 'active') and status in ('cancelled', 'error'):
+                session.goal = replace(goal, status='stopped' if status == 'cancelled' else 'blocked')
+                composition.store.save_progress(session)
+            self._publish('turn_finished', status=status, error=error, session_id=session.id)
         self._publish_state('turn')
+
+    async def _review_goal(self) -> bool:
+        """Review a settled goal once; return whether another turn was queued."""
+        session = self.session
+        goal = session.goal
+        if goal is None or goal.status != 'active' or self._has_open_input() or self._closing:
+            self._goal_needs_review = False
+            return False
+        revision = goal.revision
+        if goal.continuations >= self.composition.settings.goal_max_continuations:
+            session.goal = replace(goal, status='blocked')
+            self.composition.store.save_progress(session)
+            self._goal_needs_review = False
+            self._publish('notice', text='Goal paused: automatic continuation limit reached.', tone='warn')
+            self._publish('turn_finished', status='ok', error='', session_id=session.id)
+            self._publish_state('goal')
+            return False
+        report = next(
+            (
+                message.text
+                for message in reversed(session.messages)
+                if isinstance(message, ModelResponse) and message.text
+            ),
+            '',
+        )
+        roadmap = '\n'.join(
+            f'{item.status}: {item.title} {item.notes or ""}' for item in self.composition.roadmap_store.root.snapshot()
+        )
+        try:
+            self._goal_review_task = asyncio.create_task(
+                review_goal(
+                    self.composition.current_model(),
+                    GoalReviewInput(
+                        goal=goal, roadmap=roadmap, report=report, agreements=conversation_context(session.messages)
+                    ),
+                    model_settings=model_settings(self.composition.model_service),
+                )
+            )
+            decision = await self._goal_review_task
+        except asyncio.CancelledError:
+            if self._closing:
+                raise
+            return False
+        except Exception as exc:  # noqa: BLE001 - report reviewer failure without claiming success
+            decision = None
+            error = str(exc)
+        else:
+            error = ''
+        finally:
+            self._goal_review_task = None
+        current = session.goal
+        if (
+            self.session is session
+            and current is not None
+            and current.revision != revision
+            and current.status in ('armed', 'active')
+            and not self._has_open_input()
+            and not self._subagent_working()
+            and not self._closing
+        ):
+            session.goal = replace(current, status='active')
+            self.composition.store.save_progress(session)
+            self._goal_needs_review = True
+            return True
+        if (
+            self.session is not session
+            or current is None
+            or current.revision != revision
+            or current.status != 'active'
+            or self._has_open_input()
+            or self._subagent_working()
+            or any(str(node.status) in ('done', 'failed') for node in self.composition.summoner.waiting())
+            or self._closing
+        ):
+            self._goal_needs_review = False
+            return False
+        self._goal_needs_review = False
+        if decision is None or decision.decision in ('needs_user', 'blocked'):
+            session.goal = replace(current, status='blocked')
+            self.composition.store.save_progress(session)
+            reason = error if decision is None else decision.reason
+            self._publish('notice', text=f'Goal paused: {reason}', tone='warn')
+        elif decision.decision == 'complete':
+            session.goal = replace(current, status='completed')
+            self.composition.store.save_progress(session)
+        else:
+            key = (session.id, current.revision)
+            if self._goal_progress_key != key:
+                self._goal_progress = ProgressTracker()
+                self._goal_progress_key = key
+            if self._goal_progress.stalled(report, roadmap, decision.reason):
+                session.goal = replace(current, status='blocked')
+                self.composition.store.save_progress(session)
+                self._publish('notice', text='Goal paused: repeated reviews show no observable progress.', tone='warn')
+                self._publish('turn_finished', status='ok', error='', session_id=session.id)
+                self._publish_state('goal')
+                return False
+            session.goal = replace(current, continuations=current.continuations + 1)
+            self.composition.store.save_progress(session)
+            text = f'Goal review: the objective is not complete. Continue: {decision.reason}'
+            await self._accept_message(text, message_origin=origin('agent_message'))
+            self._publish_state('goal')
+            return True
+        self._publish('turn_finished', status='ok', error='', session_id=session.id)
+        self._publish_state('goal')
+        return False
 
     def _budget(self) -> int:
         """The profile's own budget, or the configured default — the same rule as the TUI."""
@@ -748,6 +910,13 @@ class SessionRuntime:
                     preview=content[:PREVIEW_CHARS],
                 )
             elif isinstance(event, EnqueuedMessagesEvent):
+                if str(event.enqueue_id) in self._goal_enqueues:
+                    for message in event.messages:
+                        for part in message.parts:
+                            if isinstance(part, UserPromptPart) and part in event.parts:
+                                mark(message, part, origin('internal_notice'))
+                    self._goal_enqueues.discard(str(event.enqueue_id))
+                    self._checkpoint(force=True)
                 request_id = self._request_for_enqueue(str(event.enqueue_id))
                 if request_id is not None:
                     self._event_seen.add(request_id)
@@ -985,6 +1154,9 @@ class SessionRuntime:
 
     def _on_tree_change(self, node: Any) -> None:
         self._publish('tree_changed', node_id=getattr(node, 'id', ''))
+        if self._goal_needs_review and not self._subagent_working() and not self._closing:
+            self._settled.clear()
+            self._wake.set()
 
     def _on_tree_idle(self) -> None:
         """A subagent answered with nobody in a turn: that is work, and it is owed.
@@ -1102,6 +1274,39 @@ class SessionRuntime:
         session._baseline = candidate._baseline
         session._draft = candidate._draft
         self._publish_state('context')
+
+    def apply_goal(self, command: GoalCommand) -> GoalUpdate:
+        """Apply a goal update to this session, including a running turn."""
+        session = self.session
+        update = apply_goal_command(command, session.goal, question_pending=self._pending_question is not None)
+        if update.refused:
+            raise RuntimeError(update.notice)
+        if not update.changed:
+            return update
+        previous = session.goal
+        session.goal = update.goal
+        try:
+            self.composition.store.save(session)
+        except Exception:
+            session.goal = previous
+            raise
+        run = self._run
+        if run is not None:
+            instruction = goal_instructions(update.goal) or 'The user stopped the session goal mode.'
+            try:
+                part = UserPromptPart(instruction)
+                request = ModelRequest(parts=[part])
+                mark(request, part, origin('internal_notice'))
+                enqueue_id = run.enqueue(request)
+            except Exception as exc:  # noqa: BLE001 - goal remains saved; report failed steering
+                self._publish(
+                    'notice', text=f'Goal saved, but the running turn could not receive it: {exc}', tone='warn'
+                )
+            else:
+                if enqueue_id is not None:
+                    self._goal_enqueues.add(str(enqueue_id))
+        self._publish_state('goal')
+        return update
 
     def set_external_files(self, allow: bool) -> Any:
         """Allows or denies file access outside the workspace for this session.

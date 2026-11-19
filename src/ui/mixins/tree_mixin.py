@@ -402,6 +402,9 @@ class TreeMixin:
             self.run_worker(self._refresh_tree_from_service())
             return
         node = message.node
+        resume_goal = getattr(self, 'goal_tree_changed', None)
+        if callable(resume_goal):
+            resume_goal()
         for block in self.query(SummonBlock):
             block.set_node(node)
         if self.debug_visible and self.viewed_node_id() == node.id:

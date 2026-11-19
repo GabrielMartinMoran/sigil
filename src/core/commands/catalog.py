@@ -38,6 +38,7 @@ COMMANDS: tuple[Command, ...] = (
     Command('/mcp', 'Show MCP server status'),
     Command('/context', 'Show the context usage breakdown'),
     Command('/compact', 'Reduce history: --deterministic (default) or --llm'),
+    Command('/goal', 'Set an autonomous goal (--yolo runs without asking); stop or status'),
     Command(
         '/rollback',
         'Go back to before a message: roll back (files included) or fork the conversation',

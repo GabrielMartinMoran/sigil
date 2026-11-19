@@ -7,6 +7,7 @@ from collections.abc import Mapping
 
 from src.core.config.sigil_settings import (
     DEFAULT_CONTEXT_STRATEGY,
+    DEFAULT_GOAL_MAX_CONTINUATIONS,
     DEFAULT_MAX_STEPS,
     DEFAULT_MODEL_MAX_ATTEMPTS,
     SigilSettings,
@@ -19,6 +20,7 @@ from src.core.context.strategy.constants import (
 )
 
 ENV_MAX_STEPS = 'SIGIL_MAX_STEPS'
+ENV_GOAL_MAX_CONTINUATIONS = 'SIGIL_GOAL_MAX_CONTINUATIONS'
 
 
 ENV_MODEL_MAX_ATTEMPTS = 'SIGIL_MODEL_MAX_ATTEMPTS'
@@ -74,6 +76,7 @@ def load_settings(environ: Mapping[str, str] | None = None) -> SigilSettings:
     env = os.environ if environ is None else environ
     return SigilSettings(
         max_steps=_read_int(env, ENV_MAX_STEPS, DEFAULT_MAX_STEPS),
+        goal_max_continuations=_read_int(env, ENV_GOAL_MAX_CONTINUATIONS, DEFAULT_GOAL_MAX_CONTINUATIONS),
         model_max_attempts=_read_int(env, ENV_MODEL_MAX_ATTEMPTS, DEFAULT_MODEL_MAX_ATTEMPTS),
         context_strategy=env.get(ENV_CONTEXT_STRATEGY, '').strip().lower() or DEFAULT_CONTEXT_STRATEGY,
         context_trigger_percent=_read_int(env, ENV_CONTEXT_TRIGGER_PERCENT, DEFAULT_POLICY.trigger_percent),

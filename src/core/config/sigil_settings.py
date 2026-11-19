@@ -12,6 +12,7 @@ from src.core.context.strategy.constants import (
 )
 
 DEFAULT_MAX_STEPS = 256
+DEFAULT_GOAL_MAX_CONTINUATIONS = 10
 
 
 DEFAULT_MODEL_MAX_ATTEMPTS = 5
@@ -28,6 +29,7 @@ class SigilSettings:
     """Settings of a session. Immutable on purpose: a turn never mutates them."""
 
     max_steps: int = DEFAULT_MAX_STEPS
+    goal_max_continuations: int = DEFAULT_GOAL_MAX_CONTINUATIONS
     model_max_attempts: int = DEFAULT_MODEL_MAX_ATTEMPTS
     context_strategy: str = DEFAULT_CONTEXT_STRATEGY
     context_trigger_percent: int = DEFAULT_POLICY.trigger_percent
@@ -46,6 +48,8 @@ class SigilSettings:
     def __post_init__(self) -> None:
         if self.max_steps < 1:
             raise ValueError('max_steps must be at least 1')
+        if self.goal_max_continuations < 1:
+            raise ValueError('goal_max_continuations must be at least 1')
         if self.model_max_attempts < 1:
             raise ValueError('model_max_attempts must be at least 1')
         if self.context_strategy not in CONTEXT_STRATEGIES:

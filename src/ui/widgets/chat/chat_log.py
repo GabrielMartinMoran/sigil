@@ -530,6 +530,13 @@ class ChatLog(ReadOnlyScroll):
         attachments = getattr(widget, '_attachments', ())
         widget.update(_user_renderable(text, queued=False, attachments=attachments))
 
+    async def add_agent_message(self, text: str) -> None:
+        """Display an internally generated agent message without posing as the user."""
+        self._current = None
+        self._open_tools.clear()
+        self._close_group()
+        await self._append(_user_widget(text, from_agent=True))
+
     async def add_notice(self, text: str, *, style: str = 'yellow') -> None:
         self._current = None
         self._open_tools.clear()

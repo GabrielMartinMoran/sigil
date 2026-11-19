@@ -125,6 +125,13 @@ _ROWS: tuple[Transport, ...] = (
         route='/api/rollback',
         reason='the service owns the points, the truncation and the fork.',
     ),
+    Transport(
+        name='/goal',
+        owner=CommandOwner.CORE,
+        state=TransportState.DELEGATED,
+        route='/api/goal',
+        reason='the service owns the resident session and the goal persisted on it.',
+    ),
     # --- this window serves these, and they never leave it --------------------
     Transport('/reasoning-visibility', CommandOwner.CLIENT, TransportState.CLIENT),
     Transport('/tools', CommandOwner.CLIENT, TransportState.CLIENT),

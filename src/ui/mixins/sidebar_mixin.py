@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, cast, get_args
 
 from pydantic_ai.messages import ModelMessage
 from textual import work
@@ -12,6 +12,7 @@ from textual.css.query import NoMatches
 
 from src.core.context.meter.context_meter import ContextMeter
 from src.core.context.meter.cost import session_cost
+from src.core.goal.state import Goal, GoalStatus
 from src.core.roadmap.models.todo_item import TodoItem
 from src.core.skills.loaded import loaded_skills
 from src.ui.client.service_client_error import ServiceClientError
@@ -70,6 +71,7 @@ class SidebarMixin:
         names = viewer() if callable(viewer) else loaded_skills(self._history)
         panel.update_skills(names)
         self._update_agent_label(panel)
+        self._update_goal(panel)
 
     def _sidebar_panel(self) -> SidebarPanel | None:
         """The panel, or ``None`` before it is composed."""
@@ -83,6 +85,11 @@ class SidebarMixin:
         label = getattr(self, 'viewed_agent_label', None)
         if callable(label):
             panel.update_subject(label())
+
+    def _update_goal(self, panel: SidebarPanel) -> None:
+        """In process, the goal is the one the session this terminal owns carries."""
+        session = getattr(self, '_session', None)
+        panel.update_goal(getattr(session, 'goal', None))
 
     def _service_panel_subject(self) -> str | None:
         """Who the attached panel describes: the session, never the open node.
@@ -126,6 +133,7 @@ class SidebarMixin:
         target.update_model(_model_from_state(state), reported='model' in state)
         target.update_skills(_skills_from_state(state), reported=_skills_reported(state))
         target.update_mcp(_servers_from_state(state), reported=_mcp_reported(state))
+        target.update_goal(_goal_from_state(state), reported=_goal_reported(state))
         target.update_roadmap(_roadmap_from_state(state))
         target.update_subject(self._service_panel_subject())
 
@@ -332,6 +340,41 @@ def _servers_from_state(state: Mapping[str, Any]) -> tuple[MCPServerState, ...]:
         MCPServerState(name=str(entry.get('name') or ''), ok=not entry.get('error'))
         for entry in servers
         if isinstance(entry, Mapping) and entry.get('enabled', True)
+    )
+
+
+GOAL_STATUSES: frozenset[str] = frozenset(get_args(GoalStatus))
+"""Every status the engine can put on a goal.
+
+A status this build does not know is not painted as one it does: the row falls
+back to `armed`, which is what a goal is before anything moves.
+"""
+
+
+def _goal_reported(state: Mapping[str, Any]) -> bool:
+    """Whether the projection asserted the goal, even as ``None``.
+
+    A missing key is "not reported", not "no goal": only the service that owns
+    the session can say none was set.
+    """
+    session = state.get('session')
+    return isinstance(session, Mapping) and 'goal' in session
+
+
+def _goal_from_state(state: Mapping[str, Any]) -> Goal | None:
+    """The goal the service projects, or ``None`` when it carries none."""
+    session = state.get('session')
+    view = session.get('goal') if isinstance(session, Mapping) else None
+    if not isinstance(view, Mapping):
+        return None
+    text = view.get('text')
+    if not isinstance(text, str) or not text:
+        return None
+    status = view.get('status')
+    return Goal(
+        text=text,
+        yolo=bool(view.get('yolo')),
+        status=cast(GoalStatus, status) if isinstance(status, str) and status in GOAL_STATUSES else 'armed',
     )
 
 

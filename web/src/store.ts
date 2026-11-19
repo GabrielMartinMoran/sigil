@@ -351,6 +351,20 @@ export const useStore = create<Store>((set, get) => ({
     };
     const trimmed = text.trim();
     if (!trimmed) return false;
+    if (/^\/goal(?:\s|$)/.test(trimmed)) {
+      commit({ error: '', notice: '' });
+      try {
+        const result = await api.goal(trimmed.slice(5).trim(), get().selectedSessionId);
+        commit({ notice: result.notice });
+        void get()
+          .refresh()
+          .catch((error: unknown) => commit({ error: report(error) }));
+        return true;
+      } catch (error) {
+        commit({ error: report(error) });
+        return false;
+      }
+    }
     const previous = get().pendingSend;
     const requestId = previous !== null && previous.text === trimmed ? previous.requestId : crypto.randomUUID();
     commit({ error: '', notice: '', pendingSend: { requestId, text: trimmed } });
